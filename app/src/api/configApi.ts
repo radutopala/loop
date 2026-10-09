@@ -143,3 +143,77 @@ export async function saveProjectConfig(channelId: string, content: string): Pro
   });
   if (!res.ok) throw new Error(`Failed to save project config: ${res.statusText}`);
 }
+
+// ── Config history ──
+
+export interface ConfigRevisionSummary {
+  id: number;
+  /** What wrote it: settings, learn, shortcuts, workflows, builtins, restore:<id>, external or initial. */
+  source: string;
+  created_at: string;
+  /** Lines changed from the revision before it. */
+  added: number;
+  removed: number;
+}
+
+export interface ConfigHistory {
+  path: string;
+  /** Newest first; the first one is what the file holds now. */
+  revisions: ConfigRevisionSummary[];
+}
+
+export interface ConfigRevision {
+  id: number;
+  path: string;
+  content: string;
+  hash: string;
+  source: string;
+  created_at: string;
+  /** Unified diff from the revision before it, from /dev/null for the oldest, or from the against revision. */
+  diff: string;
+}
+
+/** The global config's history, or the project config's when channelId is set. */
+export async function fetchConfigHistory(channelId?: string): Promise<ConfigHistory> {
+  const url = channelId ? `${getApiUrl()}/api/config/project/history?${new URLSearchParams({ channel_id: channelId })}` : `${getApiUrl()}/api/config/history`;
+  const res = await apiFetch(url);
+  if (!res.ok) throw new Error(`Failed to fetch config history: ${res.statusText}`);
+  return res.json();
+}
+
+/** A revision, its diff from the one before it or, when against is set, from that revision of the same file. */
+export async function fetchConfigRevision(id: number, against?: number): Promise<ConfigRevision> {
+  const query = against === undefined ? "" : `?${new URLSearchParams({ against: String(against) })}`;
+  const res = await apiFetch(`${getApiUrl()}/api/config/history/${id}${query}`);
+  if (!res.ok) throw new Error(`Failed to fetch config revision: ${res.statusText}`);
+  return res.json();
+}
+
+/** Writes the revision's content back to its config file. */
+export async function restoreConfigRevision(id: number): Promise<void> {
+  const res = await apiFetch(`${getApiUrl()}/api/config/history/${id}/restore`, { method: "POST" });
+  if (!res.ok) throw new Error(`Failed to restore config revision: ${res.statusText}`);
+}
+
+/** How the history list names what wrote a revision. */
+export function configRevisionSourceLabel(source: string): string {
+  if (source.startsWith("restore:")) return `Restored #${source.slice("restore:".length)}`;
+  switch (source) {
+    case "settings":
+      return "Settings";
+    case "learn":
+      return "Learn";
+    case "shortcuts":
+      return "Shortcuts";
+    case "workflows":
+      return "Workflows";
+    case "builtins":
+      return "Built-ins";
+    case "external":
+      return "Edited outside Loop";
+    case "initial":
+      return "First seen";
+    default:
+      return source;
+  }
+}

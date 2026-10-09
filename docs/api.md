@@ -3261,6 +3261,85 @@ Trust the project config as reviewed. Owner-only.
 
 ---
 
+### `GET /api/config/history`
+
+The global config's revisions, newest first. Owner-only.
+
+Loop records a revision of `~/.loop/config.json` and of each channel's project `.loop/config.json` whenever the content changes: on its own writes (Settings, learn, shortcut, workflow and built-in edits, restores), and within a minute of an edit made outside Loop. Each file keeps its newest 200 revisions.
+
+**Response (200):**
+```json
+{
+  "path": "/home/user/.loop/config.json",
+  "revisions": [
+    {"id": 12, "source": "settings", "created_at": "2026-10-09T10:00:00Z", "added": 2, "removed": 1},
+    {"id": 3, "source": "initial", "created_at": "2026-10-01T09:00:00Z", "added": 40, "removed": 0}
+  ]
+}
+```
+
+| Field | Description |
+|---|---|
+| `source` | What wrote the content: `settings`, `learn`, `shortcuts`, `workflows`, `builtins`, `restore:<id>`, `external` for an edit made outside Loop, or `initial` for the content Loop first saw |
+| `added`, `removed` | Lines changed from the revision before it; the oldest revision counts every line as added |
+
+**Errors:** `500` if the loop directory isn't configured. `501` if config history isn't configured.
+
+---
+
+### `GET /api/config/project/history`
+
+The project config's revisions, as for [`GET /api/config/history`](#get-apiconfighistory). Owner-only.
+
+**Query Parameters:**
+
+| Param        | Type   | Required | Description |
+|--------------|--------|----------|-------------|
+| `channel_id` | string | yes      | Channel ID; worktree channels use their root project's config |
+
+**Errors:** `400` if `channel_id` is missing or the channel isn't found. `501` if config history isn't configured.
+
+---
+
+### `GET /api/config/history/{id}`
+
+One revision with its content and the diff from the revision before it. Owner-only.
+
+**Query Parameters:**
+
+| Param     | Type    | Required | Description |
+|-----------|---------|----------|-------------|
+| `against` | integer | no       | A revision of the same file to diff from instead, older or newer |
+
+**Response (200):**
+```json
+{
+  "id": 12,
+  "path": "/home/user/.loop/config.json",
+  "content": "{\n  \"claude_model\": \"sonnet\"\n}\n",
+  "hash": "9b2e…",
+  "source": "settings",
+  "created_at": "2026-10-09T10:00:00Z",
+  "diff": "--- /home/user/.loop/config.json\n+++ /home/user/.loop/config.json\n@@ …"
+}
+```
+
+`diff` is from `/dev/null` for the oldest revision, and from the `against` revision when it's given.
+
+**Errors:** `400` for an invalid id or `against`, or an `against` revision of another file. `404` if either revision doesn't exist. `501` if config history isn't configured.
+
+---
+
+### `POST /api/config/history/{id}/restore`
+
+Write a revision's content back to its config file. Owner-only. The restore is recorded as a revision with source `restore:<id>`, and a project config that was trusted stays trusted, as with [`PUT /api/config/project`](#put-apiconfigproject).
+
+**Response:** `204 No Content`
+
+**Errors:** `400` for an invalid id. `404` if there's no such revision. `501` if config history isn't configured.
+
+---
+
 ### `POST /api/builtins/restore`
 
 Re-seed any missing built-in workflows or prompt shortcuts under `~/.loop/`. Idempotent — entries the user has kept (or modified) are left untouched, so this restores deletions rather than resetting to defaults. Backs the "Restore built-ins" bar in the Settings panel.

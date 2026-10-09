@@ -9,6 +9,7 @@ import type { Channel, DaemonInfo, ImageBuildStatusData, ImageStatusResponse, Im
 import { logErr } from "../../utils/log";
 import { ChannelHeaderInfo } from "../layout/ChannelHeaderInfo";
 import { ConfigForm, type ConfigFormHandle, getSections } from "./ConfigForm";
+import { ConfigHistory } from "./ConfigHistory";
 import { ProjectTrustNotice } from "./ProjectTrustNotice";
 
 // formatBytes renders a byte count as a compact human-readable size.
@@ -180,18 +181,20 @@ export function Settings({
     setRestarting(false);
   };
 
+  // applyDesktop applies a global config's desktop settings (theme, font
+  // sizes, islands) live.
+  const applyDesktop = (desktop: any) => {
+    if (!desktop) return;
+    setThemeName(desktop.theme || "dark");
+    setFontSizes(desktop.font_sizes ? { ...DEFAULT_FONT_SIZES, ...desktop.font_sizes } : { ...DEFAULT_FONT_SIZES });
+    setIslands(desktop.islands ?? false);
+  };
+
   const handleSaveGlobalConfig = async (content: string): Promise<string | null> => {
     try {
       await saveGlobalConfig(content);
-      // Apply desktop settings live (theme, font sizes).
       try {
-        const parsed = JSON.parse(content);
-        const desktop = parsed.desktop;
-        if (desktop) {
-          setThemeName(desktop.theme || "dark");
-          setFontSizes(desktop.font_sizes ? { ...DEFAULT_FONT_SIZES, ...desktop.font_sizes } : { ...DEFAULT_FONT_SIZES });
-          setIslands(desktop.islands ?? false);
-        }
+        applyDesktop(JSON.parse(content).desktop);
       } catch {
         /* ignore parse errors */
       }
@@ -252,6 +255,21 @@ export function Settings({
     } catch (e: any) {
       return e.message ?? "Failed to save";
     }
+  };
+
+  // A restore rewrote the file: re-fetch it so the forms show it, and apply
+  // its desktop settings as a save would.
+  const handleGlobalRestored = () => {
+    fetchGlobalConfig()
+      .then((cfg) => {
+        setGlobalConfig(cfg);
+        applyDesktop(cfg.content?.desktop);
+      })
+      .catch(logErr("re-fetching global config"));
+  };
+
+  const handleProjectRestored = () => {
+    if (channelId) fetchProjectConfig(channelId).then(setProjectConfig).catch(logErr("re-fetching project config"));
   };
 
   const handleFloatingSave = async () => {
@@ -396,6 +414,7 @@ export function Settings({
               <NavButton key={name} name={name} active={activeSection === name} colors={colors} onClick={() => setActiveSection(name)} />
             ))}
             {globalConfig && <NavButton name="JSON" active={activeSection === "__global_json__"} colors={colors} onClick={() => setActiveSection("__global_json__")} />}
+            {globalConfig && <NavButton name="History" active={activeSection === "__global_history__"} colors={colors} onClick={() => setActiveSection("__global_history__")} />}
 
             {/* Project group */}
             {projectSchemaSections.length > 0 && (
@@ -406,6 +425,7 @@ export function Settings({
                   <NavButton key={`proj_${name}`} name={name} active={activeSection === `__proj_${name}`} colors={colors} onClick={() => setActiveSection(`__proj_${name}`)} />
                 ))}
                 <NavButton name="JSON" active={activeSection === "__project_json__"} colors={colors} onClick={() => setActiveSection("__project_json__")} />
+                <NavButton name="History" active={activeSection === "__project_history__"} colors={colors} onClick={() => setActiveSection("__project_history__")} />
               </>
             )}
           </div>
@@ -417,7 +437,7 @@ export function Settings({
             flex: 1,
             display: "flex",
             flexDirection: "column",
-            overflow: activeSection.includes("json") ? "hidden" : "auto",
+            overflow: activeSection.includes("json") || activeSection.includes("history") ? "hidden" : "auto",
             padding: "16px 16px 24px",
           }}
         >
@@ -447,6 +467,8 @@ export function Settings({
                 />
               )}
 
+              {activeSection === "__global_history__" && globalConfig && <ConfigHistory colors={colors} refreshKey={globalConfig} dirty={globalDirty} onRestored={handleGlobalRestored} />}
+
               {globalConfig && globalSchemaSections.includes(activeSection) && (
                 <>
                   {(activeSection === "Workflows" || activeSection === "Prompt Shortcuts") &&
@@ -470,6 +492,10 @@ export function Settings({
 
               {(activeSection === "__project_json__" || activeSection.startsWith("__proj_")) && projectConfig && channelId && (
                 <ProjectTrustNotice channelId={channelId} colors={colors} refreshKey={projectConfig} onTrusted={onProjectTrusted} />
+              )}
+
+              {activeSection === "__project_history__" && channelId && (
+                <ConfigHistory channelId={channelId} colors={colors} refreshKey={projectConfig} dirty={projectDirty} onRestored={handleProjectRestored} />
               )}
 
               {activeSection === "__project_json__" && projectConfig && (

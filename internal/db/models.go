@@ -390,6 +390,26 @@ const (
 	LearnPassSuperseded = "superseded"
 )
 
+// ConfigRevision is the content a config file had at one point.
+type ConfigRevision struct {
+	ID      int64  `json:"id"`
+	Path    string `json:"path"`
+	Content string `json:"content"`
+	Hash    string `json:"hash"`
+	// Source is what wrote the content: the Loop surface that saved it
+	// ("settings", "learn", "restore:<id>", …), ConfigSourceExternal for an
+	// edit Loop didn't make, or ConfigSourceInitial for the content Loop
+	// first saw.
+	Source    string    `json:"source"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// The ConfigRevision sources Loop doesn't write itself.
+const (
+	ConfigSourceExternal = "external"
+	ConfigSourceInitial  = "initial"
+)
+
 // LearnPass is one learn pass over a turn in a channel, the turn whose last
 // bot message is MessageID. It runs in the channel's hidden learn thread,
 // started by the message TriggerMsgID there.

@@ -140,6 +140,7 @@ type Server struct {
 	threads                 ThreadEnsurer
 	removeMCPConfig         func(dirPath, channelID string) error // removes a deleted channel's MCP config files
 	configLocks             configLocks                           // serializes edits of each config.json
+	history                 configHistory                         // records each config.json's revisions; see lockConfig
 	messages                MessageSender
 	memoryIndexer           MemoryIndexer
 	termManager             TerminalManager
@@ -627,6 +628,10 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/config/project", s.handleSaveProjectConfig)
 	mux.HandleFunc("GET /api/config/project/trust", s.handleGetProjectTrust)
 	mux.HandleFunc("POST /api/config/project/trust", s.handleTrustProjectConfig)
+	mux.HandleFunc("GET /api/config/history", s.handleGetConfigHistory)
+	mux.HandleFunc("GET /api/config/project/history", s.handleGetProjectConfigHistory)
+	mux.HandleFunc("GET /api/config/history/{id}", s.handleGetConfigRevision)
+	mux.HandleFunc("POST /api/config/history/{id}/restore", s.handleRestoreConfigRevision)
 	mux.HandleFunc("GET /api/gate/approvals", s.handleListGateApprovals)
 	mux.HandleFunc("POST /api/gate/approvals/{id}", s.handleResolveGateApproval)
 	mux.HandleFunc("POST /api/gate/container-approval", s.handleContainerApproval)

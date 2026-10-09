@@ -392,7 +392,7 @@ func (s *Server) handleModifyWorkflow(w http.ResponseWriter, r *http.Request) {
 	}
 	// The read-modify-write below shares the lock every other edit of
 	// this file takes.
-	defer s.configLocks.lock(configPath)()
+	defer s.lockConfig(configPath, "workflows")()
 
 	// Read existing config.
 	configData, err := s.sys.ReadFile(configPath)

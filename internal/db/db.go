@@ -116,6 +116,9 @@ type Store interface {
 	UpdateExplanation(ctx context.Context, id int64, status, content, errText string) error
 	ListExplanations(ctx context.Context, channelID string) ([]*Explanation, error)
 	FailInterruptedExplanations(ctx context.Context) (int64, error)
+	InsertConfigRevision(ctx context.Context, rev *ConfigRevision, keep int) (bool, error)
+	ListConfigRevisions(ctx context.Context, path string) ([]*ConfigRevision, error)
+	GetConfigRevision(ctx context.Context, id int64) (*ConfigRevision, error)
 	InsertLearnPass(ctx context.Context, p *LearnPass) (*LearnPass, error)
 	GetLearnPassByTrigger(ctx context.Context, learnChannelID, triggerMsgID string) (*LearnPass, error)
 	UpdateLearnPass(ctx context.Context, id int64, status, errText string) error

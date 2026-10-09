@@ -97,7 +97,7 @@ func (s *Server) handleRestoreBuiltins(w http.ResponseWriter, r *http.Request) {
 
 	// The restore reads, patches and rewrites config.json, so it shares the
 	// lock that global shortcut edits take on the same file.
-	defer s.configLocks.lock(filepath.Join(s.loopDir, "config.json"))()
+	defer s.lockConfig(filepath.Join(s.loopDir, "config.json"), "builtins")()
 	ctx := &fsmigrate.Ctx{Sys: s.sys, LoopDir: s.loopDir}
 	var (
 		added   []string
