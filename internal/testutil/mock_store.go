@@ -614,6 +614,23 @@ func (m *MockStore) FailInterruptedExplanations(ctx context.Context) (int64, err
 	return args.Get(0).(int64), args.Error(1)
 }
 
+func (m *MockStore) InsertConfigRevision(ctx context.Context, rev *db.ConfigRevision, keep int) (bool, error) {
+	args := m.Called(ctx, rev, keep)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockStore) ListConfigRevisions(ctx context.Context, path string) ([]*db.ConfigRevision, error) {
+	args := m.Called(ctx, path)
+	v, _ := args.Get(0).([]*db.ConfigRevision)
+	return v, args.Error(1)
+}
+
+func (m *MockStore) GetConfigRevision(ctx context.Context, id int64) (*db.ConfigRevision, error) {
+	args := m.Called(ctx, id)
+	v, _ := args.Get(0).(*db.ConfigRevision)
+	return v, args.Error(1)
+}
+
 func (m *MockStore) InsertLearnPass(ctx context.Context, p *db.LearnPass) (*db.LearnPass, error) {
 	args := m.Called(ctx, p)
 	v, _ := args.Get(0).(*db.LearnPass)

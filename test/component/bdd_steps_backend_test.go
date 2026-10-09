@@ -84,6 +84,14 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I add a bash shortcut "([^"]*)" with command "([^"]*)" via API$`, tc.addBashShortcutViaAPI)
 	ctx.Step(`^I clear all bash shortcuts via API$`, tc.clearAllBashShortcutsViaAPI)
 
+	// Config history steps
+	ctx.Step(`^I remember the newest global config revision as "([^"]*)"$`, tc.rememberNewestConfigRevision)
+	ctx.Step(`^I save the global config via API with the line "([^"]*)" appended$`, tc.saveGlobalConfigAppending)
+	ctx.Step(`^I append the line "([^"]*)" to the global config file outside Loop$`, tc.appendToGlobalConfigFile)
+	ctx.Step(`^the global config history should start with sources "([^"]*)"$`, tc.assertConfigHistoryStartsWith)
+	ctx.Step(`^the response diff should contain "([^"]*)"$`, tc.assertResponseDiffContains)
+	ctx.Step(`^the response diff should not contain "([^"]*)"$`, tc.assertResponseDiffNotContains)
+
 	// WebSocket steps
 	ctx.Step(`^I connect to the events WebSocket$`, tc.connectEventsWS)
 	ctx.Step(`^the WebSocket connection should be established$`, tc.assertWSConnected)
@@ -142,6 +150,24 @@ func (tc *TestContext) assertStatus(expected int) error {
 func (tc *TestContext) assertBodyContains(expected string) error {
 	if !strings.Contains(string(tc.LastBody), expected) {
 		return fmt.Errorf("response body does not contain %q: %s", expected, string(tc.LastBody))
+	}
+	return nil
+}
+
+// assertResponseDiffContains checks the diff field of a config revision
+// response, so text the revision's content also holds doesn't count.
+func (tc *TestContext) assertResponseDiffContains(expected string) error {
+	diff, _ := tc.LastJSON["diff"].(string)
+	if !strings.Contains(diff, expected) {
+		return fmt.Errorf("response diff does not contain %q: %s", expected, string(tc.LastBody))
+	}
+	return nil
+}
+
+func (tc *TestContext) assertResponseDiffNotContains(unexpected string) error {
+	diff, _ := tc.LastJSON["diff"].(string)
+	if strings.Contains(diff, unexpected) {
+		return fmt.Errorf("response diff contains %q: %s", unexpected, string(tc.LastBody))
 	}
 	return nil
 }
@@ -1523,4 +1549,126 @@ func openDaemonDB() (*sql.DB, error) {
 		return nil, fmt.Errorf("opening daemon database: %w", err)
 	}
 	return sqlDB, nil
+}
+
+// --- Config history steps ---
+
+type configRevisionSummary struct {
+	ID     int64  `json:"id"`
+	Source string `json:"source"`
+}
+
+// globalConfigHistory lists the global config's revisions, newest first.
+func (tc *TestContext) globalConfigHistory() ([]configRevisionSummary, error) {
+	if err := tc.doRequest(http.MethodGet, "/api/config/history", ""); err != nil {
+		return nil, err
+	}
+	if tc.LastStatus != http.StatusOK {
+		return nil, fmt.Errorf("listing config history: status %d, body: %s", tc.LastStatus, string(tc.LastBody))
+	}
+	var resp struct {
+		Revisions []configRevisionSummary `json:"revisions"`
+	}
+	if err := json.Unmarshal(tc.LastBody, &resp); err != nil {
+		return nil, fmt.Errorf("decoding config history: %w", err)
+	}
+	return resp.Revisions, nil
+}
+
+// rememberNewestConfigRevision names the global config's newest revision,
+// waiting for the daemon's startup scan to record one.
+func (tc *TestContext) rememberNewestConfigRevision(name string) error {
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		revs, err := tc.globalConfigHistory()
+		if err != nil {
+			return err
+		}
+		if len(revs) > 0 {
+			if tc.ConfigRevisions == nil {
+				tc.ConfigRevisions = map[string]int64{}
+			}
+			tc.ConfigRevisions[name] = revs[0].ID
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("the global config has no revisions")
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+// globalConfigFile returns the global config's path and raw content.
+func (tc *TestContext) globalConfigFile() (string, string, error) {
+	if err := tc.doRequest(http.MethodGet, "/api/config", ""); err != nil {
+		return "", "", err
+	}
+	if tc.LastStatus != http.StatusOK {
+		return "", "", fmt.Errorf("getting global config: status %d, body: %s", tc.LastStatus, string(tc.LastBody))
+	}
+	path, _ := tc.LastJSON["path"].(string)
+	raw, _ := tc.LastJSON["raw"].(string)
+	if path == "" {
+		return "", "", fmt.Errorf("global config response has no path: %s", string(tc.LastBody))
+	}
+	return path, raw, nil
+}
+
+// withLine returns content with line appended on a line of its own.
+func withLine(content, line string) string {
+	if content != "" && !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	return content + line + "\n"
+}
+
+// saveGlobalConfigAppending saves the global config through the API, as
+// Settings does, with line appended.
+func (tc *TestContext) saveGlobalConfigAppending(line string) error {
+	_, raw, err := tc.globalConfigFile()
+	if err != nil {
+		return err
+	}
+	body, err := json.Marshal(map[string]string{"content": withLine(raw, line)})
+	if err != nil {
+		return err
+	}
+	if err := tc.doRequest(http.MethodPut, "/api/config", string(body)); err != nil {
+		return err
+	}
+	if tc.LastStatus != http.StatusNoContent {
+		return fmt.Errorf("saving global config: status %d, body: %s", tc.LastStatus, string(tc.LastBody))
+	}
+	return nil
+}
+
+// appendToGlobalConfigFile writes the global config file directly, as an
+// editor outside Loop would.
+func (tc *TestContext) appendToGlobalConfigFile(line string) error {
+	path, raw, err := tc.globalConfigFile()
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(withLine(raw, line)), 0644)
+}
+
+// assertConfigHistoryStartsWith checks the sources of the global config's
+// newest revisions, given newest first and comma separated.
+func (tc *TestContext) assertConfigHistoryStartsWith(sources string) error {
+	var want []string
+	for _, s := range strings.Split(tc.resolvePlaceholders(sources), ",") {
+		want = append(want, strings.TrimSpace(s))
+	}
+	revs, err := tc.globalConfigHistory()
+	if err != nil {
+		return err
+	}
+	var got []string
+	for _, r := range revs {
+		got = append(got, r.Source)
+	}
+	if len(got) < len(want) || strings.Join(got[:len(want)], ", ") != strings.Join(want, ", ") {
+		return fmt.Errorf("global config history sources: want %v first, got %v", want, got)
+	}
+	return nil
 }

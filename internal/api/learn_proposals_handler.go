@@ -445,7 +445,7 @@ func (s *Server) editLearnConfig(ctx context.Context, ch *db.Channel, v any, wri
 		return "", nil, nil, err
 	}
 	configPath = filepath.Join(dir, ".loop", "config.json")
-	defer s.configLocks.lock(configPath)()
+	defer s.lockConfig(configPath, "learn")()
 	merged := s.configs.merged(ch.DirPath, s.workspace.resolveParentDirPath(ctx, ch.ChannelID))
 	if merged == nil {
 		return configPath, nil, nil, errors.New("loading config failed")

@@ -206,6 +206,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I click on "([^"]*)" in the workflows split panel$`, tc.clickInWorkflowsSplitPanel)
 	ctx.Step(`^I click button "([^"]*)" in the workflows split panel$`, tc.clickButtonInWorkflowsSplitPanel)
 	ctx.Step(`^I click on "([^"]*)" in the settings panel$`, tc.clickInSettingsPanel)
+	ctx.Step(`^I click config history revision "([^"]*)"$`, tc.clickConfigRevision)
 	ctx.Step(`^I click button "([^"]*)" in the settings panel$`, tc.clickButtonInSettingsPanel)
 	ctx.Step(`^I trigger Run Now for the visible task$`, tc.triggerRunNowForVisibleTask)
 	ctx.Step(`^I capture the visible task ID$`, tc.captureVisibleTaskID)
@@ -723,6 +724,7 @@ func (tc *TestContext) assertElementVisible(selector string) error {
 // replaces it between the two can't fail the read with "No node with given id
 // found", as chromedp.Text's query-then-read can.
 func (tc *TestContext) assertElementContainsText(selector, expected string) error {
+	expected = tc.resolvePlaceholders(expected)
 	err := chromedp.Run(tc.chromeTab.ctx,
 		chromedp.Poll(fmt.Sprintf(`(document.querySelector(%q)?.innerText ?? "").includes(%q)`, selector, expected),
 			nil, chromedp.WithPollingTimeout(10*time.Second), chromedp.WithPollingInterval(100*time.Millisecond)),
@@ -1068,6 +1070,24 @@ func (tc *TestContext) clickButtonInWorkflowsSplitPanel(text string) error {
 	return tc.clickButtonInRegion(text, "workflows-split-panel")
 }
 
+// clickConfigRevision clicks the config history row of the revision
+// remembered as name.
+func (tc *TestContext) clickConfigRevision(name string) error {
+	id, ok := tc.ConfigRevisions[name]
+	if !ok {
+		return fmt.Errorf("no config revision remembered as %q", name)
+	}
+	js := fmt.Sprintf(`(() => {
+		const row = [...document.querySelectorAll('[data-testid="config-history-item"]')].find((el) => el.innerText.includes("#%d ·"));
+		if (!row) return false;
+		row.click();
+		return true;
+	})()`, id)
+	return chromedp.Run(tc.chromeTab.ctx,
+		chromedp.Poll(js, nil, chromedp.WithPollingTimeout(10*time.Second), chromedp.WithPollingInterval(100*time.Millisecond)),
+	)
+}
+
 func (tc *TestContext) clickInSettingsPanel(text string) error {
 	return tc.clickInRegion(text, "settings-panel")
 }
@@ -1389,6 +1409,7 @@ func (tc *TestContext) clearAndTypeInto(text, selector string) error {
 }
 
 func (tc *TestContext) selectFrom(value, selector string) error {
+	value = tc.resolvePlaceholders(value)
 	// Set value and dispatch change event for React compatibility.
 	js := fmt.Sprintf(`
 		(function() {

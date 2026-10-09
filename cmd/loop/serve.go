@@ -637,6 +637,7 @@ func (a *app) serve() error {
 		api.WithAuth(auth.deps),
 		api.WithWorkflowBashLocal(cfg.WorkflowBashLocal),
 		api.WithProjectTrust(config.NewTrustStoreIn(a.userConfigDir)),
+		api.WithConfigHistory(store),
 	}
 
 	// Quality engine: parser + graph cache + SQL-backed snapshot store. The
@@ -746,6 +747,7 @@ func (a *app) serve() error {
 	apiSrv.SetBranchPoller(branchPoller)
 	branchPoller.SetOnDirChange(apiSrv.InvalidatePRCacheForDir)
 	go branchPoller.Run(ctx)
+	go apiSrv.RunConfigHistory(ctx, time.Minute)
 	containerReg.SetBroadcaster(eventsHub)
 	// Unconditional: the local bot renders ask/plan cards through the hub
 	// even when no gate is enabled.

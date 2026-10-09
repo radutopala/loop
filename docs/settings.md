@@ -184,6 +184,17 @@ Only shown when a specific project channel is selected (via the gear icon on a c
 
 ---
 
+### Config History
+
+A **History** entry under both the Global and the Project group lists the revisions Loop recorded of that config file, newest first. Each row shows what wrote it (Settings, Learn, Shortcuts, Workflows, Built-ins, a restore, an edit made outside Loop, or the content Loop first saw), when, and the lines it added and removed.
+
+- Loop records a revision whenever the file's content changes: on its own writes, and within a minute of an edit made outside Loop, such as by hand or by an agent. Each file keeps its newest 200 revisions, stored in the Loop database.
+- Selecting a revision shows the diff from the one before it. **Diff against** picks any other revision of the same file to compare it with instead, such as the current one to see what a restore would change.
+- **Restore this version** writes that revision back to the file, as a Settings save would, and records the restore as a new revision. A project config that was trusted stays trusted. The button is disabled while the config has unsaved edits.
+- Backed by `GET /api/config/history`, `GET /api/config/project/history`, `GET /api/config/history/{id}` and `POST /api/config/history/{id}/restore`.
+
+---
+
 ### Header Bar
 
 The settings panel includes a header bar matching the workspace layout header:

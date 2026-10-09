@@ -464,6 +464,18 @@ var migrations = []migration{
 	// forked at a message; empty forks the whole session. It clears with
 	// fork_pending.
 	sqlMigration(`ALTER TABLE channels ADD COLUMN fork_resume_at TEXT NOT NULL DEFAULT ''`),
+	// config_revisions is the history of the config files Loop reads,
+	// ~/.loop/config.json and each project's .loop/config.json: a row per
+	// content a file had, stored when it changed (see ConfigRevision).
+	sqlMigration(`CREATE TABLE IF NOT EXISTS config_revisions (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		path       TEXT NOT NULL,
+		content    TEXT NOT NULL,
+		hash       TEXT NOT NULL,
+		source     TEXT NOT NULL DEFAULT '',
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`),
+	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_config_revisions_path ON config_revisions(path, id)`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the

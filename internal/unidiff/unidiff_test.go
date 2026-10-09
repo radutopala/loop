@@ -50,3 +50,23 @@ func (s *UnidiffSuite) TestDiff() {
 		})
 	}
 }
+
+func (s *UnidiffSuite) TestCount() {
+	cases := []struct {
+		name        string
+		a, b        string
+		added, gone int
+	}{
+		{"equal", "x\n", "x\n", 0, 0},
+		{"new file", "", "a\nb\n", 2, 0},
+		{"change", "a\nb\n", "a\nc\n", 1, 1},
+		{"emptied", "a\nb\n", "", 0, 2},
+		{"insert", "a\nc\n", "a\nb\nc\nd\n", 2, 0},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			added, removed := Count(c.a, c.b)
+			s.Require().Equal([2]int{c.added, c.gone}, [2]int{added, removed})
+		})
+	}
+}

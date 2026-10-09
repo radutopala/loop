@@ -36,3 +36,15 @@ func lines(s string) []string {
 	out[len(out)-1] += "\n"
 	return out
 }
+
+// Count returns how many lines Diff shows as added and removed going from
+// a to b.
+func Count(a, b string) (added, removed int) {
+	for _, op := range difflib.NewMatcher(lines(a), lines(b)).GetOpCodes() {
+		if op.Tag != 'e' {
+			added += op.J2 - op.J1
+			removed += op.I2 - op.I1
+		}
+	}
+	return added, removed
+}

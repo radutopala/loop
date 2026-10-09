@@ -275,7 +275,7 @@ func (s *Server) modifyShortcutEntry(w http.ResponseWriter, r *http.Request, req
 	if !ok {
 		return
 	}
-	defer s.configLocks.lock(configPath)()
+	defer s.lockConfig(configPath, "shortcuts")()
 
 	configData, err := s.sys.ReadFile(configPath)
 	if err != nil {

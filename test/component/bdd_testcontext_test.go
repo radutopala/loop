@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/gorilla/websocket"
@@ -49,6 +50,8 @@ type TestContext struct {
 	WorktreePath             string
 	CreatedShortcutNames     []string
 	CreatedBashShortcutNames []string
+	// ConfigRevisions names config history revision ids, for {rev:<name>}.
+	ConfigRevisions map[string]int64
 
 	// Frontend (lazily initialized)
 	chromeTab *chromeTab
@@ -117,6 +120,9 @@ func (tc *TestContext) resolvePlaceholders(path string) string {
 	}
 	path = strings.ReplaceAll(path, "{explain_channel_id}", tc.ExplainChannelID)
 	path = strings.ReplaceAll(path, "{repo_path}", tc.ChannelDir)
+	for name, id := range tc.ConfigRevisions {
+		path = strings.ReplaceAll(path, "{rev:"+name+"}", strconv.FormatInt(id, 10))
+	}
 	return path
 }
 
