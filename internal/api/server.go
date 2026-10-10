@@ -171,6 +171,7 @@ type Server struct {
 	interactionHandler      InteractionHandler
 	agentRegistry           *agentregistry.Registry
 	imageManager            ImageManager
+	plugins                 PluginManager
 	server                  *http.Server
 	listener                net.Listener
 	stopErr                 error // if set, Stop returns this error (for testing)
@@ -314,6 +315,12 @@ func (s *Server) SetInteractionHandler(h InteractionHandler) {
 // SetImageManager configures the image lifecycle manager for the /api/image/* endpoints.
 func (s *Server) SetImageManager(im ImageManager) {
 	s.imageManager = im
+}
+
+// SetPluginManager configures the plugin installer for the /api/plugins
+// endpoints; left unset, plugins are disabled.
+func (s *Server) SetPluginManager(pm PluginManager) {
+	s.plugins = pm
 }
 
 // SetApprovalResolver wires the gate approval resolver used by the local
@@ -654,6 +661,10 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/gate/approvals/{id}", s.handleResolveGateApproval)
 	mux.HandleFunc("POST /api/gate/container-approval", s.handleContainerApproval)
 	mux.HandleFunc("POST /api/builtins/restore", s.handleRestoreBuiltins)
+	mux.HandleFunc("GET /api/plugins", s.handleListPlugins)
+	mux.HandleFunc("POST /api/plugins/inspect", s.handleInspectPlugin)
+	mux.HandleFunc("POST /api/plugins", s.handleInstallPlugin)
+	mux.HandleFunc("DELETE /api/plugins/{id}", s.handleRemovePlugin)
 	mux.HandleFunc("GET /api/health", handleHealth)
 	mux.HandleFunc("POST /api/auth/rotate", s.handleRotateToken)
 	mux.HandleFunc("POST /api/content-caps", s.handleCreateContentCap)

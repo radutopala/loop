@@ -2980,6 +2980,90 @@ List all tracked containers across all channels. Returns containers sorted with 
 
 ---
 
+## Plugins
+
+Owner only. Every route answers `501` while `plugins.enabled` is off in the global config.
+
+### `GET /api/plugins`
+
+List the installed plugins.
+
+**Response:** `200 OK`
+
+```json
+{
+  "plugins": [
+    {
+      "id": "echo",
+      "image": "ghcr.io/acme/loop-plugin-echo@sha256:…",
+      "digest": "sha256:…",
+      "version": "1.0.0",
+      "api": "1",
+      "capabilities": ["ui.panel"],
+      "dev": false,
+      "status": "installed",
+      "installed_at": "2026-10-10T09:00:00Z",
+      "updated_at": "2026-10-10T09:00:00Z"
+    }
+  ]
+}
+```
+
+`capabilities` are the ones the owner approved. `digest` is empty for a dev install.
+
+### `POST /api/plugins/inspect`
+
+Pull an image, extract and validate its `/loop-plugin` dir, and return what it asks for. Installs nothing.
+
+**Request:** `{"image": "ghcr.io/acme/loop-plugin-echo:1.0.0", "dev": false}`. With `dev`, a local image is used as is, unpulled and unpinned.
+
+**Response:** `200 OK`
+
+```json
+{
+  "id": "echo",
+  "name": "Echo",
+  "version": "1.1.0",
+  "api": "1",
+  "image": "ghcr.io/acme/loop-plugin-echo@sha256:…",
+  "digest": "sha256:…",
+  "dev": false,
+  "capabilities": ["ui.panel", "files.read"],
+  "new_capabilities": ["files.read"],
+  "previous_version": "1.0.0"
+}
+```
+
+`new_capabilities` are the ones the installed version wasn't approved for (all of them on a first install). `previous_version` is set when the plugin is already installed.
+
+**Errors:** `400` without an image; `422` if the pull fails or the image isn't a valid plugin.
+
+### `POST /api/plugins`
+
+Install, or upgrade to, an image. Upgrading stops the plugin's containers; they start on the new image when next used.
+
+**Request:**
+
+```json
+{"image": "ghcr.io/acme/loop-plugin-echo:1.1.0", "digest": "sha256:…", "approve": ["ui.panel", "files.read"]}
+```
+
+`approve` must list every capability the plugin asks for. `digest`, from the inspect the owner reviewed, refuses the install if the image changed since. `dev` works as for inspect.
+
+**Response:** `200 OK`, the same body as inspect.
+
+**Errors:** `400` without an image or with a capability not approved; `409` if the image's digest isn't `digest`; `422` as for inspect.
+
+### `DELETE /api/plugins/{id}`
+
+Remove a plugin: its containers in every channel, its extracted files and its record. `?purge=true` also removes its data volumes.
+
+**Response:** `204 No Content`
+
+**Errors:** `404` if the plugin isn't installed.
+
+---
+
 ## Agent Registry
 
 ### `GET /api/agents`
