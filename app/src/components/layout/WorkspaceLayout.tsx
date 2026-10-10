@@ -1817,7 +1817,12 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                         handleRemoveLeaf(leaf.id);
                       }}
                       onDrop={handleDrop}
-                      onSplitLeaf={handleSplitLeaf}
+                      // The new pane goes beside this one, so restore the
+                      // layout to show it.
+                      onSplitLeaf={(...args) => {
+                        setMaximizedLeafId(null);
+                        handleSplitLeaf(...args);
+                      }}
                       onToggleMaximize={() => setMaximizedLeafId(null)}
                     />
                     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>{renderLeaf(leaf)}</div>
