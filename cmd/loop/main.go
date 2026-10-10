@@ -139,6 +139,7 @@ type app struct {
 	newMCPServer           func(string, string, string, mcpserver.HTTPClient, *slog.Logger, ...mcpserver.MemoryOption) *mcpserver.Server
 	newDockerClient        func() (container.DockerClient, error)
 	newPluginDocker        func() (pluginDockerClient, error)
+	runDocker              func(ctx context.Context, stdout, stderr io.Writer, args ...string) error
 	ensureImage            func(context.Context, container.DockerClient, *config.Config, func(string)) error
 	newEmbedder            func(*config.Config) (embeddings.Embedder, error)
 	loadProjectMemoryPaths func(string) []string
@@ -256,6 +257,7 @@ func newApp() *app {
 		newPluginDocker: func() (pluginDockerClient, error) {
 			return dockerclient.NewClientWithOpts(dockerclient.FromEnv, dockerclient.WithAPIVersionNegotiation())
 		},
+		runDocker: execRunner("docker"),
 		newDockerExecClient: func() (terminal.ExecClient, error) {
 			return terminal.NewDockerExecClient()
 		},

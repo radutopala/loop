@@ -10,6 +10,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"text/tabwriter"
@@ -25,7 +27,7 @@ func (a *app) newPluginCmd() *cobra.Command {
 		Long: "Install, upgrade and remove plugins. The daemon must run with\n" +
 			"plugins.enabled set in the global config.",
 	}
-	cmd.AddCommand(a.newPluginListCmd(), a.newPluginInstallCmd(), a.newPluginUpgradeCmd(), a.newPluginRemoveCmd())
+	cmd.AddCommand(a.newPluginListCmd(), a.newPluginInstallCmd(), a.newPluginUpgradeCmd(), a.newPluginRemoveCmd(), a.newPluginDevCmd())
 	return cmd
 }
 
@@ -132,6 +134,57 @@ func (a *app) newPluginRemoveCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&purge, "purge", false, "Also remove the plugin's data")
 	return cmd
+}
+
+func (a *app) newPluginDevCmd() *cobra.Command {
+	var yes bool
+	cmd := &cobra.Command{
+		Use:   "dev <dir>",
+		Short: "Build a plugin from its source and install it",
+		Long: "Builds the Dockerfile in dir with the local docker CLI and installs the\n" +
+			"image as a dev plugin. Run it again after a change to rebuild and reinstall.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dir := args[0]
+			// An absolute dir names the image after the plugin's dir, even for ".".
+			if abs, err := filepath.Abs(dir); err == nil {
+				dir = abs
+			}
+			tag := devPluginTag(dir)
+			if err := a.runDocker(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), "build", "-t", tag, dir); err != nil {
+				return fmt.Errorf("building %s: %w", dir, err)
+			}
+			return a.installPlugin(cmd, tag, true, yes)
+		},
+	}
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Approve the plugin's capabilities without asking")
+	return cmd
+}
+
+// execRunner runs name with args, writing its output to stdout and stderr.
+func execRunner(name string) func(ctx context.Context, stdout, stderr io.Writer, args ...string) error {
+	return func(ctx context.Context, stdout, stderr io.Writer, args ...string) error {
+		cmd := exec.CommandContext(ctx, name, args...)
+		cmd.Stdout, cmd.Stderr = stdout, stderr
+		return cmd.Run()
+	}
+}
+
+// devPluginTag is the local image tag loop plugin dev builds dir as.
+func devPluginTag(dir string) string {
+	name := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '.', r == '-', r == '_':
+			return r
+		case r >= 'A' && r <= 'Z':
+			return r + 'a' - 'A'
+		}
+		return '-'
+	}, filepath.Base(dir))
+	if name = strings.Trim(name, ".-_"); name == "" {
+		name = "plugin"
+	}
+	return "loop-plugin-dev/" + name + ":latest"
 }
 
 // pluginJSON is an installed plugin as the API lists it.

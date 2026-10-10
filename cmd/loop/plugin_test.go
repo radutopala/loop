@@ -3,8 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -73,7 +76,7 @@ func (s *MainSuite) TestNewPluginCmd() {
 	for _, c := range cmd.Commands() {
 		names = append(names, c.Name())
 	}
-	require.Equal(s.T(), []string{"install", "list", "remove", "upgrade"}, names)
+	require.Equal(s.T(), []string{"dev", "install", "list", "remove", "upgrade"}, names)
 }
 
 func (s *MainSuite) TestPluginList() {
@@ -318,4 +321,74 @@ func (s *MainSuite) TestPluginRequestErrors() {
 		err := s.app.pluginRequest(context.Background(), http.MethodGet, "/api/plugins", nil, http.StatusOK, nil)
 		require.ErrorContains(s.T(), err, "reading the answer")
 	})
+}
+
+func (s *MainSuite) TestPluginDev() {
+	dir := filepath.Join(s.T().TempDir(), "My Echo")
+	const tag = "loop-plugin-dev/my-echo:latest"
+	devFresh := `{"id":"echo","name":"Echo","version":"0.1.0","image":"sha256:cc","capabilities":[],"new_capabilities":[]}`
+	tests := []struct {
+		name      string
+		buildErr  error
+		wantCalls []pluginCall
+		wantOut   string
+		wantErr   string
+	}{
+		{
+			name: "built and installed",
+			wantCalls: []pluginCall{
+				{http.MethodPost, "/api/plugins/inspect", `{"dev":true,"image":"` + tag + `"}`},
+				{http.MethodPost, "/api/plugins", `{"approve":[],"dev":true,"digest":"","image":"` + tag + `"}`},
+			},
+			wantOut: "building\nEcho 0.1.0 (echo)\nImage: sha256:cc\nCapabilities: none\nIts containers can reach the network.\nInstalled echo 0.1.0\n",
+		},
+		{
+			name:     "build fails",
+			buildErr: errors.New("exit status 1"),
+			wantErr:  fmt.Sprintf("building %s: exit status 1", dir),
+		},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			calls := s.pluginServer(map[string]pluginReply{
+				"POST /api/plugins/inspect": {http.StatusOK, devFresh},
+				"POST /api/plugins":         {http.StatusOK, devFresh},
+			})
+			var built []string
+			s.app.runDocker = func(_ context.Context, stdout, _ io.Writer, args ...string) error {
+				built = args
+				_, _ = io.WriteString(stdout, "building\n")
+				return tt.buildErr
+			}
+			out, err := s.runPlugin(nil, "dev", dir, "--yes")
+			require.Equal(s.T(), []string{"build", "-t", tag, dir}, built)
+			if tt.wantErr != "" {
+				require.EqualError(s.T(), err, tt.wantErr)
+				require.Empty(s.T(), *calls)
+				return
+			}
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tt.wantCalls, *calls)
+			require.Equal(s.T(), tt.wantOut, out)
+		})
+	}
+}
+
+func (s *MainSuite) TestDevPluginTag() {
+	tests := []struct{ dir, want string }{
+		{"/src/echo", "loop-plugin-dev/echo:latest"},
+		{"/src/My_Plugin.v2", "loop-plugin-dev/my_plugin.v2:latest"},
+		{"/src/-x-", "loop-plugin-dev/x:latest"},
+		{"/", "loop-plugin-dev/plugin:latest"},
+	}
+	for _, tt := range tests {
+		require.Equal(s.T(), tt.want, devPluginTag(tt.dir), tt.dir)
+	}
+}
+
+func (s *MainSuite) TestExecRunner() {
+	var out bytes.Buffer
+	require.NoError(s.T(), execRunner("go")(context.Background(), &out, io.Discard, "version"))
+	require.Contains(s.T(), out.String(), "go version")
 }
