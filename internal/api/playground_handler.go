@@ -233,7 +233,8 @@ func (s *playgroundService) handlePlaygroundList(w http.ResponseWriter, r *http.
 }
 
 // consoleBridgeScript is injected into the served playground HTML to forward
-// console messages from the iframe to the parent via postMessage.
+// console messages from the iframe to the parent via postMessage, and to give
+// the page window.loop.state, which the parent panel answers.
 const consoleBridgeScript = `<script>
 (function() {
   var orig = { log: console.log, warn: console.warn, error: console.error, info: console.info, debug: console.debug };
@@ -246,6 +247,33 @@ const consoleBridgeScript = `<script>
   console.info = function() { send(1, arguments); orig.info.apply(console, arguments); };
   console.debug = function() { send(0, arguments); orig.debug.apply(console, arguments); };
   window.onerror = function(msg) { send(3, ["Error: " + msg]); };
+
+  // window.loop.state keeps the playground's state in the daemon, through
+  // the panel: get() and set(patch) resolve with the whole state (set merges
+  // patch into it, a null value removing its key), and subscribe(fn) calls
+  // fn with it whenever it changes, from here or from the API.
+  var pending = {}, nextId = 0, listeners = [];
+  function request(op, patch) {
+    return new Promise(function(resolve, reject) {
+      var id = ++nextId;
+      var timer = setTimeout(function() { delete pending[id]; reject(new Error("loop.state: no answer from the panel")); }, 10000);
+      pending[id] = function(msg) { clearTimeout(timer); if (msg.error) reject(new Error(msg.error)); else resolve(msg.state); };
+      try { parent.postMessage({ type: "playground-state", id: id, op: op, patch: patch }, "*"); } catch(e) { clearTimeout(timer); delete pending[id]; reject(e); }
+    });
+  }
+  window.addEventListener("message", function(e) {
+    if (e.source !== parent || !e.data) return;
+    if (e.data.type === "playground-state-reply" && pending[e.data.id]) {
+      var done = pending[e.data.id]; delete pending[e.data.id]; done(e.data);
+    } else if (e.data.type === "playground-state-changed") {
+      listeners.slice().forEach(function(fn) { try { fn(e.data.state); } catch(err) { console.error(err); } });
+    }
+  });
+  window.loop = { state: {
+    get: function() { return request("get"); },
+    set: function(patch) { return request("set", patch); },
+    subscribe: function(fn) { listeners.push(fn); return function() { listeners = listeners.filter(function(l) { return l !== fn; }); }; }
+  } };
 })();
 </script>`
 

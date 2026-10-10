@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -11,11 +12,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -617,6 +620,34 @@ func (s *MainSuite) TestNewRootCmd() {
 	}
 	for name, found := range want {
 		require.True(s.T(), found, "root command should have %s subcommand", name)
+	}
+}
+
+func (s *MainSuite) TestRootCmdUsageOnlyForMistypedCommands() {
+	tests := []struct {
+		name      string
+		args      []string
+		wantUsage bool
+	}{
+		{name: "an error from the command", args: []string{"fail"}},
+		{name: "a wrong argument count", args: []string{"fail", "extra"}, wantUsage: true},
+		{name: "an unknown flag", args: []string{"fail", "--nope"}, wantUsage: true},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			root := s.app.newRootCmd()
+			root.AddCommand(&cobra.Command{
+				Use:  "fail",
+				Args: cobra.NoArgs,
+				RunE: func(*cobra.Command, []string) error { return errors.New("boom") },
+			})
+			var out bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&out)
+			root.SetArgs(tc.args)
+			require.Error(s.T(), root.Execute())
+			require.Equal(s.T(), tc.wantUsage, strings.Contains(out.String(), "Usage:"), out.String())
+		})
 	}
 }
 

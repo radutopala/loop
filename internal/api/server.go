@@ -18,6 +18,7 @@ import (
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/osutil"
 	"github.com/radutopala/loop/internal/scheduler"
+	"github.com/radutopala/loop/internal/uibridge"
 	"github.com/radutopala/loop/internal/worktree"
 )
 
@@ -140,6 +141,8 @@ type Server struct {
 	threads                 ThreadEnsurer
 	removeMCPConfig         func(dirPath, channelID string) error // removes a deleted channel's MCP config files
 	configLocks             configLocks                           // serializes edits of each config.json
+	ui                      *uibridge.Bridge                      // the app windows the UI routes drive
+	uiStateWaitOverride     time.Duration                         // tests shorten GET /api/ui/state's wait
 	history                 configHistory                         // records each config.json's revisions; see lockConfig
 	messages                MessageSender
 	memoryIndexer           MemoryIndexer
@@ -147,6 +150,7 @@ type Server struct {
 	hostTermManager         TerminalManager
 	cmdBuilder              InteractiveCmdBuilder
 	containerRegistry       ContainerManager
+	containerKeepAlive      time.Duration // how long a deleted channel's containers stay before removal
 	activeChatLister        ActiveChatLister
 	branchPoller            *BranchPoller
 	msgHandler              IncomingMessageHandler
@@ -351,6 +355,12 @@ func (s *Server) SetAuditDirResolver(r AuditDirResolver) {
 // each domain defines its With* options next to its service.
 type Option func(*Server)
 
+// WithContainerKeepAlive sets how long a deleted channel's or thread's agent
+// and shell containers stay, for `docker logs`, before they're removed.
+func WithContainerKeepAlive(d time.Duration) Option {
+	return func(s *Server) { s.containerKeepAlive = d }
+}
+
 // NewServer creates a new API server. The channels, threads, store, and messages
 // parameters may be nil if those features are not configured.
 func NewServer(sched scheduler.Scheduler, channels ChannelEnsurer, threads ThreadEnsurer, store ChannelLister, messages MessageSender, logger *slog.Logger, opts ...Option) *Server {
@@ -372,6 +382,7 @@ func NewServer(sched scheduler.Scheduler, channels ChannelEnsurer, threads Threa
 			Run: worktree.ExecCommandRunner,
 		},
 	}
+	s.ui = uibridge.New()
 	s.review = newReviewService(&s.serverDeps)
 	s.playground = newPlaygroundService(&s.serverDeps)
 	s.quality = newQualityService(&s.serverDeps)
@@ -527,6 +538,8 @@ func (s *Server) registerPlaygroundRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/playground/file", s.playground.handlePlaygroundFileRead)
 	mux.HandleFunc("DELETE /api/playground/file", s.playground.handlePlaygroundFileDelete)
 	mux.HandleFunc("GET /api/playground/files", s.playground.handlePlaygroundFileList)
+	mux.HandleFunc("GET /api/playground/state", s.playground.handlePlaygroundStateGet)
+	mux.HandleFunc("PATCH /api/playground/state", s.playground.handlePlaygroundStatePatch)
 	mux.HandleFunc("GET /api/playground/serve/{name}", s.playground.handlePlaygroundServe)
 	mux.HandleFunc("GET /api/playground/serve/{name}/{path...}", s.playground.handlePlaygroundServeFile)
 	mux.HandleFunc("GET /api/playground/serve-project/{channel_id}/{name}", s.playground.handlePlaygroundServeProject)
@@ -643,6 +656,9 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/ws/terminal", s.handleTerminalWS)
 	mux.HandleFunc("GET /api/ws/browser", s.browser.handleBrowserWS)
 	mux.HandleFunc("GET /api/ws", s.handleEventsWS)
+	mux.HandleFunc("GET /api/ws/ui", s.handleUIWS)
+	mux.HandleFunc("GET /api/ui/state", s.handleGetUIState)
+	mux.HandleFunc("POST /api/ui/commands", s.handleRunUICommand)
 }
 
 // Start starts the HTTP server on the given address.

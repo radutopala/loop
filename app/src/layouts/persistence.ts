@@ -263,6 +263,7 @@ export function deleteLayout(channelId: string, layoutName: string): void {
   const ch = all[channelId];
   if (!ch) return;
   delete ch.layouts[layoutName];
+  delete ch.types[layoutName];
   ch.order = ch.order.filter((n) => n !== layoutName);
   // Track removed defaults so ensureDefaultLayouts doesn't re-add them.
   if ((DEFAULT_LAYOUT_NAMES as readonly string[]).includes(layoutName)) {
@@ -281,9 +282,14 @@ export function renameLayout(channelId: string, oldName: string, newName: string
   if (oldName === newName) return;
   const all = loadAll();
   const ch = all[channelId];
-  if (!ch || !ch.layouts[oldName]) return;
-  ch.layouts[newName] = ch.layouts[oldName];
-  delete ch.layouts[oldName];
+  // A tab without panes yet is only in order (and types).
+  if (!ch || (!ch.layouts[oldName] && !ch.order.includes(oldName))) return;
+  for (const byName of [ch.layouts, ch.types] as Record<string, unknown>[]) {
+    if (oldName in byName) {
+      byName[newName] = byName[oldName];
+      delete byName[oldName];
+    }
+  }
   ch.order = ch.order.map((n) => (n === oldName ? newName : n));
   if (ch.active === oldName) ch.active = newName;
   saveAll(all);

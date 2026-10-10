@@ -102,6 +102,10 @@ var agentRoutes = []string{
 	"GET /api/channels/{id}/quality/clones",
 
 	"POST /api/browser/action",
+
+	// Held to the agent's project by the handlers.
+	"GET /api/ui/state",
+	"POST /api/ui/commands",
 }
 
 // ownChannelRoutes change a review session's comments, and through a push

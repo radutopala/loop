@@ -14,7 +14,7 @@ import (
 func (s *MCPServerSuite) TestListTools() {
 	res, err := s.session.ListTools(s.ctx, nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 49) // 21 base + 3 playground + 2 shortcut + 1 chat_component + 12 quality + 1 rename + 1 description + 1 ticket + 7 review
+	require.Len(s.T(), res.Tools, 51) // 21 base + 2 ui + 3 playground + 2 shortcut + 1 chat_component + 12 quality + 1 rename + 1 description + 1 ticket + 7 review
 
 	names := make(map[string]bool)
 	for _, t := range res.Tools {
@@ -45,6 +45,8 @@ func (s *MCPServerSuite) TestListTools() {
 	require.True(s.T(), names["playground_file"])
 	require.True(s.T(), names["playground_share"])
 	require.True(s.T(), names["chat_component"])
+	require.True(s.T(), names["ui_state"])
+	require.True(s.T(), names["ui_run"])
 	require.True(s.T(), names["prompt_shortcut"])
 	require.True(s.T(), names["bash_shortcut"])
 	require.True(s.T(), names["quality_scan"])

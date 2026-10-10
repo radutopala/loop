@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -356,8 +357,14 @@ func (s *Server) handleDeleteChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Clean up containers associated with this channel.
+	// The channel's and its threads' containers go with them; the hidden
+	// threads' are removed as they're stopped.
 	s.cleanupChannelContainers(r.Context(), channelID)
+	for _, id := range threadIDs {
+		if !slices.ContainsFunc(hidden, func(h *db.Channel) bool { return h.ChannelID == id }) {
+			s.cleanupChannelContainers(r.Context(), id)
+		}
+	}
 	s.stopHiddenThreads(r.Context(), append(hidden, threadHidden...))
 	s.removeMCPConfigs(ch, append(append([]*db.Channel{ch}, threads...), threadHidden...))
 
@@ -444,10 +451,20 @@ func (s *Server) removeAgentContainers(ctx context.Context, channelID string) {
 	}
 }
 
-// cleanupChannelContainers removes all containers (agent, shell, chrome)
-// associated with a channel. Called on channel deletion to prevent orphaned containers.
+// cleanupChannelContainers cleans up after a deleted channel or thread so
+// its containers aren't orphaned: its agent and shell containers are marked
+// for removal after the keep-alive, leaving their `docker logs` to read
+// meanwhile, and its Chrome container and profile volume, which can't go
+// while the container is there, are removed now.
 func (s *Server) cleanupChannelContainers(ctx context.Context, channelID string) {
-	s.removeAgentContainers(ctx, channelID)
+	if s.containerRegistry != nil {
+		for _, info := range s.containerRegistry.ListByChannel(channelID) {
+			// Chrome is the BrowserProvider's; a pending removal is already on its way.
+			if info.Type != container.ContainerTypeChrome && info.Status != container.ContainerStatusPendingRemoval {
+				s.containerRegistry.ScheduleRemove(info.ContainerID, s.containerKeepAlive)
+			}
+		}
+	}
 	if s.browser.dockerProvider != nil {
 		containerID, _ := s.browser.dockerProvider.StopBrowser(ctx, channelID)
 		if containerID != "" && s.containerRegistry != nil {

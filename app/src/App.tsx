@@ -39,6 +39,7 @@ import { type ActiveChatState, useChatStateStore } from "./hooks/useChatStateSto
 import { DEFAULT_FONT_SIZES, ThemeProvider, useTheme } from "./ThemeContext";
 import { fonts } from "./theme";
 import type { Channel, ChannelAgentConfigData, ChannelUpdatedData, ImageBuildStatusData, ImageUpdateAvailableData, UpdateStatus, WSEvent } from "./types";
+import { useUiBridge } from "./uiBridge/useUiBridge";
 import type { ChannelPatch } from "./utils/channelUpdate";
 import { applyChannelUpdate, applyReviewStatus, replayChannelPatches } from "./utils/channelUpdate";
 import { logErr } from "./utils/log";
@@ -440,6 +441,24 @@ function AppInner() {
     },
     [configDirty, settingsOpen, doSelect],
   );
+
+  // UI commands (loop ui:run) drive this window: select_channel opens any
+  // channel, thread or worktree thread by id, fetching the list first when
+  // it's new.
+  const channelsRef = useRef(channels);
+  channelsRef.current = channels;
+  const uiSelectChannel = useCallback(
+    async (id: string) => {
+      if (!channelsRef.current.some((c) => c.id === id)) {
+        const chs = await fetchChannels();
+        if (!chs.some((c) => c.id === id)) throw new Error(`no channel ${id}`);
+        await loadChannels();
+      }
+      handleSelect(id);
+    },
+    [loadChannels, handleSelect],
+  );
+  useUiBridge(selectedId, uiSelectChannel);
 
   // Auto-select DM channel if nothing is selected on first load.
   const autoSelectedRef = useRef(false);

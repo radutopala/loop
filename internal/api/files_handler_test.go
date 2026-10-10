@@ -20,8 +20,16 @@ import (
 
 // ── validateFilePath ──
 
+// realTempDir is a temp dir with its symlinks resolved, as the handlers
+// resolve paths: on macOS the temp dir is under /var, a link to /private/var.
+func (s *ServerSuite) realTempDir() string {
+	dir, err := filepath.EvalSymlinks(s.T().TempDir())
+	require.NoError(s.T(), err)
+	return dir
+}
+
 func (s *ServerSuite) TestValidateFilePath_Success() {
-	tmpDir := s.T().TempDir()
+	tmpDir := s.realTempDir()
 	require.NoError(s.T(), os.MkdirAll(filepath.Join(tmpDir, "src"), 0755))
 
 	abs, err := s.srv.validateFilePath(tmpDir, "src")
@@ -30,7 +38,7 @@ func (s *ServerSuite) TestValidateFilePath_Success() {
 }
 
 func (s *ServerSuite) TestValidateFilePath_Root() {
-	tmpDir := s.T().TempDir()
+	tmpDir := s.realTempDir()
 
 	abs, err := s.srv.validateFilePath(tmpDir, ".")
 	require.NoError(s.T(), err)

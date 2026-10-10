@@ -32,13 +32,31 @@ import {
 import { EmptyLayoutPicker } from "../../splitPane/AddPanelButton";
 import { PaneLeafHeader } from "../../splitPane/PaneLeafHeader";
 import { paneBoxStyle, SplitPaneLayout } from "../../splitPane/SplitPaneLayout";
-import { canAddPanel, collectLeaves, collectPanelTypes, findLeafById, hasAgentLeaf, leafCount, makeLeaf, moveLeaf, removeLeaf, splitLeaf, swapLeavesInTree, updateFlex } from "../../splitPane/treeOps";
+import {
+  addBeside,
+  canAddPanel,
+  collectLeaves,
+  collectPanelTypes,
+  findLeafById,
+  hasAgentLeaf,
+  leafCount,
+  makeLeaf,
+  moveLeaf,
+  removeLeaf,
+  splitLeaf,
+  swapLeavesInTree,
+  updateFlex,
+} from "../../splitPane/treeOps";
 import type { DropPosition, SplitDirection } from "../../splitPane/types";
 import { useTheme } from "../../ThemeContext";
 import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
 import type { Channel, SessionStatus } from "../../types";
 import type { AgentOpenMode, LeafNode, PanelType, PaneNode } from "../../types/panels";
+import { replaceLeaf } from "../../uiBridge/paneOps";
+import { getTerminalInput, notifyUiChanged, registerWorkspace } from "../../uiBridge/registry";
+import type { PaneOptions, WorkspaceController } from "../../uiBridge/types";
+import { storageSetJSON } from "../../utils/storage";
 import { ChatComponentFull, ComponentFocusContext, type ShownComponent } from "../chat/ChatComponent";
 import { ChatView } from "../chat/ChatView";
 import { ExplainBadge } from "../chat/ExplainBadge";
@@ -91,6 +109,13 @@ function initIdCounter(channelId: string, tree: PaneNode) {
   }
   // Only increase, never decrease (other layouts may have higher IDs)
   if (max + 1 > cur) idCounters.set(key, max + 1);
+}
+
+/** Closes the session of a terminal pane that's going away. */
+function closeTerminalSession(channelId: string, leaf: LeafNode) {
+  if (leaf.panel !== "docker-agent" && leaf.panel !== "host-shell" && leaf.panel !== "docker-shell") return;
+  const target = leaf.panel === "host-shell" ? "host" : "agent";
+  getCloseForInstance(`${target}:${channelId}:${leaf.id}`)?.();
 }
 
 function leafIdForPanel(channelId: string, panel: PanelType): string {
@@ -438,6 +463,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     (id: string, status: SessionStatus) => {
       statusMapRef.current.set(id, status);
       setAgentState(computeAgentState());
+      notifyUiChanged();
     },
     [computeAgentState],
   );
@@ -558,10 +584,10 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   }, [openMemoryFile, tree, channelId, switchLayout, onOpenMemoryFileComplete]);
 
   const addLayout = useCallback(
-    (lt: LayoutType) => {
+    (lt: LayoutType, given?: string): string => {
       let n = 1;
-      let name = lt === "canvas" ? `Canvas ${n}` : `Layout ${n}`;
-      while (layoutNames.includes(name)) {
+      let name = given ?? (lt === "canvas" ? `Canvas ${n}` : `Layout ${n}`);
+      while (!given && layoutNames.includes(name)) {
         n++;
         name = lt === "canvas" ? `Canvas ${n}` : `Layout ${n}`;
       }
@@ -581,6 +607,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       statusMapRef.current.clear();
       setAgentState("none");
       setShowNewLayoutMenu(false);
+      return name;
     },
     [channelId, layoutNames],
   );
@@ -679,11 +706,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       if (!current) return;
       const leaf = findLeafById(current, id);
       const wasAgent = leaf?.panel === "docker-agent";
-      if (leaf && (leaf.panel === "docker-agent" || leaf.panel === "host-shell" || leaf.panel === "docker-shell")) {
-        const target = leaf.panel === "host-shell" ? "host" : "agent";
-        const closeKey = `${target}:${channelId}:${id}`;
-        getCloseForInstance(closeKey)?.();
-      }
+      if (leaf) closeTerminalSession(channelId, leaf);
       statusMapRef.current.delete(id);
       setMaximizedLeafId((prev) => (prev === id ? null : prev));
       setShownComponent((prev) => (prev?.leafId === id ? null : prev));
@@ -742,6 +765,110 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     },
     [channelId, activeName, layoutNames],
   );
+
+  // --- UI commands (uiBridge) ---
+  // Steps of a UI command run one after another before React renders, so the
+  // pane ops update treeRef at once for the next step to see.
+  const activeNameRef = useRef(activeName);
+  activeNameRef.current = activeName;
+  const layoutNamesRef = useRef(layoutNames);
+  layoutNamesRef.current = layoutNames;
+  const switchLayoutRef = useRef(switchLayout);
+  switchLayoutRef.current = switchLayout;
+  const handleRemoveLeafRef = useRef(handleRemoveLeaf);
+  handleRemoveLeafRef.current = handleRemoveLeaf;
+  const addLayoutRef = useRef(addLayout);
+  addLayoutRef.current = addLayout;
+  const handleRenameLayoutRef = useRef(handleRenameLayout);
+  handleRenameLayoutRef.current = handleRenameLayout;
+  const handleDeleteLayoutRef = useRef(handleDeleteLayout);
+  handleDeleteLayoutRef.current = handleDeleteLayout;
+
+  useEffect(() => {
+    const setTreeNow = (t: PaneNode) => {
+      treeRef.current = t;
+      setTree(t);
+    };
+    const newLeaf = (panel: PanelType, opts: PaneOptions = {}) => {
+      const leaf = makeLeaf(leafIdForPanel(channelId, panel), panel, 1, panel === "docker-agent" ? opts.openMode : undefined);
+      // A playground pane reads the playground it shows when it mounts.
+      if (panel === "playground" && opts.playground) storageSetJSON(`playground-active:${channelId}:${leaf.id}`, opts.playground);
+      return leaf;
+    };
+    const withFileTree = (t: PaneNode, leaf: LeafNode) => (leaf.panel === "editor" ? withDefaultFileTreeForEditor(t, leaf.id, leafIdForPanel(channelId, "file-tree")) : t);
+    const leafOf = (id: string) => {
+      const leaf = treeRef.current ? findLeafById(treeRef.current, id) : null;
+      if (!leaf) throw new Error(`no pane "${id}"`);
+      return leaf;
+    };
+    const controller: WorkspaceController = {
+      view: () => {
+        const canvas = layoutTypeRef.current === "canvas";
+        const t = treeRef.current;
+        return {
+          tab: activeNameRef.current,
+          tabs: layoutNamesRef.current,
+          canvas,
+          panes:
+            canvas || !t
+              ? []
+              : collectLeaves(t).map((l) => {
+                  const status = statusMapRef.current.get(l.id);
+                  const busy = getTerminalInput(channelId, l.id)?.busy();
+                  return { id: l.id, panel: l.panel, ...(l.openMode ? { open_mode: l.openMode } : {}), ...(status ? { status } : {}), ...(busy !== undefined ? { busy } : {}) };
+                }),
+          ...(!canvas && maximizedLeafIdRef.current ? { maximized: maximizedLeafIdRef.current } : {}),
+        };
+      },
+      maximize: (id) => {
+        maximizedLeafIdRef.current = id;
+        setMaximizedLeafId(id);
+      },
+      setTab: (name) => switchLayoutRef.current(name),
+      createTab: (name) => addLayoutRef.current("split", name),
+      renameTab: (name, newName) => handleRenameLayoutRef.current(name, newName),
+      removeTab: (name) => handleDeleteLayoutRef.current(name),
+      replacePane: (id, panel, opts) => {
+        const current = treeRef.current;
+        const old = leafOf(id);
+        if (!canAddPanel(current ? removeLeaf(current, id) : null, panel)) throw new Error(`the tab can't have another ${panel} pane`);
+        const leaf = newLeaf(panel, opts);
+        const next = withFileTree(replaceLeaf(current as PaneNode, id, leaf), leaf);
+        closeTerminalSession(channelId, old);
+        statusMapRef.current.delete(id);
+        setMaximizedLeafId((prev) => (prev === id ? null : prev));
+        setShownComponent((prev) => (prev?.leafId === id ? null : prev));
+        if (old.panel === "docker-agent" && !hasAgentLeaf(next)) killAgentContainer(channelId);
+        setTreeNow(next);
+        return leaf.id;
+      },
+      addPane: (panel, nextTo, direction, before, opts) => {
+        const current = treeRef.current;
+        if (!canAddPanel(current, panel)) throw new Error(`the tab can't have another ${panel} pane`);
+        const leaf = newLeaf(panel, opts);
+        if (!current) {
+          const next = withFileTree(leaf, leaf);
+          setTreeNow(next);
+          const name = activeNameRef.current;
+          if (!layoutNamesRef.current.includes(name)) setLayoutNames((prev) => [...prev, name]);
+          saveLayout(channelId, name, next);
+          return leaf.id;
+        }
+        setTreeNow(withFileTree(addBeside(current, nextTo ? leafOf(nextTo).id : null, direction, leaf, before), leaf));
+        return leaf.id;
+      },
+      removePane: (id) => {
+        leafOf(id);
+        const current = treeRef.current as PaneNode;
+        handleRemoveLeafRef.current(id);
+        treeRef.current = leafCount(current) <= 1 ? null : removeLeaf(current, id);
+      },
+    };
+    return registerWorkspace(channelId, controller);
+  }, [channelId]);
+
+  // What the window reports changes with the tab and its panes.
+  useEffect(() => notifyUiChanged(), [tree, activeName, layoutNames, layoutType, maximizedLeafId]);
 
   // Listen for cross-component "open this panel" requests (e.g. the chat-bar
   // quality icon). The event carries the target channelId so other workspaces

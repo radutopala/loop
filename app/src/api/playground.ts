@@ -79,3 +79,24 @@ export async function fetchPlaygroundShareStatus(name: string, scope?: "global" 
   if (!res.ok) throw new Error(`Failed to fetch playground share status: ${res.statusText}`);
   return res.json();
 }
+
+/** A playground's state: the JSON object its page keeps through window.loop.state. */
+export type PlaygroundState = Record<string, unknown>;
+
+/** Fetch a playground's state. */
+export async function fetchPlaygroundState(name: string, scope?: "global" | "project", channelId?: string): Promise<PlaygroundState> {
+  const res = await apiFetch(`${getApiUrl()}/api/playground/state?${shareParams(name, scope, channelId)}`);
+  if (!res.ok) throw new Error(`Failed to fetch playground state: ${(await res.text()).trim()}`);
+  return res.json();
+}
+
+/** Merge patch into a playground's state (a null value removes its key); returns the new state. */
+export async function patchPlaygroundState(name: string, patch: PlaygroundState, scope?: "global" | "project", channelId?: string): Promise<PlaygroundState> {
+  const res = await apiFetch(`${getApiUrl()}/api/playground/state?${shareParams(name, scope, channelId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) throw new Error(`Failed to update playground state: ${(await res.text()).trim()}`);
+  return res.json();
+}

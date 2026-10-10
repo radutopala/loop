@@ -17,7 +17,7 @@ import (
 )
 
 func (s *ServerSuite) setPlaygroundDir() string {
-	dir := s.T().TempDir()
+	dir := s.realTempDir()
 	s.srv.loopDir = dir
 	return dir
 }
@@ -691,7 +691,7 @@ func (s *ServerSuite) TestPlaygroundServeFilePathTraversal() {
 
 func (s *ServerSuite) TestResolvePlaygroundDirProjectScope() {
 	dir := s.setPlaygroundDir()
-	projectDir := s.T().TempDir()
+	projectDir := s.realTempDir()
 	pgDir := filepath.Join(projectDir, ".loop", "playground", "my-app")
 	require.NoError(s.T(), os.MkdirAll(pgDir, 0o755))
 
@@ -812,7 +812,7 @@ func (s *ServerSuite) TestPlaygroundServeProjectScopeBaseURL() {
 
 func (s *ServerSuite) TestResolveProjectPlaygroundDirSuccess() {
 	s.setPlaygroundDir()
-	projectDir := s.T().TempDir()
+	projectDir := s.realTempDir()
 
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
 		ChannelID: "ch1",

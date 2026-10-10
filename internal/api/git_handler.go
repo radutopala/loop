@@ -742,9 +742,6 @@ func (s *Server) handleRemoveWorktree(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if s.eventsHub != nil {
-			s.eventsHub.BroadcastChannelDeleted(body.ThreadID)
-		}
 	}
 
 	w.WriteHeader(http.StatusNoContent)

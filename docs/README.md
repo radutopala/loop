@@ -43,6 +43,7 @@ End-to-end walkthrough — a guided tour of every panel, recorded in one continu
 
 - [**Desktop App**](desktop-app.md) — Electron architecture, windows, deep links, auto-update, daemon management
 - [**Layouts**](layouts.md) — Split pane workspaces, named layouts, drag-to-split, persistence
+- [**UI Bridge**](ui-bridge.md) — Drive app windows from the CLI, HTTP or an agent: channels, tabs, panes, files, agent terminals
 - [**Chat**](chat.md) — Chat view, message rendering, streaming, agent activity, input with autocomplete, prompt shortcuts, message history
 - [**Editor**](editor.md) — CodeMirror editor, file tree, tabs, dirty tracking, auto-save, directory create/delete
 - [**Sidebar**](sidebar.md) — Channel/thread navigation, ordering, search, batch operations

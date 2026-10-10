@@ -1,6 +1,6 @@
 import type { PanelType } from "../types/panels";
 import { EXCLUSIVE_PANELS, SINGLETON_PANELS } from "../types/panels";
-import type { DropPosition, LeafNode, PaneNode, SplitDirection } from "./types";
+import type { DropPosition, LeafNode, PaneNode, SplitDirection, SplitNode } from "./types";
 
 export function makeLeaf(id: string, panel: PanelType, flex = 1, openMode?: import("../types/panels").AgentOpenMode): LeafNode {
   return { type: "leaf", id, panel, flex, ...(openMode ? { openMode } : {}) };
@@ -45,6 +45,38 @@ export function splitLeaf(node: PaneNode, leafId: string, direction: SplitDirect
     ...node,
     children: node.children.map((c) => splitLeaf(c, leafId, direction, newLeaf)),
   };
+}
+
+/**
+ * Adds leaf beside the anchor pane, or, with a null anchor, at the edge of the
+ * whole tree: after it (right or below), or before it with before set. In a
+ * split of the same direction the leaf joins the row or column as a sibling,
+ * with the average share of the panes there, rather than splitting one of
+ * them in two; elsewhere the anchor splits into the two.
+ */
+export function addBeside(node: PaneNode, anchorId: string | null, direction: SplitDirection, leaf: LeafNode, before: boolean): PaneNode {
+  const wrap = (target: PaneNode): PaneNode => {
+    const children = [{ ...target, flex: 1 }];
+    children.splice(before ? 0 : 1, 0, { ...leaf, flex: 1 });
+    return { type: "split", direction, children, flex: target.flex };
+  };
+  const join = (split: SplitNode, at: number): PaneNode => {
+    const share = split.children.reduce((sum, c) => sum + c.flex, 0) / split.children.length || 1;
+    const children = [...split.children];
+    children.splice(at, 0, { ...leaf, flex: share });
+    return { ...split, children };
+  };
+  if (anchorId === null) {
+    if (node.type === "split" && node.direction === direction) return join(node, before ? 0 : node.children.length);
+    return wrap(node);
+  }
+  const visit = (n: PaneNode): PaneNode => {
+    if (n.type === "leaf") return n.id === anchorId ? wrap(n) : n;
+    const i = n.children.findIndex((c) => c.type === "leaf" && c.id === anchorId);
+    if (i >= 0 && n.direction === direction) return join(n, before ? i : i + 1);
+    return { ...n, children: n.children.map(visit) };
+  };
+  return visit(node);
 }
 
 export function updateFlex(node: PaneNode, parentPath: number[], dividerIndex: number, newFlexA: number, newFlexB: number): PaneNode {

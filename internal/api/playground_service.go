@@ -29,6 +29,10 @@ type playgroundService struct {
 	tunnel          TunnelManager
 	shareMu         sync.Mutex
 	listenTCP       func(addr string) (net.Listener, error) // injectable for tests; nil → net.Listen
+
+	// stateMu serializes reads and writes of playground state files.
+	stateMu        sync.Mutex
+	writeStateFile func(path string, data []byte, perm os.FileMode) error // injectable for tests; nil → os.WriteFile
 }
 
 // newPlaygroundService creates the playground domain with an empty share

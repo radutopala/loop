@@ -743,3 +743,41 @@ func (s *BrowserHandlerSuite) startBrowserWS() (*websocket.Conn, *httptest.Serve
 	mockCDP.On("StopScreencast").Return().Maybe()
 	return ws, ts, mockCDP
 }
+
+func (s *BrowserHandlerSuite) TestStopKeepsTheConnectionRunning() {
+	connReady := make(chan *websocket.Conn, 1)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		connReady <- conn
+	}))
+	defer ts.Close()
+
+	ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(ts.URL, "http")+"/", nil)
+	require.NoError(s.T(), err)
+	defer ws.Close()
+	conn := <-connReady
+	defer conn.Close()
+
+	bc := &browserWSConn{
+		conn:   conn,
+		logger: slog.Default(),
+		stopCh: make(chan struct{}),
+	}
+
+	// The pane stops and starts again on the same socket when it switches
+	// mode or resets the profile.
+	bc.handleStop(context.Background(), browserWSMessage{Type: bwsMsgStop})
+	require.Equal(s.T(), bwsRespStopped, s.readResp(ws).Type)
+	select {
+	case <-bc.stopCh:
+		s.T().Fatal("a stop ended the connection")
+	default:
+	}
+
+	bc.disconnect()
+	_, open := <-bc.stopCh
+	require.False(s.T(), open)
+}

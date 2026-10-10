@@ -237,11 +237,19 @@ func (s *ServerSuite) TestDeleteThreadSuccess() {
 	s.store.On("GetChannel", mock.Anything, "thread-1").Return((*db.Channel)(nil), nil)
 	s.store.On("ListHiddenThreads", mock.Anything, "thread-1").Return([]*db.Channel(nil), nil)
 	s.threads.On("DeleteThread", mock.Anything, "thread-1").Return(nil)
+	hub := NewEventsHub(testLogger())
+	var events []Event
+	hub.captureHook = func(e Event) { events = append(events, e) }
+	s.srv.eventsHub = hub
 
 	rec := s.testRequest("DELETE", "/api/threads/thread-1", "")
 
 	require.Equal(s.T(), http.StatusNoContent, rec.Code)
 	s.threads.AssertExpectations(s.T())
+	// The app windows drop it from their sidebars.
+	require.Len(s.T(), events, 1)
+	require.Equal(s.T(), EventChannelDeleted, events[0].Type)
+	require.Equal(s.T(), "thread-1", events[0].ChannelID)
 }
 
 func (s *ServerSuite) TestDeleteThreadError() {
@@ -285,11 +293,16 @@ func (s *ServerSuite) TestDeleteChannelSuccess() {
 	require.Equal(s.T(), http.StatusNoContent, w.Code)
 }
 
+// TestDeleteChannelCleansUpContainers covers the containers a deleted
+// channel leaves: its and its threads' agent and shell containers are marked
+// for removal after the keep-alive, one already pending keeps its timer, and
+// Chrome is removed now with its profile.
 func (s *ServerSuite) TestDeleteChannelCleansUpContainers() {
 	s.store.On("GetChannel", mock.Anything, "ch-1").
 		Return(&db.Channel{ChannelID: "ch-1", Name: "test"}, nil)
-	s.store.On("ListChannelIDsByParentID", mock.Anything, "ch-1").Return([]string(nil), nil)
-	s.store.On("ListHiddenThreads", mock.Anything, "ch-1").Return([]*db.Channel(nil), nil)
+	s.store.On("ListChannelIDsByParentID", mock.Anything, "ch-1").Return([]string{"t-1"}, nil)
+	s.store.On("GetChannel", mock.Anything, "t-1").Return(&db.Channel{ChannelID: "t-1", ParentID: "ch-1"}, nil)
+	s.store.On("ListHiddenThreads", mock.Anything, "t-1").Return([]*db.Channel(nil), nil)
 	s.store.On("DeleteChannelsByParentID", mock.Anything, "ch-1").Return(nil)
 	s.store.On("DeleteChannel", mock.Anything, "ch-1").Return(nil)
 
@@ -297,18 +310,24 @@ func (s *ServerSuite) TestDeleteChannelCleansUpContainers() {
 		byChannel: []*container.ContainerInfo{
 			{ContainerID: "agent-c1", ChannelID: "ch-1", Type: container.ContainerTypeAgent},
 			{ContainerID: "shell-c2", ChannelID: "ch-1", Type: container.ContainerTypeShell},
-			{ContainerID: "chrome-c3", ChannelID: "ch-1", Type: container.ContainerTypeChrome}, // skipped
+			{ContainerID: "chrome-c3", ChannelID: "ch-1", Type: container.ContainerTypeChrome},
+			{ContainerID: "done-c4", ChannelID: "ch-1", Type: container.ContainerTypeAgent, Status: container.ContainerStatusPendingRemoval},
+			{ContainerID: "shell-t1", ChannelID: "t-1", Type: container.ContainerTypeShell},
 		},
 	}
-	reg.On("RemoveContainer", mock.Anything, "agent-c1").Return(nil)
-	reg.On("RemoveContainer", mock.Anything, "shell-c2").Return(nil)
+	reg.On("ScheduleRemove", "agent-c1", 5*time.Minute).Return()
+	reg.On("ScheduleRemove", "shell-c2", 5*time.Minute).Return()
+	reg.On("ScheduleRemove", "shell-t1", 5*time.Minute).Return()
+	reg.On("RemoveContainer", mock.Anything, "chrome-c3").Return(nil)
 
 	browserMgr := new(mockBrowserProvider)
 	browserMgr.On("StopBrowser", mock.Anything, "ch-1").Return("chrome-c3", nil)
 	browserMgr.On("RemoveProfile", mock.Anything, "ch-1").Return(nil)
-	reg.On("RemoveContainer", mock.Anything, "chrome-c3").Return(nil)
+	browserMgr.On("StopBrowser", mock.Anything, "t-1").Return("", nil)
+	browserMgr.On("RemoveProfile", mock.Anything, "t-1").Return(nil)
 
 	s.srv.containerRegistry = reg
+	s.srv.containerKeepAlive = 5 * time.Minute
 	s.srv.browser.setProviders(browserMgr, s.srv.browser.hostProvider)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/channels/ch-1", nil)
@@ -316,36 +335,51 @@ func (s *ServerSuite) TestDeleteChannelCleansUpContainers() {
 	s.mux.ServeHTTP(w, req)
 
 	require.Equal(s.T(), http.StatusNoContent, w.Code)
-	reg.AssertCalled(s.T(), "RemoveContainer", mock.Anything, "agent-c1")
-	reg.AssertCalled(s.T(), "RemoveContainer", mock.Anything, "shell-c2")
-	reg.AssertCalled(s.T(), "RemoveContainer", mock.Anything, "chrome-c3")
-	browserMgr.AssertCalled(s.T(), "StopBrowser", mock.Anything, "ch-1")
-	browserMgr.AssertCalled(s.T(), "RemoveProfile", mock.Anything, "ch-1")
+	reg.AssertExpectations(s.T())
+	browserMgr.AssertExpectations(s.T())
 }
 
-func (s *ServerSuite) TestDeleteChannelContainerRemoveError() {
-	s.store.On("GetChannel", mock.Anything, "ch-1").
-		Return(&db.Channel{ChannelID: "ch-1", Name: "test"}, nil)
-	s.store.On("ListChannelIDsByParentID", mock.Anything, "ch-1").Return([]string(nil), nil)
-	s.store.On("ListHiddenThreads", mock.Anything, "ch-1").Return([]*db.Channel(nil), nil)
-	s.store.On("DeleteChannelsByParentID", mock.Anything, "ch-1").Return(nil)
-	s.store.On("DeleteChannel", mock.Anything, "ch-1").Return(nil)
+// TestDeleteThreadMarksContainers covers a deleted thread's containers:
+// its agent and shell containers are marked for removal after the
+// keep-alive, and one already pending keeps its timer.
+func (s *ServerSuite) TestDeleteThreadMarksContainers() {
+	s.store.On("GetChannel", mock.Anything, "thread-1").Return((*db.Channel)(nil), nil)
+	s.store.On("ListHiddenThreads", mock.Anything, "thread-1").Return([]*db.Channel(nil), nil)
+	s.threads.On("DeleteThread", mock.Anything, "thread-1").Return(nil)
+	reg := &mockContainerManager{byChannel: []*container.ContainerInfo{
+		{ContainerID: "shell-t1", ChannelID: "thread-1", Type: container.ContainerTypeShell},
+		{ContainerID: "agent-t1", ChannelID: "thread-1", Type: container.ContainerTypeAgent},
+		{ContainerID: "done-t1", ChannelID: "thread-1", Type: container.ContainerTypeAgent, Status: container.ContainerStatusPendingRemoval},
+		{ContainerID: "shell-other", ChannelID: "thread-2", Type: container.ContainerTypeShell},
+	}}
+	reg.On("ScheduleRemove", "shell-t1", time.Minute).Return()
+	reg.On("ScheduleRemove", "agent-t1", time.Minute).Return()
+	s.srv.containerRegistry = reg
+	s.srv.containerKeepAlive = time.Minute
 
-	reg := &mockContainerManager{
-		byChannel: []*container.ContainerInfo{
-			{ContainerID: "agent-c1", ChannelID: "ch-1", Type: container.ContainerTypeAgent},
-		},
-	}
-	reg.On("RemoveContainer", mock.Anything, "agent-c1").Return(errors.New("remove failed"))
+	rec := s.testRequest("DELETE", "/api/threads/thread-1", "")
 
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	reg.AssertExpectations(s.T())
+}
+
+// TestDeleteThreadHiddenContainerRemoveError covers a hidden thread's
+// container that fails to go: it's logged, and the thread is still deleted.
+func (s *ServerSuite) TestDeleteThreadHiddenContainerRemoveError() {
+	s.store.On("GetChannel", mock.Anything, "thread-1").Return((*db.Channel)(nil), nil)
+	s.store.On("ListHiddenThreads", mock.Anything, "thread-1").Return([]*db.Channel{{ChannelID: "learn-1", Kind: db.ChannelKindLearn}}, nil)
+	s.threads.On("DeleteThread", mock.Anything, "thread-1").Return(nil)
+	reg := &mockContainerManager{byChannel: []*container.ContainerInfo{
+		{ContainerID: "agent-l1", ChannelID: "learn-1", Type: container.ContainerTypeAgent},
+	}}
+	reg.On("RemoveContainer", mock.Anything, "agent-l1").Return(errors.New("remove failed"))
 	s.srv.containerRegistry = reg
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/channels/ch-1", nil)
-	w := httptest.NewRecorder()
-	s.mux.ServeHTTP(w, req)
+	rec := s.testRequest("DELETE", "/api/threads/thread-1", "")
 
-	// Still returns 204 — cleanup errors are logged, not surfaced.
-	require.Equal(s.T(), http.StatusNoContent, w.Code)
+	// Cleanup errors are logged, not surfaced.
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	reg.AssertExpectations(s.T())
 }
 
 func (s *ServerSuite) TestDeleteChannelChromeRemoveError() {
@@ -453,6 +487,7 @@ func (s *ServerSuite) TestDeleteThreadStopsHiddenThreads() {
 	s.srv.SetRunCanceller(canceller)
 	reg := &mockContainerManager{byChannel: []*container.ContainerInfo{
 		{ContainerID: "agent-l1", ChannelID: "learn-1", Type: container.ContainerTypeAgent},
+		{ContainerID: "chrome-l1", ChannelID: "learn-1", Type: container.ContainerTypeChrome}, // the BrowserProvider's
 		{ContainerID: "agent-e1", ChannelID: "explain-1", Type: container.ContainerTypeAgent},
 	}}
 	reg.On("RemoveContainer", mock.Anything, "agent-l1").Return(nil)
