@@ -129,6 +129,8 @@ The `useAgentRegistry` hook subscribes to these events and maintains a `Map<stri
 
 No special configuration needed. The agent registry is initialized automatically during `serve` startup. Agent tools are enabled per-terminal-session when `agent_id` is provided.
 
+`claude_dangerously_load_development_channels`, the setting that let agents receive pushed messages before they were typed into the terminal, is gone. A filesystem migration drops it, and the commented-out copy onboarding wrote from the example config, from the global config and the `.loop/config.json` of every project Loop has a channel for. The comments above it stay.
+
 The `--agent-id` flag on the `mcp` command controls whether agent tools are enabled:
 
 ```
