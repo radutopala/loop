@@ -51,6 +51,11 @@ func (m *mockExecClient) DefaultShellCmd(pidFile string) []string {
 	return []string{"/bin/sh", "-c", fmt.Sprintf("echo $$ > %s; exec /bin/sh", pidFile)}
 }
 
+// PidFileCmd leaves an explicit command as given, so tests match it as is.
+func (m *mockExecClient) PidFileCmd(_ string, cmd []string) []string {
+	return cmd
+}
+
 // mockHostExecClient implements ExecClient but NOT PidFileShellCmd,
 // simulating host-based clients that manage processes directly.
 type mockHostExecClient struct {
@@ -504,6 +509,70 @@ func (s *TerminalSuite) TestStopSession() {
 	client.AssertExpectations(s.T())
 }
 
+func (s *TerminalSuite) TestLiveSessions() {
+	client := new(mockExecClient)
+	pipes := map[string]*io.PipeWriter{}
+	for _, exec := range []struct{ ctr, id string }{{"ctr-1", "exec-1"}, {"ctr-1", "exec-2"}, {"ctr-2", "exec-3"}} {
+		pr, pw := io.Pipe()
+		pipes[exec.id] = pw
+		client.On("ExecCreate", mock.Anything, exec.ctr, mock.Anything, true).Return(exec.id, nil).Once()
+		client.On("ExecAttach", mock.Anything, exec.id).Return(&mockConn{r: pr, w: io.Discard, closeFn: pw.Close}, nil)
+	}
+
+	mgr := NewManager(client, testLogger)
+	first, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
+	require.NoError(s.T(), err)
+	_, err = mgr.CreateSession(context.Background(), "ctr-1", nil)
+	require.NoError(s.T(), err)
+	_, err = mgr.CreateSession(context.Background(), "ctr-2", nil)
+	require.NoError(s.T(), err)
+
+	require.Equal(s.T(), 2, mgr.LiveSessions("ctr-1"))
+	require.Equal(s.T(), 1, mgr.LiveSessions("ctr-2"))
+	require.Equal(s.T(), 0, mgr.LiveSessions("ctr-3"))
+
+	// A session whose process exited stays until it's stopped, but no longer counts.
+	pipes["exec-1"].Close()
+	<-first.Done()
+	require.Equal(s.T(), 1, mgr.LiveSessions("ctr-1"))
+}
+
+func (s *TerminalSuite) TestOnExit() {
+	tests := []struct {
+		name string
+		end  func(mgr *Manager, sid string, pw *io.PipeWriter)
+	}{
+		{name: "process exits", end: func(_ *Manager, _ string, pw *io.PipeWriter) { pw.Close() }},
+		{name: "session stopped", end: func(mgr *Manager, sid string, _ *io.PipeWriter) {
+			_, err := mgr.StopSession(sid)
+			require.NoError(s.T(), err)
+		}},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			pr, pw := io.Pipe()
+			client := new(mockExecClient)
+			client.On("ExecCreate", mock.Anything, "ctr-1", mock.Anything, true).Return("exec-1", nil)
+			client.On("ExecAttach", mock.Anything, "exec-1").Return(&mockConn{r: pr, w: io.Discard, closeFn: pw.Close}, nil)
+
+			mgr := NewManager(client, testLogger)
+			exited := make(chan string, 1)
+			mgr.SetOnExit(func(sessionID, containerID string) { exited <- sessionID + " " + containerID })
+			sess, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
+			require.NoError(s.T(), err)
+
+			tt.end(mgr, sess.ID(), pw)
+			select {
+			case got := <-exited:
+				require.Equal(s.T(), sess.ID()+" ctr-1", got)
+			case <-time.After(5 * time.Second):
+				s.T().Fatal("timed out waiting for the exit hook")
+			}
+			require.Equal(s.T(), 0, mgr.LiveSessions("ctr-1"))
+		})
+	}
+}
+
 func (s *TerminalSuite) TestStopSessionNotFound() {
 	client := new(mockExecClient)
 	mgr := NewManager(client, testLogger)
@@ -904,7 +973,7 @@ func (s *TerminalSuite) TestKillProcessGroupNoPidFile() {
 	pr, pw := io.Pipe()
 	conn := &mockConn{r: pr, w: io.Discard}
 
-	// Create with explicit cmd so pidFile stays default but we override it.
+	// Create with explicit cmd, then clear the pidFile.
 	client.On("ExecCreate", mock.Anything, "ctr-1", []string{"/bin/bash"}, true).Return("exec-1", nil)
 	client.On("ExecAttach", mock.Anything, "exec-1").Return(conn, nil)
 
@@ -912,7 +981,7 @@ func (s *TerminalSuite) TestKillProcessGroupNoPidFile() {
 	sess, err := mgr.CreateSession(context.Background(), "ctr-1", []string{"/bin/bash"})
 	require.NoError(s.T(), err)
 
-	// Manually clear the pidFile to simulate a session created with explicit cmd.
+	// Manually clear the pidFile to simulate a session that has none.
 	mgr.mu.Lock()
 	mgr.sessions[sess.ID()].pidFile = ""
 	mgr.mu.Unlock()
@@ -976,6 +1045,49 @@ func (s *TerminalSuite) TestKillProcessGroupExecAttachError() {
 	client.AssertExpectations(s.T())
 }
 
+func (s *TerminalSuite) TestPidFileTracking() {
+	tests := []struct {
+		name    string
+		host    bool
+		cmd     []string
+		wantPid bool
+	}{
+		{name: "container default shell", wantPid: true},
+		{name: "container explicit command", cmd: []string{"/bin/bash"}, wantPid: true},
+		{name: "host explicit command", host: true, cmd: []string{"/bin/bash"}},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			pr, pw := io.Pipe()
+			conn := &mockConn{r: pr, w: io.Discard}
+			var client ExecClient
+			if tt.host {
+				c := new(mockHostExecClient)
+				c.On("ExecCreate", mock.Anything, "ctr-1", tt.cmd, true).Return("exec-1", nil)
+				c.On("ExecAttach", mock.Anything, "exec-1").Return(conn, nil)
+				client = c
+			} else {
+				c := new(mockExecClient)
+				c.On("ExecCreate", mock.Anything, "ctr-1", mock.Anything, true).Return("exec-1", nil)
+				c.On("ExecAttach", mock.Anything, "exec-1").Return(conn, nil)
+				client = c
+			}
+
+			mgr := NewManager(client, testLogger)
+			sess, err := mgr.CreateSession(context.Background(), "ctr-1", tt.cmd)
+			require.NoError(s.T(), err)
+			if tt.wantPid {
+				require.Equal(s.T(), "/tmp/.loop-exec-"+sess.ID()+".pid", sess.pidFile)
+			} else {
+				require.Empty(s.T(), sess.pidFile)
+			}
+
+			pw.Close()
+			<-sess.Done()
+		})
+	}
+}
+
 func (s *TerminalSuite) TestKillProcessGroupSuccess() {
 	client := new(mockExecClient)
 	pr, pw := io.Pipe()
@@ -988,8 +1100,9 @@ func (s *TerminalSuite) TestKillProcessGroupSuccess() {
 	sess, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
 	require.NoError(s.T(), err)
 
-	// Mock ExecCreate for the kill command.
-	client.On("ExecCreate", mock.Anything, "ctr-1", mock.Anything, false).Return("kill-exec-1", nil)
+	// Mock ExecCreate for the kill command, which kills the shell's session.
+	killCmd := []string{"/bin/sh", "-c", fmt.Sprintf(killSessionScript, "/tmp/.loop-exec-"+sess.ID()+".pid")}
+	client.On("ExecCreate", mock.Anything, "ctr-1", killCmd, false).Return("kill-exec-1", nil)
 	// Mock ExecAttach for the kill exec with a connection that can be closed.
 	killConn := &mockConn{r: pr, w: io.Discard}
 	client.On("ExecAttach", mock.Anything, "kill-exec-1").Return(killConn, nil)

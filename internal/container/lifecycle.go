@@ -41,14 +41,6 @@ type ImageVersions struct {
 	BuiltAt       time.Time `json:"built_at"`
 }
 
-// ReclaimResult reports the bytes freed by a "reclaim Docker space" action,
-// broken down by source so the UI can show what was cleaned.
-type ReclaimResult struct {
-	BuildCacheReclaimed uint64 `json:"build_cache_reclaimed"`
-	ImagesReclaimed     uint64 `json:"images_reclaimed"`
-	TotalReclaimed      uint64 `json:"total_reclaimed"`
-}
-
 // containerUnregisterer is the subset of ContainerRegistry needed to clean up
 // stale entries when containers are force-removed during image rebuild/removal.
 type containerUnregisterer interface {
@@ -77,6 +69,7 @@ type ImageLifecycleManager struct {
 	childRebuilder      func(ctx context.Context, handoff func()) // optional child-image cascade; see SetChildRebuilder
 	sidecarRebuilder    func(context.Context) error
 	sidecarImage        string
+	reclaimScope        func(context.Context) (ReclaimScope, error) // optional; see SetReclaimScope
 
 	// builds counts the builds in progress per image, keyed by normalized
 	// ref; changed, when not nil, is closed when one of them ends. See
@@ -274,32 +267,6 @@ func (m *ImageLifecycleManager) RemoveImage(ctx context.Context) error {
 		}
 	}
 	return nil
-}
-
-// ReclaimSpace frees Docker disk by pruning every BuildKit cache entry not in
-// use by a running build (unusedFor=0, all) and dangling images, returning the
-// bytes freed by each. Build-cache pruning is daemon-global, not scoped to
-// Loop's builds. If image pruning fails after the cache was already dropped,
-// the build-cache total is still reported alongside the error so nothing looks
-// silently lost.
-//
-// This is the action reached for when Docker is out of room, so it prunes
-// reusable cache too: the alternative left most of the disk unreclaimed, which
-// is worse than the slower build that follows.
-func (m *ImageLifecycleManager) ReclaimSpace(ctx context.Context) (ReclaimResult, error) {
-	buildCache, err := m.client.PruneBuildCache(ctx, 0, true)
-	if err != nil {
-		return ReclaimResult{}, err
-	}
-	images, err := m.client.PruneDanglingImages(ctx)
-	if err != nil {
-		return ReclaimResult{BuildCacheReclaimed: buildCache, TotalReclaimed: buildCache}, err
-	}
-	return ReclaimResult{
-		BuildCacheReclaimed: buildCache,
-		ImagesReclaimed:     images,
-		TotalReclaimed:      buildCache + images,
-	}, nil
 }
 
 // Rebuild removes the old image and builds a new one asynchronously.

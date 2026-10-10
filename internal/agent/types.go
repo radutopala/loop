@@ -6,6 +6,10 @@ import (
 )
 
 // AgentRequest is the input sent to the agent runner.
+// ChatAgentID is the agent ID of chat runs: the batch runs that answer
+// channel messages and scheduled tasks.
+const ChatAgentID = "chat"
+
 type AgentRequest struct {
 	SessionID   string `json:"session_id"`
 	ForkSession bool   `json:"fork_session,omitempty"`

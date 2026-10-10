@@ -378,10 +378,26 @@ export interface ImageStatusResponse {
   update_available?: ImageUpdateAvailableData;
 }
 
+export interface DockerReclaimable {
+  /** Whether the volume rows are sized: sizing volumes takes minutes on a large daemon. */
+  volumes_sized: boolean;
+  build_cache: number;
+  dangling_images: number;
+  unused_images: number;
+  unused_image_tags: string[];
+  anonymous_volumes: number;
+  orphan_volumes: number;
+  orphan_volume_names: string[];
+}
+
 export interface DockerReclaimResult {
   build_cache_reclaimed: number;
   images_reclaimed: number;
+  unused_images_reclaimed: number;
+  volumes_reclaimed: number;
   total_reclaimed: number;
+  /** A count: Docker doesn't say what removing a volume frees. */
+  orphan_volumes_removed: number;
 }
 
 export interface DaemonInfo {

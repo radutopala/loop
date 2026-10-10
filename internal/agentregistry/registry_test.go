@@ -82,11 +82,9 @@ func (s *RegistrySuite) TestUnregisterCleansUpChannel() {
 
 	s.reg.mu.RLock()
 	_, hasAgents := s.reg.agents["ch-1"]
-	_, hasMailboxes := s.reg.mailboxes["ch-1"]
 	s.reg.mu.RUnlock()
 
 	require.False(s.T(), hasAgents, "channel should be removed from agents map")
-	require.False(s.T(), hasMailboxes, "channel should be removed from mailboxes map")
 }
 
 func (s *RegistrySuite) TestGetNonExistent() {
@@ -141,84 +139,6 @@ func (s *RegistrySuite) TestUpdateStatusNonExistent() {
 	require.Nil(s.T(), s.reg.UpdateStatus("ch-1", "unknown-agent", "running", "", ""))
 }
 
-func (s *RegistrySuite) TestSendMessage() {
-	s.reg.Register(&AgentInfo{AgentID: "a-0", ChannelID: "ch-1"})
-	s.reg.Register(&AgentInfo{AgentID: "a-1", ChannelID: "ch-1"})
-
-	err := s.reg.SendMessage("ch-1", "a-0", "a-1", "hello")
-	require.NoError(s.T(), err)
-
-	ch, err := s.reg.Subscribe("ch-1", "a-1")
-	require.NoError(s.T(), err)
-
-	select {
-	case msg := <-ch:
-		require.Equal(s.T(), "a-0", msg.FromAgentID)
-		require.Equal(s.T(), "hello", msg.Content)
-	case <-time.After(time.Second):
-		s.T().Fatal("timeout waiting for message")
-	}
-}
-
-func (s *RegistrySuite) TestSendMessageToNonExistent() {
-	s.reg.Register(&AgentInfo{AgentID: "a-0", ChannelID: "ch-1"})
-
-	err := s.reg.SendMessage("ch-1", "a-0", "nonexistent", "hello")
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "not found")
-
-	err = s.reg.SendMessage("nonexistent", "a-0", "a-1", "hello")
-	require.Error(s.T(), err)
-}
-
-func (s *RegistrySuite) TestSendMessageDropsWhenFull() {
-	s.reg.Register(&AgentInfo{AgentID: "a-0", ChannelID: "ch-1"})
-
-	// Fill the mailbox.
-	for i := range mailboxSize {
-		err := s.reg.SendMessage("ch-1", "sender", "a-0", fmt.Sprintf("msg-%d", i))
-		require.NoError(s.T(), err)
-	}
-
-	// Next message should be dropped.
-	err := s.reg.SendMessage("ch-1", "sender", "a-0", "overflow")
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "mailbox full")
-}
-
-func (s *RegistrySuite) TestSubscribe() {
-	s.reg.Register(&AgentInfo{AgentID: "a-0", ChannelID: "ch-1"})
-
-	ch, err := s.reg.Subscribe("ch-1", "a-0")
-	require.NoError(s.T(), err)
-	require.NotNil(s.T(), ch)
-}
-
-func (s *RegistrySuite) TestSubscribeNonExistentChannel() {
-	_, err := s.reg.Subscribe("nope", "a-0")
-	require.Error(s.T(), err)
-}
-
-func (s *RegistrySuite) TestSubscribeNonExistentAgent() {
-	// Channel exists but agent doesn't.
-	s.reg.Register(&AgentInfo{AgentID: "a-0", ChannelID: "ch-1"})
-	_, err := s.reg.Subscribe("ch-1", "nonexistent")
-	require.Error(s.T(), err)
-}
-
-func (s *RegistrySuite) TestSubscribeClosedOnUnregister() {
-	s.reg.Register(&AgentInfo{AgentID: "a-0", ChannelID: "ch-1"})
-
-	ch, err := s.reg.Subscribe("ch-1", "a-0")
-	require.NoError(s.T(), err)
-
-	s.reg.Unregister("ch-1", "a-0")
-
-	// Channel should be closed.
-	_, ok := <-ch
-	require.False(s.T(), ok)
-}
-
 func (s *RegistrySuite) TestListEmptyChannel() {
 	result := s.reg.List("nonexistent")
 	require.NotNil(s.T(), result)
@@ -236,9 +156,81 @@ func (s *RegistrySuite) TestConcurrentAccess() {
 			s.reg.Get("ch-1", id)
 			s.reg.List("ch-1")
 			s.reg.UpdateStatus("ch-1", id, "running", "", "")
-			_ = s.reg.SendMessage("ch-1", id, id, "self")
 			s.reg.Unregister("ch-1", id)
 		}(i)
 	}
 	wg.Wait()
+}
+
+func (s *RegistrySuite) TestTerminals() {
+	require.Empty(s.T(), s.reg.Terminal("ch-1", "a-0"))
+
+	s.reg.SetTerminal("ch-1", "a-0", "sess-1")
+	s.reg.SetTerminal("ch-1", "a-1", "sess-2")
+	require.Equal(s.T(), "sess-1", s.reg.Terminal("ch-1", "a-0"))
+
+	// The terminal outlives the agent's registration.
+	s.reg.Register(&AgentInfo{AgentID: "a-0", ChannelID: "ch-1"})
+	s.reg.Unregister("ch-1", "a-0")
+	require.Equal(s.T(), "sess-1", s.reg.Terminal("ch-1", "a-0"))
+
+	tests := []struct {
+		name      string
+		agentID   string
+		sessionID string
+		want0     string
+		want1     string
+	}{
+		{name: "another session leaves it", agentID: "a-0", sessionID: "sess-old", want0: "sess-1", want1: "sess-2"},
+		{name: "unknown agent", agentID: "a-9", sessionID: "sess-1", want0: "sess-1", want1: "sess-2"},
+		{name: "its session clears it", agentID: "a-0", sessionID: "sess-1", want0: "", want1: "sess-2"},
+		{name: "the last one empties the channel", agentID: "a-1", sessionID: "sess-2", want0: "", want1: ""},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.reg.ClearTerminal("ch-1", tt.agentID, tt.sessionID)
+			require.Equal(s.T(), tt.want0, s.reg.Terminal("ch-1", "a-0"))
+			require.Equal(s.T(), tt.want1, s.reg.Terminal("ch-1", "a-1"))
+		})
+	}
+	require.NotContains(s.T(), s.reg.terminals, "ch-1")
+	s.reg.ClearTerminal("ch-2", "a-0", "sess-1")
+}
+
+func (s *RegistrySuite) TestReleaseTerminal() {
+	s.reg.Register(&AgentInfo{AgentID: "a-0", ChannelID: "ch-1"})
+	s.reg.Register(&AgentInfo{AgentID: "a-1", ChannelID: "ch-1"})
+	s.reg.Register(&AgentInfo{AgentID: "a-0", ChannelID: "ch-2"})
+	s.reg.SetTerminal("ch-1", "a-0", "sess-0")
+	s.reg.SetTerminal("ch-1", "a-1", "sess-1")
+	s.reg.SetTerminal("ch-2", "a-0", "sess-2")
+	// A pane whose agent hasn't registered yet.
+	s.reg.SetTerminal("ch-3", "a-9", "sess-0")
+
+	tests := []struct {
+		name      string
+		sessionID string
+		want      []string
+	}{
+		{name: "no agent's session", sessionID: "sess-x"},
+		{name: "registered and unregistered agent", sessionID: "sess-0", want: []string{"a-0"}},
+		{name: "already released", sessionID: "sess-0"},
+		{name: "last agent of a channel", sessionID: "sess-2", want: []string{"a-0"}},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			var got []string
+			for _, a := range s.reg.ReleaseTerminal(tt.sessionID) {
+				got = append(got, a.AgentID)
+			}
+			require.Equal(s.T(), tt.want, got)
+		})
+	}
+
+	require.Nil(s.T(), s.reg.Get("ch-1", "a-0"))
+	require.NotNil(s.T(), s.reg.Get("ch-1", "a-1"))
+	require.Equal(s.T(), "sess-1", s.reg.Terminal("ch-1", "a-1"))
+	require.NotContains(s.T(), s.reg.agents, "ch-2")
+	require.NotContains(s.T(), s.reg.terminals, "ch-2")
+	require.NotContains(s.T(), s.reg.terminals, "ch-3")
 }

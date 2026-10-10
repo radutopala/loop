@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/radutopala/loop/internal/container"
+	"github.com/radutopala/loop/internal/terminal"
 )
 
 // Terminal WebSocket control message types (client → server).
@@ -49,6 +51,9 @@ const (
 	wsErrCodeInvalidInput   = "invalid_input"
 	wsErrCodeSessionFailed  = "session_failed"
 	wsErrCodeUnknownMessage = "unknown_message"
+	// wsErrCodeSessionGone answers an attach to a session the server no
+	// longer has, after a daemon restart say. The client starts a new one.
+	wsErrCodeSessionGone = "session_gone"
 )
 
 // TerminalManager abstracts the terminal session operations needed by the handler.
@@ -61,6 +66,13 @@ type TerminalManager interface {
 	Resize(ctx context.Context, sessionID string, rows, cols uint) error
 	StopSession(sessionID string) (containerID string, err error)
 	KillProcessGroup(ctx context.Context, sessionID string) error
+	// LiveSessions returns how many sessions in a container still run.
+	LiveSessions(containerID string) int
+}
+
+// AgentTerminals records the terminal session an agent pane runs in.
+type AgentTerminals interface {
+	SetTerminal(channelID, agentID, sessionID string)
 }
 
 // wsControlMessage represents a JSON control message from the client.
@@ -130,13 +142,20 @@ type terminalWSConn struct {
 	manager           TerminalManager
 	hostManager       TerminalManager  // may be nil
 	containerRegistry ContainerManager // may be nil
-	browserProvider   BrowserProvider  // may be nil
+	// releaseShell and claimShell are Server.releaseShell and
+	// Server.claimShell. May be nil.
+	releaseShell    func(containerID string)
+	claimShell      func(containerID string)
+	browserProvider BrowserProvider // may be nil
 	// closeBrowserCDP drops the channel's cached browser CDPManager, which is
 	// tied to the sidecar container this connection may destroy. May be nil.
 	closeBrowserCDP func(channelID string)
 	cmdBuilder      InteractiveCmdBuilder
-	store           ChannelLister
-	loopDir         string // fallback work dir root (e.g. ~/.loop)
+	// agentTerminals records which terminal session runs each agent pane's
+	// Claude, so messages to the agent can be typed into it. May be nil.
+	agentTerminals AgentTerminals
+	store          ChannelLister
+	loopDir        string // fallback work dir root (e.g. ~/.loop)
 	// rootDirs returns the channel's ordered workspace roots (index 0 = primary
 	// dir, 1+ = extra_dirs). Used to resolve a shell pane's RootIndex to an
 	// absolute path. May be nil (then RootIndex is ignored — primary dir only).
@@ -307,8 +326,11 @@ func (t *terminalWSConn) stopCurrentSession() {
 			if err := mgr.KillProcessGroup(context.Background(), t.sessionID); err != nil {
 				t.logger.Warn("terminal ws: kill process group failed", "session_id", t.sessionID, "error", err)
 			}
-			if _, err := mgr.StopSession(t.sessionID); err != nil {
+			containerID, err := mgr.StopSession(t.sessionID)
+			if err != nil {
 				t.logger.Warn("terminal ws: stop on close failed", "session_id", t.sessionID, "error", err)
+			} else if t.sessionTarget != "host" && t.releaseShell != nil {
+				t.releaseShell(containerID)
 			}
 		}
 		t.setSessionID("")
@@ -321,7 +343,7 @@ func (t *terminalWSConn) stopCurrentSession() {
 // autoAcceptTrigger is the prompt text that triggers an automatic Enter.
 // Spaces stripped because ANSI escape codes between characters get removed by stripANSI,
 // collapsing "Enter to confirm" into "Entertoconfirm".
-const autoAcceptTrigger = "Entertoconfirm" // workspace trust + channel prompt
+const autoAcceptTrigger = "Entertoconfirm" // workspace trust prompt
 
 // maxAutoAccepts is the maximum number of prompts to auto-accept per session.
 const maxAutoAccepts = 3
@@ -642,6 +664,9 @@ func (t *terminalWSConn) handleCreate(ctx context.Context, msg wsControlMessage)
 		t.sendError(err.Error(), wsErrCodeSessionFailed)
 		return
 	}
+	if t.claimShell != nil {
+		t.claimShell(msg.ContainerID)
+	}
 	// Enable auto-accept BEFORE startSession begins streaming, so the scanner
 	// is ready when the prompt output arrives.
 	if msg.AgentID != "" {
@@ -683,6 +708,9 @@ func (t *terminalWSConn) handleCreate(ctx context.Context, msg wsControlMessage)
 		cmd := t.cmdBuilder.BuildInteractiveCmd(msg.ChannelID, dirPath, parentDirPath, claudeSessionID, msg.AgentID, forkSession)
 		if err := t.manager.SendInput(sid, []byte(cmd+"\n")); err != nil {
 			t.logger.Warn("terminal ws: failed to send interactive cmd", "session_id", sid, "error", err)
+		}
+		if msg.AgentID != "" && t.agentTerminals != nil {
+			t.agentTerminals.SetTerminal(msg.ChannelID, msg.AgentID, sid)
 		}
 		// Sessions-panel panes (stopOnClose) resume an explicit, fixed session
 		// the user picked — don't auto-relaunch those into a different one.
@@ -727,7 +755,11 @@ func (t *terminalWSConn) handleAttach(msg wsControlMessage) {
 	}
 	output, history, done, err := mgr.AttachSession(msg.SessionID)
 	if err != nil {
-		t.sendError(err.Error(), wsErrCodeSessionFailed)
+		code := wsErrCodeSessionFailed
+		if errors.Is(err, terminal.ErrSessionNotFound) {
+			code = wsErrCodeSessionGone
+		}
+		t.sendError(err.Error(), code)
 		return
 	}
 	t.sessionTarget = target
@@ -814,7 +846,30 @@ func (t *terminalWSConn) handleClose(msg wsControlMessage) {
 		t.sendError("no active session", wsErrCodeNoSession)
 		return
 	}
-	if _, err := t.activeManager().StopSession(sid); err != nil {
+	// A session no pane is attached to, one on a deleted tab say, is named
+	// by the message, with its target.
+	target := t.sessionTarget
+	if t.sessionID == "" {
+		target = msg.Target
+	}
+	isHost := target == "host"
+	mgr := t.manager
+	if isHost {
+		mgr = t.hostManager
+	}
+	if mgr == nil {
+		t.sendError("terminal not configured", wsErrCodeSessionFailed)
+		return
+	}
+	// Stopping only drops the attach stream, and the shell would run on in
+	// the container, where a later pane reclaims it.
+	if !isHost {
+		if err := mgr.KillProcessGroup(context.Background(), sid); err != nil {
+			t.logger.Warn("terminal ws: kill process group failed", "session_id", sid, "error", err)
+		}
+	}
+	containerID, err := mgr.StopSession(sid)
+	if err != nil {
 		t.sendError(err.Error(), wsErrCodeSessionFailed)
 		return
 	}
@@ -822,11 +877,55 @@ func (t *terminalWSConn) handleClose(msg wsControlMessage) {
 	t.outputCh = nil
 	t.sessionTarget = ""
 	t.disableRelaunch()
+	if !isHost && t.releaseShell != nil {
+		t.releaseShell(containerID)
+	}
 	t.writeJSON(wsStatusMessage{Type: wsStatusStopped})
 }
 
-// handleKill removes the container for a channel without requiring an active session.
-// Used when the terminal panel is closed and no panes are open.
+// releaseShell marks a channel's shell container for removal after the
+// keep-alive once no terminal session runs in it any more. Every docker pane
+// of the channel, in any tab, shares the container, so closing one pane, or
+// the tab it's on, leaves it to the others. A pane opened within the
+// keep-alive takes it back. It runs when a pane closes, and when a
+// session's process ends, a shell left with `exit` say.
+func (s *Server) releaseShell(containerID string) {
+	if s.containerRegistry == nil || s.termManager == nil {
+		return
+	}
+	s.shellMu.Lock()
+	defer s.shellMu.Unlock()
+	info := s.containerRegistry.Get(containerID)
+	if info == nil || info.Type != container.ContainerTypeShell || info.Status != container.ContainerStatusRunning {
+		return
+	}
+	if s.termManager.LiveSessions(containerID) > 0 {
+		return
+	}
+	s.containerRegistry.ScheduleRemove(containerID, s.containerKeepAlive)
+}
+
+// claimShell takes back a shell container that a session was just created
+// in, when the last pane's release marked it for removal between the lookup
+// and the session's start. shellMu orders the two: a release either counts
+// the new session or comes before this.
+func (s *Server) claimShell(containerID string) {
+	if s.containerRegistry == nil {
+		return
+	}
+	s.shellMu.Lock()
+	defer s.shellMu.Unlock()
+	info := s.containerRegistry.Get(containerID)
+	if info == nil || info.Type != container.ContainerTypeShell || info.Status != container.ContainerStatusPendingRemoval {
+		return
+	}
+	s.containerRegistry.Reclaim(containerID)
+}
+
+// handleKill removes a channel's containers at once, whatever panes still
+// use them, without requiring an active session. Used by the explicit
+// kill-agents action; closing panes and tabs releases the shell container
+// through releaseShell instead.
 func (t *terminalWSConn) handleKill(ctx context.Context, msg wsControlMessage) {
 	if msg.ChannelID == "" {
 		t.sendError("channel_id required", wsErrCodeMissingField)
@@ -890,6 +989,11 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 
 	tc := newTerminalWSConn(conn, s.termManager, s.hostTermManager, s.containerRegistry, s.cmdBuilder, s.store, s.loopDir, s.logger)
 	tc.rootDirs = s.allDirPaths
+	tc.releaseShell = s.releaseShell
+	tc.claimShell = s.claimShell
+	if s.agentRegistry != nil {
+		tc.agentTerminals = s.agentRegistry
+	}
 	tc.browserProvider = s.browser.dockerProvider
 	tc.closeBrowserCDP = func(channelID string) {
 		s.browser.closeCDPManager(channelID, s.browser.modeFor(channelID))
@@ -930,8 +1034,24 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 }
 
 // SetTerminalManager configures the terminal manager for WebSocket terminal sessions.
+// When a session's process ends, its shell container is released and the
+// agent whose pane it ran is unregistered.
 func (s *Server) SetTerminalManager(mgr TerminalManager) {
 	s.termManager = mgr
+	if n, ok := mgr.(exitNotifier); ok {
+		n.SetOnExit(s.terminalExited)
+	}
+}
+
+// exitNotifier reports when a terminal session's exec ends.
+type exitNotifier interface {
+	SetOnExit(fn func(sessionID, containerID string))
+}
+
+// terminalExited runs once a docker terminal session's exec ends.
+func (s *Server) terminalExited(sessionID, containerID string) {
+	s.releaseShell(containerID)
+	s.releaseAgentTerminal(sessionID)
 }
 
 // SetInteractiveCmdBuilder configures the command builder for interactive terminal sessions.

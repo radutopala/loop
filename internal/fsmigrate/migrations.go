@@ -297,6 +297,14 @@ var migrations = []Migration{
 		Description: "patch review-loop/review-fix-loop to loop review:run",
 		Apply:       patchReviewLoopEnvAndPRInput,
 	},
+	{
+		// Agent messages are typed into the target's terminal now, so
+		// claude_dangerously_load_development_channels no longer does
+		// anything. Config loading ignores it; this drops the dead setting,
+		// and the commented-out copy onboarding wrote from the example.
+		Description: "drop claude_dangerously_load_development_channels from config.json",
+		Apply:       dropDevChannelsKey,
+	},
 }
 
 // adoptProjectConfigs trusts the project config of every project checkout
@@ -1103,6 +1111,99 @@ func moveProxiesIntoBlockAt(sys System, configPath string) error {
 		return fmt.Errorf("writing %s: %w", configPath, err)
 	}
 	return nil
+}
+
+// devChannelsKey is the removed setting dropDevChannelsKey cleans out.
+const devChannelsKey = "claude_dangerously_load_development_channels"
+
+func dropDevChannelsKey(_ context.Context, c *Ctx) error {
+	for _, configPath := range configPaths(c) {
+		if err := dropDevChannelsKeyAt(c.Sys, configPath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// dropDevChannelsKeyAt removes devChannelsKey from the top level of a config,
+// with the comment on its line, and the comment lines that name it, as the
+// example config's commented-out copy does. The comments above the key stay.
+// The file is untouched when there is nothing to drop.
+func dropDevChannelsKeyAt(sys System, configPath string) error {
+	v, err := loadHJSONAt(sys, configPath)
+	if err != nil || v == nil {
+		return err
+	}
+	rootObj, ok := v.Value.(*hujson.Object)
+	if !ok {
+		return fmt.Errorf("parsing %s: expected JSON object at top level", configPath)
+	}
+
+	changed := false
+	if i := objectMemberIndex(rootObj, devChannelsKey); i >= 0 {
+		// The key's leading extra loses the indent of its own line; what
+		// follows it loses the rest of that line, the key's comment.
+		head := string(rootObj.Members[i].Name.BeforeExtra)
+		if j := strings.LastIndex(head, "\n"); j >= 0 {
+			head = head[:j]
+		} else {
+			head = ""
+		}
+		next := &rootObj.AfterExtra
+		if i+1 < len(rootObj.Members) {
+			next = &rootObj.Members[i+1].Name.BeforeExtra
+		} else if i > 0 {
+			prev := &rootObj.Members[i-1].Value
+			if strings.TrimSpace(string(prev.AfterExtra)) == "" {
+				prev.AfterExtra = nil // no trailing comma on the new last member
+			}
+		}
+		tail := string(*next)
+		if j := strings.Index(tail, "\n"); j >= 0 {
+			tail = tail[j:]
+		}
+		*next = hujson.Extra(head + tail)
+		rootObj.Members = slices.Delete(rootObj.Members, i, i+1)
+		changed = true
+	}
+
+	extras := []*hujson.Extra{&rootObj.AfterExtra}
+	for i := range rootObj.Members {
+		extras = append(extras, &rootObj.Members[i].Name.BeforeExtra)
+	}
+	for _, e := range extras {
+		if dropCommentLinesNaming(e, devChannelsKey) {
+			changed = true
+		}
+	}
+
+	if !changed {
+		return nil
+	}
+	if err := atomicWriteConfig(sys, configPath, v.Pack(), 0644); err != nil {
+		return fmt.Errorf("writing %s: %w", configPath, err)
+	}
+	return nil
+}
+
+// dropCommentLinesNaming removes from e the // comment lines that name key as
+// a quoted string, and reports whether it removed any. The text before e's
+// first line break is left alone: it sits on the line of the member before.
+func dropCommentLinesNaming(e *hujson.Extra, key string) bool {
+	lines := strings.Split(string(*e), "\n")
+	kept := []string{lines[0]}
+	for _, line := range lines[1:] {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "//") && strings.Contains(trimmed, `"`+key+`"`) {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	if len(kept) == len(lines) {
+		return false
+	}
+	*e = hujson.Extra(strings.Join(kept, "\n"))
+	return true
 }
 
 // memberNamed reports whether m's name is the string literal name.

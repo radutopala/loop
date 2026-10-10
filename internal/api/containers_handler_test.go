@@ -34,6 +34,15 @@ func (m *mockContainerManager) ListByChannel(channelID string) []*container.Cont
 	return out
 }
 
+func (m *mockContainerManager) Get(containerID string) *container.ContainerInfo {
+	for _, info := range append(m.byChannel, m.containers...) {
+		if info.ContainerID == containerID {
+			return info
+		}
+	}
+	return nil
+}
+
 func (m *mockContainerManager) RunningChannelIDs(context.Context) map[string]struct{} {
 	return m.runningIDs
 }
@@ -44,6 +53,10 @@ func (m *mockContainerManager) RemoveContainer(ctx context.Context, containerID 
 
 func (m *mockContainerManager) ScheduleRemove(containerID string, delay time.Duration) {
 	m.Called(containerID, delay)
+}
+
+func (m *mockContainerManager) Reclaim(containerID string) bool {
+	return m.Called(containerID).Bool(0)
 }
 
 func (m *mockContainerManager) FindOrCreateShell(ctx context.Context, channelID, dirPath, parentDirPath string) (string, error) {

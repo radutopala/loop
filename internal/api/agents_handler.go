@@ -3,11 +3,19 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"time"
+	"regexp"
+	"strconv"
+	"strings"
 
+	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/agentregistry"
 	"github.com/radutopala/loop/internal/events"
 )
+
+// validAgentID matches the agent IDs the registry takes: pane IDs such as
+// "docker-agent-0". Messages are labelled with their sender's ID, which
+// keeps a label from closing early or starting a new line.
+var validAgentID = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 
 // SetAgentRegistry configures the agent registry.
 func (s *Server) SetAgentRegistry(r *agentregistry.Registry) {
@@ -34,6 +42,10 @@ func (s *Server) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.ChannelID == "" || body.AgentID == "" {
 		http.Error(w, "channel_id and agent_id required", http.StatusBadRequest)
+		return
+	}
+	if !validAgentID.MatchString(body.AgentID) {
+		http.Error(w, "invalid agent_id", http.StatusBadRequest)
 		return
 	}
 
@@ -143,6 +155,23 @@ func (s *Server) handleDeleteAgent(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// releaseAgentTerminal unregisters the agents whose pane ran in a terminal
+// session that ended. Closing a pane kills its agent, which never gets to
+// unregister itself.
+func (s *Server) releaseAgentTerminal(sessionID string) {
+	if s.agentRegistry == nil {
+		return
+	}
+	for _, a := range s.agentRegistry.ReleaseTerminal(sessionID) {
+		if s.eventsHub != nil {
+			s.eventsHub.BroadcastAgentInstanceUnregistered(a.ChannelID, events.AgentInstanceEventData{
+				AgentID:   a.AgentID,
+				ChannelID: a.ChannelID,
+			})
+		}
+	}
+}
+
 // handleSendAgentMessage handles POST /api/agents/{id}/message.
 func (s *Server) handleSendAgentMessage(w http.ResponseWriter, r *http.Request) {
 	if s.agentRegistry == nil {
@@ -165,81 +194,49 @@ func (s *Server) handleSendAgentMessage(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "channel_id and content required", http.StatusBadRequest)
 		return
 	}
+	// The sender's label is all the target goes by, so it names the chat
+	// agent, which isn't registered, or an agent of the channel.
+	if from := body.FromAgentID; from != "" && from != agent.ChatAgentID &&
+		(!validAgentID.MatchString(from) || s.agentRegistry.Get(body.ChannelID, from) == nil) {
+		http.Error(w, "from_agent_id "+strconv.Quote(from)+" isn't an agent in channel "+body.ChannelID, http.StatusBadRequest)
+		return
+	}
 
-	if err := s.agentRegistry.SendMessage(body.ChannelID, body.FromAgentID, toAgentID, body.Content); err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+	if s.agentRegistry.Get(body.ChannelID, toAgentID) == nil {
+		http.Error(w, "agent "+toAgentID+" not found in channel "+body.ChannelID, http.StatusNotFound)
+		return
+	}
+
+	sid := s.agentRegistry.Terminal(body.ChannelID, toAgentID)
+	if sid == "" || s.termManager == nil {
+		http.Error(w, "agent "+toAgentID+" can't take messages: it has no terminal", http.StatusConflict)
+		return
+	}
+	// Typed as one paste, so a multi-line message stays one prompt. A paste
+	// marker in it would end the paste early and type the rest as keystrokes.
+	if strings.Contains(body.Content, pasteStart) || strings.Contains(body.Content, pasteEnd) {
+		http.Error(w, "content contains a bracketed-paste marker", http.StatusBadRequest)
+		return
+	}
+	text := body.Content
+	if body.FromAgentID != "" {
+		text = "[from " + body.FromAgentID + "] " + text
+	}
+	// The trailing newline keeps messages queued while the agent is busy on
+	// lines of their own: Claude Code joins queued prompts as is.
+	input := pasteStart + text + "\n" + pasteEnd + "\r"
+	if err := s.termManager.SendInput(sid, []byte(input)); err != nil {
+		s.agentRegistry.ClearTerminal(body.ChannelID, toAgentID, sid)
+		http.Error(w, "agent "+toAgentID+"'s terminal is gone: "+err.Error(), http.StatusConflict)
 		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleAgentChannelWS handles GET /api/ws/agent-channel?agent_id=X&channel_id=Y.
-// MCP servers inside agent containers connect here to receive pushed messages.
-func (s *Server) handleAgentChannelWS(w http.ResponseWriter, r *http.Request) {
-	if s.agentRegistry == nil {
-		http.Error(w, "agent registry not configured", http.StatusServiceUnavailable)
-		return
-	}
-
-	agentID := r.URL.Query().Get("agent_id")
-	channelID := r.URL.Query().Get("channel_id")
-	if agentID == "" || channelID == "" {
-		http.Error(w, "agent_id and channel_id required", http.StatusBadRequest)
-		return
-	}
-
-	// Retry Subscribe with a short poll — the push receiver may connect
-	// before the terminal handler registers the agent.
-	var ch <-chan *agentregistry.AgentMessage
-	var err error
-	for range 15 {
-		ch, err = s.agentRegistry.Subscribe(channelID, agentID)
-		if err == nil {
-			break
-		}
-		time.Sleep(time.Second)
-	}
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
-		return
-	}
-
-	conn, err := wsUpgrader.Upgrade(w, r, nil)
-	if err != nil {
-		return // gorilla/websocket writes the error response
-	}
-	defer conn.Close()
-
-	writeJSON := conn.WriteJSON
-	if s.agentWSWriteJSON != nil {
-		writeJSON = s.agentWSWriteJSON
-	}
-
-	// Read pump: detect client disconnect.
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
-				return
-			}
-		}
-	}()
-
-	// Write pump: forward messages from the mailbox to the WebSocket.
-	for {
-		select {
-		case msg, ok := <-ch:
-			if !ok {
-				// Channel closed — agent unregistered.
-				return
-			}
-			if err := writeJSON(msg); err != nil {
-				return
-			}
-		case <-done:
-			return
-		}
-	}
-}
+// Bracketed-paste markers: a terminal app takes what's between them as
+// pasted text rather than keystrokes.
+const (
+	pasteStart = "\x1b[200~"
+	pasteEnd   = "\x1b[201~"
+)

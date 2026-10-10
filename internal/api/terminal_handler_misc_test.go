@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/db"
 )
 
@@ -186,6 +187,12 @@ func (s *TerminalHandlerSuite) TestStopOnCloseWhenSessionIDOverride() {
 
 	finder := new(mockContainerManager)
 	finder.On("FindOrCreateShell", mock.Anything, "ch-sess", mock.Anything, mock.Anything).Return("resolved-ctr", nil)
+	finder.containers = []*container.ContainerInfo{{ContainerID: "resolved-ctr", ChannelID: "ch-sess", Type: container.ContainerTypeShell, Status: container.ContainerStatusRunning}}
+	released := make(chan struct{}, 1)
+	finder.On("ScheduleRemove", "resolved-ctr", time.Duration(0)).Return().Run(func(mock.Arguments) {
+		released <- struct{}{}
+	})
+	s.terminal.On("LiveSessions", "resolved-ctr").Return(0)
 	s.srv.containerRegistry = finder
 
 	builder := new(MockInteractiveCmdBuilder)
@@ -213,6 +220,12 @@ func (s *TerminalHandlerSuite) TestStopOnCloseWhenSessionIDOverride() {
 	case <-stopCalled:
 	case <-time.After(2 * time.Second):
 		s.T().Fatal("timed out waiting for StopSession")
+	}
+	// The sessions panel's shell is released once its last session stops.
+	select {
+	case <-released:
+	case <-time.After(2 * time.Second):
+		s.T().Fatal("timed out waiting for ScheduleRemove")
 	}
 }
 

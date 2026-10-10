@@ -957,7 +957,7 @@ func (o *Orchestrator) buildAgentRequest(channelID string, recent []*db.Message,
 		Messages:  messages,
 		ChannelID: channelID,
 		DirPath:   dirPath,
-		AgentID:   "chat",
+		AgentID:   agent.ChatAgentID,
 		Model:     model,
 		Effort:    effort,
 	}

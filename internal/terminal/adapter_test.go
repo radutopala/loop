@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -112,6 +113,23 @@ func (s *AdapterSuite) TestDetachSession() {
 	require.NoError(s.T(), err2)
 }
 
+func (s *AdapterSuite) TestSessions() {
+	s.mock.execID = "exec-1"
+	s.mock.conn = newFakeConn()
+
+	require.Empty(s.T(), s.adapter.Sessions())
+
+	sid, output, _, _, err := s.adapter.CreateSession(context.Background(), "container-1", nil)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), map[string]bool{sid: true}, s.adapter.Sessions())
+
+	require.NoError(s.T(), s.adapter.DetachSession(sid, output))
+	require.Equal(s.T(), map[string]bool{sid: false}, s.adapter.Sessions())
+
+	_, err = s.adapter.StopSession(sid)
+	require.NoError(s.T(), err)
+}
+
 func (s *AdapterSuite) TestDetachSessionNotFound() {
 	err := s.adapter.DetachSession("nonexistent", nil)
 	require.ErrorIs(s.T(), err, ErrSessionNotFound)
@@ -167,6 +185,37 @@ func (s *AdapterSuite) TestKillProcessGroupDelegates() {
 
 	_, err2 := s.adapter.StopSession(sid)
 	require.NoError(s.T(), err2)
+}
+
+func (s *AdapterSuite) TestLiveSessionsDelegates() {
+	s.mock.execID = "exec-1"
+	s.mock.conn = newFakeConn()
+
+	sid, _, _, _, err := s.adapter.CreateSession(context.Background(), "container-1", nil)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 1, s.adapter.LiveSessions("container-1"))
+
+	_, err = s.adapter.StopSession(sid)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 0, s.adapter.LiveSessions("container-1"))
+}
+
+func (s *AdapterSuite) TestSetOnExitDelegates() {
+	s.mock.execID = "exec-1"
+	s.mock.conn = newFakeConn()
+	exited := make(chan string, 1)
+	s.adapter.SetOnExit(func(sessionID, containerID string) { exited <- sessionID + " " + containerID })
+
+	sid, _, _, _, err := s.adapter.CreateSession(context.Background(), "container-1", nil)
+	require.NoError(s.T(), err)
+	_, err = s.adapter.StopSession(sid)
+	require.NoError(s.T(), err)
+	select {
+	case got := <-exited:
+		require.Equal(s.T(), sid+" container-1", got)
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("timed out waiting for the exit hook")
+	}
 }
 
 func (s *AdapterSuite) TestKillProcessGroupNotFound() {

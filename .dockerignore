@@ -1,0 +1,16 @@
+# The image build reads the Go sources, README.md (go generate) and
+# .loop/setup.sh. .git stays: go build stamps the binary's version from it.
+**/node_modules
+.claude
+.idea
+.tickets
+.worktrees
+app
+bin
+docs
+memory
+test
+loop
+*.out
+coverage.html
+.DS_Store

@@ -17,58 +17,57 @@ import (
 // jsonConfig is an intermediate struct for JSON unmarshalling.
 // Pointer types for numerics distinguish "missing" (nil) from "zero".
 type jsonConfig struct {
-	Platforms                                []string                   `json:"platforms"`
-	DiscordToken                             string                     `json:"discord_token"`
-	DiscordAppID                             string                     `json:"discord_app_id"`
-	SlackBotToken                            string                     `json:"slack_bot_token"`
-	SlackAppToken                            string                     `json:"slack_app_token"`
-	ClaudeCodeOAuthToken                     string                     `json:"claude_code_oauth_token"`
-	AnthropicAPIKey                          string                     `json:"anthropic_api_key"`
-	AnthropicBaseURL                         string                     `json:"anthropic_base_url"`
-	DiscordGuildID                           string                     `json:"discord_guild_id"`
-	LogFile                                  string                     `json:"log_file"`
-	LogLevel                                 string                     `json:"log_level"`
-	LogFormat                                string                     `json:"log_format"`
-	DBPath                                   string                     `json:"db_path"`
-	ContainerImage                           string                     `json:"container_image"`
-	ContainerImageAutobuild                  *bool                      `json:"container_image_autobuild"`
-	ContainerTimeoutSec                      *int                       `json:"container_timeout_sec"`
-	ContainerMemoryMB                        *int64                     `json:"container_memory_mb"`
-	ContainerCPUs                            *float64                   `json:"container_cpus"`
-	ContainerKeepAliveSec                    *int                       `json:"container_keep_alive_sec"`
-	PollIntervalSec                          *int                       `json:"poll_interval_sec"`
-	APIAddr                                  string                     `json:"api_addr"`
-	APIAdvertiseURL                          string                     `json:"api_advertise_url"`
-	MCP                                      *jsonMCPConfig             `json:"mcp"`
-	TaskTemplates                            []TaskTemplate             `json:"task_templates"`
-	Workflows                                []WorkflowDef              `json:"workflows"`
-	WorkflowConcurrency                      *WorkflowConcurrency       `json:"workflow_concurrency"`
-	PromptShortcuts                          []PromptShortcut           `json:"prompt_shortcuts"`
-	BashShortcuts                            []BashShortcut             `json:"bash_shortcuts"`
-	ChatComponents                           []ChatComponent            `json:"chat_components"`
-	Mounts                                   []string                   `json:"mounts"`
-	Proxies                                  ProxiesConfig              `json:"proxies"`
-	CopyFiles                                []string                   `json:"copy_files"`
-	Envs                                     map[string]any             `json:"envs"`
-	ClaudeModel                              string                     `json:"claude_model"`
-	ClaudeEffort                             string                     `json:"claude_effort"`
-	ClaudeBinPath                            string                     `json:"claude_bin_path"`
-	ClaudeDangerouslyLoadDevelopmentChannels *bool                      `json:"claude_dangerously_load_development_channels"`
-	ClaudeBatchDisallowedTools               []string                   `json:"claude_batch_disallowed_tools"`
-	ClaudeRetry                              *jsonAgentRetryConfig      `json:"claude_retry"`
-	KeepMCPConfigs                           *bool                      `json:"keep_mcp_configs"`
-	WorkflowBashLocal                        *bool                      `json:"workflow_bash_local"`
-	Browser                                  *jsonBrowserConfig         `json:"browser"`
-	Memory                                   *jsonMemoryConfig          `json:"memory"`
-	Quality                                  *jsonQualityConfig         `json:"quality"`
-	Permissions                              *jsonPermissionsConfig     `json:"permissions"`
-	Desktop                                  *DesktopConfig             `json:"desktop"`
-	Gates                                    *jsonGatesConfig           `json:"gates"`
-	GitHub                                   *GitHubConfig              `json:"github"`
-	Review                                   *jsonReviewConfig          `json:"review"`
-	PlaygroundShare                          *jsonPlaygroundShareConfig `json:"playground_share"`
-	Learn                                    *jsonLearnConfig           `json:"learn"`
-	Explain                                  *jsonExplainConfig         `json:"explain"`
+	Platforms                  []string                   `json:"platforms"`
+	DiscordToken               string                     `json:"discord_token"`
+	DiscordAppID               string                     `json:"discord_app_id"`
+	SlackBotToken              string                     `json:"slack_bot_token"`
+	SlackAppToken              string                     `json:"slack_app_token"`
+	ClaudeCodeOAuthToken       string                     `json:"claude_code_oauth_token"`
+	AnthropicAPIKey            string                     `json:"anthropic_api_key"`
+	AnthropicBaseURL           string                     `json:"anthropic_base_url"`
+	DiscordGuildID             string                     `json:"discord_guild_id"`
+	LogFile                    string                     `json:"log_file"`
+	LogLevel                   string                     `json:"log_level"`
+	LogFormat                  string                     `json:"log_format"`
+	DBPath                     string                     `json:"db_path"`
+	ContainerImage             string                     `json:"container_image"`
+	ContainerImageAutobuild    *bool                      `json:"container_image_autobuild"`
+	ContainerTimeoutSec        *int                       `json:"container_timeout_sec"`
+	ContainerMemoryMB          *int64                     `json:"container_memory_mb"`
+	ContainerCPUs              *float64                   `json:"container_cpus"`
+	ContainerKeepAliveSec      *int                       `json:"container_keep_alive_sec"`
+	PollIntervalSec            *int                       `json:"poll_interval_sec"`
+	APIAddr                    string                     `json:"api_addr"`
+	APIAdvertiseURL            string                     `json:"api_advertise_url"`
+	MCP                        *jsonMCPConfig             `json:"mcp"`
+	TaskTemplates              []TaskTemplate             `json:"task_templates"`
+	Workflows                  []WorkflowDef              `json:"workflows"`
+	WorkflowConcurrency        *WorkflowConcurrency       `json:"workflow_concurrency"`
+	PromptShortcuts            []PromptShortcut           `json:"prompt_shortcuts"`
+	BashShortcuts              []BashShortcut             `json:"bash_shortcuts"`
+	ChatComponents             []ChatComponent            `json:"chat_components"`
+	Mounts                     []string                   `json:"mounts"`
+	Proxies                    ProxiesConfig              `json:"proxies"`
+	CopyFiles                  []string                   `json:"copy_files"`
+	Envs                       map[string]any             `json:"envs"`
+	ClaudeModel                string                     `json:"claude_model"`
+	ClaudeEffort               string                     `json:"claude_effort"`
+	ClaudeBinPath              string                     `json:"claude_bin_path"`
+	ClaudeBatchDisallowedTools []string                   `json:"claude_batch_disallowed_tools"`
+	ClaudeRetry                *jsonAgentRetryConfig      `json:"claude_retry"`
+	KeepMCPConfigs             *bool                      `json:"keep_mcp_configs"`
+	WorkflowBashLocal          *bool                      `json:"workflow_bash_local"`
+	Browser                    *jsonBrowserConfig         `json:"browser"`
+	Memory                     *jsonMemoryConfig          `json:"memory"`
+	Quality                    *jsonQualityConfig         `json:"quality"`
+	Permissions                *jsonPermissionsConfig     `json:"permissions"`
+	Desktop                    *DesktopConfig             `json:"desktop"`
+	Gates                      *jsonGatesConfig           `json:"gates"`
+	GitHub                     *GitHubConfig              `json:"github"`
+	Review                     *jsonReviewConfig          `json:"review"`
+	PlaygroundShare            *jsonPlaygroundShareConfig `json:"playground_share"`
+	Learn                      *jsonLearnConfig           `json:"learn"`
+	Explain                    *jsonExplainConfig         `json:"explain"`
 }
 
 // jsonMemoryConfig is the JSON representation of the memory block.
@@ -275,35 +274,34 @@ func (l *Loader) parse() (*Config, error) {
 	}
 
 	cfg := &Config{
-		DiscordToken:                             jc.DiscordToken,
-		DiscordAppID:                             jc.DiscordAppID,
-		SlackBotToken:                            jc.SlackBotToken,
-		SlackAppToken:                            jc.SlackAppToken,
-		ClaudeBinPath:                            stringDefault(jc.ClaudeBinPath, "claude"),
-		ClaudeCodeOAuthToken:                     jc.ClaudeCodeOAuthToken,
-		AnthropicAPIKey:                          jc.AnthropicAPIKey,
-		AnthropicBaseURL:                         jc.AnthropicBaseURL,
-		DiscordGuildID:                           jc.DiscordGuildID,
-		LogFile:                                  stringDefault(jc.LogFile, filepath.Join(loopDir, "loop.log")),
-		LogLevel:                                 stringDefault(jc.LogLevel, "info"),
-		LogFormat:                                stringDefault(jc.LogFormat, "text"),
-		DBPath:                                   stringDefault(jc.DBPath, filepath.Join(loopDir, "loop.db")),
-		ContainerImage:                           stringDefault(jc.ContainerImage, "loop-agent:latest"),
-		ContainerImageAutobuild:                  jc.ContainerImageAutobuild == nil || *jc.ContainerImageAutobuild,
-		ContainerTimeout:                         time.Duration(ptrDefault(jc.ContainerTimeoutSec, 43200)) * time.Second,
-		ContainerMemoryMB:                        ptrDefault(jc.ContainerMemoryMB, defaultContainerMemoryMB),
-		ContainerCPUs:                            ptrDefault(jc.ContainerCPUs, 1.0),
-		ContainerKeepAlive:                       time.Duration(ptrDefault(jc.ContainerKeepAliveSec, 300)) * time.Second,
-		PollInterval:                             time.Duration(ptrDefault(jc.PollIntervalSec, 30)) * time.Second,
-		APIAddr:                                  stringDefault(jc.APIAddr, ":8222"),
-		APIAdvertiseURL:                          jc.APIAdvertiseURL,
-		LoopDir:                                  loopDir,
-		ClaudeModel:                              stringDefault(jc.ClaudeModel, "claude-sonnet-5-5"),
-		ClaudeEffort:                             jc.ClaudeEffort,
-		ClaudeDangerouslyLoadDevelopmentChannels: ptrDefault(jc.ClaudeDangerouslyLoadDevelopmentChannels, false),
-		ClaudeBatchDisallowedTools:               sliceDefault(jc.ClaudeBatchDisallowedTools, DefaultBatchDisallowedTools()),
-		KeepMCPConfigs:                           ptrDefault(jc.KeepMCPConfigs, false),
-		WorkflowBashLocal:                        ptrDefault(jc.WorkflowBashLocal, false),
+		DiscordToken:               jc.DiscordToken,
+		DiscordAppID:               jc.DiscordAppID,
+		SlackBotToken:              jc.SlackBotToken,
+		SlackAppToken:              jc.SlackAppToken,
+		ClaudeBinPath:              stringDefault(jc.ClaudeBinPath, "claude"),
+		ClaudeCodeOAuthToken:       jc.ClaudeCodeOAuthToken,
+		AnthropicAPIKey:            jc.AnthropicAPIKey,
+		AnthropicBaseURL:           jc.AnthropicBaseURL,
+		DiscordGuildID:             jc.DiscordGuildID,
+		LogFile:                    stringDefault(jc.LogFile, filepath.Join(loopDir, "loop.log")),
+		LogLevel:                   stringDefault(jc.LogLevel, "info"),
+		LogFormat:                  stringDefault(jc.LogFormat, "text"),
+		DBPath:                     stringDefault(jc.DBPath, filepath.Join(loopDir, "loop.db")),
+		ContainerImage:             stringDefault(jc.ContainerImage, "loop-agent:latest"),
+		ContainerImageAutobuild:    jc.ContainerImageAutobuild == nil || *jc.ContainerImageAutobuild,
+		ContainerTimeout:           time.Duration(ptrDefault(jc.ContainerTimeoutSec, 43200)) * time.Second,
+		ContainerMemoryMB:          ptrDefault(jc.ContainerMemoryMB, defaultContainerMemoryMB),
+		ContainerCPUs:              ptrDefault(jc.ContainerCPUs, 1.0),
+		ContainerKeepAlive:         time.Duration(ptrDefault(jc.ContainerKeepAliveSec, 300)) * time.Second,
+		PollInterval:               time.Duration(ptrDefault(jc.PollIntervalSec, 30)) * time.Second,
+		APIAddr:                    stringDefault(jc.APIAddr, ":8222"),
+		APIAdvertiseURL:            jc.APIAdvertiseURL,
+		LoopDir:                    loopDir,
+		ClaudeModel:                stringDefault(jc.ClaudeModel, "claude-sonnet-5-5"),
+		ClaudeEffort:               jc.ClaudeEffort,
+		ClaudeBatchDisallowedTools: sliceDefault(jc.ClaudeBatchDisallowedTools, DefaultBatchDisallowedTools()),
+		KeepMCPConfigs:             ptrDefault(jc.KeepMCPConfigs, false),
+		WorkflowBashLocal:          ptrDefault(jc.WorkflowBashLocal, false),
 	}
 
 	// Browser config: nested struct with defaults.

@@ -21,6 +21,7 @@ import (
 
 	"github.com/radutopala/loop/internal/api"
 	"github.com/radutopala/loop/internal/bot"
+	"github.com/radutopala/loop/internal/browser"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/db"
@@ -1050,4 +1051,55 @@ func (s *MainSuite) TestChildProjectsListerStoreError() {
 	st.On("ListChannels", mock.Anything).Return(([]*db.Channel)(nil), errors.New("db down"))
 	_, err := childProjectsLister(st, &config.Config{}, nil)(context.Background())
 	require.Error(s.T(), err)
+}
+
+func (s *MainSuite) TestReclaimScope() {
+	st := new(mockChannelLister)
+	st.On("ListChannels", mock.Anything).Return([]*db.Channel{{ChannelID: "ch-1"}, {ChannelID: "ch-2"}}, nil)
+	cfg := &config.Config{ContainerImage: "loop-agent:latest"}
+	cfg.Browser.ChromeImage = "loop-chrome:latest"
+	projects := func(context.Context) ([]container.ChildProject, error) {
+		return []container.ChildProject{{DirPath: "/proj", Image: "proj-agent:latest"}}, nil
+	}
+
+	scope, err := reclaimScope(st, cfg, projects)(context.Background())
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"loop-agent:latest", "loop-chrome:latest", embeddings.OllamaImage, "proj-agent:latest"}, scope.KeepImages)
+
+	tests := []struct {
+		volume string
+		orphan bool
+	}{
+		{volume: browser.ChromeProfileVolume("ch-1")},
+		{volume: browser.ChromeProfileVolume("ch-2")},
+		{volume: browser.ChromeProfileVolume("deleted"), orphan: true},
+		{volume: "loop-ollama"},
+		{volume: "someone-elses-cache"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.volume, func() {
+			require.Equal(s.T(), tt.orphan, scope.OrphanVolume(tt.volume))
+		})
+	}
+}
+
+func (s *MainSuite) TestReclaimScopeErrors() {
+	tests := []struct {
+		name     string
+		store    error
+		projects error
+		wantErr  string
+	}{
+		{name: "store", store: errors.New("db down"), wantErr: "db down"},
+		{name: "projects", projects: errors.New("bad config"), wantErr: "bad config"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			st := new(mockChannelLister)
+			st.On("ListChannels", mock.Anything).Return([]*db.Channel{}, tt.store)
+			projects := func(context.Context) ([]container.ChildProject, error) { return nil, tt.projects }
+			_, err := reclaimScope(st, &config.Config{}, projects)(context.Background())
+			require.EqualError(s.T(), err, tt.wantErr)
+		})
+	}
 }

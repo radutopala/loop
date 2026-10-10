@@ -173,6 +173,13 @@ export function Terminal({
     writeRef.current?.(new TextEncoder().encode(`\r\n\x1b[31m[error] ${message}\x1b[0m\r\n`));
   }, []);
 
+  // A new session's prompt starts on a line of its own, not after the
+  // previous session's last line, one a daemon restart ended say.
+  const onCreated = useCallback(() => {
+    const term = xtermInstRef.current;
+    if (term && term.buffer.active.cursorX > 0) writeRef.current?.("\r\n");
+  }, []);
+
   // Ref to access xterm dimensions when sending create/attach messages.
   const xtermInstRef = useRef<import("@xterm/xterm").Terminal | null>(null);
 
@@ -188,6 +195,7 @@ export function Terminal({
     onData,
     onStatus,
     onError,
+    onCreated,
     getTerminalSize: () => {
       const term = xtermInstRef.current;
       return term ? { cols: term.cols, rows: term.rows } : null;

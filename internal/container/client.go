@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/build"
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/events"
@@ -52,6 +53,8 @@ type dockerAPI interface {
 	VolumeRemove(ctx context.Context, volumeID string, force bool) error
 	BuildCachePrune(ctx context.Context, opts build.CachePruneOptions) (*build.CachePruneReport, error)
 	ImagesPrune(ctx context.Context, pruneFilters filters.Args) (image.PruneReport, error)
+	VolumesPrune(ctx context.Context, pruneFilters filters.Args) (volume.PruneReport, error)
+	DiskUsage(ctx context.Context, options types.DiskUsageOptions) (types.DiskUsage, error)
 	Events(ctx context.Context, options events.ListOptions) (<-chan events.Message, <-chan error)
 	Close() error
 }

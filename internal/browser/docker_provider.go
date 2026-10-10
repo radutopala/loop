@@ -117,9 +117,9 @@ const (
 	// chromeLabel identifies Chrome sidecar containers.
 	chromeLabel = "loop-chrome"
 
-	// profileVolumePrefix is the prefix for the named volumes holding each
+	// ProfileVolumePrefix is the prefix for the named volumes holding each
 	// channel's persistent Chrome profile.
-	profileVolumePrefix = "loop-chrome-profile-"
+	ProfileVolumePrefix = "loop-chrome-profile-"
 
 	// chromeProfileDir is where the profile volume is mounted inside the
 	// sidecar, and what Chrome is pointed at via --user-data-dir.
@@ -293,7 +293,7 @@ func ChromeHostname(channelID string) string {
 // ChromeProfileVolume returns the name of the Docker volume holding a channel's
 // persistent Chrome profile.
 func ChromeProfileVolume(channelID string) string {
-	return profileVolumePrefix + container.SanitizeName(channelID)
+	return ProfileVolumePrefix + container.SanitizeName(channelID)
 }
 
 // profileMounts returns the volume mount for the channel's persistent profile,

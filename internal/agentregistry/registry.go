@@ -1,15 +1,11 @@
 // Package agentregistry tracks active agent instances per channel,
-// enabling inter-agent discovery and push-based messaging.
+// enabling inter-agent discovery and messaging.
 package agentregistry
 
 import (
-	"fmt"
 	"sync"
 	"time"
 )
-
-// mailboxSize is the buffer capacity for each agent's message channel.
-const mailboxSize = 64
 
 // AgentInfo holds metadata about a running agent instance.
 type AgentInfo struct {
@@ -23,19 +19,15 @@ type AgentInfo struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
-// AgentMessage is a push-based message from one agent to another.
-type AgentMessage struct {
-	FromAgentID string    `json:"from_agent_id"`
-	Content     string    `json:"content"`
-	Timestamp   time.Time `json:"timestamp"`
-}
-
-// Registry tracks active agents and their mailboxes.
+// Registry tracks active agents and their terminal sessions.
 // All methods are goroutine-safe.
 type Registry struct {
-	mu        sync.RWMutex
-	agents    map[string]map[string]*AgentInfo         // channelID -> agentID -> info
-	mailboxes map[string]map[string]chan *AgentMessage // channelID -> agentID -> push channel
+	mu     sync.RWMutex
+	agents map[string]map[string]*AgentInfo // channelID -> agentID -> info
+	// terminals holds the terminal session each agent pane runs in. It's kept
+	// apart from agents: the session starts before the agent registers, and
+	// outlives the agent's restarts.
+	terminals map[string]map[string]string // channelID -> agentID -> terminal session ID
 	timeNow   func() time.Time
 }
 
@@ -43,7 +35,7 @@ type Registry struct {
 func New() *Registry {
 	return &Registry{
 		agents:    make(map[string]map[string]*AgentInfo),
-		mailboxes: make(map[string]map[string]chan *AgentMessage),
+		terminals: make(map[string]map[string]string),
 		timeNow:   time.Now,
 	}
 }
@@ -57,7 +49,6 @@ func (r *Registry) Register(info *AgentInfo) {
 
 	if _, ok := r.agents[info.ChannelID]; !ok {
 		r.agents[info.ChannelID] = make(map[string]*AgentInfo)
-		r.mailboxes[info.ChannelID] = make(map[string]chan *AgentMessage)
 	}
 
 	if existing, ok := r.agents[info.ChannelID][info.AgentID]; ok {
@@ -76,10 +67,9 @@ func (r *Registry) Register(info *AgentInfo) {
 		info.Status = "idle"
 	}
 	r.agents[info.ChannelID][info.AgentID] = info
-	r.mailboxes[info.ChannelID][info.AgentID] = make(chan *AgentMessage, mailboxSize)
 }
 
-// Unregister removes an agent and closes its mailbox.
+// Unregister removes an agent.
 // Idempotent — safe to call multiple times for the same agent.
 func (r *Registry) Unregister(channelID, agentID string) {
 	r.mu.Lock()
@@ -92,16 +82,6 @@ func (r *Registry) Unregister(channelID, agentID string) {
 	delete(channelAgents, agentID)
 	if len(channelAgents) == 0 {
 		delete(r.agents, channelID)
-	}
-
-	if channelMailboxes, ok := r.mailboxes[channelID]; ok {
-		if ch, ok := channelMailboxes[agentID]; ok {
-			close(ch)
-			delete(channelMailboxes, agentID)
-		}
-		if len(channelMailboxes) == 0 {
-			delete(r.mailboxes, channelID)
-		}
 	}
 }
 
@@ -157,48 +137,65 @@ func (r *Registry) UpdateStatus(channelID, agentID, status, workSummary, name st
 	return agent
 }
 
-// SendMessage pushes a message to the target agent's mailbox.
-// Non-blocking — drops the message if the mailbox is full.
-func (r *Registry) SendMessage(channelID, fromAgentID, toAgentID, content string) error {
+// SetTerminal records the terminal session an agent pane runs in.
+func (r *Registry) SetTerminal(channelID, agentID, sessionID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if _, ok := r.terminals[channelID]; !ok {
+		r.terminals[channelID] = make(map[string]string)
+	}
+	r.terminals[channelID][agentID] = sessionID
+}
+
+// Terminal returns the terminal session an agent pane runs in, or "" if none.
+func (r *Registry) Terminal(channelID, agentID string) string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	channelMailboxes, ok := r.mailboxes[channelID]
-	if !ok {
-		return fmt.Errorf("agent %s not found in channel %s", toAgentID, channelID)
-	}
-	ch, ok := channelMailboxes[toAgentID]
-	if !ok {
-		return fmt.Errorf("agent %s not found in channel %s", toAgentID, channelID)
-	}
+	return r.terminals[channelID][agentID]
+}
 
-	msg := &AgentMessage{
-		FromAgentID: fromAgentID,
-		Content:     content,
-		Timestamp:   r.timeNow(),
-	}
+// ClearTerminal forgets an agent's terminal session, if it's still sessionID.
+func (r *Registry) ClearTerminal(channelID, agentID, sessionID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
-	select {
-	case ch <- msg:
-		return nil
-	default:
-		return fmt.Errorf("agent %s mailbox full, message dropped", toAgentID)
+	channelTerminals := r.terminals[channelID]
+	if channelTerminals[agentID] != sessionID {
+		return
+	}
+	delete(channelTerminals, agentID)
+	if len(channelTerminals) == 0 {
+		delete(r.terminals, channelID)
 	}
 }
 
-// Subscribe returns the read end of an agent's mailbox channel.
-// The channel is closed when the agent unregisters.
-func (r *Registry) Subscribe(channelID, agentID string) (<-chan *AgentMessage, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+// ReleaseTerminal forgets the agents whose pane ran in terminal session
+// sessionID, which ended, and returns the ones that were registered. An
+// agent's own unregistering never runs then: closing the pane kills it.
+func (r *Registry) ReleaseTerminal(sessionID string) []*AgentInfo {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
-	channelMailboxes, ok := r.mailboxes[channelID]
-	if !ok {
-		return nil, fmt.Errorf("agent %s not found in channel %s", agentID, channelID)
+	var released []*AgentInfo
+	for channelID, channelTerminals := range r.terminals {
+		for agentID, sid := range channelTerminals {
+			if sid != sessionID {
+				continue
+			}
+			delete(channelTerminals, agentID)
+			if info := r.agents[channelID][agentID]; info != nil {
+				released = append(released, info)
+				delete(r.agents[channelID], agentID)
+				if len(r.agents[channelID]) == 0 {
+					delete(r.agents, channelID)
+				}
+			}
+		}
+		if len(channelTerminals) == 0 {
+			delete(r.terminals, channelID)
+		}
 	}
-	ch, ok := channelMailboxes[agentID]
-	if !ok {
-		return nil, fmt.Errorf("agent %s not found in channel %s", agentID, channelID)
-	}
-	return ch, nil
+	return released
 }

@@ -34,11 +34,13 @@ const defaultClientMaxBytes = 16 * 1024 * 1024
 const readBufSize = 4096
 
 // PidFileShellCmd is an optional interface that ExecClient implementations
-// can implement to provide a PID-file-wrapped default shell command.
-// Container-based clients need this for process group cleanup; host-based
-// clients manage processes directly and should not implement it.
+// can implement to provide PID-file-wrapped commands: the default shell, and
+// an explicit command. Container-based clients need this for process
+// cleanup; host-based clients manage processes directly and should not
+// implement it.
 type PidFileShellCmd interface {
 	DefaultShellCmd(pidFile string) []string
+	PidFileCmd(pidFile string, cmd []string) []string
 }
 
 // ExecClient abstracts the Docker exec operations needed by the terminal
@@ -211,6 +213,7 @@ type Manager struct {
 	idleTimeout    time.Duration
 	clientMaxBytes int
 	randRead       func([]byte) (int, error)
+	onExit         func(sessionID, containerID string)
 }
 
 // NewManager creates a new terminal session manager.
@@ -245,6 +248,19 @@ func (m *Manager) SetClientMaxBytes(n int) {
 	m.clientMaxBytes = n
 }
 
+// SetOnExit sets a func called with a session's ID and container once the
+// session's exec ends: its process exited, it idled out or it was stopped.
+func (m *Manager) SetOnExit(fn func(sessionID, containerID string)) {
+	m.onExit = fn
+}
+
+// killSessionScript kills the session of the process whose PID is in the
+// file named by its %s.
+const killSessionScript = `f=%s; p=$(cat "$f" 2>/dev/null); rm -f "$f"; [ -n "$p" ] || exit 0
+s=$(ps -o sid= -p "$p" 2>/dev/null | tr -d ' ')
+if [ -n "$s" ] && [ "$s" != 1 ] && command -v pkill >/dev/null 2>&1; then pkill -KILL -s "$s" 2>/dev/null; fi
+kill -9 -"$p" 2>/dev/null; true`
+
 // pidFileDir is where session PID files are written inside containers.
 const pidFileDir = "/tmp"
 
@@ -266,15 +282,17 @@ func (m *Manager) CreateSessionWithEnv(ctx context.Context, containerID string, 
 	sessionID := generateID(m.randRead)
 	pidFile := fmt.Sprintf("%s/.loop-exec-%s.pid", pidFileDir, sessionID)
 
-	// When no explicit command and the client supports PID-file tracking
-	// (container-based), wrap the shell to write its PID for later kill.
+	// When the client supports PID-file tracking (container-based), wrap
+	// the command, or the default shell, to write its PID for later kill.
 	// Host-based clients handle shell selection and process cleanup directly.
-	if len(cmd) == 0 {
-		if p, ok := m.client.(PidFileShellCmd); ok {
+	if p, ok := m.client.(PidFileShellCmd); ok {
+		if len(cmd) == 0 {
 			cmd = p.DefaultShellCmd(pidFile)
 		} else {
-			pidFile = "" // host client — no PID-file tracking needed
+			cmd = p.PidFileCmd(pidFile, cmd)
 		}
+	} else {
+		pidFile = "" // host client — no PID-file tracking needed
 	}
 
 	var (
@@ -309,7 +327,12 @@ func (m *Manager) CreateSessionWithEnv(ctx context.Context, containerID string, 
 		clientMaxBytes: m.clientMaxBytes,
 	}
 
-	go s.readLoop()
+	go func() {
+		s.readLoop()
+		if m.onExit != nil {
+			m.onExit(s.id, s.containerID)
+		}
+	}()
 
 	m.mu.Lock()
 	m.sessions[s.id] = s
@@ -385,8 +408,11 @@ func (m *Manager) StopSession(id string) (string, error) {
 }
 
 // KillProcessGroup reads the shell's PID from its PID file (written at exec
-// startup) and runs `kill -9 -<pid>` (negative = process group) inside the
-// container. This reliably kills the shell and all its children (e.g. Claude).
+// startup) and kills every process in the shell's session inside the
+// container. An interactive shell puts each job in a process group of its
+// own, so killing the shell's group alone would leave its jobs running. The
+// session check skips session 1, the container's own, and `kill -9 -<pid>`
+// still covers images without ps or pkill.
 func (m *Manager) KillProcessGroup(ctx context.Context, sessionID string) error {
 	m.mu.Lock()
 	s, ok := m.sessions[sessionID]
@@ -399,7 +425,7 @@ func (m *Manager) KillProcessGroup(ctx context.Context, sessionID string) error 
 	}
 
 	// Read PID file and kill the process group in one command.
-	killCmd := fmt.Sprintf("kill -9 -$(cat %s) 2>/dev/null; rm -f %s", s.pidFile, s.pidFile)
+	killCmd := fmt.Sprintf(killSessionScript, s.pidFile)
 	killExecID, err := m.client.ExecCreate(ctx, s.containerID, []string{"/bin/sh", "-c", killCmd}, false)
 	if err != nil {
 		return fmt.Errorf("creating kill exec: %w", err)
@@ -412,6 +438,25 @@ func (m *Manager) KillProcessGroup(ctx context.Context, sessionID string) error 
 	return nil
 }
 
+// LiveSessions returns how many sessions in a container still run their
+// exec, leaving out the ones whose process exited and nobody stopped yet.
+func (m *Manager) LiveSessions(containerID string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, s := range m.sessions {
+		if s.containerID != containerID {
+			continue
+		}
+		select {
+		case <-s.done:
+		default:
+			n++
+		}
+	}
+	return n
+}
+
 // ListSessions returns all active session IDs.
 func (m *Manager) ListSessions() []string {
 	m.mu.Lock()
@@ -421,4 +466,22 @@ func (m *Manager) ListSessions() []string {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+// Sessions returns every session's ID, mapped to whether a client is
+// attached to it.
+func (m *Manager) Sessions() map[string]bool {
+	m.mu.Lock()
+	all := make([]*Session, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		all = append(all, s)
+	}
+	m.mu.Unlock()
+	out := make(map[string]bool, len(all))
+	for _, s := range all {
+		s.mu.Lock()
+		out[s.id] = len(s.clients) > 0
+		s.mu.Unlock()
+	}
+	return out
 }

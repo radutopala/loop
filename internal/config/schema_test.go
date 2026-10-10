@@ -33,7 +33,6 @@ func (s *SchemaSuite) TestTopLevelProperties() {
 	schema := GlobalConfigSchema()
 	expectedKeys := []string{
 		"claude_model", "claude_bin_path",
-		"claude_dangerously_load_development_channels",
 		"claude_code_oauth_token", "anthropic_api_key", "anthropic_base_url",
 		"container_image", "container_memory_mb", "container_cpus",
 		"container_timeout_sec", "keep_mcp_configs",
@@ -222,7 +221,6 @@ func (s *SchemaSuite) TestNonGlobalOnlyFields() {
 	// These fields should NOT have x-global-only set.
 	nonGlobalKeys := []string{
 		"claude_model", "claude_bin_path",
-		"claude_dangerously_load_development_channels",
 		"container_image", "container_image_autobuild",
 		"container_memory_mb", "container_cpus",
 		"claude_batch_disallowed_tools", "claude_retry",

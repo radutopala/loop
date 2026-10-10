@@ -147,6 +147,12 @@ func (c *DockerExecClient) DefaultShellCmd(pidFile string) []string {
 	return []string{"/bin/bash", "-c", fmt.Sprintf("echo $$ > %s; exec /bin/bash --rcfile /etc/loop/bashrc -i", pidFile)}
 }
 
+// PidFileCmd returns cmd wrapped to write its PID to pidFile first, so an
+// explicit command can be killed the way the default shell is.
+func (c *DockerExecClient) PidFileCmd(pidFile string, cmd []string) []string {
+	return append([]string{"/bin/sh", "-c", `echo $$ > "$0"; exec "$@"`, pidFile}, cmd...)
+}
+
 // ExecCreate creates a new exec process in the container with the
 // given command and TTY setting. The command runs as the host UID:GID
 // (matching the container's non-root agent user created by the entrypoint):

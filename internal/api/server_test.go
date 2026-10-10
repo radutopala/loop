@@ -335,7 +335,6 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("PATCH /api/agents/{id}", s.srv.handleUpdateAgent)
 	s.mux.HandleFunc("DELETE /api/agents/{id}", s.srv.handleDeleteAgent)
 	s.mux.HandleFunc("POST /api/agents/{id}/message", s.srv.handleSendAgentMessage)
-	s.mux.HandleFunc("GET /api/ws/agent-channel", s.srv.handleAgentChannelWS)
 	s.mux.HandleFunc("GET /api/config/schema", s.srv.handleConfigSchema)
 	s.mux.HandleFunc("GET /api/config", s.srv.handleGetConfig)
 	s.mux.HandleFunc("PUT /api/config", s.srv.handleSaveConfig)

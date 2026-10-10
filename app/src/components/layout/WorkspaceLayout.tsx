@@ -1,6 +1,6 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { killAgentContainer } from "../../api/loopApi";
+import { closeTerminalSessionById, killAgentContainer } from "../../api/loopApi";
 import { CanvasLayout } from "../../canvas/CanvasLayout";
 import { withPanelTile } from "../../canvas/tilePlacement";
 import type { CanvasNode } from "../../canvas/types";
@@ -13,6 +13,7 @@ import { useEditorState } from "../../hooks/useEditorState";
 import { ExplainContext, useExplain } from "../../hooks/useExplain";
 import { LearnContext, useLearn } from "../../hooks/useLearn";
 import { prefersReducedMotion, usePresence } from "../../hooks/usePresence";
+import { takeStoredSession } from "../../hooks/useSessionPersistence";
 import type { LayoutType } from "../../layouts/persistence";
 import {
   clearLayout,
@@ -111,11 +112,18 @@ function initIdCounter(channelId: string, tree: PaneNode) {
   if (max + 1 > cur) idCounters.set(key, max + 1);
 }
 
-/** Closes the session of a terminal pane that's going away. */
-function closeTerminalSession(channelId: string, leaf: LeafNode) {
+/** Closes the session of a terminal pane that's going away. A pane on
+ *  another tab isn't mounted, so its stored session is closed directly. */
+function closeTerminalSession(channelId: string, leaf: Pick<LeafNode, "id" | "panel">) {
   if (leaf.panel !== "docker-agent" && leaf.panel !== "host-shell" && leaf.panel !== "docker-shell") return;
   const target = leaf.panel === "host-shell" ? "host" : "agent";
-  getCloseForInstance(`${target}:${channelId}:${leaf.id}`)?.();
+  const close = getCloseForInstance(`${target}:${channelId}:${leaf.id}`);
+  if (close) {
+    close();
+    return;
+  }
+  const sid = takeStoredSession(channelId, target, leaf.id);
+  if (sid) closeTerminalSessionById(sid, target);
 }
 
 function leafIdForPanel(channelId: string, panel: PanelType): string {
@@ -626,19 +634,11 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   const handleDeleteLayout = useCallback(
     (name: string) => {
       if (layoutNames.length <= 1) return;
-      // Kill terminal sessions if deleting the active layout
-      if (activeName === name) {
-        const current = treeRef.current;
-        if (current) {
-          for (const leaf of collectLeaves(current)) {
-            if (leaf.panel === "docker-agent" || leaf.panel === "host-shell" || leaf.panel === "docker-shell") {
-              const target = leaf.panel === "host-shell" ? "host" : "agent";
-              const closeKey = `${target}:${channelId}:${leaf.id}`;
-              getCloseForInstance(closeKey)?.();
-            }
-          }
-          if (hasAgentLeaf(current)) killAgentContainer(channelId);
-        }
+      // Close the tab's terminal sessions, whether it's showing or not.
+      const layout = activeName === name ? (canvasState ?? treeRef.current) : loadChannelLayouts(channelId)?.layouts[name];
+      if (layout) {
+        const leaves = layout.type === "canvas" ? (layout as CanvasNode).tiles : collectLeaves(layout as PaneNode);
+        for (const leaf of leaves) closeTerminalSession(channelId, leaf);
       }
       deleteLayout(channelId, name);
       if (activeName === name) setLearnOpen(false);
@@ -664,7 +664,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         saveActiveLayout(channelId, next);
       }
     },
-    [channelId, layoutNames, activeName],
+    [channelId, layoutNames, activeName, canvasState],
   );
 
   const handleReorderLayout = useCallback(
@@ -714,13 +714,11 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         if (!prev) return prev;
         if (leafCount(prev) <= 1) {
           clearLayout(channelId, activeName);
-          if (wasAgent) killAgentContainer(channelId);
           setAgentState("none");
           return null;
         }
         const newTree = removeLeaf(prev, id) ?? null;
         if (wasAgent && newTree && !hasAgentLeaf(newTree)) {
-          killAgentContainer(channelId);
           setAgentState("none");
         } else {
           setAgentState(computeAgentState());
@@ -838,7 +836,6 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         statusMapRef.current.delete(id);
         setMaximizedLeafId((prev) => (prev === id ? null : prev));
         setShownComponent((prev) => (prev?.leafId === id ? null : prev));
-        if (old.panel === "docker-agent" && !hasAgentLeaf(next)) killAgentContainer(channelId);
         setTreeNow(next);
         return leaf.id;
       },
@@ -1014,9 +1011,6 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
           const closeKey = `${target}:${channelId}:${leaf.id}`;
           getCloseForInstance(closeKey)?.();
         }
-      }
-      if (hasAgentLeaf(current)) {
-        killAgentContainer(channelId);
       }
     }
     const defaults = createDefaultLayouts();

@@ -2,6 +2,9 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 
 	"github.com/radutopala/loop/internal/container"
@@ -15,7 +18,8 @@ type ImageManager interface {
 	UpdateAvailable() *events.ImageUpdateAvailableData
 	RemoveImage(ctx context.Context) error
 	Rebuild(ctx context.Context) error
-	ReclaimSpace(ctx context.Context) (container.ReclaimResult, error)
+	Reclaimable(ctx context.Context, volumeSizes bool) (container.Reclaimable, error)
+	ReclaimSpace(ctx context.Context, opts container.ReclaimOptions) (container.ReclaimResult, error)
 }
 
 type imageStatusResponse struct {
@@ -63,12 +67,37 @@ func (s *Server) handleImageRemove(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleImageReclaimable estimates what reclaiming Docker space would free.
+// Volumes are sized only with ?volume_sizes=true: that takes minutes on a
+// large daemon.
+func (s *Server) handleImageReclaimable(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.imageManager, "image management not configured") {
+		return
+	}
+
+	estimate, err := s.imageManager.Reclaimable(r.Context(), r.URL.Query().Get("volume_sizes") == "true")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeHTTPJSON(w, http.StatusOK, estimate, s.logger)
+}
+
+// handleImageReclaim reclaims Docker space. The body, optional, picks the
+// opt-in parts.
 func (s *Server) handleImageReclaim(w http.ResponseWriter, r *http.Request) {
 	if !requireConfigured(w, s.imageManager, "image management not configured") {
 		return
 	}
 
-	result, err := s.imageManager.ReclaimSpace(r.Context())
+	var opts container.ReclaimOptions
+	if err := json.NewDecoder(r.Body).Decode(&opts); err != nil && !errors.Is(err, io.EOF) {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	result, err := s.imageManager.ReclaimSpace(r.Context(), opts)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

@@ -508,12 +508,6 @@ type Config struct {
 	// xhigh, max). Empty by default (no flag). Hierarchy: global → project →
 	// worktree.
 	ClaudeEffort string
-	// ClaudeDangerouslyLoadDevelopmentChannels gates the
-	// `--dangerously-load-development-channels server:loop` CLI flag added to
-	// the agent's `claude` invocation. Loop's MCP Channels surface depends on
-	// it, but Anthropic ships the flag as development-only; default to off so
-	// users opt in deliberately. Hierarchy: global → project → worktree.
-	ClaudeDangerouslyLoadDevelopmentChannels bool
 	// ClaudeBatchDisallowedTools lists Claude Code tool names passed to
 	// `--disallowedTools` for batch (`--print`) agent runs only. Defaults to the
 	// persistent-harness tools (ScheduleWakeup, Cron*) that no-op in one-shot

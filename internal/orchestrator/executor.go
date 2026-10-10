@@ -297,7 +297,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		ChannelID:     task.ChannelID,
 		DirPath:       dirPath,
 		ParentDirPath: parentDirPath,
-		AgentID:       "chat",
+		AgentID:       agent.ChatAgentID,
 	}
 	// Per-channel on-demand model/effort overrides apply to scheduled runs too.
 	if channel != nil {

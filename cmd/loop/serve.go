@@ -721,6 +721,7 @@ func (a *app) serve() error {
 	hostExecClient := a.newHostExecClient()
 	hostTermMgr := terminal.NewManager(hostExecClient, logger)
 	apiSrv.SetHostTerminalManager(terminal.NewManagerAdapter(hostTermMgr))
+	go apiSrv.RunTerminalReaper(ctx)
 
 	if cfg.Browser.Enabled {
 		// Idle monitoring for browser sessions (CDPManagers + containers).
@@ -778,8 +779,10 @@ func (a *app) serve() error {
 	// Child-image cascade: projects overriding container_image with a
 	// .loop/container/Dockerfile FROM the agent image get rebuilt whenever
 	// the base image is (re)built, so they never linger on an old base.
+	listChildProjects := childProjectsLister(store, cfg, config.LoadProjectConfig)
 	childImages := container.NewChildImageManager(dockerClient, cfg.ContainerImage,
-		childProjectsLister(store, cfg, config.LoadProjectConfig), lifecycleMgr.BeginBuild, logger)
+		listChildProjects, lifecycleMgr.BeginBuild, logger)
+	lifecycleMgr.SetReclaimScope(reclaimScope(store, cfg, listChildProjects))
 	lifecycleMgr.SetChildRebuilder(childImages.RebuildStale)
 	runner.SetImageGate(lifecycleMgr, a.version, cfg.ContainerImage)
 	if chromeProvider != nil {
@@ -1148,6 +1151,37 @@ func childProjectsLister(store channelLister, cfg *config.Config, loadProject fu
 			out = append(out, container.ChildProject{DirPath: ch.DirPath, Image: pc.ContainerImage, Autobuild: pc.ContainerImageAutobuild})
 		}
 		return out, nil
+	}
+}
+
+// reclaimScope tells reclaiming Docker space what's Loop's: its agent,
+// Chrome, embeddings and project images stay even when no container uses
+// them, and the Chrome profile volumes of channels that are gone are
+// orphans.
+func reclaimScope(store channelLister, cfg *config.Config, listChildProjects func(context.Context) ([]container.ChildProject, error)) func(context.Context) (container.ReclaimScope, error) {
+	return func(ctx context.Context) (container.ReclaimScope, error) {
+		chs, err := store.ListChannels(ctx)
+		if err != nil {
+			return container.ReclaimScope{}, err
+		}
+		projects, err := listChildProjects(ctx)
+		if err != nil {
+			return container.ReclaimScope{}, err
+		}
+		keep := []string{cfg.ContainerImage, cfg.Browser.ChromeImage, embeddings.OllamaImage}
+		for _, p := range projects {
+			keep = append(keep, p.Image)
+		}
+		profiles := make(map[string]bool, len(chs))
+		for _, ch := range chs {
+			profiles[browser.ChromeProfileVolume(ch.ChannelID)] = true
+		}
+		return container.ReclaimScope{
+			KeepImages: keep,
+			OrphanVolume: func(name string) bool {
+				return strings.HasPrefix(name, browser.ProfileVolumePrefix) && !profiles[name]
+			},
+		}, nil
 	}
 }
 

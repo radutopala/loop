@@ -23,15 +23,14 @@ type Server struct {
 	apiURL           string
 	authorID         string
 	agentID          string
+	agentSender      bool
 	dirPath          string
 	memoryEnabled    bool
 	workflowsEnabled bool
 	learnTools       bool
 	mcpServer        *mcp.Server
 	httpClient       HTTPClient
-	apiToken         func() string
 	logger           *slog.Logger
-	channelTransport *channelTransport // non-nil when agent tools enabled
 }
 
 // MemoryOption configures optional memory search for the MCP server.
@@ -50,14 +49,6 @@ func WithMemoryAPI(dirPath string) MemoryOption {
 func WithWorkflowAPI() MemoryOption {
 	return func(s *Server) {
 		s.workflowsEnabled = true
-	}
-}
-
-// WithAPIToken sets where the channel push WebSocket gets the API token it
-// sends. HTTP calls send it through the HTTPClient passed to New.
-func WithAPIToken(token func() string) MemoryOption {
-	return func(s *Server) {
-		s.apiToken = token
 	}
 }
 
@@ -83,19 +74,22 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 	}
 
 	serverOpts := &mcp.ServerOptions{Logger: logger}
-	if s.agentID != "" {
+	switch {
+	case s.agentSender:
+		serverOpts.Instructions = "Other agents run in this channel's terminals.\n" +
+			"Use `list_agents` to discover them.\n" +
+			"Use `send_agent_message` to send one a message by ID; it's typed into its terminal.\n" +
+			"They can't message you back."
+	case s.agentID != "":
 		serverOpts.Instructions = fmt.Sprintf("You are agent %q connected to Loop's inter-agent communication channel.\n", s.agentID) +
 			"Your agent ID is marked with * in list_agents output.\n" +
-			"Messages from other agents arrive as <channel source=\"loop\" from_agent=\"...\">.\n\n" +
-			"IMPORTANT: When you receive a channel message, RESPOND IMMEDIATELY. " +
+			"Messages from other agents arrive typed into your prompt as \"[from <agent id>] <message>\".\n\n" +
+			"IMPORTANT: When you receive a message from another agent, RESPOND IMMEDIATELY. " +
 			"Pause what you are doing, act on the message, then resume your work. " +
 			"Treat incoming messages like a coworker tapping you on the shoulder.\n\n" +
 			"Use `list_agents` to discover other running agents in this channel.\n" +
 			"Use `send_agent_message` to send a message to another agent by ID.\n" +
 			"Use `update_agent_status` to set your name and work summary."
-		serverOpts.Capabilities = &mcp.ServerCapabilities{
-			Experimental: map[string]any{"claude/channel": map[string]any{}},
-		}
 	}
 	s.mcpServer = mcp.NewServer(&mcp.Implementation{
 		Name:    "loop",
@@ -357,21 +351,8 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 	return s
 }
 
-// Run starts the MCP server on the given transport. The push-receiver
-// goroutine (when channel tools are enabled) is bound to a derived ctx
-// that is cancelled on return so tests and graceful shutdowns don't leak
-// DNS-hung websocket dial loops.
+// Run starts the MCP server on the given transport.
 func (s *Server) Run(ctx context.Context, transport mcp.Transport) error {
-	// Use the channel transport when agent tools are enabled,
-	// so channel notifications share the stdout mutex with MCP responses.
-	if s.channelTransport != nil {
-		s.channelTransport.inner = transport
-		s.channelTransport.apiToken = s.apiToken
-		pushCtx, cancel := context.WithCancel(ctx)
-		defer cancel()
-		startPushReceiver(pushCtx, s.apiURL, s.channelID, s.agentID, s.channelTransport, s.logger)
-		transport = s.channelTransport
-	}
 	return s.mcpServer.Run(ctx, transport)
 }
 
@@ -383,7 +364,7 @@ func (s *Server) MCPServer() *mcp.Server {
 // RegisterAgent registers this agent in the backend registry.
 // Called on MCP server startup so the agent is discoverable by others.
 func (s *Server) RegisterAgent() {
-	if s.agentID == "" {
+	if s.agentID == "" || s.agentSender {
 		return
 	}
 	body, _ := json.Marshal(map[string]string{
@@ -407,7 +388,7 @@ func (s *Server) RegisterAgent() {
 // UnregisterAgent removes this agent from the backend registry.
 // Called on MCP server shutdown so other agents see it as gone.
 func (s *Server) UnregisterAgent() {
-	if s.agentID == "" {
+	if s.agentID == "" || s.agentSender {
 		return
 	}
 	url := s.apiURL + "/api/agents/" + s.agentID + "?channel_id=" + s.channelID

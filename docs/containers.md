@@ -402,7 +402,7 @@ On server startup, `Restore()` populates the registry from Docker containers tha
 
 ### FindOrCreateShell
 
-Terminal connections use `FindOrCreateShell` to get a shell container for a channel. It uses a per-channel mutex to prevent duplicate containers when multiple terminal panes connect simultaneously (double-checked locking pattern).
+Terminal connections use `FindOrCreateShell` to get a shell container for a channel. It uses a per-channel mutex to prevent duplicate containers when multiple terminal panes connect simultaneously (double-checked locking pattern). A shell container still pending removal is taken back, its timer cancelled, so a pane opened within the keep-alive reuses it.
 
 ## Container Removal
 
@@ -482,12 +482,13 @@ Both are resolved from the channel's own config layers, so a project can raise o
 
 ## Shell Containers
 
-`CreateShellContainer` creates a long-lived container for terminal access. Instead of running the Claude CLI, these containers execute `sleep infinity` and persist until explicitly stopped.
+`CreateShellContainer` creates a long-lived container for terminal access. Instead of running the Claude CLI, these containers execute `sleep infinity`.
 
 Shell containers:
 - Use the same `createAndStartContainer` pipeline (same env, mounts, MCP config).
-- Are **not** auto-removed via `scheduleRemove`.
-- Are used by the terminal system for interactive sessions (`docker exec`).
+- Are shared by every docker shell and agent pane of the channel, in any tab, as `docker exec` sessions.
+- Are marked for removal after `container_keep_alive_sec` once no live session runs in them: the last pane with one closes, or its process ends (a shell left with `exit`). Closing one pane, or a tab, shown or not, leaves the container to the panes still open elsewhere; panes on a tab never opened have no session and don't hold it. A session started while the last one is being released takes the container back. A session no app window holds any more is closed after 5 minutes (see [Session Lifecycle](terminal.md#session-lifecycle)), which releases the container the same way.
+- Are removed at once by the layout's **Kill** button, and marked for removal when their channel or thread is deleted.
 
 ---
 
@@ -517,12 +518,15 @@ After a successful startup build, `PruneBuildCache` drops BuildKit cache entries
 
 ## Reclaiming Docker Space
 
-The **Containers** settings section exposes a "Reclaim Docker space" action (`POST /api/image/reclaim`) that frees disk on demand:
+The **Containers** settings section exposes a "Reclaim Docker space" action. On open it shows, by source, what reclaiming would free (`GET /api/image/reclaimable`, read from Docker's disk usage). Sizing volumes means walking them, which takes minutes on a large daemon, so the UI asks twice: once without volume sizes, back in seconds, then with `?volume_sizes=true`. The action itself is `POST /api/image/reclaim`, and it doesn't size volumes:
 
-- `PruneBuildCache(unusedFor=0)` drops **all currently-unused** BuildKit cache.
-- `PruneDanglingImages` removes **dangling (untagged)** images — layers orphaned by repeated rebuilds. Tagged images still in use (`loop-agent`, project images) are preserved.
+- `PruneBuildCache(unusedFor=0, all)` drops **all currently-unused** BuildKit cache.
+- `PruneDanglingImages` removes **dangling (untagged)** images — layers orphaned by repeated rebuilds.
+- `PruneAnonymousVolumes` removes the **anonymous** volumes no container uses. Named volumes, which hold caches and databases someone chose to keep, are never pruned.
+- The Chrome profile volumes (`loop-chrome-profile-*`) of **deleted channels** are removed, when no container mounts them.
+- Opt-in, with `{"unused_images": true}` in the body: the **tagged images no container uses** are removed too. Loop's own are kept: the agent and Chrome images, the embeddings image, project images and the child images built on the agent image.
 
-The handler returns a `ReclaimResult` (`build_cache_reclaimed`, `images_reclaimed`, `total_reclaimed`, in bytes) and the UI reports the space freed. Build-cache pruning is daemon-global, not scoped to Loop's own builds, and the next image build runs slower until the cache warms again.
+Removals aren't forced, so an image or volume a container started using in the meantime stays. The handler returns a `ReclaimResult` (`build_cache_reclaimed`, `images_reclaimed`, `unused_images_reclaimed`, `volumes_reclaimed`, `total_reclaimed`, in bytes, and `orphan_volumes_removed`, a count, since Docker doesn't say what removing a volume frees) and the UI reports the space freed. Build-cache pruning is daemon-global, not scoped to Loop's own builds, and the next image build runs slower until the cache warms again.
 
 ---
 

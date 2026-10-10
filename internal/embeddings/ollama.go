@@ -15,13 +15,15 @@ import (
 	"time"
 )
 
+// OllamaImage is the image the embeddings container runs.
+const OllamaImage = "ollama/ollama:latest"
+
 const (
 	defaultOllamaURL        = "http://localhost:11434"
 	defaultOllamaModel      = "nomic-embed-text"
 	defaultOllamaDims       = 768
 	ollamaContainerName     = "loop-ollama"
 	ollamaVolumeName        = "loop-ollama"
-	ollamaImage             = "ollama/ollama:latest"
 	ollamaStartupWait       = 30 * time.Second
 	ollamaStartupPollDelay  = 500 * time.Millisecond
 	ollamaIdleTimeout       = 5 * time.Minute
@@ -243,7 +245,7 @@ func (e *OllamaEmbedder) ensureRunning(ctx context.Context) error {
 		"--name", ollamaContainerName,
 		"-v", ollamaVolumeName+":/root/.ollama",
 		"-p", "11434:11434",
-		ollamaImage,
+		OllamaImage,
 	); err != nil {
 		return fmt.Errorf("docker run ollama: %w", err)
 	}

@@ -66,7 +66,7 @@ func withModelSettings(settings, model string) string {
 // session id it was running. resumeAt cuts a fork at that transcript entry
 // (see agent.AgentRequest.ResumeAt); it only applies to a forked resume, and
 // only batch (print mode) runs pass it: the flag is print-mode only.
-func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID, resumeAt, agentID string, forkSession, continueSession bool, extraDirs []string) []string {
+func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID, resumeAt string, forkSession, continueSession bool, extraDirs []string) []string {
 	cmd := []string{cfg.ClaudeBinPath, "--mcp-config", mcpConfigPath}
 	if cfg.ClaudeModel != "" {
 		cmd = append(cmd, "--model", cfg.ClaudeModel)
@@ -86,13 +86,6 @@ func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID, resumeAt, 
 				cmd = append(cmd, "--resume-session-at="+resumeAt)
 			}
 		}
-	}
-	// Enable MCP Channels when agent tools are configured, so the agent
-	// can receive push notifications from other agents. Anthropic ships
-	// `--dangerously-load-development-channels` as a development-only flag,
-	// so it's opt-in via config (global → project → worktree).
-	if agentID != "" && cfg.ClaudeDangerouslyLoadDevelopmentChannels {
-		cmd = append(cmd, "--dangerously-load-development-channels", "server:loop")
 	}
 	for _, dir := range extraDirs {
 		cmd = append(cmd, "--add-dir", dir)
@@ -205,7 +198,7 @@ func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRe
 		}
 		cfg = &override
 	}
-	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, req.SessionID, req.ResumeAt, req.AgentID, req.ForkSession, false, cfg.ExtraDirs)
+	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, req.SessionID, req.ResumeAt, req.ForkSession, false, cfg.ExtraDirs)
 	settings := runSettings
 	if req.ReviewMode {
 		settings = reviewModeSettings
@@ -294,7 +287,7 @@ const claudeExitTrailer = `; __lec=$?; printf '\033[?1000l\033[?1002l\033[?1003l
 // to claude.
 func buildInteractiveClaudeCmd(cfg *config.Config, channelID, workDir, sessionID, agentID string, forkSession, continueSession bool) string {
 	mcpConfigPath := mcpConfigPathForAgent(workDir, channelID, agentID)
-	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, sessionID, "", agentID, forkSession, continueSession, cfg.ExtraDirs)
+	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, sessionID, "", forkSession, continueSession, cfg.ExtraDirs)
 	// Single-quoted for the shell: the model's "[1m]" is a glob, and the
 	// settings JSON holds no single quote.
 	if i := slices.Index(cmd, "--model"); i >= 0 {

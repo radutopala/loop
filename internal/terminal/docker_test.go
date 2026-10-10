@@ -356,6 +356,12 @@ func (s *DockerSuite) TestDefaultShellCmd() {
 	require.Equal(s.T(), []string{"/bin/bash", "-c", "echo $$ > /tmp/.loop-exec-abc.pid; exec /bin/bash --rcfile /etc/loop/bashrc -i"}, cmd)
 }
 
+func (s *DockerSuite) TestPidFileCmd() {
+	c := &DockerExecClient{}
+	cmd := c.PidFileCmd("/tmp/.loop-exec-abc.pid", []string{"claude", "--resume", "x"})
+	require.Equal(s.T(), []string{"/bin/sh", "-c", `echo $$ > "$0"; exec "$@"`, "/tmp/.loop-exec-abc.pid", "claude", "--resume", "x"}, cmd)
+}
+
 func (s *DockerSuite) TestExecCreateNoTTY() {
 	api := new(mockDockerExecAPI)
 	c := &DockerExecClient{api: api, execUser: func() string { return "1000:1000" }}

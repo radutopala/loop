@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	"github.com/radutopala/loop/internal/agentregistry"
 	"github.com/radutopala/loop/internal/db"
 )
 
@@ -21,6 +22,9 @@ func (s *TerminalHandlerSuite) TestCreateSessionWithAgentIDTriggersAutoAccept() 
 	builder := new(MockInteractiveCmdBuilder)
 	builder.On("BuildInteractiveCmd", "ch-1", "", "", "", "agent-0", false).Return("claude --dangerously-skip-permissions")
 	s.srv.SetInteractiveCmdBuilder(builder)
+	reg := agentregistry.New()
+	s.srv.SetAgentRegistry(reg)
+	defer func() { s.srv.agentRegistry = nil }()
 
 	outCh := make(chan []byte, 1)
 	doneCh := make(chan struct{})
@@ -48,6 +52,8 @@ func (s *TerminalHandlerSuite) TestCreateSessionWithAgentIDTriggersAutoAccept() 
 	case <-time.After(time.Second):
 		s.T().Fatal("timed out waiting for interactive cmd SendInput")
 	}
+	// Messages to the agent are typed into the pane's session.
+	require.Eventually(s.T(), func() bool { return reg.Terminal("ch-1", "agent-0") == "sid-1" }, time.Second, 10*time.Millisecond)
 
 	builder.AssertExpectations(s.T())
 

@@ -137,6 +137,25 @@ func (m *mockDockerClient) PruneDanglingImages(ctx context.Context) (uint64, err
 	return args.Get(0).(uint64), args.Error(1)
 }
 
+func (m *mockDockerClient) PruneAnonymousVolumes(ctx context.Context) (uint64, error) {
+	args := m.Called(ctx)
+	return args.Get(0).(uint64), args.Error(1)
+}
+
+func (m *mockDockerClient) DiskUsage(ctx context.Context, volumeSizes bool) (*container.DiskUsage, error) {
+	args := m.Called(ctx, volumeSizes)
+	du, _ := args.Get(0).(*container.DiskUsage)
+	return du, args.Error(1)
+}
+
+func (m *mockDockerClient) RemoveImage(ctx context.Context, ref string) error {
+	return m.Called(ctx, ref).Error(0)
+}
+
+func (m *mockDockerClient) RemoveVolume(ctx context.Context, name string) error {
+	return m.Called(ctx, name).Error(0)
+}
+
 func (m *mockDockerClient) ContainerList(ctx context.Context, labelKey, labelValue string) ([]string, error) {
 	args := m.Called(ctx, labelKey, labelValue)
 	if args.Get(0) == nil {
