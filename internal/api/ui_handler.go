@@ -226,7 +226,11 @@ func (s *Server) uiAgentRefusal(r *http.Request, steps []uiStep) string {
 		return "an agent's command starts with select_channel, to a channel of its project"
 	}
 	for _, step := range steps {
-		if step.Op == "select_channel" && step.ChannelID != "" && !s.agentOwnsChannel(r.Context(), p, step.ChannelID) {
+		switch {
+		case step.Op != "select_channel":
+		case step.ChannelID == "":
+			return "an agent's select_channel needs a channel_id"
+		case !s.agentOwnsChannel(r.Context(), p, step.ChannelID):
 			return "channel " + step.ChannelID + " is outside this agent's project"
 		}
 	}

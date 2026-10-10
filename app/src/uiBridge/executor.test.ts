@@ -343,6 +343,62 @@ describe("runSteps", () => {
     expect(host.clock - started).toBe(1_000);
   });
 
+  it("stays in the channel the command found open", async () => {
+    ws.setTab = (name) => {
+      host.onSleep = () => {
+        host.selected = "c2"; // the user opens another channel meanwhile
+        ws.tab = name;
+      };
+    };
+    expect(await run([{ op: "set_tab", tab: "Git" }])).toEqual([{ op: "set_tab", ok: false, error: "the window left channel c1 for c2; a command's steps stay in its channel" }]);
+  });
+
+  it("stays in the channel select_channel opened", async () => {
+    const ws2 = new FakeWorkspace();
+    host.workspaces.set("c2", ws2);
+    ws2.setTab = () => {
+      host.selected = null;
+    };
+    const results = await run([
+      { op: "select_channel", channel_id: "c2" },
+      { op: "set_tab", tab: "Git" },
+      { op: "add_pane", panel: "notes" },
+    ]);
+    expect(results).toEqual([
+      { op: "select_channel", ok: true },
+      { op: "set_tab", ok: false, error: "the window left channel c2 for no channel; a command's steps stay in its channel" },
+    ]);
+  });
+
+  it("moves to each channel select_channel opens", async () => {
+    host.workspaces.set("c2", new FakeWorkspace());
+    const results = await run([
+      { op: "add_pane", panel: "notes" },
+      { op: "select_channel", channel_id: "c2" },
+      { op: "add_pane", panel: "notes" },
+      { op: "select_channel", channel_id: "c1" },
+      { op: "add_pane", panel: "git" },
+    ]);
+    expect(results.map((r) => r.ok)).toEqual([true, true, true, true, true]);
+    expect(ws.calls).toEqual(["add notes - horizontal", "add git - horizontal"]);
+  });
+
+  it("doesn't add a pane once the window left the channel", async () => {
+    host.workspaces.set("c2", new FakeWorkspace());
+    host.playgrounds = async () => {
+      host.selected = "c2";
+      return host.pgs;
+    };
+    for (const step of [
+      { op: "add_pane", panel: "playground", item: "board" },
+      { op: "replace_pane", pane: "chat", panel: "playground", item: "board" },
+    ]) {
+      host.selected = "c1";
+      expect(await run([step])).toEqual([{ op: step.op, ok: false, error: "the window left channel c1 for c2; a command's steps stay in its channel" }]);
+    }
+    expect(ws.calls).toEqual([]);
+  });
+
   it("uses a minute when there's no timeout", async () => {
     const started = host.clock;
     await runSteps([{ op: "select_channel", channel_id: "c2" }], host);
@@ -385,6 +441,15 @@ describe("send_input", () => {
     const t = new FakeTerminal("shell");
     host.terminals.set(`c1:${pane}`, t);
     expect(await run([{ op: "send_input", pane, text: "ls" }])).toEqual([{ op: "send_input", ok: false, error: `send_input only types into docker-agent and docker-shell panes, not ${panel}` }]);
+    expect(t.sent).toEqual([]);
+  });
+
+  it("doesn't paste a paste marker into the agent", async () => {
+    const t = new FakeTerminal("agent");
+    host.terminals.set("c1:docker-agent-1", t);
+    for (const text of ["a\x1b[201~\x1b[Z", "\x1b[200~b"]) {
+      expect(await run([{ op: "send_input", pane: "docker-agent", text }])).toEqual([{ op: "send_input", ok: false, error: "text can't contain a bracketed-paste marker (ESC [200~ or ESC [201~)" }]);
+    }
     expect(t.sent).toEqual([]);
   });
 
@@ -557,6 +622,70 @@ describe("read_output and wait_for", () => {
       { op: "wait_for", ok: true, pane: "docker-agent-1", output: "> 42" },
     ]);
     expect(sleeps).toBe(10);
+  });
+
+  it("fails when the window leaves the channel while it waits", async () => {
+    const other = new FakeTerminal("agent");
+    other.text = "another project's output";
+    host.workspaces.set("c2", Object.assign(new FakeWorkspace(), { panes: ws.panes }));
+    host.terminals.set("c2:docker-agent-1", other);
+    t.outputAt = host.clock;
+    host.onSleep = () => {
+      host.selected = "c2";
+    };
+    const results = await run([
+      { op: "select_channel", channel_id: "c1" },
+      { op: "wait_for", pane: "docker-agent" },
+      { op: "read_output", pane: "docker-agent" },
+      { op: "send_input", pane: "docker-agent", text: "x" },
+    ]);
+    expect(results).toEqual([
+      { op: "select_channel", ok: true },
+      { op: "wait_for", ok: false, error: "the window left channel c1 for c2; a command's steps stay in its channel" },
+    ]);
+    expect(other.reads).toEqual([]);
+    expect(other.sent).toEqual([]);
+  });
+
+  it("fails a step after the window left the channel", async () => {
+    host.workspaces.set("c2", Object.assign(new FakeWorkspace(), { panes: ws.panes }));
+    const other = new FakeTerminal("agent");
+    host.terminals.set("c2:docker-agent-1", other);
+    t.send = (data) => {
+      t.sent.push(data);
+      host.selected = "c2"; // the user opens another channel meanwhile
+    };
+    const results = await run([
+      { op: "send_input", pane: "docker-agent", text: "go" },
+      { op: "read_output", pane: "docker-agent" },
+      { op: "send_input", pane: "docker-agent", text: "more" },
+    ]);
+    expect(results).toEqual([
+      { op: "send_input", ok: true, pane: "docker-agent-1" },
+      { op: "read_output", ok: false, error: "the window left channel c1 for c2; a command's steps stay in its channel" },
+    ]);
+    expect(other.reads).toEqual([]);
+    expect(other.sent).toEqual([]);
+  });
+
+  it("reads the new terminal of a pane that remounted", async () => {
+    const remounted = new FakeTerminal("agent");
+    remounted.text = "> 42";
+    t.outputAt = host.clock;
+    t.text = "stale";
+    host.onSleep = () => {
+      remounted.outputAt = host.clock;
+      host.terminals.set("c1:docker-agent-1", remounted);
+    };
+    expect(await run([{ op: "wait_for", pane: "docker-agent", match: "42" }])).toEqual([{ op: "wait_for", ok: true, pane: "docker-agent-1", output: "> 42" }]);
+  });
+
+  it("fails when the pane closes while it waits", async () => {
+    t.outputAt = host.clock;
+    host.onSleep = () => {
+      host.terminals.delete("c1:docker-agent-1");
+    };
+    expect(await run([{ op: "wait_for", pane: "docker-agent", match: "never" }])).toEqual([{ op: "wait_for", ok: false, error: "pane docker-agent-1 is no longer open" }]);
   });
 
   it("is done when the session ends", async () => {

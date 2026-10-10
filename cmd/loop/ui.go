@@ -53,8 +53,10 @@ A pane is a pane id or a panel type, the first pane of that type. The
 terminal steps (send_input, read_output, wait_for) use only docker-agent and
 docker-shell panes, never a host shell. wait_for waits for output matching
 match, or else for the terminal to be quiet for quiet_ms; after a send_input
-to the pane in the same command, only output since counts. The steps go to
-the focused window unless --client names another; ui:state lists them.`,
+to the pane in the same command, only output since counts. A command stays
+in the channel select_channel opened (or the one open at its start): if the
+window shows another, its next step fails. The steps go to the focused
+window unless --client names another; ui:state lists them.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			var steps []byte

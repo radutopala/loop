@@ -257,6 +257,8 @@ func (s *UIHandlerSuite) TestAgentCommandsStayInItsProject() {
 	}{
 		{"not opening a channel first", `[{"op":"set_tab","tab":"Git"}]`, http.StatusForbidden, "starts with select_channel"},
 		{"another project's channel", `[{"op":"select_channel","channel_id":"other"}]`, http.StatusForbidden, "channel other is outside this agent's project"},
+		{"select_channel without a channel", `[{"op":"select_channel"}]`, http.StatusForbidden, "select_channel needs a channel_id"},
+		{"select_channel without a channel later", `[{"op":"select_channel","channel_id":"ch-1"},{"op":"select_channel","channel_id":""}]`, http.StatusForbidden, "select_channel needs a channel_id"},
 		{"another project's channel later", `[{"op":"select_channel","channel_id":"ch-1"},{"op":"select_channel","channel_id":"other"}]`, http.StatusForbidden, "channel other is outside"},
 		// Past the check, to no window.
 		{"its own channel", `[{"op":"select_channel","channel_id":"ch-1"},{"op":"set_tab","tab":"Git"}]`, http.StatusNotFound, "no app window"},

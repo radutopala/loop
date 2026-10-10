@@ -58,7 +58,7 @@ An agent token works only on the routes in-container clients call (the table is 
 
 On the routes it may call, an agent is held to its own project. Every channel, thread, task, workflow run and `dir_path` a request names, in the path, the query or the JSON body, must be the agent's own channel or dir, or share its project root (after symlinks). A request that names anything else gets 403. The exception is `POST /api/messages` (the `send_message` tool): its `channel_id` may be any channel, so one agent can hand work or news to another project's channel. Agents may also only change `project` bash shortcuts, and can't start workflows while `workflow_bash_local` runs workflow bash on the host. The routes that change review comments (delete, edit, push one, push all) are held to the agent's own channel, not its project: they act on the PR as the user. An agent may not delete a GitHub comment.
 
-On the UI bridge, an agent's command must start with `select_channel` to a channel of its project, and every `select_channel` in it must stay in the project. `GET /api/ui/state` leaves out the `state` of windows showing a channel outside it. The UI WebSocket stays owner-only.
+On the UI bridge, an agent's command must start with `select_channel` to a channel of its project, and every `select_channel` in it must name a channel of the project. `GET /api/ui/state` leaves out the `state` of windows showing a channel outside it. The UI WebSocket stays owner-only.
 
 ### Public routes
 
@@ -2798,6 +2798,10 @@ Terminal steps (`send_input`, `read_output`, `wait_for`) work only on `docker-ag
 ```
 
 A failed step has `"ok": false` and an `error`; the steps after it don't run.
+
+A command stays in one channel: the one its last `select_channel` opened, or else the one the window showed at its first step. If the window shows another channel while the command runs, e.g. because the user opened one, the next step (or the step waiting) fails rather than run there.
+
+`send_input` refuses text for a `docker-agent` pane that contains a bracketed-paste marker (`ESC [200~` or `ESC [201~`), which would end the paste early.
 
 **Errors:** `400` empty steps, a step without an op, a bad timeout, or a terminal step on a host shell; `403` an agent's command outside its project; `404` no window, or no window `client_id`; `502` the window dropped; `504` the window didn't answer in time.
 

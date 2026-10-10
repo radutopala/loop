@@ -23,14 +23,22 @@ export const MAX_LINES = 2000;
 
 const POLL_MS = 50;
 
+const PASTE_START = "\x1b[200~";
+const PASTE_END = "\x1b[201~";
+
 /** What a step adds to its result. */
 type StepOutput = Omit<StepResult, "op" | "ok">;
 
-/** What the steps of one command share: when each pane was last typed
- *  into, for wait_for to wait for what that brought. */
+/** What the steps of one command share: the channel they run in, and when
+ *  each pane was last typed into, for wait_for to wait for what that
+ *  brought. */
 interface Run {
   host: UiHost;
   deadline: number;
+  /** The channel select_channel opened, or the one the first step found
+   *  open. Once set, a step fails if the window shows another, so a
+   *  command never follows the window into another channel. */
+  channel?: string;
   sentAt: Map<string, number>;
 }
 
@@ -55,22 +63,33 @@ export async function runSteps(steps: UiStep[], host: UiHost, timeoutMs = DEFAUL
   return results;
 }
 
-async function waitFor(host: UiHost, deadline: number, what: string, ready: () => boolean): Promise<void> {
+async function waitFor(run: Run, what: string, ready: () => boolean): Promise<void> {
+  const { host, deadline } = run;
   while (!ready()) {
     if (host.now() >= deadline) throw new StepError(`timed out waiting for ${what}`);
     await host.sleep(POLL_MS);
+    stillOn(run);
   }
 }
 
-function workspaceOf(host: UiHost): { channelId: string; ws: WorkspaceController } {
-  const channelId = host.selectedChannelId();
-  const ws = channelId ? host.workspace(channelId) : undefined;
+/** Fails when the window no longer shows the command's channel, e.g. after
+ *  the user opened another while a step waited. */
+function stillOn(run: Run): void {
+  const current = run.host.selectedChannelId();
+  if (run.channel && current !== run.channel) throw new StepError(`the window left channel ${run.channel} for ${current ?? "no channel"}; a command's steps stay in its channel`);
+}
+
+function workspaceOf(run: Run): { channelId: string; ws: WorkspaceController } {
+  stillOn(run);
+  const channelId = run.host.selectedChannelId();
+  const ws = channelId ? run.host.workspace(channelId) : undefined;
   if (!channelId || !ws) throw new StepError("no channel is open; select_channel first");
+  run.channel ??= channelId;
   return { channelId, ws };
 }
 
-function splitWorkspace(host: UiHost): { channelId: string; ws: WorkspaceController } {
-  const w = workspaceOf(host);
+function splitWorkspace(run: Run): { channelId: string; ws: WorkspaceController } {
+  const w = workspaceOf(run);
   if (w.ws.view().canvas) throw new StepError("the open tab is a canvas; pane steps work on split tabs");
   return w;
 }
@@ -129,17 +148,19 @@ function linesOf(step: UiStep): number {
 }
 
 async function runStep(step: UiStep, run: Run): Promise<StepOutput> {
-  const { host, deadline } = run;
+  const { host } = run;
   switch (step.op) {
     case "select_channel": {
       const id = step.channel_id;
       if (!id) throw new StepError("channel_id is required");
+      run.channel = undefined;
       if (host.selectedChannelId() !== id) await host.selectChannel(id);
-      await waitFor(host, deadline, `channel ${id} to open`, () => host.selectedChannelId() === id && !!host.workspace(id));
+      await waitFor(run, `channel ${id} to open`, () => host.selectedChannelId() === id && !!host.workspace(id));
+      run.channel = id;
       return {};
     }
     case "set_tab": {
-      const { ws } = workspaceOf(host);
+      const { ws } = workspaceOf(run);
       const tab = step.tab;
       if (!tab) throw new StepError("tab is required");
       const { tabs } = ws.view();
@@ -147,20 +168,20 @@ async function runStep(step: UiStep, run: Run): Promise<StepOutput> {
       if (ws.view().tab === tab) return {};
       ws.setTab(tab);
       // The tab's panes are there once it renders.
-      await waitFor(host, deadline, `tab ${tab} to open`, () => ws.view().tab === tab);
+      await waitFor(run, `tab ${tab} to open`, () => ws.view().tab === tab);
       return {};
     }
     case "create_tab": {
-      const { ws } = workspaceOf(host);
+      const { ws } = workspaceOf(run);
       const name = step.tab?.trim();
       if (step.tab !== undefined && !name) throw new StepError("tab can't be empty");
       if (name && ws.view().tabs.includes(name)) throw new StepError(`there's already a tab "${name}"`);
       const tab = ws.createTab(name);
-      await waitFor(host, deadline, `tab ${tab} to open`, () => ws.view().tab === tab);
+      await waitFor(run, `tab ${tab} to open`, () => ws.view().tab === tab);
       return { tab };
     }
     case "rename_tab": {
-      const { ws } = workspaceOf(host);
+      const { ws } = workspaceOf(run);
       const tab = step.tab;
       if (!tab) throw new StepError("tab is required");
       const name = step.name?.trim();
@@ -170,29 +191,30 @@ async function runStep(step: UiStep, run: Run): Promise<StepOutput> {
       if (name === tab) return { tab };
       if (tabs.includes(name)) throw new StepError(`there's already a tab "${name}"`);
       ws.renameTab(tab, name);
-      await waitFor(host, deadline, `tab ${tab} to be renamed`, () => ws.view().tabs.includes(name));
+      await waitFor(run, `tab ${tab} to be renamed`, () => ws.view().tabs.includes(name));
       return { tab: name };
     }
     case "remove_tab": {
-      const { ws } = workspaceOf(host);
+      const { ws } = workspaceOf(run);
       const tab = step.tab;
       if (!tab) throw new StepError("tab is required");
       const { tabs } = ws.view();
       if (!tabs.includes(tab)) throw new StepError(`no tab "${tab}"; tabs: ${tabs.join(", ")}`);
       if (tabs.length <= 1) throw new StepError("the last tab can't be removed");
       ws.removeTab(tab);
-      await waitFor(host, deadline, `tab ${tab} to close`, () => !ws.view().tabs.includes(tab));
+      await waitFor(run, `tab ${tab} to close`, () => !ws.view().tabs.includes(tab));
       return {};
     }
     case "replace_pane": {
-      const { channelId, ws } = splitWorkspace(host);
+      const { channelId, ws } = splitWorkspace(run);
       const pane = findPane(ws.view().panes, step.pane);
       const panel = panelOf(step.panel);
       const opts = await paneOptions(step, panel, channelId, host);
+      stillOn(run);
       return { pane: attempt(() => ws.replacePane(pane.id, panel, opts)) };
     }
     case "add_pane": {
-      const { channelId, ws } = splitWorkspace(host);
+      const { channelId, ws } = splitWorkspace(run);
       const panel = panelOf(step.panel);
       const nextTo = step.next_to === undefined ? undefined : findPane(ws.view().panes, step.next_to).id;
       const direction = step.direction ?? "horizontal";
@@ -200,27 +222,28 @@ async function runStep(step: UiStep, run: Run): Promise<StepOutput> {
       const side = step.side ?? "after";
       if (side !== "before" && side !== "after") throw new StepError(`unknown side "${side}"; use before or after`);
       const opts = await paneOptions(step, panel, channelId, host);
+      stillOn(run);
       return { pane: attempt(() => ws.addPane(panel, nextTo, direction, side === "before", opts)) };
     }
     case "remove_pane": {
-      const { ws } = splitWorkspace(host);
+      const { ws } = splitWorkspace(run);
       const pane = findPane(ws.view().panes, step.pane);
       attempt(() => ws.removePane(pane.id));
       return {};
     }
     case "maximize_pane": {
-      const { ws } = splitWorkspace(host);
+      const { ws } = splitWorkspace(run);
       const pane = findPane(ws.view().panes, step.pane);
       ws.maximize(pane.id);
       return { pane: pane.id };
     }
     case "restore_pane": {
-      const { ws } = splitWorkspace(host);
+      const { ws } = splitWorkspace(run);
       ws.maximize(null);
       return {};
     }
     case "open_file": {
-      const { channelId } = splitWorkspace(host);
+      const { channelId } = splitWorkspace(run);
       if (!step.path) throw new StepError("path is required");
       if (step.line !== undefined && (!Number.isInteger(step.line) || step.line < 1)) throw new StepError("line must be a whole number from 1");
       await host.openFile(channelId, step.path, step.line).catch((err) => {
@@ -244,21 +267,21 @@ async function runStep(step: UiStep, run: Run): Promise<StepOutput> {
 
 /** The agent terminal of the step's pane, once it's there and its session
  *  has started, or ready (quiet) when ready is set. */
-async function terminalOf(step: UiStep, run: Run, verb: string, ready?: (t: TerminalInput) => boolean): Promise<{ pane: string; t: TerminalInput }> {
-  const { host, deadline } = run;
-  const { channelId, ws } = workspaceOf(host);
+async function terminalOf(step: UiStep, run: Run, verb: string, ready?: (t: TerminalInput) => boolean): Promise<{ channelId: string; pane: string; t: TerminalInput }> {
+  const { host } = run;
+  const { channelId, ws } = workspaceOf(run);
   const pane = findPane(ws.view().panes, step.pane);
   if (!INPUT_PANELS.includes(pane.panel)) throw new StepError(`${step.op} only ${verb} docker-agent and docker-shell panes, not ${pane.panel}`);
   // A pane added a step before mounts and starts its session first.
   let found: TerminalInput | undefined;
-  await waitFor(host, deadline, `pane ${pane.id} to be ${ready ? "ready for input" : "started"}`, () => {
+  await waitFor(run, `pane ${pane.id} to be ${ready ? "ready for input" : "started"}`, () => {
     found = host.terminal(channelId, pane.id);
     if (!found) return false;
     const status = found.status();
     if (ready && (status === "completed" || status === "failed")) throw new StepError(`pane ${pane.id}'s session has ${status === "failed" ? "failed" : "ended"}`);
     return ready ? ready(found) : status !== "connecting";
   });
-  return { pane: pane.id, t: found as TerminalInput };
+  return { channelId, pane: pane.id, t: found as TerminalInput };
 }
 
 async function sendInput(step: UiStep, run: Run): Promise<StepOutput> {
@@ -268,8 +291,10 @@ async function sendInput(step: UiStep, run: Run): Promise<StepOutput> {
   const submit = step.submit ?? true;
   if (t.kind === "agent") {
     // The Claude TUI: a bracketed paste keeps a multi-line prompt one
-    // input, and \r submits it.
-    t.send(`\x1b[200~${step.text}\x1b[201~${submit ? "\r" : ""}`);
+    // input, and \r submits it. A marker in the text would end the paste
+    // early and send the rest as keys.
+    if (step.text.includes(PASTE_START) || step.text.includes(PASTE_END)) throw new StepError("text can't contain a bracketed-paste marker (ESC [200~ or ESC [201~)");
+    t.send(`${PASTE_START}${step.text}${PASTE_END}${submit ? "\r" : ""}`);
   } else {
     t.send(`${step.text}${submit ? "\n" : ""}`);
   }
@@ -292,10 +317,16 @@ async function waitForOutput(step: UiStep, run: Run): Promise<StepOutput> {
   }
   const quietMs = step.quiet_ms ?? WAIT_QUIET_MS;
   if (!Number.isInteger(quietMs) || quietMs < 0) throw new StepError("quiet_ms must be a whole number from 0");
-  const { host, deadline } = run;
-  const { pane, t } = await terminalOf(step, run, "reads");
+  const { host } = run;
+  const found = await terminalOf(step, run, "reads");
+  const { channelId, pane } = found;
+  let t = found.t;
   const since = run.sentAt.get(pane) ?? 0;
-  await waitFor(host, deadline, match ? `pane ${pane} to print /${step.match}/` : `pane ${pane} to be quiet`, () => {
+  await waitFor(run, match ? `pane ${pane} to print /${step.match}/` : `pane ${pane} to be quiet`, () => {
+    // A pane that remounted has a new terminal.
+    const current = host.terminal(channelId, pane);
+    if (!current) throw new StepError(`pane ${pane} is no longer open`);
+    t = current;
     const status = t.status();
     if (status === "completed" || status === "failed") return true;
     const last = t.lastOutputAt();
