@@ -529,6 +529,13 @@ type Config struct {
 	PlaygroundShare            PlaygroundShareConfig
 	Learn                      LearnConfig
 	Explain                    ExplainConfig
+	Plugins                    PluginsConfig
+}
+
+// PluginsConfig configures plugins. Enabled lets the daemon install and run
+// them; it's global only, since installing a plugin is the owner's call.
+type PluginsConfig struct {
+	Enabled bool `json:"enabled"`
 }
 
 // GitHubConfig holds GitHub integration settings. GHUser names a `gh` CLI

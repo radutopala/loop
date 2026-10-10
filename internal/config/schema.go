@@ -908,6 +908,20 @@ func buildSchema() *ConfigSchema {
 				},
 			},
 
+			// ── Plugins section ──
+			"plugins": {
+				Type:     "object",
+				XSection: "Plugins",
+				Properties: map[string]*SchemaProperty{
+					"enabled": {
+						Type:        "boolean",
+						Title:       "Enabled",
+						Description: "Let the daemon install and run plugins. Global only.",
+						Default:     false,
+					},
+				},
+			},
+
 			// ── Permissions section (nested object) ──
 			"permissions": {
 				Type:     "object",

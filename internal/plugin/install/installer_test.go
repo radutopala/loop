@@ -128,7 +128,8 @@ const manifest = `{
 	"ui": {"panels": [{"id": "main", "label": "Echo", "entry": "ui/main/index.html"}]},
 }`
 
-type InstallerSuite struct {
+// base is the fixture the installer and service suites share.
+type base struct {
 	suite.Suite
 	ctx    context.Context
 	docker *mockDocker
@@ -137,11 +138,15 @@ type InstallerSuite struct {
 	in     *Installer
 }
 
+type InstallerSuite struct {
+	base
+}
+
 func TestInstallerSuite(t *testing.T) {
 	suite.Run(t, new(InstallerSuite))
 }
 
-func (s *InstallerSuite) SetupTest() {
+func (s *base) SetupTest() {
 	s.ctx = context.Background()
 	s.docker = new(mockDocker)
 	s.store = new(mockStore)
@@ -149,12 +154,12 @@ func (s *InstallerSuite) SetupTest() {
 	s.in = NewInstaller(s.docker, s.store, s.root, "v2026.10.3")
 }
 
-func (s *InstallerSuite) TearDownTest() {
+func (s *base) TearDownTest() {
 	s.docker.AssertExpectations(s.T())
 	s.store.AssertExpectations(s.T())
 }
 
-func (s *InstallerSuite) info() image.InspectResponse {
+func (s *base) info() image.InspectResponse {
 	return image.InspectResponse{
 		ID:          imageID,
 		RepoDigests: []string{"not a ref!", "ghcr.io/acme/other@" + digest, "ghcr.io/acme/echo@" + digest},
@@ -170,17 +175,17 @@ func pluginTar(m string) io.ReadCloser {
 	)
 }
 
-func (s *InstallerSuite) expectPull() {
+func (s *base) expectPull() {
 	s.docker.On("ImagePull", s.ctx, ref, image.PullOptions{}).Return(io.NopCloser(strings.NewReader(`{"status":"Pulling"}{"status":"Done"}`)), nil).Once()
 }
 
-func (s *InstallerSuite) expectCreated() {
+func (s *base) expectCreated() {
 	s.docker.On("ContainerCreate", s.ctx, &containertypes.Config{Image: imageID, Cmd: []string{"true"}}, (*containertypes.HostConfig)(nil), (*network.NetworkingConfig)(nil), (*ocispec.Platform)(nil), "").
 		Return(containertypes.CreateResponse{ID: "x1"}, nil).Once()
 	s.docker.On("ContainerRemove", mock.Anything, "x1", containertypes.RemoveOptions{Force: true}).Return(nil).Once()
 }
 
-func (s *InstallerSuite) expectData() {
+func (s *base) expectData() {
 	s.docker.On("CopyFromContainer", s.ctx, "x1", "/data").Return(tarOf(entry{name: "data/", uid: 1000}), nil).Once()
 }
 
@@ -375,7 +380,7 @@ func (s *InstallerSuite) TestValidateLoopVersion() {
 }
 
 // candidate returns an extracted candidate of the echo plugin.
-func (s *InstallerSuite) candidate(hex string) *Candidate {
+func (s *base) candidate(hex string) *Candidate {
 	dir := filepath.Join(s.root, "echo", "images", hex)
 	require.NoError(s.T(), os.MkdirAll(dir, 0o755))
 	m, err := plugin.ParseManifest([]byte(manifest))
@@ -397,7 +402,7 @@ func (s *InstallerSuite) TestInstall() {
 
 func (s *InstallerSuite) TestInstallFailures() {
 	c := s.candidate("new")
-	require.EqualError(s.T(), s.in.Install(s.ctx, c, []plugin.Capability{plugin.CapUIPanel}), `capability "files.read" is not approved`)
+	require.EqualError(s.T(), s.in.Install(s.ctx, c, []plugin.Capability{plugin.CapUIPanel}), "capability not approved: files.read")
 
 	s.store.On("UpsertPluginState", s.ctx, mock.Anything).Return(errors.New("boom")).Once()
 	require.EqualError(s.T(), s.in.Install(s.ctx, c, plugin.Capabilities), "recording the plugin: boom")
@@ -432,4 +437,16 @@ func (s *InstallerSuite) TestRemove() {
 	require.NoError(s.T(), os.WriteFile(filepath.Join(s.root, "echo"), nil, 0o644))
 	s.store.On("DeletePluginState", s.ctx, "echo").Return(nil).Once()
 	require.ErrorContains(s.T(), s.in.Remove(s.ctx, "echo"), "deleting the extracted plugin")
+}
+
+func (m *mockStore) ListPluginStates(ctx context.Context) ([]*db.PluginState, error) {
+	args := m.Called(ctx)
+	v, _ := args.Get(0).([]*db.PluginState)
+	return v, args.Error(1)
+}
+
+func (m *mockStore) ListPluginContainers(ctx context.Context, pluginID string) ([]*db.PluginContainer, error) {
+	args := m.Called(ctx, pluginID)
+	v, _ := args.Get(0).([]*db.PluginContainer)
+	return v, args.Error(1)
 }

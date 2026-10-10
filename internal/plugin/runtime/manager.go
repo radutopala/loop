@@ -521,10 +521,30 @@ func (m *Manager) RemoveLeftovers(ctx context.Context) error {
 
 // StopAll stops every running container, at shutdown.
 func (m *Manager) StopAll(ctx context.Context) {
+	m.stopWhere(ctx, func(key) bool { return true })
+}
+
+// StopPlugin stops a plugin's containers in every channel and forgets their
+// failed starts, so the next use starts its current image afresh.
+func (m *Manager) StopPlugin(ctx context.Context, pluginID string) {
+	m.stopWhere(ctx, func(k key) bool { return k.pluginID == pluginID })
 	m.mu.Lock()
-	keys := make([]key, 0, len(m.running))
+	for k := range m.failures {
+		if k.pluginID == pluginID {
+			delete(m.failures, k)
+		}
+	}
+	m.mu.Unlock()
+}
+
+// stopWhere stops the running containers whose key match picks.
+func (m *Manager) stopWhere(ctx context.Context, match func(key) bool) {
+	m.mu.Lock()
+	var keys []key
 	for k := range m.running {
-		keys = append(keys, k)
+		if match(k) {
+			keys = append(keys, k)
+		}
 	}
 	m.mu.Unlock()
 	for _, k := range keys {

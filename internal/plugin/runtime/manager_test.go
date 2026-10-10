@@ -445,6 +445,19 @@ func (s *ManagerSuite) TestStopIdleAndStopAll() {
 	require.Empty(s.T(), s.m.running)
 }
 
+func (s *ManagerSuite) TestStopPlugin() {
+	s.startOne("ch1", "c1")
+	other := key{"other", "ch1"}
+	s.m.running[other] = &instance{containerID: "o1"}
+	s.m.failures[key{"cogtest", "ch2"}] = &failure{count: 3}
+	s.m.failures[other] = &failure{count: 1}
+
+	s.expectStopped("ch1", "c1")
+	s.m.StopPlugin(s.ctx, "cogtest")
+	require.Equal(s.T(), map[key]*instance{other: {containerID: "o1"}}, s.m.running)
+	require.Equal(s.T(), map[key]*failure{other: {count: 1}}, s.m.failures)
+}
+
 func (s *ManagerSuite) TestRunIdleLoop() {
 	ctx, cancel := context.WithCancel(s.ctx)
 	s.ctx = ctx

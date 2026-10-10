@@ -162,6 +162,22 @@ func (s *ConfigSuite) TestLoadGitHubConfig() {
 	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "radutopala", cfg.GitHub.GHUser)
+	require.False(s.T(), cfg.Plugins.Enabled, "plugins are off by default")
+}
+
+func (s *ConfigSuite) TestLoadPluginsConfig() {
+	s.loader.readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			"platforms": ["discord"],
+			"discord_token": "t",
+			"discord_app_id": "a",
+			"plugins": { "enabled": true }
+		}`), nil
+	}
+
+	cfg, err := s.loader.load()
+	require.NoError(s.T(), err)
+	require.True(s.T(), cfg.Plugins.Enabled)
 }
 
 func (s *ConfigSuite) TestLoadBrowserEnabledExplicitFalse() {

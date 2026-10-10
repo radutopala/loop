@@ -355,7 +355,7 @@ func (in *Installer) Install(ctx context.Context, c *Candidate, approved []plugi
 	var caps []string
 	for _, cap := range c.Manifest.Capabilities {
 		if !slices.Contains(approved, cap) {
-			return fmt.Errorf("capability %q is not approved", cap)
+			return fmt.Errorf("%w: %s", ErrNotApproved, cap)
 		}
 		caps = append(caps, string(cap))
 	}

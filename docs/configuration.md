@@ -102,6 +102,12 @@ Browser settings are grouped under `"browser"`:
 |---|---|---|---|
 | `github.gh_user` | `string` | `""` | Named `gh` CLI account to use for PR lookups (see `gh auth status`). Empty falls back to whichever account `gh` currently has active. Used by `GET /api/channels/{id}/pr` and the Git panel's PR chip. |
 
+#### Plugins
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `plugins.enabled` | `bool` | `false` | Lets the daemon install and run plugins (`loop plugin`). Global only: a project config can't turn it on. |
+
 #### Mounts
 
 ```jsonc
