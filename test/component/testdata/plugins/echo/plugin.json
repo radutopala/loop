@@ -1,0 +1,17 @@
+// The echo fixture plugin: the smallest image Loop installs and runs. It
+// answers the Loop → plugin contract and echoes what it's sent.
+{
+  "id": "echo",
+  "name": "Echo",
+  "version": "0.1.0",
+  "api": "1",
+  "tools": [
+    {
+      "name": "echo",
+      "description": "Returns its input",
+      "input_schema": { "type": "object", "properties": { "text": { "type": "string" } } },
+    },
+  ],
+  "actions": [{ "id": "ping" }],
+  "resources": { "memory": "64m", "cpus": 0.25 },
+}
