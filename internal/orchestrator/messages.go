@@ -481,29 +481,8 @@ func (o *Orchestrator) prepareAgentRequest(ctx context.Context, msg *bot.Incomin
 			}
 		}
 	}
-	// A learn thread only ever runs read-only, as a learn pass or a user's
-	// reply to one. Without its parent there's nothing to set up, and it
-	// must not run as a chat with the full tool set instead.
-	if channel.Kind == db.ChannelKindLearn {
-		if parent == nil {
-			o.logger.Error("learn: loading the learn thread's parent", "error", parentErr, "channel_id", msg.ChannelID, "parent_id", channel.ParentID)
-			return nil, nil, nil, fmt.Errorf("learn thread %s: parent %q not found", msg.ChannelID, channel.ParentID)
-		}
-		if err := o.applyLearnRequest(ctx, req, parent, msg.AuthorID == learnAuthorID, turnID); err != nil {
-			return nil, nil, nil, err
-		}
-	}
-	// An explain thread only ever runs explanations, each a read-only fork
-	// of its parent's session; anything else must not run there.
-	if channel.Kind == db.ChannelKindExplain {
-		if msg.AuthorID != explainAuthorID {
-			return nil, nil, nil, errNotExplainRun(msg.ChannelID)
-		}
-		if parent == nil {
-			o.logger.Error("explain: loading the explain thread's parent", "error", parentErr, "channel_id", msg.ChannelID, "parent_id", channel.ParentID)
-			return nil, nil, nil, fmt.Errorf("explain thread %s: parent %q not found", msg.ChannelID, channel.ParentID)
-		}
-		if err := o.applyExplainRequest(ctx, req, parent, turnID); err != nil {
+	if db.IsHiddenKind(channel.Kind) {
+		if err := o.shapeHiddenRun(ctx, req, msg, channel, parent, parentErr, turnID); err != nil {
 			return nil, nil, nil, err
 		}
 	}

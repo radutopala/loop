@@ -415,27 +415,27 @@ type deleteStep struct {
 var deleteChannelSteps = []deleteStep{
 	{`DELETE FROM messages WHERE channel_id = \?`, "deleting messages for channel"},
 	{`DELETE FROM quality_snapshots WHERE channel_id = \?`, "deleting quality snapshots for channel"},
-	{`DELETE FROM messages WHERE channel_id IN \(SELECT channel_id FROM channels WHERE kind IN \(` + hiddenKindsRe + `\) AND parent_id IN \(\?\)\)`, "deleting hidden thread messages"},
-	{`DELETE FROM quality_snapshots WHERE channel_id IN \(SELECT channel_id FROM channels WHERE kind IN \(` + hiddenKindsRe + `\) AND parent_id IN \(\?\)\)`, "deleting hidden thread quality snapshots"},
+	{`DELETE FROM messages WHERE channel_id IN \(SELECT channel_id FROM channels WHERE ` + hiddenKindRe + ` AND parent_id IN \(\?\)\)`, "deleting hidden thread messages"},
+	{`DELETE FROM quality_snapshots WHERE channel_id IN \(SELECT channel_id FROM channels WHERE ` + hiddenKindRe + ` AND parent_id IN \(\?\)\)`, "deleting hidden thread quality snapshots"},
 	{`DELETE FROM learn_proposals WHERE channel_id IN \(\?\)`, "deleting learn proposals"},
 	{`DELETE FROM explanations WHERE channel_id IN \(\?\)`, "deleting explanations"},
 	{`DELETE FROM learn_passes WHERE channel_id IN \(\?\)`, "deleting learn passes"},
-	{`DELETE FROM channels WHERE kind IN \(` + hiddenKindsRe + `\) AND parent_id IN \(\?\)`, "deleting hidden threads"},
+	{`DELETE FROM channels WHERE ` + hiddenKindRe + ` AND parent_id IN \(\?\)`, "deleting hidden threads"},
 	{`DELETE FROM channels WHERE channel_id = \?`, ""},
 }
 
 const (
-	childIDs      = `SELECT channel_id FROM channels WHERE parent_id = \?`
-	hiddenKindsRe = `'learn', 'explain'`
+	childIDs     = `SELECT channel_id FROM channels WHERE parent_id = \?`
+	hiddenKindRe = `\(kind IN \('learn', 'explain'\) OR kind LIKE 'plugin:_%'\)`
 )
 
 var deleteChildrenSteps = []deleteStep{
-	{`DELETE FROM messages WHERE channel_id IN \(SELECT channel_id FROM channels WHERE kind IN \(` + hiddenKindsRe + `\) AND parent_id IN \(` + childIDs + `\)\)`, "deleting hidden thread messages"},
-	{`DELETE FROM quality_snapshots WHERE channel_id IN \(SELECT channel_id FROM channels WHERE kind IN \(` + hiddenKindsRe + `\) AND parent_id IN \(` + childIDs + `\)\)`, "deleting hidden thread quality snapshots"},
+	{`DELETE FROM messages WHERE channel_id IN \(SELECT channel_id FROM channels WHERE ` + hiddenKindRe + ` AND parent_id IN \(` + childIDs + `\)\)`, "deleting hidden thread messages"},
+	{`DELETE FROM quality_snapshots WHERE channel_id IN \(SELECT channel_id FROM channels WHERE ` + hiddenKindRe + ` AND parent_id IN \(` + childIDs + `\)\)`, "deleting hidden thread quality snapshots"},
 	{`DELETE FROM learn_proposals WHERE channel_id IN \(` + childIDs + `\)`, "deleting learn proposals"},
 	{`DELETE FROM explanations WHERE channel_id IN \(` + childIDs + `\)`, "deleting explanations"},
 	{`DELETE FROM learn_passes WHERE channel_id IN \(` + childIDs + `\)`, "deleting learn passes"},
-	{`DELETE FROM channels WHERE kind IN \(` + hiddenKindsRe + `\) AND parent_id IN \(` + childIDs + `\)`, "deleting hidden threads"},
+	{`DELETE FROM channels WHERE ` + hiddenKindRe + ` AND parent_id IN \(` + childIDs + `\)`, "deleting hidden threads"},
 	{`DELETE FROM messages WHERE channel_id IN \(` + childIDs + `\)`, "deleting messages for child channels"},
 	{`DELETE FROM quality_snapshots WHERE channel_id IN \(` + childIDs + `\)`, "deleting quality snapshots for child channels"},
 	{`DELETE FROM channels WHERE parent_id = \?`, ""},

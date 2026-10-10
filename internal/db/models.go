@@ -1,6 +1,7 @@
 package db
 
 import (
+	"strings"
 	"time"
 
 	"github.com/radutopala/loop/internal/types"
@@ -49,24 +50,48 @@ type Channel struct {
 	// ("off") for this channel; empty inherits the config's explain.enabled.
 	ExplainOverride string `json:"explain_override"`
 	// Kind is ChannelKindLearn or ChannelKindExplain for the hidden thread a
-	// channel's learn passes or explanations run in; empty for every other
-	// channel and thread.
+	// channel's learn passes or explanations run in, PluginKind(id) for the
+	// one a plugin's agent runs use; empty for every other channel and
+	// thread.
 	Kind      string    `json:"kind"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // Kinds of hidden thread. ChannelKindLearn runs a channel's learn passes,
-// ChannelKindExplain its explanations.
+// ChannelKindExplain its explanations. A plugin's agent runs use a kind of
+// their own, ChannelKindPluginPrefix followed by the plugin's id (see
+// PluginKind).
 const (
-	ChannelKindLearn   = "learn"
-	ChannelKindExplain = "explain"
+	ChannelKindLearn        = "learn"
+	ChannelKindExplain      = "explain"
+	ChannelKindPluginPrefix = "plugin:"
 )
+
+// PluginKind is the kind of the hidden thread plugin pluginID's agent runs
+// use.
+func PluginKind(pluginID string) string {
+	return ChannelKindPluginPrefix + pluginID
+}
+
+// PluginOfKind returns the plugin id kind names and true when kind is a
+// plugin's hidden thread kind, "" and false otherwise.
+func PluginOfKind(kind string) (string, bool) {
+	id, ok := strings.CutPrefix(kind, ChannelKindPluginPrefix)
+	if !ok || id == "" {
+		return "", false
+	}
+	return id, true
+}
 
 // IsHiddenKind reports whether kind marks a hidden thread, one the user
 // never sees in the sidebar, search or session import.
 func IsHiddenKind(kind string) bool {
-	return kind == ChannelKindLearn || kind == ChannelKindExplain
+	if kind == ChannelKindLearn || kind == ChannelKindExplain {
+		return true
+	}
+	_, ok := PluginOfKind(kind)
+	return ok
 }
 
 // Values of Channel.LearnOverride and Channel.ExplainOverride; empty inherits

@@ -426,7 +426,7 @@ func (s *SQLiteStore) GetMessagesCursor(ctx context.Context, channelID string, c
 func (s *SQLiteStore) SearchMessages(ctx context.Context, query string, limit int) ([]*Message, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+messageColumns+` FROM messages WHERE kind = 'message' AND content LIKE ?
-		 AND channel_id NOT IN (SELECT channel_id FROM channels WHERE kind IN (`+hiddenKinds+`))
+		 AND channel_id NOT IN (SELECT channel_id FROM channels WHERE `+hiddenKind+`)
 		 ORDER BY created_at DESC LIMIT ?`,
 		"%"+query+"%", limit,
 	)

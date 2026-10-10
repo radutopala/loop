@@ -61,7 +61,7 @@ func (s *SQLiteStore) InsertHiddenThread(ctx context.Context, ch *Channel) error
 func (s *SQLiteStore) ListHiddenThreads(ctx context.Context, parentID string) ([]*Channel, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+channelColumns+`
-		 FROM channels WHERE parent_id = ? AND kind IN (`+hiddenKinds+`) ORDER BY id`,
+		 FROM channels WHERE parent_id = ? AND `+hiddenKind+` ORDER BY id`,
 		parentID,
 	)
 	if err != nil {
