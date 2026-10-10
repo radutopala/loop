@@ -191,12 +191,15 @@ describe("contentCapBase", () => {
     await expect(api.contentCapBase(raw)).resolves.toBe("http://api/c/cap1/");
     await expect(api.contentCapBase({ kind: "playground", name: "demo" })).resolves.toBe("http://api/c/cap2/");
     await expect(api.contentCapBase({ kind: "playground", channelId: "ch", name: "demo" })).resolves.toBe("http://api/c/cap3/");
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    await expect(api.contentCapBase({ kind: "plugin", name: "demo" })).resolves.toBe("http://api/c/cap4/");
+    await expect(api.contentCapBase({ kind: "plugin", name: "demo" })).resolves.toBe("http://api/c/cap4/");
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     const bodies = fetchMock.mock.calls.map((c) => JSON.parse(String(c[1]?.body)));
     expect(bodies).toEqual([
       { kind: "raw", channel_id: "ch", root: 1 },
       { kind: "playground", channel_id: "", name: "demo" },
       { kind: "playground", channel_id: "ch", name: "demo" },
+      { kind: "plugin", name: "demo" },
     ]);
     expect(authOf(fetchMock.mock.calls[0]![1])).toBe("Bearer tok");
   });

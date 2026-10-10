@@ -131,7 +131,7 @@ export function wsProtocols(): string[] {
 // POST /api/content-caps, cached per scope and minted again before they
 // expire or once the daemon forgets them (a restart).
 
-export type ContentCapScope = { kind: "raw"; channelId: string; root: number } | { kind: "playground"; channelId?: string; name: string };
+export type ContentCapScope = { kind: "raw"; channelId: string; root: number } | { kind: "playground"; channelId?: string; name: string } | { kind: "plugin"; name: string };
 
 interface CachedCap {
   base: string;
@@ -141,11 +141,29 @@ interface CachedCap {
 const caps = new Map<string, Promise<CachedCap>>();
 
 function capKey(scope: ContentCapScope): string {
-  return scope.kind === "raw" ? `raw\0${scope.channelId}\0${scope.root}` : `playground\0${scope.channelId ?? ""}\0${scope.name}`;
+  switch (scope.kind) {
+    case "raw":
+      return `raw\0${scope.channelId}\0${scope.root}`;
+    case "playground":
+      return `playground\0${scope.channelId ?? ""}\0${scope.name}`;
+    case "plugin":
+      return `plugin\0${scope.name}`;
+  }
+}
+
+function capBody(scope: ContentCapScope): Record<string, unknown> {
+  switch (scope.kind) {
+    case "raw":
+      return { kind: "raw", channel_id: scope.channelId, root: scope.root };
+    case "playground":
+      return { kind: "playground", channel_id: scope.channelId ?? "", name: scope.name };
+    case "plugin":
+      return { kind: "plugin", name: scope.name };
+  }
 }
 
 async function mintCap(scope: ContentCapScope): Promise<CachedCap> {
-  const body = scope.kind === "raw" ? { kind: "raw", channel_id: scope.channelId, root: scope.root } : { kind: "playground", channel_id: scope.channelId ?? "", name: scope.name };
+  const body = capBody(scope);
   const res = await apiFetch(`${apiUrl}/api/content-caps`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

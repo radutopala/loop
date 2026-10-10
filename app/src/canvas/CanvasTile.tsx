@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentInfo } from "../hooks/useAgentRegistry";
 import { type ContainerStatsByType, fmtBytes, statsForPanel } from "../hooks/useContainerStats";
+import { usePluginPanels } from "../plugins/PluginPanelsContext";
 import { useTheme } from "../ThemeContext";
 import { fonts } from "../theme";
-import { type LeafNode, PANEL_LABELS, PANEL_OPTIONS, type PanelType } from "../types/panels";
+import { type LeafNode, type PanelType, type PaneMeta, paneLabel } from "../types/panels";
+import { canvasAddRows } from "./canvasAddRows";
 import type { CanvasTile as CanvasTileType } from "./types";
 
 const HEADER_HEIGHT = 24;
@@ -21,7 +23,7 @@ interface CanvasTileProps {
   onBringToFront: (id: string) => void;
   onClose: (id: string) => void;
   /** Add a new tile at a world position. */
-  onAddTile: (panel: PanelType, position: { x: number; y: number }) => void;
+  onAddTile: (panel: PanelType, position: { x: number; y: number }, meta?: PaneMeta) => void;
   /** Singleton panels already in use. */
   usedSingletons?: Set<PanelType>;
   /** Toggle maximize — tile fills viewport. */
@@ -76,7 +78,8 @@ export function CanvasTile({
   }, [tile.id, onBringToFront]);
 
   const isAgent = tile.panel === "docker-agent";
-  const label = isAgent ? agentInfo?.name || tile.id : PANEL_LABELS[tile.panel];
+  const label = isAgent ? agentInfo?.name || tile.id : paneLabel(tile.panel, tile.plugin);
+  const pluginPanels = usePluginPanels();
   const statsEntry = statsForPanel(tile.panel, containerStats);
 
   // --- Drag (reports deltas in world coords) ---
@@ -141,6 +144,7 @@ export function CanvasTile({
     panel: tile.panel,
     flex: 1,
     ...(tile.openMode ? { openMode: tile.openMode } : {}),
+    ...(tile.plugin ? { plugin: tile.plugin } : {}),
   };
 
   return (
@@ -230,16 +234,16 @@ export function CanvasTile({
               }}
               onMouseDown={(e) => e.stopPropagation()}
             >
-              {PANEL_OPTIONS.filter((opt) => !hiddenPanels?.includes(opt.panel)).map((opt) => {
-                const disabled = !!usedSingletons?.has(opt.panel);
+              {canvasAddRows(usedSingletons, pluginPanels, hiddenPanels).map((opt) => {
+                const disabled = opt.disabled;
                 return (
                   <button
-                    key={opt.panel}
+                    key={opt.key}
                     disabled={disabled}
                     onClick={(e) => {
                       e.stopPropagation();
                       if (!disabled) {
-                        onAddTile(opt.panel, { x: tile.x + tile.width + 20, y: tile.y });
+                        onAddTile(opt.panel, { x: tile.x + tile.width + 20, y: tile.y }, opt.meta);
                         setShowAddMenu(false);
                       }
                     }}

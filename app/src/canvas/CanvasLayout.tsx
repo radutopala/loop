@@ -2,11 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { SideView } from "../components/layout/LearnSplit";
 import type { AgentInfo } from "../hooks/useAgentRegistry";
 import type { ContainerStatsByType } from "../hooks/useContainerStats";
+import { usePluginPanels } from "../plugins/PluginPanelsContext";
 import { EmptyLayoutPicker } from "../splitPane/AddPanelButton";
 import { useTheme } from "../ThemeContext";
-import { type AgentOpenMode, EXCLUSIVE_PANELS, type LeafNode, PANEL_OPTIONS, type PanelType, SINGLETON_PANELS } from "../types/panels";
+import { EXCLUSIVE_PANELS, type LeafNode, type PanelType, type PaneMeta, SINGLETON_PANELS } from "../types/panels";
 import { CanvasLearnDock, LEARN_DOCK_GAP } from "./CanvasLearnDock";
 import { CanvasTile } from "./CanvasTile";
+import { canvasAddRows } from "./canvasAddRows";
 import { DEFAULT_TILE_SIZES, findNonOverlappingPosition } from "./tilePlacement";
 import type { CanvasNode, CanvasTile as CanvasTileType } from "./types";
 
@@ -37,6 +39,7 @@ export interface LearnDock {
 
 /** Free-form canvas layout with draggable/resizable tiles, pan & zoom. */
 export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats, onCanvasChange, hiddenPanels, learnDock }: CanvasLayoutProps) {
+  const pluginPanels = usePluginPanels();
   const { colors } = useTheme();
   const [showAddMenu, setShowAddMenu] = useState<{ x: number; y: number } | null>(null);
   const [maximizedId, setMaximizedId] = useState<string | null>(null);
@@ -172,7 +175,7 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats,
   );
 
   const handleAddTile = useCallback(
-    (panel: PanelType, position?: { x: number; y: number }, meta?: { openMode?: AgentOpenMode }) => {
+    (panel: PanelType, position?: { x: number; y: number }, meta?: PaneMeta) => {
       // Default position: center of the visible viewport.
       let worldPos: { x: number; y: number };
       if (position) {
@@ -189,6 +192,8 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats,
       // Nudge position to avoid overlapping existing tiles.
       const adjusted = findNonOverlappingPosition(worldPos.x, worldPos.y, tileW, tileH, canvas.tiles);
       const openMode = panel === "docker-agent" ? meta?.openMode : undefined;
+      const plugin = panel === "plugin" ? meta?.plugin : undefined;
+      if (panel === "plugin" && !plugin) return;
       const newTile: CanvasTileType = {
         id,
         panel,
@@ -198,6 +203,7 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats,
         height: tileH,
         zIndex: maxZ + 1,
         ...(openMode ? { openMode } : {}),
+        ...(plugin ? { plugin } : {}),
       };
       const newTiles: CanvasTileType[] = [newTile];
       if (panel === "editor" && !canvas.tiles.some((t) => t.panel === "file-tree")) {
@@ -415,14 +421,14 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats,
             boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
           }}
         >
-          {PANEL_OPTIONS.filter((opt) => !hiddenPanels?.includes(opt.panel)).map((opt) => {
-            const disabled = usedSingletons.has(opt.panel);
+          {canvasAddRows(usedSingletons, pluginPanels, hiddenPanels).map((opt) => {
+            const disabled = opt.disabled;
             return (
               <button
-                key={opt.panel}
+                key={opt.key}
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (!disabled) handleAddTile(opt.panel);
+                  if (!disabled) handleAddTile(opt.panel, undefined, opt.meta);
                 }}
                 disabled={disabled}
                 style={{
@@ -499,6 +505,7 @@ const PANEL_COLORS: Record<PanelType, string> = {
   audit: "#ef4444",
   quality: "#22c55e",
   review: "#facc15",
+  plugin: "#2dd4bf",
 };
 
 function CanvasMinimap({

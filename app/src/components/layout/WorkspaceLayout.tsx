@@ -30,6 +30,8 @@ import {
   saveLayout,
   saveLayoutType,
 } from "../../layouts/persistence";
+import { PluginPanel } from "../../plugins/PluginPanel";
+import { PluginPanelsProvider, pluginPaneKey, shownPluginPanes, useInstalledPlugins, usePluginPanelsValue } from "../../plugins/PluginPanelsContext";
 import { EmptyLayoutPicker } from "../../splitPane/AddPanelButton";
 import { PaneLeafHeader } from "../../splitPane/PaneLeafHeader";
 import { paneBoxStyle, SplitPaneLayout } from "../../splitPane/SplitPaneLayout";
@@ -53,7 +55,7 @@ import { useTheme } from "../../ThemeContext";
 import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
 import type { Channel, SessionStatus } from "../../types";
-import type { AgentOpenMode, LeafNode, PanelType, PaneNode } from "../../types/panels";
+import type { AgentOpenMode, LeafNode, PanelType, PaneMeta, PaneNode } from "../../types/panels";
 import { replaceLeaf } from "../../uiBridge/paneOps";
 import { getTerminalInput, notifyUiChanged, registerWorkspace } from "../../uiBridge/registry";
 import type { PaneOptions, WorkspaceController } from "../../uiBridge/types";
@@ -730,13 +732,15 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   );
 
   const handleSplitLeaf = useCallback(
-    (leafId: string, panel: PanelType, direction: SplitDirection, meta?: { openMode?: AgentOpenMode }) => {
+    (leafId: string, panel: PanelType, direction: SplitDirection, meta?: PaneMeta) => {
       setTree((prev) => {
         if (!prev) return prev;
         if (!canAddPanel(prev, panel)) return prev;
+        const plugin = panel === "plugin" ? meta?.plugin : undefined;
+        if (panel === "plugin" && !plugin) return prev;
         const newLeafId = leafIdForPanel(channelId, panel);
         const openMode = panel === "docker-agent" ? meta?.openMode : undefined;
-        let result = splitLeaf(prev, leafId, direction, makeLeaf(newLeafId, panel, 1, openMode));
+        let result = splitLeaf(prev, leafId, direction, makeLeaf(newLeafId, panel, 1, openMode, plugin));
         if (panel === "editor") {
           result = withDefaultFileTreeForEditor(result, newLeafId, leafIdForPanel(channelId, "file-tree"));
         }
@@ -747,10 +751,12 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   );
 
   const handleEmptyAdd = useCallback(
-    (panel: PanelType, meta?: { openMode?: AgentOpenMode }) => {
+    (panel: PanelType, meta?: PaneMeta) => {
+      const plugin = panel === "plugin" ? meta?.plugin : undefined;
+      if (panel === "plugin" && !plugin) return;
       const newLeafId = leafIdForPanel(channelId, panel);
       const openMode = panel === "docker-agent" ? meta?.openMode : undefined;
-      let newTree: PaneNode = makeLeaf(newLeafId, panel, 1, openMode);
+      let newTree: PaneNode = makeLeaf(newLeafId, panel, 1, openMode, plugin);
       if (panel === "editor") {
         newTree = withDefaultFileTreeForEditor(newTree, newLeafId, leafIdForPanel(channelId, "file-tree"));
       }
@@ -1044,6 +1050,14 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     return hidden.length > 0 ? hidden : undefined;
   }, [channel.review_enabled]);
 
+  // The installed plugins' panels, for the add-pane menus and plugin panes.
+  const installedPlugins = useInstalledPlugins();
+  const shownPlugins = useMemo(() => {
+    if (layoutType !== "canvas") return shownPluginPanes(tree);
+    return new Set((canvasState?.tiles ?? []).flatMap((t) => (t.panel === "plugin" && t.plugin ? [pluginPaneKey(t.plugin)] : [])));
+  }, [layoutType, tree, canvasState]);
+  const pluginPanels = usePluginPanelsValue(installedPlugins, shownPlugins);
+
   // The chat is mounted once, into chatHost (see ChatSlot); it renders once a slot holds the host.
   const [chatHost] = useState(createChatHost);
   const [chatHostPlaced, setChatHostPlaced] = useState(false);
@@ -1290,6 +1304,17 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
           return <AuditPanel key={`layout-audit-${channelId}`} channelId={channelId} />;
         case "quality":
           return <QualityPanel key={`layout-quality-${channelId}`} channelId={channelId} dirPath={dirPath} branch={branch} embedded onClose={() => handleRemoveLeaf(leaf.id)} />;
+        case "plugin":
+          return (
+            <PluginPanel
+              key={`layout-plugin-${channelId}-${leaf.id}`}
+              plugin={leaf.plugin}
+              channelId={channelId}
+              containerChannelId={channel.parent_id || channelId}
+              channelName={channel.name}
+              dirPath={dirPath}
+            />
+          );
         case "review":
           return (
             <ReviewPanel
@@ -1754,123 +1779,126 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       {/* Layout content. Its shortcut pickers (the composers', the
           terminals') fetch again when a learn proposal adds a shortcut. */}
       <ShortcutsVersionContext.Provider value={learn.shortcutsVersion}>
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, position: "relative" }}>
-          {/* The layout stays put under the Learn view while it's open. */}
-          <div
-            style={{
-              flex: 1,
-              display: "flex",
-              flexDirection: "column",
-              overflow: "hidden",
-              minHeight: 0,
-              position: "relative",
-            }}
-            // Nor can it be clicked or reached from the keyboard.
-            inert={learnOverlay}
-          >
-            {layoutType === "canvas" ? (
-              <CanvasLayout
-                canvas={canvasState ?? { type: "canvas", viewport: { x: 0, y: 0, zoom: 1 }, tiles: [] }}
-                renderLeaf={renderLeaf}
-                agentInfoMap={agentInfoMap}
-                containerStats={containerStats}
-                onCanvasChange={(c) => {
-                  setCanvasState(c);
-                }}
-                hiddenPanels={hiddenPanels}
-                learnDock={learnDocked && learnSplit.mounted ? { shown: learnSplit.shown, ms: learnMs, view: sideView, running: sideRunning, pane: learnPane, ref: learnSplitRef } : undefined}
-              />
-            ) : !tree ? (
-              <EmptyLayoutPicker onAdd={handleEmptyAdd} hiddenPanels={hiddenPanels} />
-            ) : maximizedLeafId && findLeafById(tree, maximizedLeafId) ? (
-              (() => {
-                const leaf = findLeafById(tree, maximizedLeafId)!;
-                const usedSingletons = collectPanelTypes(tree);
-                return (
-                  <div
-                    style={{
-                      flex: 1,
-                      display: "flex",
-                      flexDirection: "column",
-                      overflow: "hidden",
-                      minHeight: 0,
-                      minWidth: 0,
-                      ...paneBoxStyle(colors),
-                    }}
-                  >
-                    <PaneLeafHeader
-                      leafId={leaf.id}
-                      panel={leaf.panel}
-                      usedSingletons={usedSingletons}
-                      hiddenPanels={hiddenPanels}
-                      agentInfo={leaf.panel === "docker-agent" ? agentInfoMap.get(leaf.id) : undefined}
-                      containerStats={containerStats}
-                      isMaximized
-                      onRemove={() => {
-                        setMaximizedLeafId(null);
-                        handleRemoveLeaf(leaf.id);
+        <PluginPanelsProvider value={pluginPanels}>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, position: "relative" }}>
+            {/* The layout stays put under the Learn view while it's open. */}
+            <div
+              style={{
+                flex: 1,
+                display: "flex",
+                flexDirection: "column",
+                overflow: "hidden",
+                minHeight: 0,
+                position: "relative",
+              }}
+              // Nor can it be clicked or reached from the keyboard.
+              inert={learnOverlay}
+            >
+              {layoutType === "canvas" ? (
+                <CanvasLayout
+                  canvas={canvasState ?? { type: "canvas", viewport: { x: 0, y: 0, zoom: 1 }, tiles: [] }}
+                  renderLeaf={renderLeaf}
+                  agentInfoMap={agentInfoMap}
+                  containerStats={containerStats}
+                  onCanvasChange={(c) => {
+                    setCanvasState(c);
+                  }}
+                  hiddenPanels={hiddenPanels}
+                  learnDock={learnDocked && learnSplit.mounted ? { shown: learnSplit.shown, ms: learnMs, view: sideView, running: sideRunning, pane: learnPane, ref: learnSplitRef } : undefined}
+                />
+              ) : !tree ? (
+                <EmptyLayoutPicker onAdd={handleEmptyAdd} hiddenPanels={hiddenPanels} />
+              ) : maximizedLeafId && findLeafById(tree, maximizedLeafId) ? (
+                (() => {
+                  const leaf = findLeafById(tree, maximizedLeafId)!;
+                  const usedSingletons = collectPanelTypes(tree);
+                  return (
+                    <div
+                      style={{
+                        flex: 1,
+                        display: "flex",
+                        flexDirection: "column",
+                        overflow: "hidden",
+                        minHeight: 0,
+                        minWidth: 0,
+                        ...paneBoxStyle(colors),
                       }}
-                      onDrop={handleDrop}
-                      // The new pane goes beside this one, so restore the
-                      // layout to show it.
-                      onSplitLeaf={(...args) => {
-                        setMaximizedLeafId(null);
-                        handleSplitLeaf(...args);
-                      }}
-                      onToggleMaximize={() => setMaximizedLeafId(null)}
-                    />
-                    <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>{renderLeaf(leaf)}</div>
-                  </div>
-                );
-              })()
-            ) : (
-              <SplitPaneLayout
-                tree={tree}
-                renderLeaf={renderLeaf}
-                agentInfoMap={agentInfoMap}
-                containerStats={containerStats}
-                minimizedLeaves={minimizedLeaves}
-                hiddenPanels={hiddenPanels}
-                onUpdateFlex={handleUpdateFlex}
-                onDrop={handleDrop}
-                onRemoveLeaf={handleRemoveLeaf}
-                onSplitLeaf={handleSplitLeaf}
-                onMaximize={(leafId) => setMaximizedLeafId(leafId)}
-                onToggleMinimize={(leafId) =>
-                  setMinimizedLeaves((prev) => {
-                    const next = new Set(prev);
-                    if (next.has(leafId)) next.delete(leafId);
-                    else next.add(leafId);
-                    return next;
-                  })
+                    >
+                      <PaneLeafHeader
+                        leafId={leaf.id}
+                        panel={leaf.panel}
+                        plugin={leaf.plugin}
+                        usedSingletons={usedSingletons}
+                        hiddenPanels={hiddenPanels}
+                        agentInfo={leaf.panel === "docker-agent" ? agentInfoMap.get(leaf.id) : undefined}
+                        containerStats={containerStats}
+                        isMaximized
+                        onRemove={() => {
+                          setMaximizedLeafId(null);
+                          handleRemoveLeaf(leaf.id);
+                        }}
+                        onDrop={handleDrop}
+                        // The new pane goes beside this one, so restore the
+                        // layout to show it.
+                        onSplitLeaf={(...args) => {
+                          setMaximizedLeafId(null);
+                          handleSplitLeaf(...args);
+                        }}
+                        onToggleMaximize={() => setMaximizedLeafId(null)}
+                      />
+                      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>{renderLeaf(leaf)}</div>
+                    </div>
+                  );
+                })()
+              ) : (
+                <SplitPaneLayout
+                  tree={tree}
+                  renderLeaf={renderLeaf}
+                  agentInfoMap={agentInfoMap}
+                  containerStats={containerStats}
+                  minimizedLeaves={minimizedLeaves}
+                  hiddenPanels={hiddenPanels}
+                  onUpdateFlex={handleUpdateFlex}
+                  onDrop={handleDrop}
+                  onRemoveLeaf={handleRemoveLeaf}
+                  onSplitLeaf={handleSplitLeaf}
+                  onMaximize={(leafId) => setMaximizedLeafId(leafId)}
+                  onToggleMinimize={(leafId) =>
+                    setMinimizedLeaves((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(leafId)) next.delete(leafId);
+                      else next.add(leafId);
+                      return next;
+                    })
+                  }
+                />
+              )}
+            </div>
+            {learnOverlay && (
+              <LearnSplit
+                ref={learnSplitRef}
+                shown={learnSplit.shown}
+                ms={learnMs}
+                view={sideView}
+                running={sideRunning}
+                chatHeader={
+                  // The chat's pane header, without the layout controls: this
+                  // isn't a layout pane. Its Learn or Explain badge closes the view.
+                  <PaneLeafHeader leafId={LEARN_SPLIT_SLOT_ID} panel="chat" usedSingletons={new Set()} containerStats={containerStats} />
                 }
+                chat={
+                  <>
+                    <ChatSlot host={chatHost} active onAttach={placeChatHost} />
+                    <ExplainBadge leafId={LEARN_SPLIT_SLOT_ID} explain={explain} open={sideView === "explain"} onToggle={sideView === "explain" ? closeLearn : openExplain} />
+                    <LearnBadge leafId={LEARN_SPLIT_SLOT_ID} learn={learn} open={sideView === "learn"} onToggle={sideView === "learn" ? closeLearn : openLearn} />
+                  </>
+                }
+                learnPane={learnPane}
               />
             )}
           </div>
-          {learnOverlay && (
-            <LearnSplit
-              ref={learnSplitRef}
-              shown={learnSplit.shown}
-              ms={learnMs}
-              view={sideView}
-              running={sideRunning}
-              chatHeader={
-                // The chat's pane header, without the layout controls: this
-                // isn't a layout pane. Its Learn or Explain badge closes the view.
-                <PaneLeafHeader leafId={LEARN_SPLIT_SLOT_ID} panel="chat" usedSingletons={new Set()} containerStats={containerStats} />
-              }
-              chat={
-                <>
-                  <ChatSlot host={chatHost} active onAttach={placeChatHost} />
-                  <ExplainBadge leafId={LEARN_SPLIT_SLOT_ID} explain={explain} open={sideView === "explain"} onToggle={sideView === "explain" ? closeLearn : openExplain} />
-                  <LearnBadge leafId={LEARN_SPLIT_SLOT_ID} learn={learn} open={sideView === "learn"} onToggle={sideView === "learn" ? closeLearn : openLearn} />
-                </>
-              }
-              learnPane={learnPane}
-            />
-          )}
-        </div>
-        {chatHostPlaced && portalLeafId && createPortal(renderChat(portalLeafId), chatHost)}
+          {chatHostPlaced && portalLeafId && createPortal(renderChat(portalLeafId), chatHost)}
+        </PluginPanelsProvider>
       </ShortcutsVersionContext.Provider>
     </div>
   );

@@ -117,6 +117,10 @@ served from a signed link with a content security policy that:
 
 So a bundle ships everything it needs, uses script files, and gets its data through the bridge.
 
+A plugin approved for `ui.panel` adds its panels to the workspace's add-pane menus, in split and
+canvas layouts, after the built-in panels. A `singleton` panel can be shown once per layout. A
+pane in a thread talks to the plugin's container of the thread's parent channel.
+
 ### Bridge
 
 On load the host posts `{"type": "loop-plugin:init"}` to the frame with a `MessagePort` in
@@ -133,6 +137,9 @@ On load the host posts `{"type": "loop-plugin:init"}` to the frame with a `Messa
 | `theme.get` | | `{"mode": "dark"\|"light", "vars": {"--bg": "…", …}}` |
 | `ui.notify` | `{"title", "body"}` | `null`; needs `ui.notify` |
 | `ui.open_file` | `{"path", "line"?}` | `null`; opens a file of the channel in the editor; needs `ui.open_file` |
+
+The theme's `vars` are `--bg`, `--surface`, `--fg`, `--muted`, `--border`, `--accent`,
+`--success`, `--danger`, `--font` and `--mono`; a panel sets them on its root element.
 
 Host notifications:
 

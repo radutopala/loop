@@ -1,5 +1,7 @@
+import { usePluginPanels } from "../plugins/PluginPanelsContext";
 import { useTheme } from "../ThemeContext";
-import { AGENT_OPEN_MODE_OPTIONS, type AgentOpenMode, PANEL_OPTIONS, type PanelType } from "../types/panels";
+import type { PanelType, PaneMeta } from "../types/panels";
+import { addPaneRows } from "./addPaneRows";
 
 const PANEL_ICONS: Record<PanelType, React.ReactNode> = {
   chat: (
@@ -130,6 +132,13 @@ const PANEL_ICONS: Record<PanelType, React.ReactNode> = {
       <path d="M14 18h4" />
     </svg>
   ),
+  plugin: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 3v4M15 3v4" />
+      <path d="M6 7h12v4a6 6 0 0 1-12 0z" />
+      <path d="M12 17v4" />
+    </svg>
+  ),
 };
 
 const PANEL_DESCRIPTIONS: Record<PanelType, string> = {
@@ -152,11 +161,13 @@ const PANEL_DESCRIPTIONS: Record<PanelType, string> = {
   audit: "Agent gate audit logs",
   quality: "Architectural quality signal",
   review: "Review a GitHub PR's diff",
+  plugin: "A plugin's panel",
 };
 
 /** Centered picker for when layout is empty (no tree). */
-export function EmptyLayoutPicker({ onAdd, hiddenPanels }: { onAdd: (panel: PanelType, meta?: { openMode?: AgentOpenMode }) => void; hiddenPanels?: PanelType[] }) {
+export function EmptyLayoutPicker({ onAdd, hiddenPanels }: { onAdd: (panel: PanelType, meta?: PaneMeta) => void; hiddenPanels?: PanelType[] }) {
   const { colors } = useTheme();
+  const pluginPanels = usePluginPanels();
 
   const pickerBtnStyle: React.CSSProperties = {
     padding: "12px 24px",
@@ -171,27 +182,17 @@ export function EmptyLayoutPicker({ onAdd, hiddenPanels }: { onAdd: (panel: Pane
     gap: 8,
   };
 
-  // Expand "docker-agent" into one tile per AgentOpenMode so the user picks fork/resume/fresh up-front.
-  const entries: { key: string; panel: PanelType; label: string; description: string; openMode?: AgentOpenMode }[] = [];
-  for (const { panel, label } of PANEL_OPTIONS) {
-    if (hiddenPanels?.includes(panel)) continue;
-    if (panel === "docker-agent") {
-      for (const m of AGENT_OPEN_MODE_OPTIONS) {
-        entries.push({ key: `${panel}-${m.mode}`, panel, label: `${label} (${m.label})`, description: m.description, openMode: m.mode });
-      }
-    } else {
-      entries.push({ key: panel, panel, label, description: PANEL_DESCRIPTIONS[panel] });
-    }
-  }
+  // docker-agent comes once per AgentOpenMode so the user picks fork/resume/fresh up-front.
+  const entries = addPaneRows(new Set(), pluginPanels, hiddenPanels);
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12 }}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "center" }}>
-        {entries.map(({ key, panel, label, description, openMode }) => (
+        {entries.map(({ key, panel, label, description, meta }) => (
           <button
             key={key}
             data-testid={`empty-layout-add-${key}`}
-            onClick={() => onAdd(panel, openMode ? { openMode } : undefined)}
+            onClick={() => onAdd(panel, meta)}
             style={pickerBtnStyle}
             onMouseEnter={(e) => {
               e.currentTarget.style.borderColor = colors.textDim;
@@ -207,7 +208,7 @@ export function EmptyLayoutPicker({ onAdd, hiddenPanels }: { onAdd: (panel: Pane
             {PANEL_ICONS[panel]}
             <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
               <span>{label}</span>
-              <span style={{ fontSize: 10, opacity: 0.6 }}>{description}</span>
+              <span style={{ fontSize: 10, opacity: 0.6 }}>{description ?? PANEL_DESCRIPTIONS[panel]}</span>
             </div>
           </button>
         ))}
