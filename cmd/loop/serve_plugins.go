@@ -1,0 +1,84 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"path/filepath"
+	"time"
+
+	"github.com/radutopala/loop/internal/apiauth"
+	"github.com/radutopala/loop/internal/config"
+	"github.com/radutopala/loop/internal/container"
+	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/plugin/install"
+	"github.com/radutopala/loop/internal/plugin/runtime"
+)
+
+const (
+	// pluginIdleTimeout is how long a plugin container may go unused before
+	// it's stopped.
+	pluginIdleTimeout = 15 * time.Minute
+	// pluginStartWait caps how long a started plugin container has to answer
+	// its health check.
+	pluginStartWait = 30 * time.Second
+	// pluginIdleInterval is how often idle plugin containers are looked for.
+	pluginIdleInterval = time.Minute
+)
+
+// pluginDockerClient is the Docker API plugins are installed and run with.
+type pluginDockerClient interface {
+	runtime.DockerClient
+	install.DockerClient
+	Close() error
+}
+
+// pluginStore keeps installed plugins and their containers.
+type pluginStore interface {
+	runtime.Store
+	install.ServiceStore
+}
+
+// plugins is the plugin system the daemon runs when plugins.enabled is set.
+type plugins struct {
+	docker  pluginDockerClient
+	runtime *runtime.Manager
+	service *install.Service
+}
+
+// stop stops every plugin container, at shutdown.
+func (p *plugins) stop(ctx context.Context) {
+	p.runtime.StopAll(ctx)
+	_ = p.docker.Close()
+}
+
+// newPlugins builds the plugin system, or returns nil when plugins are
+// disabled. It removes the plugin containers an earlier daemon left behind.
+func (a *app) newPlugins(ctx context.Context, cfg *config.Config, store db.Store, tokens *apiauth.Registry, gate container.ImageGate, logger *slog.Logger) (*plugins, error) {
+	if !cfg.Plugins.Enabled {
+		return nil, nil
+	}
+	ps, ok := store.(pluginStore)
+	if !ok {
+		return nil, errors.New("plugins need the SQLite store")
+	}
+	cli, err := a.newPluginDocker()
+	if err != nil {
+		return nil, fmt.Errorf("creating the plugin docker client: %w", err)
+	}
+	root := filepath.Join(cfg.LoopDir, "plugins")
+	mgr := runtime.NewManager(cli, ps, tokens, runtime.Config{
+		Root:        root,
+		APIURL:      container.AgentAPIBase(cfg),
+		IdleTimeout: pluginIdleTimeout,
+		StartWait:   pluginStartWait,
+		Proxy:       container.ProxySettingsFromConfig(cfg),
+	}, logger)
+	mgr.SetImageGate(gate)
+	if err := mgr.RemoveLeftovers(ctx); err != nil {
+		logger.Warn("removing leftover plugin containers", "error", err)
+	}
+	installer := install.NewInstaller(cli, ps, root, a.version)
+	return &plugins{docker: cli, runtime: mgr, service: install.NewService(installer, mgr, ps)}, nil
+}

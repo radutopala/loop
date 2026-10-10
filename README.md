@@ -581,6 +581,10 @@ For development: `make docker-build` builds from `container/Dockerfile` in the r
 | `loop app:url` | | Print the web UI's URL signed in with the API token (`--base`, default `http://localhost:5173/`), for running the UI in a browser |
 | `loop ui:state` | | Print the desktop app windows' state (`--watch` to print each change); see [docs/api.md](docs/api.md#ui-bridge) |
 | `loop ui:run` | | Run UI steps, a JSON array from an argument or stdin, in an app window (`--client`, `--timeout`) |
+| `loop plugin:list` | | List the installed plugins; plugins need `plugins.enabled` in the global config, see [docs/api.md](docs/api.md#plugins) |
+| `loop plugin:install <image>` | | Pull a plugin image, show its capabilities and install it once approved (`--dev` for a local image, `--yes` to skip the prompt) |
+| `loop plugin:upgrade <id> [tag]` | | Install a tag (default `latest`) of a plugin's image; new capabilities need approval (`--yes`) |
+| `loop plugin:remove <id>` | | Remove a plugin and its containers (`--purge` also removes its data) |
 | `loop readme` | `r` | Print the README documentation |
 
 `loop --help` lists every command from the command tree. Nested commands show by colon path and run that way too: `loop review:run` is `loop review run`.

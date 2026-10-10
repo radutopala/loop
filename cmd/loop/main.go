@@ -138,6 +138,7 @@ type app struct {
 	newAPIServer           func(scheduler.Scheduler, api.ChannelEnsurer, api.ThreadEnsurer, api.ChannelLister, api.MessageSender, *slog.Logger, ...api.Option) *api.Server
 	newMCPServer           func(string, string, string, mcpserver.HTTPClient, *slog.Logger, ...mcpserver.MemoryOption) *mcpserver.Server
 	newDockerClient        func() (container.DockerClient, error)
+	newPluginDocker        func() (pluginDockerClient, error)
 	ensureImage            func(context.Context, container.DockerClient, *config.Config, func(string)) error
 	newEmbedder            func(*config.Config) (embeddings.Embedder, error)
 	loadProjectMemoryPaths func(string) []string
@@ -252,6 +253,9 @@ func newApp() *app {
 		newDockerClient: func() (container.DockerClient, error) {
 			return container.NewClient()
 		},
+		newPluginDocker: func() (pluginDockerClient, error) {
+			return dockerclient.NewClientWithOpts(dockerclient.FromEnv, dockerclient.WithAPIVersionNegotiation())
+		},
 		newDockerExecClient: func() (terminal.ExecClient, error) {
 			return terminal.NewDockerExecClient()
 		},
@@ -365,6 +369,7 @@ func (a *app) newRootCmd() *cobra.Command {
 	root.AddCommand(a.newQualityCmd())
 	root.AddCommand(a.newReviewCmd())
 	root.AddCommand(a.newUICmd())
+	root.AddCommand(a.newPluginCmd())
 	root.AddCommand(a.newAPIRotateTokenCmd())
 	root.AddCommand(a.newAppURLCmd())
 	nameHelpFlags(root)

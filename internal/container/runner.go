@@ -660,7 +660,7 @@ func (r *DockerRunner) createAndStartContainer(
 		return "", "", "", false, err
 	}
 
-	apiURL := agentAPIBase(cfg)
+	apiURL := AgentAPIBase(cfg)
 
 	env, err := r.buildContainerEnv(cfg, channelID, apiURL)
 	if err != nil {

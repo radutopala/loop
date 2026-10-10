@@ -583,12 +583,12 @@ func ensureNoProxy(env []string, extraHosts ...string) []string {
 	return env
 }
 
-// agentAPIBase returns the base URL agent containers use to reach the loop API.
+// AgentAPIBase returns the base URL agent containers use to reach the loop API.
 // Defaults to host.docker.internal (correct when the daemon runs on the Docker
 // host), but honors cfg.APIAdvertiseURL when set — needed when the daemon ITSELF
 // runs in a container, so agents reach it over the Docker network rather than
 // the host (where host.docker.internal:<port> would hit a different daemon).
-func agentAPIBase(cfg *config.Config) string {
+func AgentAPIBase(cfg *config.Config) string {
 	if cfg.APIAdvertiseURL != "" {
 		return cfg.APIAdvertiseURL
 	}

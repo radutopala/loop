@@ -406,7 +406,7 @@ func (b *ClaudeCmdBuilder) resolveCmdConfig(channelID, dirPath, parentDirPath, a
 
 // writeAgentMCPConfig writes a per-agent MCP config file with --agent-id.
 func (b *ClaudeCmdBuilder) writeAgentMCPConfig(cfg *config.Config, workDir, channelID, agentID string) {
-	apiURL := agentAPIBase(cfg)
+	apiURL := AgentAPIBase(cfg)
 	loopDir := filepath.Join(workDir, ".loop")
 	_ = b.mkdirAll(loopDir, 0o755)
 	mcpCfg := buildMCPConfig(channelID, apiURL, workDir, "", agentID, cfg.Memory.Enabled, cfg.Browser.Enabled, cfg.MCPServers)

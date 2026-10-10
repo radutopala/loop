@@ -789,6 +789,15 @@ func (a *app) serve() error {
 		chromeProvider.SetImageGate(lifecycleMgr)
 	}
 
+	plug, err := a.newPlugins(ctx, cfg, store, auth.agents, lifecycleMgr, logger)
+	if err != nil {
+		return err
+	}
+	if plug != nil {
+		apiSrv.SetPluginManager(plug.service)
+		go plug.runtime.RunIdleLoop(ctx, pluginIdleInterval)
+	}
+
 	// Ensure agent image asynchronously so the API is available during builds.
 	a.ensureImageAsync(ctx, dockerClient, cfg, eventsHub, lifecycleMgr, logger)
 
@@ -913,6 +922,10 @@ func (a *app) serve() error {
 
 	// Clean up Chrome sidecar containers.
 	apiSrv.CleanupBrowsers(shutdownCtx)
+
+	if plug != nil {
+		plug.stop(shutdownCtx)
+	}
 
 	if err := orch.Stop(); err != nil {
 		slog.Error("shutdown error", "error", err)
