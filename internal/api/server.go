@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/radutopala/loop/internal/agentregistry"
@@ -27,9 +28,12 @@ import (
 type ContainerManager interface {
 	List() []*container.ContainerInfo
 	ListByChannel(channelID string) []*container.ContainerInfo
+	Get(containerID string) *container.ContainerInfo
 	RunningChannelIDs(ctx context.Context) map[string]struct{}
 	RemoveContainer(ctx context.Context, containerID string) error
 	ScheduleRemove(containerID string, delay time.Duration)
+	// Reclaim cancels a container's pending removal.
+	Reclaim(containerID string) bool
 	FindOrCreateShell(ctx context.Context, channelID, dirPath, parentDirPath string) (string, error)
 }
 
@@ -150,7 +154,9 @@ type Server struct {
 	hostTermManager         TerminalManager
 	cmdBuilder              InteractiveCmdBuilder
 	containerRegistry       ContainerManager
-	containerKeepAlive      time.Duration // how long a deleted channel's containers stay before removal
+	containerKeepAlive      time.Duration  // how long a deleted channel's containers stay before removal
+	shellMu                 sync.Mutex     // orders releaseShell and claimShell
+	termClaims              terminalClaims // when the app last held each terminal session
 	activeChatLister        ActiveChatLister
 	branchPoller            *BranchPoller
 	msgHandler              IncomingMessageHandler
@@ -167,8 +173,7 @@ type Server struct {
 	imageManager            ImageManager
 	server                  *http.Server
 	listener                net.Listener
-	stopErr                 error             // if set, Stop returns this error (for testing)
-	agentWSWriteJSON        func(v any) error // injectable for testing agent-channel WS write errors
+	stopErr                 error // if set, Stop returns this error (for testing)
 	workflowEngine          WorkflowEngine
 	worktreeCreator         *worktree.Creator
 	readFile                func(string) ([]byte, error) // injectable for testing
@@ -573,7 +578,6 @@ func (s *Server) registerAgentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/agents/{id}", s.handleUpdateAgent)
 	mux.HandleFunc("DELETE /api/agents/{id}", s.handleDeleteAgent)
 	mux.HandleFunc("POST /api/agents/{id}/message", s.handleSendAgentMessage)
-	mux.HandleFunc("GET /api/ws/agent-channel", s.handleAgentChannelWS)
 	mux.HandleFunc("GET /api/image/status", s.handleImageStatus)
 	mux.HandleFunc("POST /api/image/rebuild", s.handleImageRebuild)
 	mux.HandleFunc("POST /api/image/reclaim", s.handleImageReclaim)
@@ -654,6 +658,7 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/content-caps", s.handleCreateContentCap)
 	mux.HandleFunc("GET /c/{cap}/{path...}", s.handleContentCap)
 	mux.HandleFunc("GET /api/ws/terminal", s.handleTerminalWS)
+	mux.HandleFunc("POST /api/terminal/claims", s.handleClaimTerminals)
 	mux.HandleFunc("GET /api/ws/browser", s.browser.handleBrowserWS)
 	mux.HandleFunc("GET /api/ws", s.handleEventsWS)
 	mux.HandleFunc("GET /api/ws/ui", s.handleUIWS)

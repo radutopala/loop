@@ -1,11 +1,11 @@
 ---
 title: Multi-Agent Workspaces
 ---
-Loop supports running multiple Claude Code agents in parallel within the same channel, with real-time agent discovery and push-based inter-agent messaging via MCP Channels.
+Loop supports running multiple Claude Code agents in parallel within the same channel, with real-time agent discovery and inter-agent messaging typed into each agent's terminal.
 
 ## Overview
 
-Multiple agents share one Docker container per channel (each runs as a separate `docker exec`). They share the filesystem so file changes are visible across agents immediately. MCP Channels enable agents to coordinate work — "I'm done with the API, you can start the tests."
+Multiple agents share one Docker container per channel (each runs as a separate `docker exec`). They share the filesystem so file changes are visible across agents immediately. Inter-agent messages let agents coordinate work — "I'm done with the API, you can start the tests."
 
 ```
 Channel "my-project" → 1 Docker container
@@ -16,7 +16,7 @@ Channel "my-project" → 1 Docker container
   └── docker-agent-3:   docker exec → bash → claude (Swarm/Canvas pane)
 ```
 
-The chat agent registers as AgentID `"chat"` so all 5 agents (1 chat + 4 terminal) can discover each other and communicate via MCP Channels.
+The terminal agents register, so they can discover and message each other. The chat agent (AgentID `"chat"`) only sends: it can list the terminal agents and message them, but it has no terminal to type messages into, so it isn't registered and the others neither list nor message it.
 
 ## Layouts
 
@@ -58,11 +58,11 @@ type AgentInfo struct {
 5. On shutdown, the MCP server calls `UnregisterAgent()` which sends `DELETE /api/agents/{id}` to the backend
 6. On WebSocket close, agent is also unregistered as a fallback, and `agent_instance.unregistered` fires
 
-For chat agents (batch runs via Discord/Slack/local messages), the container runner registers with AgentID `"chat"` at the start of `runOnce()` and unregisters on return.
+Chat runs (batch runs via Discord/Slack/local messages, AgentID `"chat"`) don't register.
 
 ### Auto-Accept Prompts
 
-Agent terminal sessions automatically accept Claude Code's workspace trust and `--dangerously-load-development-channels` confirmation prompts. The terminal handler scans output for the trigger string and sends Enter when matched, up to a maximum of 3 prompts per session. This also works on reattach (scans history buffer).
+Agent terminal sessions automatically accept Claude Code's workspace trust prompt. The terminal handler scans output for the trigger string and sends Enter when matched, up to a maximum of 3 prompts per session. This also works on reattach (scans history buffer).
 
 ### REST API
 
@@ -71,8 +71,7 @@ Agent terminal sessions automatically accept Claude Code's workspace trust and `
 | `GET /api/agents?channel_id=X` | List agents for a channel |
 | `PATCH /api/agents/{id}` | Update agent status/name/work summary |
 | `DELETE /api/agents/{id}?channel_id=X` | Unregister agent (MCP server shutdown) |
-| `POST /api/agents/{id}/message` | Send message to agent's mailbox |
-| `GET /api/ws/agent-channel?agent_id=X&channel_id=Y` | WebSocket for push message delivery |
+| `POST /api/agents/{id}/message` | Type a message into the agent's terminal |
 
 ## Inter-Agent MCP Tools
 
@@ -81,7 +80,7 @@ When a terminal pane has an `agent_id`, the Loop MCP server inside the container
 | Tool | Description |
 |------|-------------|
 | `list_agents` | List all active agents in the current channel with status and work summaries |
-| `send_agent_message` | Send a push message to another agent by ID |
+| `send_agent_message` | Send a message to another agent by ID, typed into its terminal |
 | `update_agent_status` | Update this agent's display name and work summary |
 
 ### Instructions
@@ -89,53 +88,25 @@ When a terminal pane has an `agent_id`, the Loop MCP server inside the container
 The MCP server provides these instructions to Claude when agent tools are enabled:
 
 ```
-You are connected to Loop's inter-agent communication channel.
-Messages from other agents arrive as <channel source="loop" from_agent="...">.
-Use the `list_agents` tool to discover other running agents in this channel.
-Use the `send_agent_message` tool to send a message to another agent by ID.
-Use the `update_agent_status` tool to set your name and work summary.
-When you receive a channel message, respond helpfully — you are collaborating with the sender.
+You are agent "<id>" connected to Loop's inter-agent communication channel.
+Your agent ID is marked with * in list_agents output.
+Messages from other agents arrive typed into your prompt as "[from <agent id>] <message>".
+...
 ```
 
-## MCP Channels (Push Notifications)
-
-Inter-agent messaging uses Claude Code's MCP Channels protocol for real-time push delivery.
-
-### Capability Declaration
-
-The MCP server declares `capabilities.experimental["claude/channel"]` during initialization so Claude Code processes channel notifications.
-
-### Message Flow
+## Message Delivery
 
 ```
 Agent A calls send_agent_message tool
   → HTTP POST /api/agents/docker-agent-1/message
-  → Backend pushes to docker-agent-1's mailbox channel
-  → Agent B's MCP server reads from WebSocket (startPushReceiver)
-  → channelTransport.WriteNotification() writes to stdout:
-    {"jsonrpc":"2.0","method":"notifications/claude/channel",
-     "params":{"content":"...","meta":{"from_agent":"docker-agent-0"}}}
-  → Claude B sees: <channel source="loop" from_agent="docker-agent-0">message</channel>
+  → Backend looks up docker-agent-1's terminal session
+  → Types "[from docker-agent-0] <message>" into it as one bracketed paste, then Enter
+  → Claude B gets it as a prompt; while B is busy, Claude Code queues it
 ```
 
-### Push Receiver Resilience
+The message goes in as one paste, so a multi-line message stays one prompt, and ends with a newline so prompts queued while the agent is busy stay on lines of their own. Content holding a bracketed-paste marker is refused (`400`).
 
-The `startPushReceiver` goroutine automatically reconnects when the WebSocket connection drops (e.g. when the agent is unregistered/re-registered during a frontend tab switch). On dial failure it retries after 2 seconds; on read error it reconnects after 1 second.
-
-### Claude CLI Flag
-
-The `--dangerously-load-development-channels server:loop` flag is added to Claude CLI args when an `agent_id` is set **and** `claude_dangerously_load_development_channels: true` is set in config. This enables Claude Code to process `notifications/claude/channel` JSON-RPC notifications from the MCP server.
-
-Anthropic ships the flag as development-only, so it's **off by default**. Enable it via the standard config hierarchy (global → project → worktree):
-
-```jsonc
-// ~/.loop/config.json or {workDir}/.loop/config.json
-{
-  "claude_dangerously_load_development_channels": true
-}
-```
-
-Both chat agents (batch runs) and terminal agents get this flag when they have an `agent_id` and the opt-in is set.
+The call fails, and the tool reports it, when the target has no terminal (`409`) or its terminal session is gone (`409`; the stale session is forgotten).
 
 ## Frontend Events
 
@@ -154,7 +125,7 @@ The `useAgentRegistry` hook subscribes to these events and maintains a `Map<stri
 
 No special configuration needed. The agent registry is initialized automatically during `serve` startup. Agent tools are enabled per-terminal-session when `agent_id` is provided.
 
-The `--agent-id` flag on the `mcp` command controls whether agent tools and channel transport are enabled:
+The `--agent-id` flag on the `mcp` command controls whether agent tools are enabled:
 
 ```
 loop mcp --channel-id ch-1 --api-url http://... --agent-id agent-0

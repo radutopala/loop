@@ -1,18 +1,65 @@
 import type { RefObject } from "react";
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import type { TerminalTarget } from "../types";
 import type { AgentOpenMode } from "../types/panels";
+import { startTerminalClaims } from "./terminalClaims";
+
+/** Where the session maps are kept, so a reload reattaches each pane to its
+ *  session rather than starting a new one and leaving the old one running.
+ *  sessionStorage is per window, so two windows don't share them. */
+const SESSIONS_STORAGE_KEY = "loop.terminalSessions";
+
+type StoredSessions = { ids: [string, string][]; starts: [string, number][] };
+
+function loadStoredSessions(): StoredSessions {
+  try {
+    const raw = sessionStorage.getItem(SESSIONS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<StoredSessions>;
+      return { ids: parsed.ids ?? [], starts: parsed.starts ?? [] };
+    }
+  } catch {
+    // No storage, or a corrupt entry: start empty.
+  }
+  return { ids: [], starts: [] };
+}
+
+const stored = loadStoredSessions();
 
 /** Module-level map so session IDs survive component remounts.
  *  Keyed by `${channelId}:${target}` so agent and host sessions are tracked independently. */
-const sessionsByChannel = new Map<string, string>();
+const sessionsByChannel = new Map<string, string>(stored.ids);
 
 /** Module-level map of session start timestamps (epoch ms) so timers survive remounts. */
-const sessionStartTimes = new Map<string, number>();
+const sessionStartTimes = new Map<string, number>(stored.starts);
+
+function saveSessions() {
+  try {
+    sessionStorage.setItem(SESSIONS_STORAGE_KEY, JSON.stringify({ ids: [...sessionsByChannel], starts: [...sessionStartTimes] }));
+  } catch {
+    // Storage full or blocked: the maps still work for this page load.
+  }
+}
 
 function sessionKey(channelId: string, target: TerminalTarget, instanceId?: string): string {
   const base = `${channelId}:${target}`;
   return instanceId ? `${base}:${instanceId}` : base;
+}
+
+/** Removes and returns the session stored for a terminal pane, so a pane
+ *  that isn't mounted can still have its session closed. */
+export function takeStoredSession(channelId: string, target: TerminalTarget, instanceId?: string): string | null {
+  const key = sessionKey(channelId, target, instanceId);
+  const sid = sessionsByChannel.get(key) ?? null;
+  sessionsByChannel.delete(key);
+  sessionStartTimes.delete(key);
+  saveSessions();
+  return sid;
+}
+
+/** The session IDs this window holds, on tabs it isn't showing too. */
+export function heldSessionIds(): string[] {
+  return [...sessionsByChannel.values()];
 }
 
 type GetTerminalSize = (() => { cols: number; rows: number } | null) | undefined;
@@ -43,6 +90,10 @@ export function useSessionPersistence(
   /** Set to true after kill to prevent auto-creating a new session on reconnect. */
   const killedRef = useRef(false);
 
+  useEffect(() => {
+    startTerminalClaims(heldSessionIds);
+  }, []);
+
   /** Called from the message dispatcher when the server confirms or clears a session. */
   const setSessionId = useCallback(
     (id: string | null) => {
@@ -58,6 +109,7 @@ export function useSessionPersistence(
           sessionsByChannel.delete(key);
           sessionStartTimes.delete(key);
         }
+        saveSessions();
       }
     },
     [key],

@@ -36,7 +36,7 @@ func (s *AgentsToolsSuite) SetupTest() {
 		case r.Method == "POST" && r.URL.Path == "/api/agents/agent-1/message":
 			w.WriteHeader(http.StatusNoContent)
 		case r.Method == "POST" && r.URL.Path == "/api/agents/nonexistent/message":
-			w.WriteHeader(http.StatusNotFound)
+			http.Error(w, "agent not found", http.StatusNotFound)
 		case r.Method == "PATCH" && r.URL.Path == "/api/agents/agent-0":
 			w.WriteHeader(http.StatusOK)
 			fmt.Fprint(w, `{"status":"ok"}`)
@@ -90,7 +90,7 @@ func (s *AgentsToolsSuite) TestSendAgentMessage() {
 	})
 	require.NoError(s.T(), err)
 	require.False(s.T(), result.IsError)
-	require.Contains(s.T(), result.Content[0].(*mcp.TextContent).Text, "Message sent to agent-1")
+	require.Equal(s.T(), "Message sent to agent-1.", result.Content[0].(*mcp.TextContent).Text)
 }
 
 func (s *AgentsToolsSuite) TestSendAgentMessageMissingFields() {
@@ -107,7 +107,7 @@ func (s *AgentsToolsSuite) TestSendAgentMessageNotFound() {
 	})
 	require.NoError(s.T(), err)
 	require.True(s.T(), result.IsError)
-	require.Contains(s.T(), result.Content[0].(*mcp.TextContent).Text, "HTTP 404")
+	require.Equal(s.T(), "send message failed: HTTP 404: agent not found", result.Content[0].(*mcp.TextContent).Text)
 }
 
 func (s *AgentsToolsSuite) TestSendAgentMessageError() {
@@ -168,9 +168,7 @@ func (s *AgentsToolsSuite) TestRegisterAgent() {
 		require.Equal(s.T(), "/api/agents", r.URL.Path)
 		var body map[string]string
 		require.NoError(s.T(), json.NewDecoder(r.Body).Decode(&body))
-		require.Equal(s.T(), "ch-1", body["channel_id"])
-		require.Equal(s.T(), "agent-0", body["agent_id"])
-		require.Equal(s.T(), "idle", body["status"])
+		require.Equal(s.T(), map[string]string{"channel_id": "ch-1", "agent_id": "agent-0", "name": "agent-0", "status": "idle"}, body)
 		called = true
 		w.WriteHeader(http.StatusCreated)
 	}))
@@ -179,6 +177,18 @@ func (s *AgentsToolsSuite) TestRegisterAgent() {
 	mcpSrv := New("ch-1", srv.URL, "author-1", srv.Client(), nil, WithAgentTools("agent-0"))
 	mcpSrv.RegisterAgent()
 	require.True(s.T(), called)
+}
+
+func (s *AgentsToolsSuite) TestInstructions() {
+	srv := New("ch-1", "http://127.0.0.1:1", "author-1", http.DefaultClient, nil, WithAgentTools("agent-0"))
+	ct, st := mcp.NewInMemoryTransports()
+	ss, err := srv.mcpServer.Connect(context.Background(), st, nil)
+	require.NoError(s.T(), err)
+	defer ss.Close()
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "test"}, nil).Connect(context.Background(), ct, nil)
+	require.NoError(s.T(), err)
+	defer cs.Close()
+	require.Contains(s.T(), cs.InitializeResult().Instructions, "[from <agent id>]")
 }
 
 func (s *AgentsToolsSuite) TestRegisterAgentNoAgentID() {
@@ -238,4 +248,38 @@ func (s *AgentsToolsSuite) TestUnregisterAgentBadStatus() {
 	srv := New("ch-1", apiSrv.URL, "author-1", apiSrv.Client(), nil, WithAgentTools("agent-0"))
 	// Should log warning about unexpected status, not panic.
 	srv.UnregisterAgent()
+}
+
+func (s *AgentsToolsSuite) TestAgentSender() {
+	var requests int
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer apiSrv.Close()
+
+	srv := New("ch-1", apiSrv.URL, "author-1", apiSrv.Client(), nil, WithAgentSender("chat"))
+	// Never registered, so the other agents neither list nor message it.
+	srv.RegisterAgent()
+	srv.UnregisterAgent()
+	require.Zero(s.T(), requests)
+
+	ct, st := mcp.NewInMemoryTransports()
+	ss, err := srv.mcpServer.Connect(context.Background(), st, nil)
+	require.NoError(s.T(), err)
+	defer ss.Close()
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "test"}, nil).Connect(context.Background(), ct, nil)
+	require.NoError(s.T(), err)
+	defer cs.Close()
+	require.Contains(s.T(), cs.InitializeResult().Instructions, "They can't message you back.")
+
+	tools, err := cs.ListTools(context.Background(), nil)
+	require.NoError(s.T(), err)
+	var names []string
+	for _, tool := range tools.Tools {
+		names = append(names, tool.Name)
+	}
+	require.Contains(s.T(), names, "list_agents")
+	require.Contains(s.T(), names, "send_agent_message")
+	require.NotContains(s.T(), names, "update_agent_status")
 }

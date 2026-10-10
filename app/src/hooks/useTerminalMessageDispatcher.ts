@@ -8,13 +8,15 @@ interface UseTerminalMessageDispatcherOptions {
   onSessionChange: (sessionId: string | null) => void;
   /** Called when an attach/create fails so the caller can retry with create. */
   onSessionFailed?: () => void;
+  /** Called when the server created a new session, before any of its output. */
+  onCreated?: () => void;
 }
 
 /**
  * Returns a message handler that dispatches incoming WebSocket messages
  * to the appropriate callback: binary PTY data, status updates, or errors.
  */
-export function useTerminalMessageDispatcher({ onData, onStatus, onError, onSessionChange, onSessionFailed }: UseTerminalMessageDispatcherOptions) {
+export function useTerminalMessageDispatcher({ onData, onStatus, onError, onSessionChange, onSessionFailed, onCreated }: UseTerminalMessageDispatcherOptions) {
   const handleMessage = useCallback(
     (event: MessageEvent) => {
       if (event.data instanceof ArrayBuffer) {
@@ -25,6 +27,10 @@ export function useTerminalMessageDispatcher({ onData, onStatus, onError, onSess
       const msg = JSON.parse(event.data as string) as ServerMessage;
       switch (msg.type) {
         case "created":
+          onCreated?.();
+          onSessionChange(msg.session_id ?? null);
+          onStatus("running");
+          break;
         case "attached":
           onSessionChange(msg.session_id ?? null);
           onStatus("running");
@@ -35,15 +41,17 @@ export function useTerminalMessageDispatcher({ onData, onStatus, onError, onSess
           onStatus("completed");
           break;
         case "error":
-          onError(msg.message);
-          if (msg.error_code === "no_session" || msg.error_code === "session_failed") {
+          // A session the server no longer has, after a daemon restart say,
+          // is replaced quietly: the pane gets a fresh shell, not an error.
+          if (msg.error_code !== "session_gone") onError(msg.message);
+          if (msg.error_code === "no_session" || msg.error_code === "session_failed" || msg.error_code === "session_gone") {
             onSessionChange(null);
             onSessionFailed?.();
           }
           break;
       }
     },
-    [onData, onStatus, onError, onSessionChange],
+    [onData, onStatus, onError, onSessionChange, onSessionFailed, onCreated],
   );
 
   return { handleMessage };

@@ -10,12 +10,21 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// WithAgentTools enables inter-agent communication tools and channel push notifications.
+// WithAgentTools enables inter-agent communication tools.
 func WithAgentTools(agentID string) MemoryOption {
 	return func(s *Server) {
 		s.agentID = agentID
-		s.channelTransport = newChannelTransport()
 		// Tools are registered after mcpServer is created (in New).
+	}
+}
+
+// WithAgentSender gives an agent with no terminal, the chat agent, the tools
+// to find and message the terminal agents. It isn't registered, so the
+// others neither list nor message it.
+func WithAgentSender(agentID string) MemoryOption {
+	return func(s *Server) {
+		s.agentID = agentID
+		s.agentSender = true
 	}
 }
 
@@ -39,9 +48,12 @@ func (s *Server) registerAgentTools() {
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "send_agent_message",
-		Description: "Send a message to another agent in this channel. The message will be delivered via push notification.",
+		Description: "Send a message to another agent in this channel. It's typed into the agent's terminal as a prompt. The call fails when the agent has no terminal to type into.",
 	}, s.handleSendAgentMessage)
 
+	if s.agentSender {
+		return
+	}
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "update_agent_status",
 		Description: "Update this agent's name and work summary. Other agents can see this via list_agents.",
@@ -92,12 +104,12 @@ func (s *Server) handleSendAgentMessage(_ context.Context, _ *mcp.CallToolReques
 		"content":       input.Content,
 	})
 
-	_, status, err := s.doRequest("POST", s.apiURL+"/api/agents/"+input.ToAgentID+"/message", reqBody)
+	respBody, status, err := s.doRequest("POST", s.apiURL+"/api/agents/"+input.ToAgentID+"/message", reqBody)
 	if err != nil {
 		return errorResult(fmt.Sprintf("failed to send message: %v", err)), nil, nil
 	}
 	if status >= 400 {
-		return errorResult(fmt.Sprintf("send message failed: HTTP %d", status)), nil, nil
+		return errorResult(fmt.Sprintf("send message failed: HTTP %d: %s", status, strings.TrimSpace(string(respBody)))), nil, nil
 	}
 
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Message sent to %s.", input.ToAgentID)}}}, nil, nil

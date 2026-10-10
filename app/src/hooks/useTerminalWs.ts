@@ -22,11 +22,27 @@ interface UseTerminalWsOptions {
   onData: (data: ArrayBuffer) => void;
   onStatus: (status: SessionStatus) => void;
   onError: (message: string) => void;
+  /** Called when the server created a new session, before any of its output. */
+  onCreated?: () => void;
   /** Returns current terminal dimensions for include in create messages. */
   getTerminalSize?: () => { cols: number; rows: number } | null;
 }
 
-export function useTerminalWs({ channelId, target = "agent", instanceId, claudeSessionId, newSession, openMode, cmd, rootIndex, onData, onStatus, onError, getTerminalSize }: UseTerminalWsOptions) {
+export function useTerminalWs({
+  channelId,
+  target = "agent",
+  instanceId,
+  claudeSessionId,
+  newSession,
+  openMode,
+  cmd,
+  rootIndex,
+  onData,
+  onStatus,
+  onError,
+  onCreated,
+  getTerminalSize,
+}: UseTerminalWsOptions) {
   const getTerminalSizeRef = useRef(getTerminalSize);
   getTerminalSizeRef.current = getTerminalSize;
 
@@ -92,6 +108,7 @@ export function useTerminalWs({ channelId, target = "agent", instanceId, claudeS
     onError,
     onSessionChange,
     onSessionFailed,
+    onCreated,
   });
 
   const { connected, send } = useWebSocketConnection({

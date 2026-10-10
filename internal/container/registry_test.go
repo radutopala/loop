@@ -923,6 +923,56 @@ func (s *ContainerRegistrySuite) TestFindOrCreateShellIgnoresPendingRemoval() {
 	require.Equal(s.T(), "new-shell", id)
 }
 
+func (s *ContainerRegistrySuite) TestFindOrCreateShellReclaimsPendingRemoval() {
+	s.broadcaster.On("BroadcastContainerRegistered", mock.Anything)
+	s.broadcaster.On("BroadcastContainerStatusChanged", mock.Anything)
+
+	tests := []struct {
+		name    string
+		logger  *slog.Logger
+		fired   bool
+		wantID  string
+		creates bool
+	}{
+		{name: "timer pending", logger: slog.Default(), wantID: "old-shell"},
+		{name: "timer pending without a logger", wantID: "old-shell"},
+		{name: "timer already fired", logger: slog.Default(), fired: true, wantID: "new-shell", creates: true},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.reg = NewRegistry(s.broadcaster)
+			if tt.logger != nil {
+				s.reg.SetLogger(tt.logger)
+			}
+			s.reg.Register(&ContainerInfo{ContainerID: "agent-1", ChannelID: "ch-1", Type: ContainerTypeAgent})
+			s.reg.UpdateStatus("agent-1", ContainerStatusPendingRemoval)
+			s.reg.Register(&ContainerInfo{ContainerID: "old-shell", ChannelID: "ch-1", Type: ContainerTypeShell})
+
+			timer := time.NewTimer(time.Hour)
+			s.reg.SetAfterFunc(func(time.Duration, func()) *time.Timer { return timer })
+			s.reg.ScheduleRemove("old-shell", time.Minute)
+			if tt.fired {
+				timer.Stop()
+			}
+
+			creator := new(mockCreator)
+			creator.On("CreateShellContainer", mock.Anything, "ch-1", "", "").Return("new-shell", nil)
+			s.reg.SetShellCreator(creator)
+
+			id, err := s.reg.FindOrCreateShell(context.Background(), "ch-1", "", "")
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tt.wantID, id)
+			if !tt.creates {
+				info := s.reg.Get("old-shell")
+				require.Equal(s.T(), ContainerStatusRunning, info.Status)
+				require.Nil(s.T(), info.RemoveAt)
+				require.False(s.T(), timer.Stop(), "the removal timer is stopped")
+				creator.AssertNotCalled(s.T(), "CreateShellContainer", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+			}
+		})
+	}
+}
+
 func (s *ContainerRegistrySuite) TestFindOrCreateShellConcurrent() {
 	s.broadcaster.On("BroadcastContainerRegistered", mock.Anything).Maybe()
 

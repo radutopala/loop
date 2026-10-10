@@ -79,3 +79,20 @@ func (a *ManagerAdapter) StopSession(sessionID string) (string, error) {
 func (a *ManagerAdapter) KillProcessGroup(ctx context.Context, sessionID string) error {
 	return a.mgr.KillProcessGroup(ctx, sessionID)
 }
+
+// LiveSessions returns how many sessions in a container still run their exec.
+func (a *ManagerAdapter) LiveSessions(containerID string) int {
+	return a.mgr.LiveSessions(containerID)
+}
+
+// SetOnExit sets a func called with a session's container once the
+// session's exec ends.
+func (a *ManagerAdapter) SetOnExit(fn func(containerID string)) {
+	a.mgr.SetOnExit(fn)
+}
+
+// Sessions returns every session's ID, mapped to whether a client is
+// attached to it.
+func (a *ManagerAdapter) Sessions() map[string]bool {
+	return a.mgr.Sessions()
+}

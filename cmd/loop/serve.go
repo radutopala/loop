@@ -721,6 +721,7 @@ func (a *app) serve() error {
 	hostExecClient := a.newHostExecClient()
 	hostTermMgr := terminal.NewManager(hostExecClient, logger)
 	apiSrv.SetHostTerminalManager(terminal.NewManagerAdapter(hostTermMgr))
+	go apiSrv.RunTerminalReaper(ctx)
 
 	if cfg.Browser.Enabled {
 		// Idle monitoring for browser sessions (CDPManagers + containers).

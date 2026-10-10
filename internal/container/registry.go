@@ -490,12 +490,60 @@ func (r *Registry) FindOrCreateShell(ctx context.Context, channelID, dirPath, pa
 	if info := r.FindByChannelAndType(channelID, ContainerTypeShell); info != nil {
 		return info.ContainerID, nil
 	}
+	if id := r.reclaimShell(channelID); id != "" {
+		return id, nil
+	}
 
 	id, err := r.creator.CreateShellContainer(ctx, channelID, dirPath, parentDirPath)
 	if err != nil {
 		return "", fmt.Errorf("creating shell container: %w", err)
 	}
 	return id, nil
+}
+
+// reclaimShell takes back the channel's shell container while its removal
+// is still pending, so a terminal opened within the keep-alive reuses it.
+// It returns "" when there's none, or its removal timer already fired.
+func (r *Registry) reclaimShell(channelID string) string {
+	r.mu.RLock()
+	var id string
+	for cid := range r.byChannel[channelID] {
+		if info, ok := r.containers[cid]; ok && info.Type == ContainerTypeShell && info.Status == ContainerStatusPendingRemoval {
+			id = cid
+			break
+		}
+	}
+	r.mu.RUnlock()
+	if id == "" || !r.Reclaim(id) {
+		return ""
+	}
+	return id
+}
+
+// Reclaim cancels a container's pending removal and marks it running again.
+// It reports false when no removal is pending, or its timer already fired.
+func (r *Registry) Reclaim(containerID string) bool {
+	r.timersMu.Lock()
+	t, ok := r.timers[containerID]
+	stopped := ok && t.Stop()
+	if stopped {
+		delete(r.timers, containerID)
+	}
+	r.timersMu.Unlock()
+	if !stopped {
+		return false
+	}
+
+	r.mu.Lock()
+	if info, ok := r.containers[containerID]; ok {
+		info.RemoveAt = nil
+	}
+	r.mu.Unlock()
+	r.UpdateStatus(containerID, ContainerStatusRunning)
+	if r.logger != nil {
+		r.logger.Info("container removal cancelled", "container_id", containerID)
+	}
+	return true
 }
 
 // Restore populates the registry from a list of existing containers.

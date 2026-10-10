@@ -86,6 +86,10 @@ func (m *MockTerminalManager) StopSession(sessionID string) (string, error) {
 	return args.String(0), args.Error(1)
 }
 
+func (m *MockTerminalManager) LiveSessions(containerID string) int {
+	return m.Called(containerID).Int(0)
+}
+
 func (m *MockTerminalManager) KillProcessGroup(ctx context.Context, sessionID string) error {
 	return m.Called(ctx, sessionID).Error(0)
 }

@@ -402,7 +402,7 @@ On server startup, `Restore()` populates the registry from Docker containers tha
 
 ### FindOrCreateShell
 
-Terminal connections use `FindOrCreateShell` to get a shell container for a channel. It uses a per-channel mutex to prevent duplicate containers when multiple terminal panes connect simultaneously (double-checked locking pattern).
+Terminal connections use `FindOrCreateShell` to get a shell container for a channel. It uses a per-channel mutex to prevent duplicate containers when multiple terminal panes connect simultaneously (double-checked locking pattern). A shell container still pending removal is taken back, its timer cancelled, so a pane opened within the keep-alive reuses it.
 
 ## Container Removal
 
@@ -482,12 +482,13 @@ Both are resolved from the channel's own config layers, so a project can raise o
 
 ## Shell Containers
 
-`CreateShellContainer` creates a long-lived container for terminal access. Instead of running the Claude CLI, these containers execute `sleep infinity` and persist until explicitly stopped.
+`CreateShellContainer` creates a long-lived container for terminal access. Instead of running the Claude CLI, these containers execute `sleep infinity`.
 
 Shell containers:
 - Use the same `createAndStartContainer` pipeline (same env, mounts, MCP config).
-- Are **not** auto-removed via `scheduleRemove`.
-- Are used by the terminal system for interactive sessions (`docker exec`).
+- Are shared by every docker shell and agent pane of the channel, in any tab, as `docker exec` sessions.
+- Are marked for removal after `container_keep_alive_sec` once no live session runs in them: the last pane with one closes, or its process ends (a shell left with `exit`). Closing one pane, or a tab, shown or not, leaves the container to the panes still open elsewhere; panes on a tab never opened have no session and don't hold it. A session started while the last one is being released takes the container back. A session no app window holds any more is closed after 5 minutes (see [Session Lifecycle](terminal.md#session-lifecycle)), which releases the container the same way.
+- Are removed at once by the layout's **Kill** button, and marked for removal when their channel or thread is deleted.
 
 ---
 

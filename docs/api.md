@@ -36,7 +36,7 @@ Every API caller is either the **owner** or an **agent**. Nothing is trusted for
 | Caller | Token | Where it lives |
 |---|---|---|
 | Owner: the desktop app, the `loop` CLI, host tools | Owner token, 32 random bytes in hex | `api-token` in Loop's directory under the OS user config dir (`~/Library/Application Support/loop/` on macOS, `~/.config/loop/` on Linux). Dir `0700`, file `0600`. `loop serve` creates it on first start |
-| Agent: the clients inside one agent container (the MCP server, mcp-browser, `loop review`, the agent-channel WebSocket) | Agent token, issued per container | `/run/loop/api-token` in the container, readable by the agent user only. Never in the container's environment, so `docker inspect` doesn't show it. Revoked when the container goes |
+| Agent: the clients inside one agent container (the MCP server, mcp-browser, `loop review`) | Agent token, issued per container | `/run/loop/api-token` in the container, readable by the agent user only. Never in the container's environment, so `docker inspect` doesn't show it. Revoked when the container goes |
 
 The owner token's directory is never a channel dir and never mounted into a container, whatever the config says.
 
@@ -54,7 +54,7 @@ Browsers can't set headers on a WebSocket, so WebSocket clients send it as a sub
 
 ### Agent scope
 
-An agent token works only on the routes in-container clients call (the table is `agentRoutes` in `internal/api/agent_scope.go`): messages, threads, tasks, shortcuts, memory, playground, workflows, learn proposals, review, quality, the UI bridge (`GET /api/ui/state`, `POST /api/ui/commands`), the browser action and the agent-channel WebSocket. Every other route answers 403, among them config, terminals, gates, images, token rotation and content links.
+An agent token works only on the routes in-container clients call (the table is `agentRoutes` in `internal/api/agent_scope.go`): messages, threads, tasks, shortcuts, memory, playground, workflows, learn proposals, review, quality, the UI bridge (`GET /api/ui/state`, `POST /api/ui/commands`), and the browser action. Every other route answers 403, among them config, terminals, gates, images, token rotation and content links.
 
 On the routes it may call, an agent is held to its own project. Every channel, thread, task, workflow run and `dir_path` a request names, in the path, the query or the JSON body, must be the agent's own channel or dir, or share its project root (after symlinks). A request that names anything else gets 403. The exception is `POST /api/messages` (the `send_message` tool): its `channel_id` may be any channel, so one agent can hand work or news to another project's channel. Agents may also only change `project` bash shortcuts, and can't start workflows while `workflow_bash_local` runs workflow bash on the host. The routes that change review comments (delete, edit, push one, push all) are held to the agent's own channel, not its project: they act on the PR as the user. An agent may not delete a GitHub comment.
 
@@ -2827,6 +2827,24 @@ Interactive terminal WebSocket. See [Terminal WebSocket](terminal.md) for the fu
 
 ---
 
+### `POST /api/terminal/claims`
+
+Claims the terminal sessions an app window holds, on tabs it isn't showing too. The app sends it once a minute; a session no client is attached to and no window has claimed for 5 minutes is closed. See [Session Lifecycle](terminal.md#session-lifecycle).
+
+**Request body:**
+
+```json
+{
+  "session_ids": ["a1b2c3d4", "e5f6a7b8"]
+}
+```
+
+**Response:** `204 No Content`.
+
+**Errors:** `400` if the body is invalid.
+
+---
+
 ### `GET /api/ws/ui`
 
 The app windows' connection to the [UI bridge](#ui-bridge): a window sends `hello`, then `state` whenever what it shows changes, and answers each `command` with a `result` message holding its `results`. Owner only.
@@ -3051,7 +3069,7 @@ Unregister an agent from the registry. Called by the MCP server on graceful shut
 
 ### `POST /api/agents/{id}/message`
 
-Send a push message to an agent's mailbox.
+Type a message into an agent's terminal, as `[from <from_agent_id>] <content>` in one bracketed paste followed by Enter. Claude Code queues it when the agent is busy.
 
 **Request Body:**
 
@@ -3065,37 +3083,11 @@ Send a push message to an agent's mailbox.
 
 | Status | Description |
 |--------|-------------|
-| 204 | Message delivered |
-| 400 | Missing `channel_id` or `content` |
+| 204 | Message typed into the agent's terminal |
+| 400 | Missing `channel_id` or `content`, or `content` holds a bracketed-paste marker |
 | 404 | Target agent not found |
+| 409 | Target agent has no terminal, or its terminal session is gone |
 | 503 | Agent registry not configured |
-
-Messages are non-blocking — dropped if the target's mailbox (buffer size 64) is full.
-
----
-
-### `GET /api/ws/agent-channel`
-
-WebSocket endpoint for MCP servers to receive pushed messages.
-
-**Query Parameters:**
-
-| Param | Required | Description |
-|-------|----------|-------------|
-| `agent_id` | Yes | Agent ID to subscribe for |
-| `channel_id` | Yes | Channel ID |
-
-Messages are forwarded as JSON:
-
-```json
-{
-  "from_agent_id": "docker-agent-0",
-  "content": "task completed",
-  "timestamp": "2026-03-25T10:05:00Z"
-}
-```
-
-The WebSocket closes when the agent is unregistered (terminal session closed).
 
 ---
 

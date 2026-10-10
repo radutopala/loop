@@ -116,15 +116,9 @@ func (s *MCPServerSuite) TestNew() {
 	require.NotNil(s.T(), s.srv.mcpServer)
 }
 
-// TestRunWithChannelTransport covers Server.Run's channelTransport != nil
-// branch: when WithAgentTools is set, Run threads the supplied transport
-// into channelTransport.inner, starts the push-receiver goroutine, and
-// cancels the receiver ctx on return so no goroutine leaks.
-func (s *MCPServerSuite) TestRunWithChannelTransport() {
+// TestRun serves MCP traffic on the given transport until ctx is cancelled.
+func (s *MCPServerSuite) TestRun() {
 	srv := New("ch-1", "http://127.0.0.1:1", "author-1", http.DefaultClient, nil, WithAgentTools("agent-0"))
-	// Tiny backoffs so the receiver goroutine cycles quickly during the test.
-	srv.channelTransport.dialBackoff = 5 * time.Millisecond
-	srv.channelTransport.reconnectDelay = 5 * time.Millisecond
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1.0.0"}, nil)
 	t1, t2 := mcp.NewInMemoryTransports()

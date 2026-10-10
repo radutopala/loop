@@ -263,6 +263,7 @@ Raw PTY output is sent as WebSocket binary frames. The client should render thes
 | `missing_field`   | A required field is missing (e.g., `session_id`, `rows`, `cols`, `channel_id`) |
 | `invalid_input`   | Input data is invalid (e.g., bad base64, empty command argument, too many args) |
 | `session_failed`  | Session operation failed (container not found, exec error, etc.) |
+| `session_gone`    | `attach` named a session the server no longer has, after a daemon restart say. The app starts a new session in the pane without showing an error |
 | `unknown_message` | Unrecognized message type |
 
 ---
@@ -292,8 +293,9 @@ create ──> readLoop starts ──> fan-out to attached clients
 2. **Read loop:** Reads from the exec connection in 4096-byte chunks. Each chunk is written to the ring buffer and fanned out to all attached client channels (buffered, capacity 64). Slow consumers have output dropped with a warning log.
 3. **Attach:** Registers a new client channel on the session. The ring buffer contents are replayed immediately, followed by live output streaming.
 4. **Detach on WS close:** When the WebSocket disconnects, the session is detached (not stopped). The exec process and ring buffer continue running so the session can be reattached later.
-5. **Reattach:** A new WebSocket connection can attach to the same session ID. The ring buffer provides the scrollback history.
-6. **Kill on explicit close:** Only `stop`, `close`, or `kill` messages terminate the exec process. `StopSession` closes the exec connection, closes all client channels, and removes the session from the manager.
+5. **Reattach:** A new WebSocket connection can attach to the same session ID. The ring buffer provides the scrollback history. The app keeps each pane's session ID in `sessionStorage`, so a reload reattaches too.
+6. **Kill on explicit close:** Only `stop`, `close`, or `kill` messages terminate the exec process. `StopSession` closes the exec connection, closes all client channels, and removes the session from the manager. For a Docker session, `close` first kills every process in the shell's session inside the container, its background jobs included.
+7. **Reaping:** Every app window claims the sessions it holds, on tabs it isn't showing too, through [`POST /api/terminal/claims`](api.md#post-apiterminalclaims) once a minute. A session no client is attached to and no window has claimed for 5 minutes, one of a closed or crashed window say, is closed as `close` would close it. A session is never reaped while a client is attached, and a sweep gap far longer than a minute (the machine slept) counts every session as held.
 
 ---
 

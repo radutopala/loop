@@ -12,6 +12,7 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 
+	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/learn"
 	"github.com/radutopala/loop/internal/mcpserver"
@@ -82,6 +83,34 @@ func (s *MainSuite) TestRunMCPWithAgentID() {
 
 	_ = s.app.runMCP("ch1", "http://localhost:8222", "", logPath, "", "local", "agent-0", false)
 	require.True(s.T(), called)
+}
+
+func (s *MainSuite) TestRunMCPChatAgent() {
+	logPath := filepath.Join(s.T().TempDir(), "mcp.log")
+
+	var srv *mcpserver.Server
+	s.app.newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger, opts ...mcpserver.MemoryOption) *mcpserver.Server {
+		srv = mcpserver.New(channelID, apiURL, authorID, httpClient, logger, opts...)
+		return srv
+	}
+	_ = s.app.runMCP("ch1", "http://localhost:8222", "", logPath, "", "local", agent.ChatAgentID, false)
+	require.NotNil(s.T(), srv)
+
+	ctx := context.Background()
+	t1, t2 := mcpsdk.NewInMemoryTransports()
+	go func() { _ = srv.MCPServer().Run(ctx, t1) }()
+	session, err := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "c", Version: "1"}, nil).Connect(ctx, t2, nil)
+	require.NoError(s.T(), err)
+	defer session.Close()
+	tools, err := session.ListTools(ctx, nil)
+	require.NoError(s.T(), err)
+	var names []string
+	for _, tool := range tools.Tools {
+		names = append(names, tool.Name)
+	}
+	require.Contains(s.T(), names, "list_agents")
+	require.Contains(s.T(), names, "send_agent_message")
+	require.NotContains(s.T(), names, "update_agent_status", "chat only sends")
 }
 
 func (s *MainSuite) TestRunMCPLearnAgent() {

@@ -728,7 +728,7 @@ func (s *MainSuite) TestRunMCPWithMemoryEnabled() {
 
 	_ = s.app.runMCP("", "http://localhost:8222", "/home/user/dev/loop", logPath, "", "local", "", false)
 	// WithMemoryAPI + WithWorkflowAPI
-	require.Equal(s.T(), 3, optCount, "expected WithMemoryAPI + WithWorkflowAPI + WithAPIToken when config memory is enabled")
+	require.Equal(s.T(), 2, optCount, "expected WithMemoryAPI + WithWorkflowAPI when config memory is enabled")
 }
 
 func (s *MainSuite) TestRunMCPWithMemoryEnabledChannelIDMode() {
@@ -756,7 +756,7 @@ func (s *MainSuite) TestRunMCPWithMemoryEnabledChannelIDMode() {
 
 	_ = s.app.runMCP("ch1", "http://localhost:8222", "", logPath, "", "local", "", false)
 	// WithMemoryAPI + WithWorkflowAPI
-	require.Equal(s.T(), 3, optCount, "expected WithMemoryAPI + WithWorkflowAPI + WithAPIToken when config memory is enabled in channel-id mode")
+	require.Equal(s.T(), 2, optCount, "expected WithMemoryAPI + WithWorkflowAPI when config memory is enabled in channel-id mode")
 }
 
 func (s *MainSuite) TestRunMCPWithMemoryNotEnabled() {
@@ -782,7 +782,7 @@ func (s *MainSuite) TestRunMCPWithMemoryNotEnabled() {
 
 	_ = s.app.runMCP("", "http://localhost:8222", "/path", logPath, "", "local", "", false)
 	// Only WithWorkflowAPI should be passed; no memory option
-	require.Equal(s.T(), 2, optCount, "expected only WithWorkflowAPI + WithAPIToken when memory is disabled")
+	require.Equal(s.T(), 1, optCount, "expected only WithWorkflowAPI when memory is disabled")
 }
 
 func (s *MainSuite) TestRunMCPWithMemoryFlag() {
@@ -804,5 +804,5 @@ func (s *MainSuite) TestRunMCPWithMemoryFlag() {
 
 	_ = s.app.runMCP("ch1", "http://localhost:8222", "", logPath, "", "local", "", true)
 	// WithMemoryAPI + WithWorkflowAPI
-	require.Equal(s.T(), 3, optCount, "expected WithMemoryAPI + WithWorkflowAPI + WithAPIToken when memory flag is true")
+	require.Equal(s.T(), 2, optCount, "expected WithMemoryAPI + WithWorkflowAPI when memory flag is true")
 }

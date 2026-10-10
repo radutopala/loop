@@ -15,6 +15,20 @@ export function killAgentContainer(channelId: string): void {
   };
 }
 
+/** Open a one-shot WebSocket to close a terminal session no pane is attached to. */
+export function closeTerminalSessionById(sessionId: string, target: "agent" | "host"): void {
+  const ws = new WebSocket(`${getWsUrl()}/api/ws/terminal`, wsProtocols());
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ type: "close", session_id: sessionId, target }));
+  };
+  ws.onmessage = () => {
+    ws.close();
+  };
+  ws.onerror = () => {
+    ws.close();
+  };
+}
+
 interface ChannelAPIResponse {
   channel_id: string;
   name: string;

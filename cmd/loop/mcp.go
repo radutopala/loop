@@ -8,7 +8,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
 
-	"github.com/radutopala/loop/internal/apiauth"
+	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/explain"
 	"github.com/radutopala/loop/internal/learn"
 	"github.com/radutopala/loop/internal/logging"
@@ -87,16 +87,19 @@ func (a *app) runMCP(channelID, apiURL, dirPath, logPath, authorID, platform, ag
 	case "":
 	case learn.AgentID:
 		// A learn pass files proposals, and gets none of the inter-agent
-		// tools or channel push: it works alone, and other agents shouldn't
-		// see or message it.
+		// tools: it works alone, and other agents shouldn't see or message
+		// it.
 		memOpts = append(memOpts, mcpserver.WithLearnTools())
+	case agent.ChatAgentID:
+		// Chat has no terminal to type messages into, so it only sends.
+		memOpts = append(memOpts, mcpserver.WithAgentSender(agentID))
 	case explain.AgentID:
 		// An explanation only reads: like a learn pass it works alone, and
 		// it has no tools of its own either.
 	default:
 		memOpts = append(memOpts, mcpserver.WithAgentTools(agentID))
 	}
-	memOpts = append(memOpts, mcpserver.WithWorkflowAPI(), mcpserver.WithAPIToken(apiauth.NewClientTokenSource().Token))
+	memOpts = append(memOpts, mcpserver.WithWorkflowAPI())
 
 	srv := a.newMCPServer(channelID, apiURL, authorID, a.apiClient, logger, memOpts...)
 	srv.RegisterAgent()

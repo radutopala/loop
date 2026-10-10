@@ -124,22 +124,21 @@ name and is matched exactly, never slugified.
 
 ### Agent Tools (when `--agent-id` set)
 
-Enabled for Swarm/Canvas terminal agents. Uses MCP Channels for push delivery.
+Enabled for Swarm/Canvas terminal agents. Messages are typed into the target agent's terminal.
 
 | Tool | Description |
 |------|-------------|
 | `list_agents` | List active agents in the current channel with status and work summaries |
-| `send_agent_message` | Send a push message to another agent by ID (delivered via `notifications/claude/channel`) |
+| `send_agent_message` | Send a message to another agent by ID, typed into its terminal as `[from <agent id>] <message>`; fails when the agent has no terminal |
 | `update_agent_status` | Update this agent's display name and work summary (visible to other agents and frontend) |
 
-When `--agent-id` is set, the server also:
-- Declares `capabilities.experimental["claude/channel"]` in the MCP initialize response
-- Sets instructions telling Claude how to use agent tools and respond to channel messages
-- Starts a push receiver goroutine (WebSocket to `/api/ws/agent-channel`) that forwards messages as `notifications/claude/channel` JSON-RPC notifications to stdout
+When `--agent-id` is set, the server also sets instructions telling Claude how to use the agent tools and how messages from other agents arrive.
+
+With `--agent-id chat`, the id chat runs get, the server only sends: it has `list_agents` and `send_agent_message` but not `update_agent_status`, and it doesn't register, because chat has no terminal to type messages into.
 
 ### Learn Tools (learn agent only)
 
-Registered only when `--agent-id` is `learn`, the id the orchestrator gives a [learn pass](orchestrator.md#learn-pass). A learn pass works alone, so that id gets none of the agent tools above: no `list_agents`, `send_agent_message` or `update_agent_status`, no channel push, and it isn't registered in the agent registry.
+Registered only when `--agent-id` is `learn`, the id the orchestrator gives a [learn pass](orchestrator.md#learn-pass). A learn pass works alone, so that id gets none of the agent tools above: no `list_agents`, `send_agent_message` or `update_agent_status`, and it isn't registered in the agent registry.
 
 | Tool | Description |
 |------|-------------|

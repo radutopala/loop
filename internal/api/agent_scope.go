@@ -14,12 +14,11 @@ import (
 )
 
 // agentRoutes is everything an agent container's clients call: the MCP
-// server's tools, mcp-browser, `loop review` and the agent-channel WS. An
-// agent token gets a 403 on every other route, so config, terminals, the
-// gate, images and the other owner-only surfaces stay out of reach. Adding
-// an MCP tool that calls a new route means adding the route here.
+// server's tools, mcp-browser and `loop review`. An agent token gets a 403
+// on every other route, so config, terminals, the gate, images and the other
+// owner-only surfaces stay out of reach. Adding an MCP tool that calls a new
+// route means adding the route here.
 var agentRoutes = []string{
-	"GET /api/ws/agent-channel",
 	"POST /api/agents",
 	"GET /api/agents",
 	"PATCH /api/agents/{id}",

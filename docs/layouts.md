@@ -337,7 +337,7 @@ The layout tab bar sits between the workspace header and the layout content area
    - Inactive tab: transparent background, `colors.textDim` text, hover shows `colors.hoverBg`
    - Each tab has an `x` button for deletion (only shown when more than 1 layout exists)
 3. **`+` button** -- creates a new layout
-4. **Kill button** -- red-bordered pill, only visible when agent state is "running". Kills all agent/shell sessions and the agent container.
+4. **Kill button** -- red-bordered pill, only visible when agent state is "running". Kills all agent/shell sessions and the channel's containers at once. Closing a pane or a tab only closes its sessions; the shared shell container is marked for removal once no pane in any tab has a session in it.
 5. **Reset button** -- opens a dropdown with "Restore defaults" and/or "Reset current"
 
 ---

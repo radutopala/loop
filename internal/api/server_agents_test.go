@@ -7,9 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"time"
 
-	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
 
 	"github.com/radutopala/loop/internal/agentregistry"
@@ -149,20 +147,58 @@ func (s *ServerSuite) TestAgentUpdateAgentNotConfigured() {
 
 // --- handleSendAgentMessage ---
 
-func (s *ServerSuite) TestAgentSendMessageSuccess() {
-	reg := agentregistry.New()
-	s.srv.SetAgentRegistry(reg)
-	defer func() { s.srv.agentRegistry = nil }()
+func (s *ServerSuite) TestAgentSendMessage() {
+	const typed = "\x1b[200~[from a-0] hello\nthere\n\x1b[201~\r"
+	tests := []struct {
+		name       string
+		terminal   string
+		noTerm     bool
+		from       string
+		content    string
+		input      string
+		inputErr   error
+		wantCode   int
+		wantBody   string
+		wantTermAt string
+	}{
+		{name: "typed", terminal: "sess-1", from: "a-0", content: "hello\nthere", input: typed, wantCode: http.StatusNoContent, wantTermAt: "sess-1"},
+		{name: "typed without sender", terminal: "sess-1", content: "hi", input: "\x1b[200~hi\n\x1b[201~\r", wantCode: http.StatusNoContent, wantTermAt: "sess-1"},
+		{name: "paste start marker", terminal: "sess-1", from: "a-0", content: "a\x1b[200~b", wantCode: http.StatusBadRequest, wantBody: "bracketed-paste marker", wantTermAt: "sess-1"},
+		{name: "paste end marker", terminal: "sess-1", from: "a-0", content: "a\x1b[201~b", wantCode: http.StatusBadRequest, wantBody: "bracketed-paste marker", wantTermAt: "sess-1"},
+		{name: "terminal gone", terminal: "sess-1", from: "a-0", content: "hello\nthere", input: typed, inputErr: errors.New("session not found"), wantCode: http.StatusConflict, wantBody: "terminal is gone: session not found"},
+		{name: "no terminal", from: "a-0", content: "hello", wantCode: http.StatusConflict, wantBody: "has no terminal"},
+		{name: "no terminal manager", terminal: "sess-1", noTerm: true, from: "a-0", content: "hello", wantCode: http.StatusConflict, wantBody: "has no terminal", wantTermAt: "sess-1"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			reg := agentregistry.New()
+			s.srv.SetAgentRegistry(reg)
+			defer func() { s.srv.agentRegistry = nil }()
+			term := new(MockTerminalManager)
+			s.srv.termManager = term
+			if tt.noTerm {
+				s.srv.termManager = nil
+			}
 
-	reg.Register(&agentregistry.AgentInfo{AgentID: "a-0", ChannelID: "ch-1"})
-	reg.Register(&agentregistry.AgentInfo{AgentID: "a-1", ChannelID: "ch-1"})
+			reg.Register(&agentregistry.AgentInfo{AgentID: "a-1", ChannelID: "ch-1"})
+			if tt.terminal != "" {
+				reg.SetTerminal("ch-1", "a-1", tt.terminal)
+			}
+			if tt.input != "" {
+				term.On("SendInput", "sess-1", []byte(tt.input)).Return(tt.inputErr)
+			}
 
-	body := `{"channel_id":"ch-1","from_agent_id":"a-0","content":"hello"}`
-	req := httptest.NewRequest("POST", "/api/agents/a-1/message", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	s.mux.ServeHTTP(w, req)
+			body, _ := json.Marshal(map[string]string{"channel_id": "ch-1", "from_agent_id": tt.from, "content": tt.content})
+			req := httptest.NewRequest("POST", "/api/agents/a-1/message", strings.NewReader(string(body)))
+			w := httptest.NewRecorder()
+			s.mux.ServeHTTP(w, req)
 
-	require.Equal(s.T(), http.StatusNoContent, w.Code)
+			require.Equal(s.T(), tt.wantCode, w.Code)
+			require.Contains(s.T(), w.Body.String(), tt.wantBody)
+			require.Equal(s.T(), tt.wantTermAt, reg.Terminal("ch-1", "a-1"))
+			term.AssertExpectations(s.T())
+		})
+	}
 }
 
 func (s *ServerSuite) TestAgentSendMessageTargetNotFound() {
@@ -206,182 +242,6 @@ func (s *ServerSuite) TestAgentSendMessageNotConfigured() {
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, req)
 	require.Equal(s.T(), http.StatusServiceUnavailable, w.Code)
-}
-
-// --- handleAgentChannelWS ---
-
-func (s *ServerSuite) TestAgentChannelWSSuccess() {
-	reg := agentregistry.New()
-	s.srv.SetAgentRegistry(reg)
-	defer func() { s.srv.agentRegistry = nil }()
-
-	reg.Register(&agentregistry.AgentInfo{AgentID: "a-0", ChannelID: "ch-1"})
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/ws/agent-channel", s.srv.handleAgentChannelWS)
-	ts := httptest.NewServer(mux)
-	defer ts.Close()
-
-	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/ws/agent-channel?agent_id=a-0&channel_id=ch-1"
-	ws, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	require.NoError(s.T(), err)
-	defer ws.Close()
-
-	// Send a message to the agent.
-	require.NoError(s.T(), reg.SendMessage("ch-1", "a-1", "a-0", "hello"))
-
-	// Read the message from WebSocket.
-	var msg agentregistry.AgentMessage
-	require.NoError(s.T(), ws.ReadJSON(&msg))
-	require.Equal(s.T(), "a-1", msg.FromAgentID)
-	require.Equal(s.T(), "hello", msg.Content)
-}
-
-func (s *ServerSuite) TestAgentChannelWSClosesOnUnregister() {
-	reg := agentregistry.New()
-	s.srv.SetAgentRegistry(reg)
-	defer func() { s.srv.agentRegistry = nil }()
-
-	reg.Register(&agentregistry.AgentInfo{AgentID: "a-0", ChannelID: "ch-1"})
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/ws/agent-channel", s.srv.handleAgentChannelWS)
-	ts := httptest.NewServer(mux)
-	defer ts.Close()
-
-	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/ws/agent-channel?agent_id=a-0&channel_id=ch-1"
-	ws, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	require.NoError(s.T(), err)
-	defer ws.Close()
-
-	// Unregister the agent — WebSocket should close.
-	reg.Unregister("ch-1", "a-0")
-
-	// Reading should return an error (connection closed).
-	_, _, err = ws.ReadMessage()
-	require.Error(s.T(), err)
-}
-
-func (s *ServerSuite) TestAgentChannelWSMissingParams() {
-	reg := agentregistry.New()
-	s.srv.SetAgentRegistry(reg)
-	defer func() { s.srv.agentRegistry = nil }()
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/ws/agent-channel", s.srv.handleAgentChannelWS)
-	ts := httptest.NewServer(mux)
-	defer ts.Close()
-
-	resp, err := http.Get(ts.URL + "/api/ws/agent-channel")
-	require.NoError(s.T(), err)
-	defer resp.Body.Close()
-	require.Equal(s.T(), http.StatusBadRequest, resp.StatusCode)
-}
-
-func (s *ServerSuite) TestAgentChannelWSAgentNotFound() {
-	reg := agentregistry.New()
-	s.srv.SetAgentRegistry(reg)
-	defer func() { s.srv.agentRegistry = nil }()
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/ws/agent-channel", s.srv.handleAgentChannelWS)
-	ts := httptest.NewServer(mux)
-	defer ts.Close()
-
-	resp, err := http.Get(ts.URL + "/api/ws/agent-channel?agent_id=nope&channel_id=ch-1")
-	require.NoError(s.T(), err)
-	defer resp.Body.Close()
-	require.Equal(s.T(), http.StatusNotFound, resp.StatusCode)
-}
-
-func (s *ServerSuite) TestAgentChannelWSUpgradeFail() {
-	reg := agentregistry.New()
-	s.srv.SetAgentRegistry(reg)
-	defer func() { s.srv.agentRegistry = nil }()
-
-	// Agent exists but request is a regular HTTP GET (not WS upgrade).
-	reg.Register(&agentregistry.AgentInfo{AgentID: "a-0", ChannelID: "ch-1"})
-	s.srv.logger = slog.Default()
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/ws/agent-channel", s.srv.handleAgentChannelWS)
-	ts := httptest.NewServer(mux)
-	defer ts.Close()
-
-	resp, err := http.Get(ts.URL + "/api/ws/agent-channel?agent_id=a-0&channel_id=ch-1")
-	require.NoError(s.T(), err)
-	defer resp.Body.Close()
-	// Upgrade fails — returns 400 (Bad Request from gorilla/websocket).
-	require.Equal(s.T(), http.StatusBadRequest, resp.StatusCode)
-}
-
-func (s *ServerSuite) TestAgentChannelWSNotConfigured() {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/ws/agent-channel", s.srv.handleAgentChannelWS)
-	ts := httptest.NewServer(mux)
-	defer ts.Close()
-
-	resp, err := http.Get(ts.URL + "/api/ws/agent-channel?agent_id=a-0&channel_id=ch-1")
-	require.NoError(s.T(), err)
-	defer resp.Body.Close()
-	require.Equal(s.T(), http.StatusServiceUnavailable, resp.StatusCode)
-}
-
-// --- integration: send + receive via WS ---
-
-func (s *ServerSuite) TestAgentChannelWSMultipleMessages() {
-	reg := agentregistry.New()
-	s.srv.SetAgentRegistry(reg)
-	defer func() { s.srv.agentRegistry = nil }()
-
-	reg.Register(&agentregistry.AgentInfo{AgentID: "a-0", ChannelID: "ch-1"})
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/ws/agent-channel", s.srv.handleAgentChannelWS)
-	ts := httptest.NewServer(mux)
-	defer ts.Close()
-
-	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/ws/agent-channel?agent_id=a-0&channel_id=ch-1"
-	ws, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	require.NoError(s.T(), err)
-	defer ws.Close()
-
-	// Send 3 messages.
-	for i := range 3 {
-		require.NoError(s.T(), reg.SendMessage("ch-1", "sender", "a-0", strings.Repeat("x", i+1)))
-	}
-
-	// Read all 3.
-	for i := range 3 {
-		require.NoError(s.T(), ws.SetReadDeadline(time.Now().Add(time.Second)))
-		var msg agentregistry.AgentMessage
-		require.NoError(s.T(), ws.ReadJSON(&msg))
-		require.Equal(s.T(), strings.Repeat("x", i+1), msg.Content)
-	}
-}
-
-func (s *ServerSuite) TestAgentChannelWSWriteError() {
-	reg := agentregistry.New()
-	s.srv.SetAgentRegistry(reg)
-	s.srv.agentWSWriteJSON = func(v any) error { return errors.New("write failed") }
-
-	reg.Register(&agentregistry.AgentInfo{AgentID: "a-0", ChannelID: "ch-1"})
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/ws/agent-channel", s.srv.handleAgentChannelWS)
-	ts := httptest.NewServer(mux)
-
-	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/ws/agent-channel?agent_id=a-0&channel_id=ch-1"
-	ws, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	require.NoError(s.T(), err)
-
-	// Send a message; the injected writeJSON returns an error, exercising the error branch.
-	require.NoError(s.T(), reg.SendMessage("ch-1", "sender", "a-0", "boom"))
-	time.Sleep(50 * time.Millisecond)
-
-	// Close WS + server before test cleanup to avoid race on agentWSWriteJSON.
-	ws.Close()
-	ts.Close()
 }
 
 // --- handleDeleteAgent ---
