@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type BuiltinKind, restoreBuiltins } from "../../api/builtins";
 import { type ConfigResponse, type ConfigSchema, fetchConfigSchema, fetchGlobalConfig, fetchProjectConfig, saveGlobalConfig, saveProjectConfig } from "../../api/configApi";
-import { getImageStatus, reclaimDockerSpace } from "../../api/loopApi";
+import { getImageStatus, getReclaimable, reclaimDockerSpace } from "../../api/loopApi";
 import { DEFAULT_FONT_SIZES, useTheme } from "../../ThemeContext";
 import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
-import type { Channel, DaemonInfo, ImageBuildStatusData, ImageStatusResponse, ImageUpdateAvailableData } from "../../types";
+import type { Channel, DaemonInfo, DockerReclaimable, DockerReclaimResult, ImageBuildStatusData, ImageStatusResponse, ImageUpdateAvailableData } from "../../types";
 import { logErr } from "../../utils/log";
 import { ChannelHeaderInfo } from "../layout/ChannelHeaderInfo";
 import { ConfigForm, type ConfigFormHandle, getSections } from "./ConfigForm";
@@ -19,6 +19,35 @@ export function formatBytes(n: number): string {
   const i = Math.min(units.length - 1, Math.floor(Math.log(n) / Math.log(1024)));
   const val = n / 1024 ** i;
   return `${val >= 10 || i === 0 ? Math.round(val) : val.toFixed(1)} ${units[i]}`;
+}
+
+const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
+
+// reclaimRows lists, by source, what reclaiming Docker space would free; the
+// unused images row is the opt-in one, and a volume row's bytes are null
+// until the volumes are sized.
+export function reclaimRows(e: DockerReclaimable): { label: string; bytes: number | null; optIn?: boolean }[] {
+  const volumeBytes = (n: number) => (e.volumes_sized ? n : null);
+  return [
+    { label: "Build cache", bytes: e.build_cache },
+    { label: "Dangling images", bytes: e.dangling_images },
+    { label: "Unused anonymous volumes", bytes: volumeBytes(e.anonymous_volumes) },
+    { label: `Deleted channels' Chrome profiles (${plural(e.orphan_volume_names.length, "volume")})`, bytes: volumeBytes(e.orphan_volumes) },
+    { label: `Unused images (${plural(e.unused_image_tags.length, "tag")})`, bytes: e.unused_images, optIn: true },
+  ];
+}
+
+// reclaimSummary tells what reclaiming Docker space freed, by source.
+export function reclaimSummary(r: DockerReclaimResult): string {
+  const parts = [
+    ["build cache", r.build_cache_reclaimed],
+    ["dangling images", r.images_reclaimed],
+    ["unused images", r.unused_images_reclaimed],
+    ["anonymous volumes", r.volumes_reclaimed],
+  ] as const;
+  const freed = parts.filter(([, n]) => n > 0).map(([label, n]) => `${label} ${formatBytes(n)}`);
+  if (r.orphan_volumes_removed > 0) freed.push(`${plural(r.orphan_volumes_removed, "Chrome profile")} of deleted channels removed`);
+  return `Reclaimed ${formatBytes(r.total_reclaimed)}${freed.length ? ` — ${freed.join(", ")}` : ""}.`;
 }
 
 function buildHeaderBtnStyle(colors: ColorPalette): React.CSSProperties {
@@ -230,13 +259,12 @@ export function Settings({
     setRestoreMsgByKind((prev) => ({ ...prev, [kind]: msg }));
   };
 
-  const handleReclaimSpace = async () => {
+  const handleReclaimSpace = async (unusedImages: boolean) => {
     setReclaiming(true);
     setReclaimMsg(null);
     let msg: string;
     try {
-      const r = await reclaimDockerSpace();
-      msg = `Reclaimed ${formatBytes(r.total_reclaimed)} — build cache ${formatBytes(r.build_cache_reclaimed)}, dangling images ${formatBytes(r.images_reclaimed)}.`;
+      msg = reclaimSummary(await reclaimDockerSpace(unusedImages));
     } catch (e: any) {
       msg = e?.message ?? "Reclaim failed";
     } finally {
@@ -963,8 +991,43 @@ function DockerImageSection({
   );
 }
 
-function ContainersSection({ colors, reclaiming, reclaimMsg, onReclaim }: { colors: ColorPalette; reclaiming: boolean; reclaimMsg: string | null; onReclaim: () => void }) {
+function ContainersSection({ colors, reclaiming, reclaimMsg, onReclaim }: { colors: ColorPalette; reclaiming: boolean; reclaimMsg: string | null; onReclaim: (unusedImages: boolean) => void }) {
   const [confirming, setConfirming] = useState(false);
+  const [unusedImages, setUnusedImages] = useState(false);
+  const [estimate, setEstimate] = useState<DockerReclaimable | null>(null);
+  const [estimateErr, setEstimateErr] = useState<string | null>(null);
+
+  // Estimate on open, and again once a reclaim is done: quickly without the
+  // volume sizes, then with them, which can take minutes.
+  useEffect(() => {
+    if (reclaiming) return;
+    let cancelled = false;
+    let sized = false;
+    const fail = (e: any) => {
+      if (!cancelled) setEstimateErr(e?.message ?? "Couldn't read Docker's disk usage");
+    };
+    getReclaimable()
+      .then((e) => {
+        if (cancelled || sized) return;
+        setEstimate(e);
+        setEstimateErr(null);
+      })
+      .catch(fail);
+    getReclaimable(true)
+      .then((e) => {
+        if (cancelled) return;
+        sized = true;
+        setEstimate(e);
+        setEstimateErr(null);
+      })
+      .catch(fail);
+    return () => {
+      cancelled = true;
+    };
+  }, [reclaiming]);
+
+  const rows = estimate ? reclaimRows(estimate) : [];
+  const total = rows.reduce((sum, r) => sum + (r.optIn && !unusedImages ? 0 : (r.bytes ?? 0)), 0);
 
   return (
     <>
@@ -979,10 +1042,38 @@ function ContainersSection({ colors, reclaiming, reclaimMsg, onReclaim }: { colo
           lineHeight: 1.5,
         }}
       >
-        Reclaim Docker disk by pruning the BuildKit cache and dangling (untagged) images left behind by repeated Loop builds. This drops reusable cache too (
-        <code style={{ fontFamily: fonts.mono }}>docker builder prune -a</code>), which is where the space actually is — keeping only unshared entries typically frees a few GB where this frees tens.
-        Tagged images in use — <code style={{ fontFamily: fonts.mono }}>loop-agent</code> and your project images — are kept. Build-cache pruning is daemon-wide, not scoped to Loop, and the next image
-        build will be slower.
+        Reclaim Docker disk by pruning the BuildKit cache (<code style={{ fontFamily: fonts.mono }}>docker builder prune -a</code>, reusable cache too, which is where the space usually is), dangling
+        images, anonymous volumes no container uses and the Chrome profiles of deleted channels. Named volumes are kept, and so are Loop's images —{" "}
+        <code style={{ fontFamily: fonts.mono }}>loop-agent</code>, Chrome, embeddings and your project images. Build-cache pruning is daemon-wide, not scoped to Loop, and the next image build will be
+        slower.
+      </div>
+
+      <div data-testid="reclaim-estimate" style={{ fontSize: 12, color: colors.text, marginBottom: 12, lineHeight: 1.7 }}>
+        {estimateErr && <div style={{ color: colors.error }}>{estimateErr}</div>}
+        {!estimate && !estimateErr && <div style={{ color: colors.textDim }}>Reading Docker's disk usage…</div>}
+        {rows.map((r) => (
+          <div key={r.label} style={{ display: "flex", alignItems: "center", gap: 8, color: r.optIn && !unusedImages ? colors.textDim : colors.text }}>
+            {r.optIn ? (
+              <label style={{ flex: 1, display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }} title={estimate?.unused_image_tags.join("\n")}>
+                <input data-testid="reclaim-unused-images" type="checkbox" checked={unusedImages} onChange={(e) => setUnusedImages(e.target.checked)} />
+                {r.label}
+              </label>
+            ) : (
+              <span style={{ flex: 1 }}>{r.label}</span>
+            )}
+            <span style={{ fontFamily: fonts.mono, color: r.bytes === null ? colors.textDim : undefined }}>{r.bytes === null ? "sizing…" : formatBytes(r.bytes)}</span>
+          </div>
+        ))}
+        {estimate && (
+          <div style={{ display: "flex", gap: 8, borderTop: `1px solid ${colors.border}`, marginTop: 4, paddingTop: 4, fontWeight: 600 }}>
+            <span style={{ flex: 1 }}>Total, about</span>
+            <span style={{ fontFamily: fonts.mono }}>
+              {formatBytes(total)}
+              {estimate.volumes_sized ? "" : " + volumes"}
+            </span>
+          </div>
+        )}
+        {unusedImages && <div style={{ color: colors.textDim, fontSize: 11 }}>Unused images are pulled or built again when something needs them.</div>}
       </div>
 
       {confirming ? (
@@ -991,7 +1082,7 @@ function ContainersSection({ colors, reclaiming, reclaimMsg, onReclaim }: { colo
             data-testid="reclaim-confirm"
             onClick={() => {
               setConfirming(false);
-              onReclaim();
+              onReclaim(unusedImages);
             }}
             style={{
               flex: 1,

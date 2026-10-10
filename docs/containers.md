@@ -518,12 +518,15 @@ After a successful startup build, `PruneBuildCache` drops BuildKit cache entries
 
 ## Reclaiming Docker Space
 
-The **Containers** settings section exposes a "Reclaim Docker space" action (`POST /api/image/reclaim`) that frees disk on demand:
+The **Containers** settings section exposes a "Reclaim Docker space" action. On open it shows, by source, what reclaiming would free (`GET /api/image/reclaimable`, read from Docker's disk usage). Sizing volumes means walking them, which takes minutes on a large daemon, so the UI asks twice: once without volume sizes, back in seconds, then with `?volume_sizes=true`. The action itself is `POST /api/image/reclaim`, and it doesn't size volumes:
 
-- `PruneBuildCache(unusedFor=0)` drops **all currently-unused** BuildKit cache.
-- `PruneDanglingImages` removes **dangling (untagged)** images — layers orphaned by repeated rebuilds. Tagged images still in use (`loop-agent`, project images) are preserved.
+- `PruneBuildCache(unusedFor=0, all)` drops **all currently-unused** BuildKit cache.
+- `PruneDanglingImages` removes **dangling (untagged)** images — layers orphaned by repeated rebuilds.
+- `PruneAnonymousVolumes` removes the **anonymous** volumes no container uses. Named volumes, which hold caches and databases someone chose to keep, are never pruned.
+- The Chrome profile volumes (`loop-chrome-profile-*`) of **deleted channels** are removed, when no container mounts them.
+- Opt-in, with `{"unused_images": true}` in the body: the **tagged images no container uses** are removed too. Loop's own are kept: the agent and Chrome images, the embeddings image, project images and the child images built on the agent image.
 
-The handler returns a `ReclaimResult` (`build_cache_reclaimed`, `images_reclaimed`, `total_reclaimed`, in bytes) and the UI reports the space freed. Build-cache pruning is daemon-global, not scoped to Loop's own builds, and the next image build runs slower until the cache warms again.
+Removals aren't forced, so an image or volume a container started using in the meantime stays. The handler returns a `ReclaimResult` (`build_cache_reclaimed`, `images_reclaimed`, `unused_images_reclaimed`, `volumes_reclaimed`, `total_reclaimed`, in bytes, and `orphan_volumes_removed`, a count, since Docker doesn't say what removing a volume frees) and the UI reports the space freed. Build-cache pruning is daemon-global, not scoped to Loop's own builds, and the next image build runs slower until the cache warms again.
 
 ---
 

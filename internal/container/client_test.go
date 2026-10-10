@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/build"
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/events"
@@ -137,6 +138,16 @@ func (m *mockDockerAPI) BuildCachePrune(ctx context.Context, opts build.CachePru
 func (m *mockDockerAPI) ImagesPrune(ctx context.Context, pruneFilters filters.Args) (image.PruneReport, error) {
 	args := m.Called(ctx, pruneFilters)
 	return args.Get(0).(image.PruneReport), args.Error(1)
+}
+
+func (m *mockDockerAPI) VolumesPrune(ctx context.Context, pruneFilters filters.Args) (volume.PruneReport, error) {
+	args := m.Called(ctx, pruneFilters)
+	return args.Get(0).(volume.PruneReport), args.Error(1)
+}
+
+func (m *mockDockerAPI) DiskUsage(ctx context.Context, options types.DiskUsageOptions) (types.DiskUsage, error) {
+	args := m.Called(ctx, options)
+	return args.Get(0).(types.DiskUsage), args.Error(1)
 }
 
 func (m *mockDockerAPI) Events(ctx context.Context, options events.ListOptions) (<-chan events.Message, <-chan error) {

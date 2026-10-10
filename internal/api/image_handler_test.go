@@ -44,8 +44,13 @@ func (m *MockImageManager) Rebuild(ctx context.Context) error {
 	return m.Called(ctx).Error(0)
 }
 
-func (m *MockImageManager) ReclaimSpace(ctx context.Context) (container.ReclaimResult, error) {
-	args := m.Called(ctx)
+func (m *MockImageManager) Reclaimable(ctx context.Context, volumeSizes bool) (container.Reclaimable, error) {
+	args := m.Called(ctx, volumeSizes)
+	return args.Get(0).(container.Reclaimable), args.Error(1)
+}
+
+func (m *MockImageManager) ReclaimSpace(ctx context.Context, opts container.ReclaimOptions) (container.ReclaimResult, error) {
+	args := m.Called(ctx, opts)
 	return args.Get(0).(container.ReclaimResult), args.Error(1)
 }
 
@@ -195,50 +200,91 @@ func (s *ServerSuite) TestImageRemoveNotConfigured() {
 	require.Contains(s.T(), rec.Body.String(), "image management not configured")
 }
 
+// --- GET /api/image/reclaimable ---
+
+func (s *ServerSuite) TestImageReclaimable() {
+	tests := []struct {
+		name     string
+		mgr      bool
+		query    string
+		sized    bool
+		estimate container.Reclaimable
+		err      error
+		wantCode int
+		wantBody string
+	}{
+		{name: "volumes sized", mgr: true, query: "?volume_sizes=true", sized: true, estimate: container.Reclaimable{VolumesSized: true, AnonymousVolumes: 5}, wantCode: http.StatusOK},
+		{
+			name: "estimate", mgr: true, wantCode: http.StatusOK,
+			estimate: container.Reclaimable{BuildCache: 4096, UnusedImages: 2048, UnusedImageTags: []string{"old:1"}, OrphanVolumes: 10, OrphanVolumeList: []string{"loop-chrome-profile-gone"}},
+			wantBody: `"unused_image_tags":["old:1"]`,
+		},
+		{name: "daemon error", mgr: true, err: errors.New("daemon down"), wantCode: http.StatusInternalServerError, wantBody: "daemon down"},
+		{name: "not configured", wantCode: http.StatusNotImplemented, wantBody: "image management not configured"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			mgr := new(MockImageManager)
+			if tt.mgr {
+				s.srv.imageManager = mgr
+				mgr.On("Reclaimable", mock.Anything, tt.sized).Return(tt.estimate, tt.err)
+			}
+			s.mux.HandleFunc("GET /api/image/reclaimable", s.srv.handleImageReclaimable)
+			rec := s.testRequest("GET", "/api/image/reclaimable"+tt.query, "")
+
+			require.Equal(s.T(), tt.wantCode, rec.Code)
+			require.Contains(s.T(), rec.Body.String(), tt.wantBody)
+			if tt.wantCode == http.StatusOK {
+				var resp container.Reclaimable
+				require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
+				require.Equal(s.T(), tt.estimate, resp)
+			}
+			mgr.AssertExpectations(s.T())
+		})
+	}
+}
+
 // --- POST /api/image/reclaim ---
 
-func (s *ServerSuite) TestImageReclaimSuccess() {
-	mockImgMgr := new(MockImageManager)
-	s.srv.imageManager = mockImgMgr
+func (s *ServerSuite) TestImageReclaim() {
+	result := container.ReclaimResult{BuildCacheReclaimed: 4096, ImagesReclaimed: 8192, UnusedImagesReclaimed: 1, VolumesReclaimed: 2, TotalReclaimed: 12291, OrphanVolumesRemoved: 3}
+	tests := []struct {
+		name     string
+		mgr      bool
+		body     string
+		opts     *container.ReclaimOptions // nil: ReclaimSpace isn't called
+		err      error
+		wantCode int
+		wantBody string
+	}{
+		{name: "no body", mgr: true, opts: &container.ReclaimOptions{}, wantCode: http.StatusOK},
+		{name: "unused images opted in", mgr: true, body: `{"unused_images":true}`, opts: &container.ReclaimOptions{UnusedImages: true}, wantCode: http.StatusOK},
+		{name: "invalid body", mgr: true, body: `{`, wantCode: http.StatusBadRequest, wantBody: "invalid request body"},
+		{name: "daemon error", mgr: true, opts: &container.ReclaimOptions{}, err: errors.New("daemon down"), wantCode: http.StatusInternalServerError, wantBody: "daemon down"},
+		{name: "not configured", wantCode: http.StatusNotImplemented, wantBody: "image management not configured"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			mgr := new(MockImageManager)
+			if tt.mgr {
+				s.srv.imageManager = mgr
+			}
+			if tt.opts != nil {
+				mgr.On("ReclaimSpace", mock.Anything, *tt.opts).Return(result, tt.err)
+			}
+			s.mux.HandleFunc("POST /api/image/reclaim", s.srv.handleImageReclaim)
+			rec := s.testRequest("POST", "/api/image/reclaim", tt.body)
 
-	mockImgMgr.On("ReclaimSpace", mock.Anything).Return(container.ReclaimResult{
-		BuildCacheReclaimed: 4096,
-		ImagesReclaimed:     8192,
-		TotalReclaimed:      12288,
-	}, nil)
-
-	s.mux.HandleFunc("POST /api/image/reclaim", s.srv.handleImageReclaim)
-	rec := s.testRequest("POST", "/api/image/reclaim", "")
-
-	require.Equal(s.T(), http.StatusOK, rec.Code)
-
-	var resp container.ReclaimResult
-	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
-	require.Equal(s.T(), uint64(4096), resp.BuildCacheReclaimed)
-	require.Equal(s.T(), uint64(8192), resp.ImagesReclaimed)
-	require.Equal(s.T(), uint64(12288), resp.TotalReclaimed)
-	mockImgMgr.AssertExpectations(s.T())
-}
-
-func (s *ServerSuite) TestImageReclaimError() {
-	mockImgMgr := new(MockImageManager)
-	s.srv.imageManager = mockImgMgr
-
-	mockImgMgr.On("ReclaimSpace", mock.Anything).Return(container.ReclaimResult{}, errors.New("daemon down"))
-
-	s.mux.HandleFunc("POST /api/image/reclaim", s.srv.handleImageReclaim)
-	rec := s.testRequest("POST", "/api/image/reclaim", "")
-
-	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
-	require.Contains(s.T(), rec.Body.String(), "daemon down")
-	mockImgMgr.AssertExpectations(s.T())
-}
-
-func (s *ServerSuite) TestImageReclaimNotConfigured() {
-	// imageManager is nil by default in SetupTest — do not set it.
-	s.mux.HandleFunc("POST /api/image/reclaim", s.srv.handleImageReclaim)
-	rec := s.testRequest("POST", "/api/image/reclaim", "")
-
-	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
-	require.Contains(s.T(), rec.Body.String(), "image management not configured")
+			require.Equal(s.T(), tt.wantCode, rec.Code)
+			require.Contains(s.T(), rec.Body.String(), tt.wantBody)
+			if tt.wantCode == http.StatusOK {
+				var resp container.ReclaimResult
+				require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
+				require.Equal(s.T(), result, resp)
+			}
+			mgr.AssertExpectations(s.T())
+		})
+	}
 }

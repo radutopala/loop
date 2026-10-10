@@ -580,6 +580,7 @@ func (s *Server) registerAgentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/agents/{id}/message", s.handleSendAgentMessage)
 	mux.HandleFunc("GET /api/image/status", s.handleImageStatus)
 	mux.HandleFunc("POST /api/image/rebuild", s.handleImageRebuild)
+	mux.HandleFunc("GET /api/image/reclaimable", s.handleImageReclaimable)
 	mux.HandleFunc("POST /api/image/reclaim", s.handleImageReclaim)
 	mux.HandleFunc("DELETE /api/image", s.handleImageRemove)
 	mux.HandleFunc("GET /api/containers", s.handleListContainers)
