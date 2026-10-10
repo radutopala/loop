@@ -832,6 +832,7 @@ func (a *app) serve() error {
 	apiSrv.SetSessionSwitcher(orch)
 	apiSrv.SetAskResolver(orch)
 	apiSrv.SetQueueResumer(orch)
+	apiSrv.SetPluginRunner(orch)
 	if statsClient, ok := dockerClient.(api.ContainerStatsFetcher); ok {
 		apiSrv.SetContainerStatsFetcher(statsClient)
 	}

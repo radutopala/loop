@@ -19,6 +19,7 @@ require (
 	github.com/docker/go-connections v0.7.0
 	github.com/docker/go-units v0.5.0
 	github.com/go-json-experiment/json v0.0.0-20260601182631-00ed12fed2a6
+	github.com/google/jsonschema-go v0.4.3
 	github.com/gorilla/websocket v1.5.3
 	github.com/moby/docker-image-spec v1.3.1
 	github.com/modelcontextprotocol/go-sdk v1.6.1
@@ -54,7 +55,6 @@ require (
 	github.com/gobwas/pool v0.2.1 // indirect
 	github.com/gobwas/ws v1.4.0 // indirect
 	github.com/gofrs/uuid v4.3.1+incompatible // indirect
-	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/go-immutable-radix v1.3.1 // indirect
 	github.com/hashicorp/go-memdb v1.3.4 // indirect

@@ -19,6 +19,7 @@ import (
 
 	"github.com/radutopala/loop/internal/apiauth"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/plugin"
 	"github.com/radutopala/loop/internal/plugin/install"
 	"github.com/radutopala/loop/internal/plugin/proxy"
 	"github.com/radutopala/loop/internal/plugin/runtime"
@@ -92,7 +93,7 @@ func (s *IntegrationSuite) call(ep runtime.Endpoint, secret, method, path string
 }
 
 func (s *IntegrationSuite) TestInstallRunRemove() {
-	c, err := s.service.Install(s.ctx, echoImage, true, "", nil)
+	c, err := s.service.Install(s.ctx, echoImage, true, "", []plugin.Capability{plugin.CapAgentReadOnly})
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "echo", c.Manifest.ID)
 
@@ -119,6 +120,19 @@ func (s *IntegrationSuite) TestInstallRunRemove() {
 	// A manual action goes through the service to the running container.
 	require.NoError(s.T(), s.service.RunAction(s.ctx, "echo", "ping", ch, proxy.ActionRequest{Trigger: proxy.TriggerManual}))
 	require.ErrorIs(s.T(), s.service.RunAction(s.ctx, "echo", "nope", ch, proxy.ActionRequest{Trigger: proxy.TriggerManual}), install.ErrUnknownAction)
+
+	// The say agent gets the echo tool, and its calls reach the container.
+	run, err := s.service.AgentRun(s.ctx, "echo", "say")
+	require.NoError(s.T(), err)
+	require.True(s.T(), run.Agent.ReadOnly)
+	require.Len(s.T(), run.Tools, 1)
+	call := proxy.ToolRequest{RunID: "run-1", Agent: "say", ThreadID: "th-1", Input: json.RawMessage(`{"text":"hi"}`)}
+	res, err := s.service.CallTool(s.ctx, "echo", "echo", ch, call)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), &proxy.ToolResult{Content: "hi"}, res)
+	call.Input = json.RawMessage(`{"text":1}`)
+	_, err = s.service.CallTool(s.ctx, "echo", "echo", ch, call)
+	require.ErrorIs(s.T(), err, install.ErrInvalidInput)
 
 	require.NoError(s.T(), s.service.Remove(s.ctx, "echo", true))
 	_, err = s.docker.ContainerInspect(s.ctx, runtime.ContainerName("echo", ch.ID))

@@ -172,6 +172,7 @@ type Server struct {
 	agentRegistry           *agentregistry.Registry
 	imageManager            ImageManager
 	plugins                 PluginManager
+	pluginRunner            PluginRunner
 	server                  *http.Server
 	listener                net.Listener
 	stopErr                 error // if set, Stop returns this error (for testing)
@@ -666,6 +667,8 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/plugins", s.handleInstallPlugin)
 	mux.HandleFunc("DELETE /api/plugins/{id}", s.handleRemovePlugin)
 	mux.HandleFunc("POST /api/plugins/{plugin}/actions/{action}", s.handleRunPluginAction)
+	mux.HandleFunc("POST /api/plugins/{plugin}/tools/{tool}", s.handleCallPluginTool)
+	mux.HandleFunc("POST /api/plugin/v1/runs", s.handleStartPluginRun)
 	mux.HandleFunc("GET /api/health", handleHealth)
 	mux.HandleFunc("POST /api/auth/rotate", s.handleRotateToken)
 	mux.HandleFunc("POST /api/content-caps", s.handleCreateContentCap)

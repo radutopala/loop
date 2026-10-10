@@ -93,3 +93,49 @@ func (s *ClientSuite) TestActionFailures() {
 	err = c.Action(context.Background(), runtime.Endpoint{URL: "http://plugin\x7f"}, "ping", ActionRequest{})
 	require.ErrorContains(s.T(), err, "building the plugin request")
 }
+
+func (s *ClientSuite) TestTool() {
+	tests := []struct {
+		name    string
+		status  int
+		body    string
+		want    *ToolResult
+		wantErr string
+	}{
+		{name: "result", status: http.StatusOK, body: `{"content":"hi","is_error":false}`, want: &ToolResult{Content: "hi"}},
+		{name: "tool error", status: http.StatusOK, body: `{"content":"bad input","is_error":true}`, want: &ToolResult{Content: "bad input", IsError: true}},
+		{name: "refused", status: http.StatusNotFound, body: "no such tool\n", wantErr: "the plugin answered 404 Not Found: no such tool"},
+		{name: "not json", status: http.StatusOK, body: "hi", wantErr: "reading the plugin's answer"},
+		{name: "answer capped", status: http.StatusOK, body: `{"content":"` + strings.Repeat("x", maxToolResult) + `"}`, wantErr: "reading the plugin's answer"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			var got ToolRequest
+			var path, auth string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				path, auth = r.URL.EscapedPath(), r.Header.Get("Authorization")
+				_ = json.NewDecoder(r.Body).Decode(&got)
+				w.WriteHeader(tt.status)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer srv.Close()
+
+			req := ToolRequest{RunID: "r1", Agent: "say", ThreadID: "plugin:echo-1", Input: json.RawMessage(`{"text":"hi"}`)}
+			res, err := NewClient(srv.Client()).Tool(context.Background(), runtime.Endpoint{URL: srv.URL, Secret: "sec"}, "echo", req)
+			require.Equal(s.T(), "/tools/echo", path)
+			require.Equal(s.T(), "Bearer sec", auth)
+			require.Equal(s.T(), req, got)
+			if tt.wantErr != "" {
+				require.ErrorContains(s.T(), err, tt.wantErr)
+				return
+			}
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tt.want, res)
+		})
+	}
+}
+
+func (s *ClientSuite) TestToolBadInput() {
+	_, err := NewClient(failingDoer{}).Tool(context.Background(), runtime.Endpoint{URL: "http://plugin"}, "echo", ToolRequest{Input: json.RawMessage("{")})
+	require.ErrorContains(s.T(), err, "encoding the tool call")
+}

@@ -5,6 +5,7 @@
   "name": "Echo",
   "version": "0.1.0",
   "api": "1",
+  "capabilities": ["agent.readonly"],
   "tools": [
     {
       "name": "echo",
@@ -12,6 +13,7 @@
       "input_schema": { "type": "object", "properties": { "text": { "type": "string" } } },
     },
   ],
-  "actions": [{ "id": "ping" }],
+  "agents": [{ "id": "say", "read_only": true, "tools": ["echo"] }],
+  "actions": [{ "id": "ping" }, { "id": "say" }],
   "resources": { "memory": "64m", "cpus": 0.25 },
 }

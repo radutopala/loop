@@ -37,12 +37,13 @@ export function subscriptionChannels(selectedId: string | null | undefined, runn
 }
 
 /**
- * Whether a run ran in a channel's hidden learn or explain thread: a learn
- * pass ("learn"), a reply the user asked the learn thread for in the Learn
- * view ("learn-reply"), or an explanation ("explain").
+ * Whether a run ran in one of a channel's hidden threads: a learn pass
+ * ("learn"), a reply the user asked the learn thread for in the Learn view
+ * ("learn-reply"), an explanation ("explain") or a plugin's agent run
+ * ("plugin").
  */
 function isHiddenTrigger(trigger: string | undefined): boolean {
-  return trigger === "learn" || trigger === "learn-reply" || trigger === "explain";
+  return trigger === "learn" || trigger === "learn-reply" || trigger === "explain" || trigger === "plugin";
 }
 
 /**

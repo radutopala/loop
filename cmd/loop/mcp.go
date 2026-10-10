@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
@@ -13,6 +15,7 @@ import (
 	"github.com/radutopala/loop/internal/learn"
 	"github.com/radutopala/loop/internal/logging"
 	"github.com/radutopala/loop/internal/mcpserver"
+	"github.com/radutopala/loop/internal/plugin"
 )
 
 // closeLogFile closes f and merges any close error into existingErr. If
@@ -28,7 +31,7 @@ func closeLogFile(f *os.File, component string, existingErr error) error {
 }
 
 func (a *app) newMCPCmd() *cobra.Command {
-	var channelID, apiURL, logPath, dirPath, authorID, platform, agentID string
+	var channelID, apiURL, logPath, dirPath, authorID, platform, agentID, pluginID, pluginTools string
 	var memoryEnabled bool
 
 	cmd := &cobra.Command{
@@ -36,7 +39,15 @@ func (a *app) newMCPCmd() *cobra.Command {
 		Aliases: []string{"m"},
 		Short:   "Run as an MCP server over stdio",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return a.runMCP(channelID, apiURL, dirPath, logPath, authorID, platform, agentID, memoryEnabled)
+			var extra []mcpserver.MemoryOption
+			if pluginID != "" {
+				var tools []plugin.Tool
+				if err := json.Unmarshal([]byte(pluginTools), &tools); err != nil {
+					return fmt.Errorf("parsing --plugin-tools: %w", err)
+				}
+				extra = append(extra, mcpserver.WithPluginTools(pluginID, tools))
+			}
+			return a.runMCP(channelID, apiURL, dirPath, logPath, authorID, platform, agentID, memoryEnabled, extra...)
 		},
 	}
 
@@ -48,6 +59,9 @@ func (a *app) newMCPCmd() *cobra.Command {
 	cmd.Flags().StringVar(&platform, "platform", "local", "Platform for channel creation (used with --dir)")
 	cmd.Flags().BoolVar(&memoryEnabled, "memory", false, "Enable memory search/index tools")
 	cmd.Flags().StringVar(&agentID, "agent-id", "", "Agent ID for inter-agent communication tools")
+	cmd.Flags().StringVar(&pluginID, "plugin-id", "", "Plugin whose tools a plugin agent run gets")
+	cmd.Flags().StringVar(&pluginTools, "plugin-tools", "[]", "The plugin tools, as a JSON array")
+	cmd.MarkFlagsRequiredTogether("plugin-id", "plugin-tools")
 	cmd.MarkFlagsOneRequired("channel-id", "dir")
 	cmd.MarkFlagsMutuallyExclusive("channel-id", "dir")
 	_ = cmd.MarkFlagRequired("api-url")
@@ -55,7 +69,7 @@ func (a *app) newMCPCmd() *cobra.Command {
 	return cmd
 }
 
-func (a *app) runMCP(channelID, apiURL, dirPath, logPath, authorID, platform, agentID string, memoryEnabled bool) (err error) {
+func (a *app) runMCP(channelID, apiURL, dirPath, logPath, authorID, platform, agentID string, memoryEnabled bool, extra ...mcpserver.MemoryOption) (err error) {
 	if dirPath != "" {
 		resolved, rerr := a.ensureChannelFn(apiURL, dirPath, platform)
 		if rerr != nil {
@@ -83,23 +97,27 @@ func (a *app) runMCP(channelID, apiURL, dirPath, logPath, authorID, platform, ag
 	if memoryEnabled || (cfgErr == nil && cfg.Memory.Enabled) {
 		memOpts = append(memOpts, mcpserver.WithMemoryAPI(dirPath))
 	}
-	switch agentID {
-	case "":
-	case learn.AgentID:
+	switch {
+	case agentID == "":
+	case strings.HasPrefix(agentID, agent.PluginAgentPrefix):
+		// A plugin's agent gets the plugin's tools (see extra) and works
+		// alone, like a learn pass.
+	case agentID == learn.AgentID:
 		// A learn pass files proposals, and gets none of the inter-agent
 		// tools: it works alone, and other agents shouldn't see or message
 		// it.
 		memOpts = append(memOpts, mcpserver.WithLearnTools())
-	case agent.ChatAgentID:
+	case agentID == agent.ChatAgentID:
 		// Chat has no terminal to type messages into, so it only sends.
 		memOpts = append(memOpts, mcpserver.WithAgentSender(agentID))
-	case explain.AgentID:
+	case agentID == explain.AgentID:
 		// An explanation only reads: like a learn pass it works alone, and
 		// it has no tools of its own either.
 	default:
 		memOpts = append(memOpts, mcpserver.WithAgentTools(agentID))
 	}
 	memOpts = append(memOpts, mcpserver.WithWorkflowAPI())
+	memOpts = append(memOpts, extra...)
 
 	srv := a.newMCPServer(channelID, apiURL, authorID, a.apiClient, logger, memOpts...)
 	srv.RegisterAgent()

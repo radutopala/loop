@@ -10,6 +10,8 @@ import (
 	"net/http"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/radutopala/loop/internal/plugin"
 )
 
 // HTTPClient abstracts HTTP calls for testability.
@@ -28,6 +30,8 @@ type Server struct {
 	memoryEnabled    bool
 	workflowsEnabled bool
 	learnTools       bool
+	pluginID         string
+	pluginTools      []plugin.Tool
 	mcpServer        *mcp.Server
 	httpClient       HTTPClient
 	logger           *slog.Logger
@@ -342,6 +346,8 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 	if s.learnTools {
 		s.registerLearnTools()
 	}
+
+	s.registerPluginTools()
 
 	// Register agent tools after mcpServer is created.
 	if s.agentID != "" {

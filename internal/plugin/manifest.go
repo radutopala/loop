@@ -15,6 +15,7 @@ import (
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/docker/go-units"
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/tailscale/hujson"
 
 	"github.com/radutopala/loop/internal/agentgate"
@@ -99,6 +100,29 @@ type Tool struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	InputSchema json.RawMessage `json:"input_schema"`
+}
+
+// schema compiles the tool's input schema.
+func (t *Tool) schema() (*jsonschema.Resolved, error) {
+	var s jsonschema.Schema
+	if err := json.Unmarshal(t.InputSchema, &s); err != nil {
+		return nil, err
+	}
+	return s.Resolve(nil)
+}
+
+// ValidateInput checks input, a tool call's arguments, against the tool's
+// input schema.
+func (t *Tool) ValidateInput(input json.RawMessage) error {
+	rs, err := t.schema()
+	if err != nil {
+		return fmt.Errorf("the tool's input schema: %w", err)
+	}
+	var v any
+	if err := json.Unmarshal(input, &v); err != nil {
+		return fmt.Errorf("the input is not JSON: %w", err)
+	}
+	return rs.Validate(v)
 }
 
 // Action is something Loop can trigger in the plugin, on a schedule or by
@@ -268,8 +292,7 @@ func (m *Manifest) validateTools(add func(string, ...any)) map[string]bool {
 		if strings.TrimSpace(t.Description) == "" {
 			add("tools[%d]: description is required", i)
 		}
-		var schema map[string]any
-		if err := json.Unmarshal(t.InputSchema, &schema); err != nil || schema["type"] != "object" {
+		if rs, err := t.schema(); err != nil || rs.Schema().Type != "object" {
 			add("tools[%d]: input_schema must be a JSON schema of type object", i)
 		}
 	}

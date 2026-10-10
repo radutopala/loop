@@ -11,10 +11,10 @@ import (
 	"github.com/radutopala/loop/internal/db"
 )
 
-// TestPrepareAgentRequestPluginThread checks a plugin's hidden thread: with
-// nothing registered for plugins every run there is refused, and once a
-// handler is registered under the prefix it shapes the runs of every
-// plugin's kind.
+// TestPrepareAgentRequestPluginThread checks the hidden-kind machinery on a
+// plugin's hidden thread: with nothing registered for plugins every run
+// there is refused, and a handler registered under the prefix shapes the
+// runs of every plugin's kind.
 func (s *OrchestratorSuite) TestPrepareAgentRequestPluginThread() {
 	thread := &db.Channel{ChannelID: "plugin-1", ParentID: "ch1", DirPath: "/project", Kind: db.PluginKind("cogtest")}
 	parent := &db.Channel{ChannelID: "ch1", Name: "api", DirPath: "/project"}
@@ -46,6 +46,7 @@ func (s *OrchestratorSuite) TestPrepareAgentRequestPluginThread() {
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			s.SetupTest()
+			delete(s.orch.hiddenKinds, db.ChannelKindPluginPrefix)
 			if tc.handler != nil {
 				s.orch.hiddenKinds[db.ChannelKindPluginPrefix] = *tc.handler
 			}

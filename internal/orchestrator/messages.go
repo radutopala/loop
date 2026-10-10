@@ -28,11 +28,12 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *bot.IncomingMessa
 	}
 	if !active {
 		if !o.resolveThread(ctx, msg.ChannelID) {
-			if msg.AuthorID == learnAuthorID || msg.AuthorID == explainAuthorID {
-				// A learn pass's or explanation's trigger whose hidden
-				// thread was deleted meanwhile. It must not bring the
-				// thread back as a plain channel, where the run would be
-				// unrestricted.
+			if msg.AuthorID == learnAuthorID || msg.AuthorID == explainAuthorID || msg.AuthorID == pluginAuthorID {
+				// A learn pass's, explanation's or plugin run's trigger
+				// whose hidden thread was deleted meanwhile. It must not
+				// bring the thread back as a plain channel, where the run
+				// would be unrestricted.
+				o.pluginRunDone(msg)
 				o.logger.Debug("dropping the trigger", "reason", "hidden thread gone", "channel_id", msg.ChannelID, "author_id", msg.AuthorID)
 				return
 			}
@@ -294,6 +295,7 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 	// deferred to after the run saves its own.
 	o.sessionRunStarted(msg.ChannelID)
 	defer o.sessionRunDone(ctx, msg.ChannelID)
+	defer o.pluginRunDone(msg)
 
 	// An explanation's or learn pass's run marks it running here and done
 	// or failed below.
@@ -364,7 +366,7 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 // runTrigger tags a run in ch's agent.status events with what started it,
 // so the renderer can hold back the dock bounce and notifications for runs
 // the user didn't ask for: "learn" for a learn pass, "explain" for an
-// explanation, "bot" when the bot
+// explanation, "plugin" for a plugin's agent run, "bot" when the bot
 // itself re-entered HandleMessage (an agent posting via the send_message or
 // create_thread MCP tools), "learn-reply" for a user's message in a learn
 // thread, "" for a user's message anywhere else.
@@ -374,6 +376,8 @@ func (o *Orchestrator) runTrigger(ch *db.Channel, authorID string) string {
 		return "learn"
 	case authorID == explainAuthorID:
 		return "explain"
+	case authorID == pluginAuthorID:
+		return "plugin"
 	case o.bot.IsBotUser(authorID):
 		return "bot"
 	case ch != nil && ch.Kind == db.ChannelKindLearn:

@@ -20,6 +20,8 @@ type PluginManager interface {
 	Install(ctx context.Context, ref string, dev bool, digest string, approved []plugin.Capability) (*install.Candidate, error)
 	Remove(ctx context.Context, pluginID string, purge bool) error
 	RunAction(ctx context.Context, pluginID, action string, ch runtime.Channel, req proxy.ActionRequest) error
+	AgentRun(ctx context.Context, pluginID, agentID string) (*install.AgentRun, error)
+	CallTool(ctx context.Context, pluginID, tool string, ch runtime.Channel, req proxy.ToolRequest) (*proxy.ToolResult, error)
 }
 
 const pluginsDisabled = "plugins are disabled; set plugins.enabled in the global config"

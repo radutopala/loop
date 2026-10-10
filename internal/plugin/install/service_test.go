@@ -2,6 +2,7 @@ package install
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -37,6 +38,12 @@ type mockCaller struct {
 
 func (m *mockCaller) Action(ctx context.Context, ep runtime.Endpoint, action string, req proxy.ActionRequest) error {
 	return m.Called(ctx, ep, action, req).Error(0)
+}
+
+func (m *mockCaller) Tool(ctx context.Context, ep runtime.Endpoint, tool string, req proxy.ToolRequest) (*proxy.ToolResult, error) {
+	args := m.Called(ctx, ep, tool, req)
+	res, _ := args.Get(0).(*proxy.ToolResult)
+	return res, args.Error(1)
 }
 
 func (m *mockRuntime) Remove(ctx context.Context, pluginID, channelID string, purge bool) error {
@@ -168,7 +175,16 @@ func (s *ServiceSuite) installed(status string) *db.PluginState {
 	return &db.PluginState{PluginID: "echo", Image: c.Image, Status: status}
 }
 
-const actionManifest = `{"id": "echo", "name": "Echo", "version": "1.0.0", "api": "1", "actions": [{"id": "ping"}]}`
+const actionManifest = `{
+	"id": "echo", "name": "Echo", "version": "1.0.0", "api": "1",
+	"capabilities": ["agent.write"],
+	"actions": [{"id": "ping"}],
+	"tools": [
+		{"name": "echo", "description": "Echoes text", "input_schema": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}},
+		{"name": "edit", "description": "Edits", "input_schema": {"type": "object"}},
+	],
+	"agents": [{"id": "say", "read_only": true, "tools": ["echo"]}, {"id": "writer", "tools": ["edit"]}],
+}`
 
 func (s *ServiceSuite) TestRunAction() {
 	st := s.installed(db.PluginStatusInstalled)
@@ -235,4 +251,111 @@ func (s *ServiceSuite) TestRunActionFailures() {
 			require.ErrorContains(s.T(), err, tt.wantErr)
 		})
 	}
+}
+
+func (s *ServiceSuite) TestAgentRun() {
+	tests := []struct {
+		name      string
+		agent     string
+		caps      []string
+		wantTools []string
+		wantErr   string
+	}{
+		{name: "read-only with agent.readonly", agent: "say", caps: []string{"agent.readonly"}, wantTools: []string{"echo"}},
+		{name: "read-only with agent.write", agent: "say", caps: []string{"agent.write"}, wantTools: []string{"echo"}},
+		{name: "writer with agent.write", agent: "writer", caps: []string{"agent.write"}, wantTools: []string{"edit"}},
+		{name: "writer with agent.readonly", agent: "writer", caps: []string{"agent.readonly"}, wantErr: "capability not approved: the agent writer needs agent.write"},
+		{name: "nothing approved", agent: "say", wantErr: "capability not approved: the agent say needs agent.readonly"},
+		{name: "unknown agent", agent: "nope", caps: []string{"agent.write"}, wantErr: "the plugin has no such agent: nope"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			defer s.TearDownTest()
+			st := s.installed(db.PluginStatusInstalled)
+			st.ApprovedCaps = tt.caps
+			s.store.On("GetPluginState", s.ctx, "echo").Return(st, nil).Once()
+			run, err := s.svc.AgentRun(s.ctx, "echo", tt.agent)
+			if tt.wantErr != "" {
+				require.EqualError(s.T(), err, tt.wantErr)
+				return
+			}
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tt.agent, run.Agent.ID)
+			var names []string
+			for _, t := range run.Tools {
+				names = append(names, t.Name)
+			}
+			require.Equal(s.T(), tt.wantTools, names)
+		})
+	}
+
+	s.Run("not installed", func() {
+		s.SetupTest()
+		defer s.TearDownTest()
+		s.store.On("GetPluginState", s.ctx, "echo").Return(nil, nil).Once()
+		_, err := s.svc.AgentRun(s.ctx, "echo", "say")
+		require.ErrorIs(s.T(), err, ErrNotInstalled)
+	})
+}
+
+func (s *ServiceSuite) TestCallTool() {
+	ch := runtime.Channel{ID: "ch1", DirPath: "/src"}
+	ep := runtime.Endpoint{URL: "http://127.0.0.1:1234", Secret: "s"}
+	call := func(agent, input string) proxy.ToolRequest {
+		return proxy.ToolRequest{RunID: "r1", Agent: agent, ThreadID: "plugin:echo-1", Input: json.RawMessage(input)}
+	}
+	tests := []struct {
+		name    string
+		tool    string
+		req     proxy.ToolRequest
+		setup   func(req proxy.ToolRequest)
+		want    *proxy.ToolResult
+		wantIs  error
+		wantErr string
+	}{
+		{name: "forwarded", tool: "echo", req: call("say", `{"text":"hi"}`), setup: func(req proxy.ToolRequest) {
+			s.runtime.On("Ensure", s.ctx, mock.Anything, ch).Return(ep, nil).Once()
+			s.caller.On("Tool", s.ctx, ep, "echo", req).Return(&proxy.ToolResult{Content: "hi"}, nil).Once()
+		}, want: &proxy.ToolResult{Content: "hi"}},
+		{name: "unknown agent", tool: "echo", req: call("nope", `{}`), wantIs: ErrUnknownAgent},
+		{name: "tool the agent wasn't given", tool: "edit", req: call("say", `{}`), wantIs: ErrUnknownTool},
+		{name: "undeclared tool", tool: "nope", req: call("say", `{}`), wantIs: ErrUnknownTool},
+		{name: "invalid input", tool: "echo", req: call("say", `{"text":1}`), wantIs: ErrInvalidInput},
+		{name: "start", tool: "echo", req: call("say", `{"text":"hi"}`), setup: func(proxy.ToolRequest) {
+			s.runtime.On("Ensure", s.ctx, mock.Anything, ch).Return(runtime.Endpoint{}, errors.New("unhealthy")).Once()
+		}, wantErr: "starting the plugin: unhealthy"},
+		{name: "call", tool: "echo", req: call("say", `{"text":"hi"}`), setup: func(req proxy.ToolRequest) {
+			s.runtime.On("Ensure", s.ctx, mock.Anything, ch).Return(ep, nil).Once()
+			s.caller.On("Tool", s.ctx, ep, "echo", req).Return(nil, errors.New("calling the plugin: refused")).Once()
+		}, wantErr: "calling the plugin: refused"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			defer s.TearDownTest()
+			s.store.On("GetPluginState", s.ctx, "echo").Return(s.installed(db.PluginStatusInstalled), nil).Once()
+			if tt.setup != nil {
+				tt.setup(tt.req)
+			}
+			res, err := s.svc.CallTool(s.ctx, "echo", tt.tool, ch, tt.req)
+			switch {
+			case tt.wantIs != nil:
+				require.ErrorIs(s.T(), err, tt.wantIs)
+			case tt.wantErr != "":
+				require.EqualError(s.T(), err, tt.wantErr)
+			default:
+				require.NoError(s.T(), err)
+				require.Equal(s.T(), tt.want, res)
+			}
+		})
+	}
+
+	s.Run("not installed", func() {
+		s.SetupTest()
+		defer s.TearDownTest()
+		s.store.On("GetPluginState", s.ctx, "echo").Return(nil, nil).Once()
+		_, err := s.svc.CallTool(s.ctx, "echo", "echo", ch, call("say", `{}`))
+		require.ErrorIs(s.T(), err, ErrNotInstalled)
+	})
 }

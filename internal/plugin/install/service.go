@@ -27,6 +27,14 @@ var (
 	// ErrNotRunnable is returned for a plugin installed but not runnable,
 	// such as a disabled one.
 	ErrNotRunnable = errors.New("the plugin is not runnable")
+	// ErrUnknownAgent is returned for an agent the plugin's manifest
+	// doesn't declare.
+	ErrUnknownAgent = errors.New("the plugin has no such agent")
+	// ErrUnknownTool is returned for a tool the calling agent wasn't given.
+	ErrUnknownTool = errors.New("the agent has no such tool")
+	// ErrInvalidInput is returned for a tool call whose input doesn't match
+	// the tool's input schema.
+	ErrInvalidInput = errors.New("invalid tool input")
 )
 
 // Runtime runs installed plugins' containers.
@@ -47,6 +55,14 @@ type ServiceStore interface {
 // Caller calls into a running plugin.
 type Caller interface {
 	Action(ctx context.Context, ep runtime.Endpoint, action string, req proxy.ActionRequest) error
+	Tool(ctx context.Context, ep runtime.Endpoint, tool string, req proxy.ToolRequest) (*proxy.ToolResult, error)
+}
+
+// AgentRun is an agent run a plugin asks for: the agent and the tools it
+// gets.
+type AgentRun struct {
+	Agent plugin.Agent
+	Tools []plugin.Tool
 }
 
 // Service installs, upgrades and removes plugins, keeping their running
@@ -127,17 +143,7 @@ func (s *Service) Remove(ctx context.Context, pluginID string, purge bool) error
 // RunAction starts the plugin's container in ch, if it isn't running, and
 // asks it to run action.
 func (s *Service) RunAction(ctx context.Context, pluginID, action string, ch runtime.Channel, req proxy.ActionRequest) error {
-	st, err := s.store.GetPluginState(ctx, pluginID)
-	if err != nil {
-		return fmt.Errorf("reading the plugin: %w", err)
-	}
-	if st == nil {
-		return ErrNotInstalled
-	}
-	if st.Status != db.PluginStatusInstalled {
-		return fmt.Errorf("%w: it is %s", ErrNotRunnable, st.Status)
-	}
-	m, err := s.installer.Manifest(st)
+	st, m, err := s.runnable(ctx, pluginID)
 	if err != nil {
 		return err
 	}
@@ -149,4 +155,91 @@ func (s *Service) RunAction(ctx context.Context, pluginID, action string, ch run
 		return fmt.Errorf("starting the plugin: %w", err)
 	}
 	return s.caller.Action(ctx, ep, action, req)
+}
+
+// AgentRun returns the run of agentID that the plugin asks for, once the
+// owner approved the capability it needs: agent.readonly or agent.write for
+// a read-only agent, agent.write for any other.
+func (s *Service) AgentRun(ctx context.Context, pluginID, agentID string) (*AgentRun, error) {
+	st, m, err := s.runnable(ctx, pluginID)
+	if err != nil {
+		return nil, err
+	}
+	a, ok := findAgent(m, agentID)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrUnknownAgent, agentID)
+	}
+	write := slices.Contains(st.ApprovedCaps, string(plugin.CapAgentWrite))
+	if !write && (!a.ReadOnly || !slices.Contains(st.ApprovedCaps, string(plugin.CapAgentReadOnly))) {
+		return nil, fmt.Errorf("%w: the agent %s needs %s", ErrNotApproved, agentID, agentCap(a))
+	}
+	run := &AgentRun{Agent: a}
+	for _, t := range m.Tools {
+		if slices.Contains(a.Tools, t.Name) {
+			run.Tools = append(run.Tools, t)
+		}
+	}
+	return run, nil
+}
+
+// CallTool forwards an agent's call of tool to the plugin's container in
+// ch, starting it if it isn't running. The tool must be one req.Agent was
+// given, and the input must match its schema, so a bad call fails without
+// waking the plugin.
+func (s *Service) CallTool(ctx context.Context, pluginID, tool string, ch runtime.Channel, req proxy.ToolRequest) (*proxy.ToolResult, error) {
+	st, m, err := s.runnable(ctx, pluginID)
+	if err != nil {
+		return nil, err
+	}
+	a, ok := findAgent(m, req.Agent)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrUnknownAgent, req.Agent)
+	}
+	i := slices.IndexFunc(m.Tools, func(t plugin.Tool) bool { return t.Name == tool })
+	if i < 0 || !slices.Contains(a.Tools, tool) {
+		return nil, fmt.Errorf("%w: %s", ErrUnknownTool, tool)
+	}
+	if err := m.Tools[i].ValidateInput(req.Input); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidInput, err)
+	}
+	ep, err := s.runtime.Ensure(ctx, runtime.Plugin{Manifest: m, Image: st.Image}, ch)
+	if err != nil {
+		return nil, fmt.Errorf("starting the plugin: %w", err)
+	}
+	return s.caller.Tool(ctx, ep, tool, req)
+}
+
+// runnable returns an installed plugin that may run, and its manifest.
+func (s *Service) runnable(ctx context.Context, pluginID string) (*db.PluginState, *plugin.Manifest, error) {
+	st, err := s.store.GetPluginState(ctx, pluginID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("reading the plugin: %w", err)
+	}
+	if st == nil {
+		return nil, nil, ErrNotInstalled
+	}
+	if st.Status != db.PluginStatusInstalled {
+		return nil, nil, fmt.Errorf("%w: it is %s", ErrNotRunnable, st.Status)
+	}
+	m, err := s.installer.Manifest(st)
+	if err != nil {
+		return nil, nil, err
+	}
+	return st, m, nil
+}
+
+func findAgent(m *plugin.Manifest, id string) (plugin.Agent, bool) {
+	i := slices.IndexFunc(m.Agents, func(a plugin.Agent) bool { return a.ID == id })
+	if i < 0 {
+		return plugin.Agent{}, false
+	}
+	return m.Agents[i], true
+}
+
+// agentCap is the capability agent a's runs need at least.
+func agentCap(a plugin.Agent) plugin.Capability {
+	if a.ReadOnly {
+		return plugin.CapAgentReadOnly
+	}
+	return plugin.CapAgentWrite
 }

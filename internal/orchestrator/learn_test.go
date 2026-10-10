@@ -377,6 +377,7 @@ func (s *OrchestratorSuite) TestRunTrigger() {
 	}{
 		{name: "learn pass", ch: learnThread, authorID: learnAuthorID, want: "learn"},
 		{name: "explanation", ch: &db.Channel{ChannelID: "explain-1", Kind: db.ChannelKindExplain}, authorID: explainAuthorID, want: "explain"},
+		{name: "plugin run", ch: &db.Channel{ChannelID: "plugin-1", Kind: db.PluginKind("echo")}, authorID: pluginAuthorID, want: "plugin"},
 		{name: "bot", ch: chat, authorID: "bot-1", want: "bot"},
 		{name: "user", ch: chat, authorID: "user-1", want: ""},
 		{name: "user in a learn thread", ch: learnThread, authorID: "user-1", want: "learn-reply"},

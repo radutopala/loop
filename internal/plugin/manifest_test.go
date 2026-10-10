@@ -115,8 +115,9 @@ func (s *ManifestSuite) TestValidate() {
 				tool,
 				{Name: "echo", Description: " ", InputSchema: json.RawMessage(`{"type":"string"}`)},
 				{Name: "Bad", Description: "x", InputSchema: json.RawMessage(`nope`)},
+				{Name: "unresolved", Description: "x", InputSchema: json.RawMessage(`{"type":"object","$ref":"#/missing"}`)},
 			}
-		}, wantErr: []string{`tools[1]: tool "echo" is declared twice`, "tools[1]: description is required", "tools[1]: input_schema must be a JSON schema of type object", `tools[2]: name "Bad" must match`, "tools[2]: input_schema must be"}},
+		}, wantErr: []string{`tools[1]: tool "echo" is declared twice`, "tools[1]: description is required", "tools[1]: input_schema must be a JSON schema of type object", `tools[2]: name "Bad" must match`, "tools[2]: input_schema must be", "tools[3]: input_schema must be"}},
 		{name: "agents", edit: func(m *Manifest) {
 			m.Tools = []Tool{tool}
 			m.Agents = []Agent{
@@ -189,6 +190,32 @@ func (s *ManifestSuite) TestValidate() {
 			for _, want := range tc.wantErr {
 				require.ErrorContains(s.T(), err, want)
 			}
+		})
+	}
+}
+
+func (s *ManifestSuite) TestToolValidateInput() {
+	t := Tool{Name: "echo", InputSchema: json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}`)}
+	tests := []struct {
+		name    string
+		tool    Tool
+		input   string
+		wantErr string
+	}{
+		{name: "valid", tool: t, input: `{"text":"hi"}`},
+		{name: "missing field", tool: t, input: `{}`, wantErr: "text"},
+		{name: "wrong type", tool: t, input: `{"text":1}`, wantErr: "text"},
+		{name: "not json", tool: t, input: `{`, wantErr: "the input is not JSON"},
+		{name: "bad schema", tool: Tool{InputSchema: json.RawMessage(`nope`)}, input: `{}`, wantErr: "the tool's input schema"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			err := tt.tool.ValidateInput(json.RawMessage(tt.input))
+			if tt.wantErr == "" {
+				require.NoError(s.T(), err)
+				return
+			}
+			require.ErrorContains(s.T(), err, tt.wantErr)
 		})
 	}
 }

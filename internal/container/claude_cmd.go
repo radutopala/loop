@@ -409,7 +409,7 @@ func (b *ClaudeCmdBuilder) writeAgentMCPConfig(cfg *config.Config, workDir, chan
 	apiURL := AgentAPIBase(cfg)
 	loopDir := filepath.Join(workDir, ".loop")
 	_ = b.mkdirAll(loopDir, 0o755)
-	mcpCfg := buildMCPConfig(channelID, apiURL, workDir, "", agentID, cfg.Memory.Enabled, cfg.Browser.Enabled, cfg.MCPServers)
+	mcpCfg := buildMCPConfig(channelID, apiURL, workDir, "", agentID, nil, cfg.Memory.Enabled, cfg.Browser.Enabled, cfg.MCPServers)
 	data, _ := json.MarshalIndent(mcpCfg, "", "  ")
 	configPath := mcpConfigPathForAgent(workDir, channelID, agentID)
 	_ = b.writeFile(configPath, data, 0o644)

@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/explain"
 	"github.com/radutopala/loop/internal/learn"
@@ -170,11 +171,11 @@ func (r *DockerRunner) gitExcludesMount() string {
 // buildMCPConfig creates the merged MCP config with the built-in loop
 // and any user-defined servers from the config. The built-in loop always
 // takes precedence over a user-defined server with the same name.
-func buildMCPConfig(channelID, apiURL, workDir, authorID, agentID string, memoryEnabled, browserEnabled bool, userServers map[string]config.MCPServerConfig) mcpConfig {
-	// A learn pass or an explanation is read-only: it gets the built-in loop
-	// server alone, not the user's servers or the browser, whose tools can
-	// change things.
-	if agentID == learn.AgentID || agentID == explain.AgentID {
+func buildMCPConfig(channelID, apiURL, workDir, authorID, agentID string, mcpArgs []string, memoryEnabled, browserEnabled bool, userServers map[string]config.MCPServerConfig) mcpConfig {
+	// A learn pass, an explanation or a plugin's agent gets the built-in
+	// loop server alone, not the user's servers or the browser, whose tools
+	// can change things.
+	if agentID == learn.AgentID || agentID == explain.AgentID || strings.HasPrefix(agentID, agent.PluginAgentPrefix) {
 		userServers, browserEnabled = nil, false
 	}
 	servers := make(map[string]mcpServerEntry, len(userServers)+1)
@@ -197,6 +198,7 @@ func buildMCPConfig(channelID, apiURL, workDir, authorID, agentID string, memory
 		if agentID != "" {
 			args = append(args, "--agent-id", agentID)
 		}
+		args = append(args, mcpArgs...)
 		servers["loop"] = mcpServerEntry{
 			Command: "/usr/local/bin/loop",
 			Args:    args,
@@ -622,7 +624,7 @@ func localhostToDockerHost(v string) string {
 
 // writeMCPConfig creates host directories and writes the per-channel MCP
 // config file. Returns the config file path.
-func (r *DockerRunner) writeMCPConfig(workDir, channelID, apiURL, authorID, agentID string, cfg *config.Config) (string, error) {
+func (r *DockerRunner) writeMCPConfig(workDir, channelID, apiURL, authorID, agentID string, mcpArgs []string, cfg *config.Config) (string, error) {
 	for _, dir := range []string{workDir, filepath.Join(workDir, ".loop")} {
 		if err := r.sys.MkdirAll(dir, 0o755); err != nil {
 			return "", fmt.Errorf("creating host directory %s: %w", dir, err)
@@ -630,7 +632,7 @@ func (r *DockerRunner) writeMCPConfig(workDir, channelID, apiURL, authorID, agen
 	}
 
 	mcpConfigPath := mcpConfigPathForAgent(workDir, channelID, agentID)
-	mcpCfg := buildMCPConfig(channelID, apiURL, workDir, authorID, agentID, cfg.Memory.Enabled, cfg.Browser.Enabled, cfg.MCPServers)
+	mcpCfg := buildMCPConfig(channelID, apiURL, workDir, authorID, agentID, mcpArgs, cfg.Memory.Enabled, cfg.Browser.Enabled, cfg.MCPServers)
 	mcpJSON, _ := json.MarshalIndent(mcpCfg, "", "  ")
 	if err := r.sys.WriteFile(mcpConfigPath, mcpJSON, 0o644); err != nil {
 		return "", fmt.Errorf("writing mcp config: %w", err)

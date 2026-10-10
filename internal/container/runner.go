@@ -490,7 +490,7 @@ func (r *DockerRunner) runWithRecovery(ctx context.Context, req *agent.AgentRequ
 // worktree's own .loop/config.json (which normally holds nothing but
 // extra_dirs) and the project's mounts, image, and gates are silently lost.
 func (r *DockerRunner) RunBash(ctx context.Context, script, channelID, dirPath, parentDirPath string) (string, error) {
-	containerID, ctrName, mcpConfigPath, keepMCP, err := r.createAndStartContainer(ctx, channelID, dirPath, "", parentDirPath, "",
+	containerID, ctrName, mcpConfigPath, keepMCP, err := r.createAndStartContainer(ctx, channelID, dirPath, "", parentDirPath, "", nil,
 		ContainerTypeAgent, nil,
 		func(_ *config.Config, _ string) []string {
 			return []string{"/bin/sh", "-c", script}
@@ -560,7 +560,7 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 		fresh.ResumeAt = ""
 		req = &fresh
 	}
-	containerID, ctrName, mcpConfigPath, keepMCP, err := r.createAndStartContainer(ctx, req.ChannelID, req.DirPath, req.AuthorID, req.ParentDirPath, req.AgentID,
+	containerID, ctrName, mcpConfigPath, keepMCP, err := r.createAndStartContainer(ctx, req.ChannelID, req.DirPath, req.AuthorID, req.ParentDirPath, req.AgentID, req.MCPArgs,
 		ContainerTypeAgent, req.OnActivity,
 		func(cfg *config.Config, mcpConfigPath string) []string {
 			return buildClaudeCmd(cfg, mcpConfigPath, req)
@@ -638,6 +638,7 @@ func (r *DockerRunner) resolveWorkDir(channelID, dirPath string) string {
 func (r *DockerRunner) createAndStartContainer(
 	ctx context.Context,
 	channelID, dirPath, authorID, parentDirPath, agentID string,
+	mcpArgs []string,
 	cType ContainerType,
 	onActivity func(activity, detail string),
 	buildCmd func(cfg *config.Config, mcpConfigPath string) []string,
@@ -830,7 +831,7 @@ func (r *DockerRunner) createAndStartContainer(
 		_, _ = r.sys.ExecCommandOutput("git", "init", workDir)
 	}
 
-	mcpConfigPath, err = r.writeMCPConfig(workDir, channelID, apiURL, authorID, agentID, cfg)
+	mcpConfigPath, err = r.writeMCPConfig(workDir, channelID, apiURL, authorID, agentID, mcpArgs, cfg)
 	if err != nil {
 		return "", "", "", false, err
 	}
@@ -995,7 +996,7 @@ func (r *DockerRunner) waitForExit(ctx context.Context, containerID string) (int
 // Unlike Run, the container runs "sleep infinity" instead of Claude CLI and is
 // not auto-removed — it persists until explicitly stopped.
 func (r *DockerRunner) CreateShellContainer(ctx context.Context, channelID, dirPath, parentDirPath string) (string, error) {
-	containerID, ctrName, _, _, err := r.createAndStartContainer(ctx, channelID, dirPath, "", parentDirPath, "",
+	containerID, ctrName, _, _, err := r.createAndStartContainer(ctx, channelID, dirPath, "", parentDirPath, "", nil,
 		ContainerTypeShell, nil,
 		func(*config.Config, string) []string {
 			return []string{"sleep", "infinity"}

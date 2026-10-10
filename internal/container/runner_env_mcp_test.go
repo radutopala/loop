@@ -291,7 +291,7 @@ func (s *RunnerSuite) TestEnsureNoProxy() {
 }
 
 func (s *RunnerSuite) TestBuildMCPConfig() {
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "", false, true, nil)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "", nil, false, true, nil)
 	require.Len(s.T(), cfg.MCPServers, 2)
 	ls := cfg.MCPServers["loop"]
 	require.Equal(s.T(), "/usr/local/bin/loop", ls.Command)
@@ -304,7 +304,7 @@ func (s *RunnerSuite) TestBuildMCPConfig() {
 }
 
 func (s *RunnerSuite) TestBuildMCPConfigBrowserDisabled() {
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "", false, false, nil)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "", nil, false, false, nil)
 	require.Len(s.T(), cfg.MCPServers, 1)
 	_, hasBrowser := cfg.MCPServers["loop-browser"]
 	require.False(s.T(), hasBrowser)
@@ -313,7 +313,7 @@ func (s *RunnerSuite) TestBuildMCPConfigBrowserDisabled() {
 }
 
 func (s *RunnerSuite) TestBuildMCPConfigWithAuthorID() {
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "user-42", "", false, true, nil)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "user-42", "", nil, false, true, nil)
 	require.Len(s.T(), cfg.MCPServers, 2)
 	ls := cfg.MCPServers["loop"]
 	require.Equal(s.T(), "/usr/local/bin/loop", ls.Command)
@@ -328,7 +328,7 @@ func (s *RunnerSuite) TestBuildMCPConfigWithUserServers() {
 			Env:     map[string]string{"API_KEY": "secret"},
 		},
 	}
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "", false, true, userServers)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "", nil, false, true, userServers)
 	require.Len(s.T(), cfg.MCPServers, 3)
 
 	custom := cfg.MCPServers["custom-tool"]
@@ -342,8 +342,8 @@ func (s *RunnerSuite) TestBuildMCPConfigWithUserServers() {
 
 func (s *RunnerSuite) TestBuildMCPConfigReadOnlyGetsLoopOnly() {
 	userServers := map[string]config.MCPServerConfig{"custom-tool": {Command: "/path/to/binary"}}
-	for _, agentID := range []string{learn.AgentID, explain.AgentID} {
-		cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", agentID, false, true, userServers)
+	for _, agentID := range []string{learn.AgentID, explain.AgentID, agent.PluginAgentID("echo", "say")} {
+		cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", agentID, nil, false, true, userServers)
 		require.Len(s.T(), cfg.MCPServers, 1, agentID)
 		require.Equal(s.T(), "/usr/local/bin/loop", cfg.MCPServers["loop"].Command)
 	}
@@ -356,7 +356,7 @@ func (s *RunnerSuite) TestBuildMCPConfigUserLoopPreserved() {
 			Args:    []string{"--custom-flag"},
 		},
 	}
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "", false, true, userServers)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "", nil, false, true, userServers)
 	require.Len(s.T(), cfg.MCPServers, 2)
 	ls := cfg.MCPServers["loop"]
 	require.Equal(s.T(), "/user/custom/loop", ls.Command)
@@ -370,7 +370,7 @@ func (s *RunnerSuite) TestBuildMCPConfigUserBrowserPreserved() {
 			Args:    []string{"--port", "9999"},
 		},
 	}
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "", false, true, userServers)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "", nil, false, true, userServers)
 	require.Len(s.T(), cfg.MCPServers, 2)
 	bs := cfg.MCPServers["loop-browser"]
 	require.Equal(s.T(), "/user/custom/browser", bs.Command)
@@ -378,18 +378,24 @@ func (s *RunnerSuite) TestBuildMCPConfigUserBrowserPreserved() {
 }
 
 func (s *RunnerSuite) TestBuildMCPConfigWithMemory() {
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "", true, true, nil)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "", nil, true, true, nil)
 	require.Len(s.T(), cfg.MCPServers, 2)
 	ls := cfg.MCPServers["loop"]
 	require.Contains(s.T(), ls.Args, "--memory")
 }
 
 func (s *RunnerSuite) TestBuildMCPConfigWithAgentID() {
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "agent-0", false, true, nil)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "agent-0", nil, false, true, nil)
 	require.Len(s.T(), cfg.MCPServers, 2)
 	ls := cfg.MCPServers["loop"]
 	require.Contains(s.T(), ls.Args, "--agent-id")
 	require.Contains(s.T(), ls.Args, "agent-0")
+}
+
+func (s *RunnerSuite) TestBuildMCPConfigWithMCPArgs() {
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", agent.PluginAgentID("echo", "say"), []string{"--plugin-id", "echo"}, false, true, nil)
+	ls := cfg.MCPServers["loop"]
+	require.Equal(s.T(), []string{"--agent-id", "plugin-echo-say", "--plugin-id", "echo"}, ls.Args[len(ls.Args)-4:])
 }
 
 func (s *RunnerSuite) TestRunBrowserDisabledNoNetwork() {

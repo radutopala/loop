@@ -102,6 +102,9 @@ var agentRoutes = []string{
 
 	"POST /api/browser/action",
 
+	// Held to the plugin's own runs by the handler.
+	"POST /api/plugins/{plugin}/tools/{tool}",
+
 	// Held to the agent's project by the handlers.
 	"GET /api/ui/state",
 	"POST /api/ui/commands",

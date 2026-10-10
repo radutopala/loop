@@ -49,6 +49,15 @@ func (o *Orchestrator) defaultHiddenKinds() map[string]hiddenKind {
 				return o.applyExplainRequest(ctx, req, parent, turnID)
 			},
 		},
+		// A plugin's thread only ever runs the agent runs the plugin asked
+		// for, each in a session of its own.
+		db.ChannelKindPluginPrefix: {
+			name:  "plugin",
+			admit: o.admitPluginRun,
+			apply: func(_ context.Context, req *agent.AgentRequest, msg *bot.IncomingMessage, parent *db.Channel, _ string) error {
+				return o.applyPluginRequest(req, msg, parent)
+			},
+		},
 	}
 }
 

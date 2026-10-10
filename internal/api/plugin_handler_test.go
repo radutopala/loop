@@ -47,6 +47,18 @@ func (m *MockPluginManager) RunAction(ctx context.Context, pluginID, action stri
 	return m.Called(ctx, pluginID, action, ch, req).Error(0)
 }
 
+func (m *MockPluginManager) AgentRun(ctx context.Context, pluginID, agentID string) (*install.AgentRun, error) {
+	args := m.Called(ctx, pluginID, agentID)
+	v, _ := args.Get(0).(*install.AgentRun)
+	return v, args.Error(1)
+}
+
+func (m *MockPluginManager) CallTool(ctx context.Context, pluginID, tool string, ch runtime.Channel, req proxy.ToolRequest) (*proxy.ToolResult, error) {
+	args := m.Called(ctx, pluginID, tool, ch, req)
+	v, _ := args.Get(0).(*proxy.ToolResult)
+	return v, args.Error(1)
+}
+
 func (s *ServerSuite) pluginRoutes() *MockPluginManager {
 	pm := new(MockPluginManager)
 	s.srv.SetPluginManager(pm)

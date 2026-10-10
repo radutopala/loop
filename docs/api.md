@@ -2982,7 +2982,7 @@ List all tracked containers across all channels. Returns containers sorted with 
 
 ## Plugins
 
-Owner only. Every route answers `501` while `plugins.enabled` is off in the global config.
+Owner only, except the run and tool routes below. Every route answers `501` while `plugins.enabled` is off in the global config.
 
 ### `GET /api/plugins`
 
@@ -3081,6 +3081,46 @@ Run a plugin action by hand in a channel. The plugin's container for the channel
 `channel_id` is the channel the action ran in.
 
 **Errors:** `400` without `channel_id`; `404` if the channel or plugin doesn't exist, or the plugin has no such action; `409` if the plugin isn't runnable; `502` if its container doesn't start or the plugin refuses the action.
+
+### `POST /api/plugin/v1/runs`
+
+Called by a plugin, with the token in its `LOOP_PLUGIN_TOKEN_FILE`, to start a run of one of its agents in the channel its container serves. The run goes in the channel's hidden `plugin:<id>` thread, with a fresh session each time, and gets the agent's tools as `plugin_<tool>` MCP tools. A read-only agent runs read-only. The plugin must have been approved for `agent.readonly`, or `agent.write` for an agent that writes.
+
+**Request body:**
+
+```json
+{"agent": "say", "prompt": "Call plugin_echo with the text hi.", "model": "", "effort": ""}
+```
+
+`model` and `effort` are optional and fall back to the channel's.
+
+**Response:** `202 Accepted`
+
+```json
+{"run_id": "ask-…", "thread_id": "…"}
+```
+
+**Errors:** `400` without `agent` or `prompt`; `403` for any caller but a plugin, or without the capability; `404` if the agent or the channel doesn't exist; `409` if the plugin isn't runnable.
+
+### `POST /api/plugins/{plugin}/tools/{tool}`
+
+Called by a plugin agent's MCP server when the agent calls one of the plugin's tools. Only a run of that plugin's own agent, in its `plugin:<id>` thread, may call it. Loop checks the tool is the agent's and the input against the tool's `input_schema`, then sends `{"run_id", "agent", "thread_id", "input"}` to the plugin's `POST /tools/{tool}`.
+
+**Request body:**
+
+```json
+{"input": {"text": "hi"}}
+```
+
+**Response:** `200 OK`
+
+```json
+{"content": "hi", "is_error": false}
+```
+
+An unknown tool or an input the schema rejects comes back as `is_error: true`, so the agent sees why.
+
+**Errors:** `403` for any caller but the plugin's own agent run; `404` if the thread or its channel is gone; `502` if the container doesn't start or the plugin fails the call.
 
 ---
 

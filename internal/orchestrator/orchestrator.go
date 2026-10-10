@@ -104,6 +104,8 @@ type Orchestrator struct {
 	delayStop         chan struct{}         // closed by Stop to end the delay poller
 	delayStopOnce     sync.Once             // guards delayStop close
 	hiddenKinds       map[string]hiddenKind // runs of each kind of hidden thread (see shapeHiddenRun)
+	pluginRuns        sync.Map              // map[runID]*PluginRun — plugin runs queued or going on (see StartPluginRun)
+	activePluginRuns  sync.Map              // map[threadID]ActivePluginRun — the plugin run going on in each plugin thread
 
 	// loadWorktreeProjectConfig merges global → root project → worktree
 	// config for a worktree dir and its root checkout.
