@@ -117,6 +117,13 @@ var ownChannelRoutes = map[string]bool{
 	"POST /api/channels/{id}/review/push-all":            true,
 }
 
+// pluginRoutes are what a plugin container calls: the Plugin API, and
+// nothing an agent token reaches. Its handlers check the plugin's
+// capabilities and hold it to the channel its token was issued for.
+var pluginRoutes = []string{
+	"/api/plugin/v1/",
+}
+
 // publicRoutes need no API token. The container-approval route checks its
 // own per-container gate token, and content links carry a signed capability.
 var publicRoutes = []string{

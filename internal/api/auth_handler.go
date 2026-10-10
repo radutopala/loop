@@ -51,7 +51,7 @@ func WithWorkflowBashLocal(local bool) Option {
 }
 
 func newAuthenticator(owner string, agents apiauth.AgentLookup) *apiauth.Authenticator {
-	return apiauth.NewAuthenticator(owner, agents, apiauth.NewRouteSet(agentRoutes...), apiauth.NewRouteSet(publicRoutes...))
+	return apiauth.NewAuthenticator(owner, agents, apiauth.NewRouteSet(agentRoutes...), apiauth.NewRouteSet(pluginRoutes...), apiauth.NewRouteSet(publicRoutes...))
 }
 
 // carriesOwnerToken reports whether rawURL is a signed-in UI link for this

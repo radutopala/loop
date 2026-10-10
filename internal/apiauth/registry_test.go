@@ -60,8 +60,9 @@ func (s *RegistrySuite) TestIssueLookupRevoke() {
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), hashToken(tok), stored.Hash)
 	require.NotContains(s.T(), stored.Hash, tok, "only the hash is stored")
-	other, err := s.reg.Issue("c2", "ch2", "")
+	other, err := s.reg.IssuePlugin("c2", "ch2", "/work", "cogtest")
 	require.NoError(s.T(), err)
+	require.Equal(s.T(), &db.APIToken{Hash: hashToken(other), Kind: "plugin", PluginID: "cogtest", ContainerID: "c2", ChannelID: "ch2", DirPath: "/work"}, stored)
 
 	p, ok := s.reg.Lookup(tok)
 	require.True(s.T(), ok)
@@ -72,8 +73,9 @@ func (s *RegistrySuite) TestIssueLookupRevoke() {
 	require.NoError(s.T(), s.reg.Revoke("c1"))
 	_, ok = s.reg.Lookup(tok)
 	require.False(s.T(), ok)
-	_, ok = s.reg.Lookup(other)
+	p, ok = s.reg.Lookup(other)
 	require.True(s.T(), ok)
+	require.Equal(s.T(), Principal{Kind: KindPlugin, PluginID: "cogtest", ContainerID: "c2", ChannelID: "ch2", DirPath: "/work"}, p)
 }
 
 func (s *RegistrySuite) TestIssueErrors() {
@@ -94,14 +96,18 @@ func (s *RegistrySuite) TestIssueErrors() {
 
 func (s *RegistrySuite) TestLoad() {
 	s.store.On("ListAPITokens", mock.Anything).Return([]*db.APIToken{
-		{Hash: "h1", ContainerID: "live", ChannelID: "ch1", DirPath: "/a"},
-		{Hash: "h2", ContainerID: "dead", ChannelID: "ch2"},
-		{Hash: "h3", ContainerID: "dead", ChannelID: "ch2"},
+		{Hash: "h1", Kind: "agent", ContainerID: "live", ChannelID: "ch1", DirPath: "/a"},
+		{Hash: "h2", Kind: "agent", ContainerID: "dead", ChannelID: "ch2"},
+		{Hash: "h3", Kind: "plugin", PluginID: "cogtest", ContainerID: "dead", ChannelID: "ch2"},
+		{Hash: "h4", Kind: "plugin", PluginID: "cogtest", ContainerID: "live-plugin", ChannelID: "ch1", DirPath: "/a"},
 	}, nil).Once()
 	s.store.On("DeleteAPITokens", mock.Anything, "dead").Return(nil).Once()
 
-	require.NoError(s.T(), s.reg.Load(context.Background(), func(id string) bool { return id == "live" }))
-	require.Equal(s.T(), map[string]Principal{"h1": {Kind: KindAgent, ContainerID: "live", ChannelID: "ch1", DirPath: "/a"}}, s.reg.byHash)
+	require.NoError(s.T(), s.reg.Load(context.Background(), func(id string) bool { return id != "dead" }))
+	require.Equal(s.T(), map[string]Principal{
+		"h1": {Kind: KindAgent, ContainerID: "live", ChannelID: "ch1", DirPath: "/a"},
+		"h4": {Kind: KindPlugin, PluginID: "cogtest", ContainerID: "live-plugin", ChannelID: "ch1", DirPath: "/a"},
+	}, s.reg.byHash)
 }
 
 func (s *RegistrySuite) TestLoadErrors() {

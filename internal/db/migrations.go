@@ -476,6 +476,10 @@ var migrations = []migration{
 		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`),
 	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_config_revisions_path ON config_revisions(path, id)`),
+	// An api token's kind is who it was issued to: an agent container, or a
+	// plugin's container, whose plugin plugin_id names.
+	sqlMigration(`ALTER TABLE api_tokens ADD COLUMN kind TEXT NOT NULL DEFAULT 'agent'`),
+	sqlMigration(`ALTER TABLE api_tokens ADD COLUMN plugin_id TEXT NOT NULL DEFAULT ''`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the
