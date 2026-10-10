@@ -2698,6 +2698,8 @@ Get the Loop project README content.
 
 Drives the desktop app: each app window connects to `/api/ws/ui`, reports what it shows, and runs the steps a command sends it. The CLI wraps it as `loop ui:run` and `loop ui:state`; agents use the `ui_state` and `ui_run` MCP tools.
 
+For an overview, the rules a command follows and the security model, see [UI Bridge](ui-bridge.md).
+
 ### `GET /api/ui/state`
 
 The connected windows and what each shows.
