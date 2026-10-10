@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/plugin"
+	"github.com/radutopala/loop/internal/plugin/proxy"
+	"github.com/radutopala/loop/internal/plugin/runtime"
 )
 
 var (
@@ -18,10 +21,17 @@ var (
 	// ErrNotApproved is returned when the owner didn't approve every
 	// capability a plugin asks for.
 	ErrNotApproved = errors.New("capability not approved")
+	// ErrUnknownAction is returned for an action the plugin's manifest
+	// doesn't declare.
+	ErrUnknownAction = errors.New("the plugin has no such action")
+	// ErrNotRunnable is returned for a plugin installed but not runnable,
+	// such as a disabled one.
+	ErrNotRunnable = errors.New("the plugin is not runnable")
 )
 
 // Runtime runs installed plugins' containers.
 type Runtime interface {
+	Ensure(ctx context.Context, p runtime.Plugin, ch runtime.Channel) (runtime.Endpoint, error)
 	StopPlugin(ctx context.Context, pluginID string)
 	Remove(ctx context.Context, pluginID, channelID string, purge bool) error
 }
@@ -34,17 +44,23 @@ type ServiceStore interface {
 	ListPluginContainers(ctx context.Context, pluginID string) ([]*db.PluginContainer, error)
 }
 
+// Caller calls into a running plugin.
+type Caller interface {
+	Action(ctx context.Context, ep runtime.Endpoint, action string, req proxy.ActionRequest) error
+}
+
 // Service installs, upgrades and removes plugins, keeping their running
-// containers in step.
+// containers in step, and runs their actions.
 type Service struct {
 	installer *Installer
 	runtime   Runtime
 	store     ServiceStore
+	caller    Caller
 }
 
 // NewService returns a Service.
-func NewService(installer *Installer, runtime Runtime, store ServiceStore) *Service {
-	return &Service{installer: installer, runtime: runtime, store: store}
+func NewService(installer *Installer, runtime Runtime, store ServiceStore, caller Caller) *Service {
+	return &Service{installer: installer, runtime: runtime, store: store, caller: caller}
 }
 
 // List returns the installed plugins.
@@ -106,4 +122,31 @@ func (s *Service) Remove(ctx context.Context, pluginID string, purge bool) error
 	}
 	errs = append(errs, s.installer.Remove(ctx, pluginID))
 	return errors.Join(errs...)
+}
+
+// RunAction starts the plugin's container in ch, if it isn't running, and
+// asks it to run action.
+func (s *Service) RunAction(ctx context.Context, pluginID, action string, ch runtime.Channel, req proxy.ActionRequest) error {
+	st, err := s.store.GetPluginState(ctx, pluginID)
+	if err != nil {
+		return fmt.Errorf("reading the plugin: %w", err)
+	}
+	if st == nil {
+		return ErrNotInstalled
+	}
+	if st.Status != db.PluginStatusInstalled {
+		return fmt.Errorf("%w: it is %s", ErrNotRunnable, st.Status)
+	}
+	m, err := s.installer.Manifest(st)
+	if err != nil {
+		return err
+	}
+	if !slices.ContainsFunc(m.Actions, func(a plugin.Action) bool { return a.ID == action }) {
+		return fmt.Errorf("%w: %s", ErrUnknownAction, action)
+	}
+	ep, err := s.runtime.Ensure(ctx, runtime.Plugin{Manifest: m, Image: st.Image}, ch)
+	if err != nil {
+		return fmt.Errorf("starting the plugin: %w", err)
+	}
+	return s.caller.Action(ctx, ep, action, req)
 }

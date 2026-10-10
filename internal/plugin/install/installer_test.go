@@ -205,7 +205,7 @@ func (s *InstallerSuite) TestInspect() {
 	require.False(s.T(), c.Dev)
 	require.Equal(s.T(), "echo", c.Manifest.ID)
 	require.Equal(s.T(), prev, c.Previous)
-	require.Equal(s.T(), filepath.Join(s.root, "echo", "images", strings.TrimPrefix(imageID, "sha256:")), c.Dir)
+	require.Equal(s.T(), filepath.Join(s.root, "echo", "images", strings.TrimPrefix(digest, "sha256:")), c.Dir)
 	require.FileExists(s.T(), filepath.Join(c.Dir, "plugin.json"))
 	require.FileExists(s.T(), filepath.Join(c.Dir, "ui", "main", "index.html"))
 	require.Equal(s.T(), []plugin.Capability{plugin.CapFilesRead}, c.NewCapabilities())
@@ -449,4 +449,24 @@ func (m *mockStore) ListPluginContainers(ctx context.Context, pluginID string) (
 	args := m.Called(ctx, pluginID)
 	v, _ := args.Get(0).([]*db.PluginContainer)
 	return v, args.Error(1)
+}
+
+func (s *InstallerSuite) TestManifest() {
+	hex := strings.TrimPrefix(digest, "sha256:")
+	st := &db.PluginState{PluginID: "echo", Image: "ghcr.io/acme/echo@" + digest}
+	_, err := s.in.Manifest(st)
+	require.ErrorContains(s.T(), err, "reading the plugin's manifest")
+
+	c := s.candidate(hex)
+	require.NoError(s.T(), os.WriteFile(filepath.Join(c.Dir, "plugin.json"), []byte(manifest), 0o644))
+	m, err := s.in.Manifest(st)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "echo", m.ID)
+
+	// A dev install's image is its local id.
+	dev := s.candidate(strings.TrimPrefix(imageID, "sha256:"))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dev.Dir, "plugin.json"), []byte(manifest), 0o644))
+	m, err = s.in.Manifest(&db.PluginState{PluginID: "echo", Image: imageID, Dev: true})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "1.0.0", m.Version)
 }

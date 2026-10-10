@@ -586,6 +586,7 @@ For development: `make docker-build` builds from `container/Dockerfile` in the r
 | `loop plugin:upgrade <id> [tag]` | | Install a tag (default `latest`) of a plugin's image; new capabilities need approval (`--yes`) |
 | `loop plugin:remove <id>` | | Remove a plugin and its containers (`--purge` also removes its data) |
 | `loop plugin:dev <dir>` | | Build the Dockerfile in a plugin's source dir and install the image as a dev plugin (`--yes` to skip the prompt) |
+| `loop plugin:run <id> <action>` | | Run a plugin action in the current directory's channel, starting its container there (`--channel-id` or `--dir` for another channel) |
 | `loop readme` | `r` | Print the README documentation |
 
 `loop --help` lists every command from the command tree. Nested commands show by colon path and run that way too: `loop review:run` is `loop review run`.

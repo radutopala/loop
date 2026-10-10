@@ -76,7 +76,7 @@ func (s *MainSuite) TestNewPluginCmd() {
 	for _, c := range cmd.Commands() {
 		names = append(names, c.Name())
 	}
-	require.Equal(s.T(), []string{"dev", "install", "list", "remove", "upgrade"}, names)
+	require.Equal(s.T(), []string{"dev", "install", "list", "remove", "run", "upgrade"}, names)
 }
 
 func (s *MainSuite) TestPluginList() {
@@ -391,4 +391,64 @@ func (s *MainSuite) TestExecRunner() {
 	var out bytes.Buffer
 	require.NoError(s.T(), execRunner("go")(context.Background(), &out, io.Discard, "version"))
 	require.Contains(s.T(), out.String(), "go version")
+}
+
+func (s *MainSuite) TestPluginRun() {
+	const path = "/api/plugins/echo/actions/ping"
+	accepted := pluginReply{http.StatusAccepted, `{"channel_id":"ch-1"}`}
+	tests := []struct {
+		name     string
+		args     []string
+		getwd    error
+		ensure   error
+		reply    pluginReply
+		wantDir  string
+		wantBody string
+		wantOut  string
+		wantErr  string
+	}{
+		{name: "channel id", args: []string{"run", "echo", "ping", "--channel-id", "ch-1"}, reply: accepted,
+			wantBody: `{"channel_id":"ch-1"}`, wantOut: "Started echo ping in ch-1\n"},
+		{name: "dir", args: []string{"run", "echo", "ping", "--dir", "/src/app"}, reply: accepted,
+			wantDir: "/src/app", wantBody: `{"channel_id":"ch-dir"}`, wantOut: "Started echo ping in ch-dir\n"},
+		{name: "working directory", args: []string{"run", "echo", "ping"}, reply: accepted,
+			wantDir: "/work", wantBody: `{"channel_id":"ch-dir"}`, wantOut: "Started echo ping in ch-dir\n"},
+		{name: "no working directory", args: []string{"run", "echo", "ping"}, getwd: errors.New("gone"),
+			wantErr: "getting working directory: gone"},
+		{name: "no channel", args: []string{"run", "echo", "ping", "--dir", "/src/app"}, ensure: errors.New("down"),
+			wantDir: "/src/app", wantErr: "ensuring channel for dir /src/app: down"},
+		{name: "unknown action", args: []string{"run", "echo", "ping", "--channel-id", "ch-1"}, reply: pluginReply{http.StatusNotFound, "the plugin has no such action: ping\n"},
+			wantBody: `{"channel_id":"ch-1"}`, wantErr: "404 Not Found: the plugin has no such action: ping"},
+		{name: "both flags", args: []string{"run", "echo", "ping", "--channel-id", "ch-1", "--dir", "/src/app"},
+			wantErr: "if any flags in the group [channel-id dir] are set none of the others can be"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			sys := newPassthroughMock()
+			s.app.sys = sys
+			sys.Override("Getwd").Return("/work", tt.getwd)
+			var gotDir string
+			s.app.ensureChannelFn = func(_, dir, platform string) (string, error) {
+				gotDir = dir
+				require.Equal(s.T(), "local", platform)
+				return "ch-dir", tt.ensure
+			}
+			calls := s.pluginServer(map[string]pluginReply{"POST " + path: tt.reply})
+			out, err := s.runPlugin(nil, tt.args...)
+			require.Equal(s.T(), tt.wantDir, gotDir)
+			if tt.wantErr != "" {
+				require.ErrorContains(s.T(), err, tt.wantErr)
+			} else {
+				require.NoError(s.T(), err)
+				require.Equal(s.T(), tt.wantOut, out)
+			}
+			if tt.wantBody == "" {
+				require.Empty(s.T(), *calls)
+				return
+			}
+			require.Len(s.T(), *calls, 1)
+			require.Equal(s.T(), pluginCall{"POST", path, tt.wantBody}, (*calls)[0])
+		})
+	}
 }

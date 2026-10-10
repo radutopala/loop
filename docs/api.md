@@ -3062,6 +3062,26 @@ Remove a plugin: its containers in every channel, its extracted files and its re
 
 **Errors:** `404` if the plugin isn't installed.
 
+### `POST /api/plugins/{plugin}/actions/{action}`
+
+Run a plugin action by hand in a channel. The plugin's container for the channel starts first if it isn't running; a thread runs the action in its parent channel. The plugin answers once it has taken the action, so the run itself goes on after the response.
+
+**Request body:**
+
+```json
+{"channel_id": "ch-1"}
+```
+
+**Response:** `202 Accepted`
+
+```json
+{"channel_id": "ch-1"}
+```
+
+`channel_id` is the channel the action ran in.
+
+**Errors:** `400` without `channel_id`; `404` if the channel or plugin doesn't exist, or the plugin has no such action; `409` if the plugin isn't runnable; `502` if its container doesn't start or the plugin refuses the action.
+
 ---
 
 ## Agent Registry

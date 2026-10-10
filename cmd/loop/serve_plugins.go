@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"path/filepath"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/plugin/install"
+	"github.com/radutopala/loop/internal/plugin/proxy"
 	"github.com/radutopala/loop/internal/plugin/runtime"
 )
 
@@ -81,7 +83,7 @@ func (a *app) newPlugins(ctx context.Context, cfg *config.Config, store db.Store
 		logger.Warn("removing leftover plugin containers", "error", err)
 	}
 	installer := install.NewInstaller(cli, ps, root, a.version)
-	return &plugins{docker: cli, runtime: mgr, service: install.NewService(installer, mgr, ps)}, nil
+	return &plugins{docker: cli, runtime: mgr, service: install.NewService(installer, mgr, ps, proxy.NewClient(&http.Client{}))}, nil
 }
 
 // pluginsUnavailable says why plugin containers can't run under cfg. They

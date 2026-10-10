@@ -20,6 +20,7 @@ import (
 	"github.com/radutopala/loop/internal/apiauth"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/plugin/install"
+	"github.com/radutopala/loop/internal/plugin/proxy"
 	"github.com/radutopala/loop/internal/plugin/runtime"
 )
 
@@ -57,7 +58,7 @@ func (s *IntegrationSuite) SetupTest() {
 		StartWait:   30 * time.Second,
 	}, logger)
 	installer := install.NewInstaller(s.docker, s.store, root, "dev")
-	s.service = install.NewService(installer, s.runtime, s.store)
+	s.service = install.NewService(installer, s.runtime, s.store, proxy.NewClient(http.DefaultClient))
 }
 
 func (s *IntegrationSuite) TearDownTest() {
@@ -114,6 +115,10 @@ func (s *IntegrationSuite) TestInstallRunRemove() {
 	again, err := s.runtime.Ensure(s.ctx, runtime.Plugin{Manifest: c.Manifest, Image: c.Image}, ch)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), ep, again)
+
+	// A manual action goes through the service to the running container.
+	require.NoError(s.T(), s.service.RunAction(s.ctx, "echo", "ping", ch, proxy.ActionRequest{Trigger: proxy.TriggerManual}))
+	require.ErrorIs(s.T(), s.service.RunAction(s.ctx, "echo", "nope", ch, proxy.ActionRequest{Trigger: proxy.TriggerManual}), install.ErrUnknownAction)
 
 	require.NoError(s.T(), s.service.Remove(s.ctx, "echo", true))
 	_, err = s.docker.ContainerInspect(s.ctx, runtime.ContainerName("echo", ch.ID))

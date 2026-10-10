@@ -9,6 +9,8 @@ import (
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/plugin"
 	"github.com/radutopala/loop/internal/plugin/install"
+	"github.com/radutopala/loop/internal/plugin/proxy"
+	"github.com/radutopala/loop/internal/plugin/runtime"
 )
 
 // PluginManager installs, upgrades and removes plugins.
@@ -17,6 +19,7 @@ type PluginManager interface {
 	Inspect(ctx context.Context, ref string, dev bool) (*install.Candidate, error)
 	Install(ctx context.Context, ref string, dev bool, digest string, approved []plugin.Capability) (*install.Candidate, error)
 	Remove(ctx context.Context, pluginID string, purge bool) error
+	RunAction(ctx context.Context, pluginID, action string, ch runtime.Channel, req proxy.ActionRequest) error
 }
 
 const pluginsDisabled = "plugins are disabled; set plugins.enabled in the global config"
@@ -149,6 +152,56 @@ func (s *Server) handleRemovePlugin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type pluginActionRequest struct {
+	ChannelID string `json:"channel_id"`
+}
+
+// handleRunPluginAction runs a plugin action by hand in a channel, starting
+// the plugin's container there first if it isn't running. A thread runs it
+// in its parent channel, since a plugin runs per channel.
+func (s *Server) handleRunPluginAction(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.plugins, pluginsDisabled) {
+		return
+	}
+	var req pluginActionRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.ChannelID == "" {
+		http.Error(w, "channel_id is required", http.StatusBadRequest)
+		return
+	}
+	ch, err := s.store.GetChannel(r.Context(), req.ChannelID)
+	if err == nil && ch != nil && ch.ParentID != "" {
+		ch, err = s.store.GetChannel(r.Context(), ch.ParentID)
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if ch == nil {
+		http.Error(w, "channel not found", http.StatusNotFound)
+		return
+	}
+	// Starting the container outlives a client that hangs up, so a slow
+	// start isn't counted as a failed one.
+	ctx := context.WithoutCancel(r.Context())
+	err = s.plugins.RunAction(ctx, r.PathValue("plugin"), r.PathValue("action"),
+		runtime.Channel{ID: ch.ChannelID, DirPath: ch.DirPath}, proxy.ActionRequest{Trigger: proxy.TriggerManual})
+	switch {
+	case errors.Is(err, install.ErrNotInstalled), errors.Is(err, install.ErrUnknownAction):
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	case errors.Is(err, install.ErrNotRunnable):
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	case err != nil:
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeHTTPJSON(w, http.StatusAccepted, map[string]string{"channel_id": ch.ChannelID}, s.logger)
 }
 
 func requireImage(w http.ResponseWriter, image string) bool {

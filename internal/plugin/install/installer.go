@@ -145,7 +145,7 @@ func (in *Installer) Inspect(ctx context.Context, ref string, dev bool) (*Candid
 		_ = os.RemoveAll(staging)
 		return nil, err
 	}
-	if c.Dir, err = in.place(staging, c.Manifest.ID, info.ID); err != nil {
+	if c.Dir, err = in.place(staging, c.Manifest.ID, c.Image); err != nil {
 		return nil, err
 	}
 	if c.Previous, err = in.store.GetPluginState(ctx, c.Manifest.ID); err != nil {
@@ -323,10 +323,10 @@ func (in *Installer) validate(dir string) (*plugin.Manifest, error) {
 	return m, nil
 }
 
-// place moves a staging dir to the plugin's dir for imageID, replacing an
+// place moves a staging dir to the plugin's dir for image, replacing an
 // earlier extraction of the same image.
-func (in *Installer) place(staging, pluginID, imageID string) (string, error) {
-	dir := in.imageDir(pluginID, imageID)
+func (in *Installer) place(staging, pluginID, image string) (string, error) {
+	dir := in.imageDir(pluginID, image)
 	err := os.MkdirAll(filepath.Dir(dir), 0o755)
 	if err == nil {
 		err = os.RemoveAll(dir)
@@ -341,11 +341,21 @@ func (in *Installer) place(staging, pluginID, imageID string) (string, error) {
 	return dir, nil
 }
 
-// imageDir is where an image of a plugin is extracted, named by the image's
-// id so an upgrade doesn't overwrite the dir a running plugin serves from.
-func (in *Installer) imageDir(pluginID, imageID string) string {
-	_, hex, _ := strings.Cut(imageID, ":")
+// imageDir is where an image of a plugin is extracted, named by the hex of
+// the image it runs (a dev install's image id, or the pinned repo's digest)
+// so an upgrade doesn't overwrite the dir a running plugin serves from.
+func (in *Installer) imageDir(pluginID, image string) string {
+	hex := image[strings.LastIndex(image, ":")+1:]
 	return filepath.Join(in.root, pluginID, "images", hex)
+}
+
+// Manifest reads the manifest of the image st runs, as extracted at install.
+func (in *Installer) Manifest(st *db.PluginState) (*plugin.Manifest, error) {
+	data, err := os.ReadFile(filepath.Join(in.imageDir(st.PluginID, st.Image), path.Base(plugin.ManifestPath)))
+	if err != nil {
+		return nil, fmt.Errorf("reading the plugin's manifest: %w", err)
+	}
+	return plugin.ParseManifest(data)
 }
 
 // Install records c as installed with the capabilities the owner approved,

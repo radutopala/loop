@@ -27,7 +27,7 @@ func (a *app) newPluginCmd() *cobra.Command {
 		Long: "Install, upgrade and remove plugins. The daemon must run with\n" +
 			"plugins.enabled set in the global config.",
 	}
-	cmd.AddCommand(a.newPluginListCmd(), a.newPluginInstallCmd(), a.newPluginUpgradeCmd(), a.newPluginRemoveCmd(), a.newPluginDevCmd())
+	cmd.AddCommand(a.newPluginListCmd(), a.newPluginInstallCmd(), a.newPluginUpgradeCmd(), a.newPluginRemoveCmd(), a.newPluginDevCmd(), a.newPluginRunCmd())
 	return cmd
 }
 
@@ -159,6 +159,53 @@ func (a *app) newPluginDevCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Approve the plugin's capabilities without asking")
 	return cmd
+}
+
+func (a *app) newPluginRunCmd() *cobra.Command {
+	var channelID, dir string
+	cmd := &cobra.Command{
+		Use:   "run <id> <action>",
+		Short: "Run a plugin action in a channel",
+		Long: "Runs one of a plugin's actions by hand in a channel, starting the plugin's\n" +
+			"container there if it isn't running. The channel is the current\n" +
+			"directory's unless --channel-id or --dir names another.",
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if channelID == "" {
+				var err error
+				if channelID, err = a.dirChannel(dir); err != nil {
+					return err
+				}
+			}
+			path := "/api/plugins/" + url.PathEscape(args[0]) + "/actions/" + url.PathEscape(args[1])
+			if err := a.pluginRequest(cmd.Context(), http.MethodPost, path, map[string]any{"channel_id": channelID}, http.StatusAccepted, nil); err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Started %s %s in %s\n", args[0], args[1], channelID)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&channelID, "channel-id", "", "Channel to run the action in")
+	cmd.Flags().StringVar(&dir, "dir", "", "Project directory whose channel to run the action in")
+	cmd.MarkFlagsMutuallyExclusive("channel-id", "dir")
+	return cmd
+}
+
+// dirChannel returns the local channel of dir, or of the working directory
+// when dir is empty, creating it if needed.
+func (a *app) dirChannel(dir string) (string, error) {
+	if dir == "" {
+		wd, err := a.sys.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("getting working directory: %w", err)
+		}
+		dir = wd
+	}
+	id, err := a.ensureChannelFn(a.resolveAPIURL(), dir, "local")
+	if err != nil {
+		return "", fmt.Errorf("ensuring channel for dir %s: %w", dir, err)
+	}
+	return id, nil
 }
 
 // execRunner runs name with args, writing its output to stdout and stderr.

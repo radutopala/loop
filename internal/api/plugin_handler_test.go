@@ -13,6 +13,8 @@ import (
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/plugin"
 	"github.com/radutopala/loop/internal/plugin/install"
+	"github.com/radutopala/loop/internal/plugin/proxy"
+	"github.com/radutopala/loop/internal/plugin/runtime"
 )
 
 type MockPluginManager struct {
@@ -41,6 +43,10 @@ func (m *MockPluginManager) Remove(ctx context.Context, pluginID string, purge b
 	return m.Called(ctx, pluginID, purge).Error(0)
 }
 
+func (m *MockPluginManager) RunAction(ctx context.Context, pluginID, action string, ch runtime.Channel, req proxy.ActionRequest) error {
+	return m.Called(ctx, pluginID, action, ch, req).Error(0)
+}
+
 func (s *ServerSuite) pluginRoutes() *MockPluginManager {
 	pm := new(MockPluginManager)
 	s.srv.SetPluginManager(pm)
@@ -48,6 +54,7 @@ func (s *ServerSuite) pluginRoutes() *MockPluginManager {
 	s.mux.HandleFunc("POST /api/plugins/inspect", s.srv.handleInspectPlugin)
 	s.mux.HandleFunc("POST /api/plugins", s.srv.handleInstallPlugin)
 	s.mux.HandleFunc("DELETE /api/plugins/{id}", s.srv.handleRemovePlugin)
+	s.mux.HandleFunc("POST /api/plugins/{plugin}/actions/{action}", s.srv.handleRunPluginAction)
 	s.T().Cleanup(func() { pm.AssertExpectations(s.T()) })
 	return pm
 }
@@ -65,7 +72,8 @@ func (s *ServerSuite) TestPluginsDisabled() {
 	s.mux.HandleFunc("POST /api/plugins/inspect", s.srv.handleInspectPlugin)
 	s.mux.HandleFunc("POST /api/plugins", s.srv.handleInstallPlugin)
 	s.mux.HandleFunc("DELETE /api/plugins/{id}", s.srv.handleRemovePlugin)
-	for _, req := range [][2]string{{"GET", "/api/plugins"}, {"POST", "/api/plugins/inspect"}, {"POST", "/api/plugins"}, {"DELETE", "/api/plugins/echo"}} {
+	s.mux.HandleFunc("POST /api/plugins/{plugin}/actions/{action}", s.srv.handleRunPluginAction)
+	for _, req := range [][2]string{{"GET", "/api/plugins"}, {"POST", "/api/plugins/inspect"}, {"POST", "/api/plugins"}, {"DELETE", "/api/plugins/echo"}, {"POST", "/api/plugins/echo/actions/ping"}} {
 		rec := s.testRequest(req[0], req[1], "")
 		require.Equal(s.T(), http.StatusNotImplemented, rec.Code, req[1])
 		require.Contains(s.T(), rec.Body.String(), "plugins.enabled")
@@ -157,4 +165,60 @@ func (s *ServerSuite) TestRemovePlugin() {
 	pm.On("Remove", mock.Anything, "echo", false).Return(errors.New("boom")).Once()
 	rec = s.testRequest("DELETE", "/api/plugins/echo", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+}
+
+func (s *ServerSuite) TestRunPluginAction() {
+	manual := proxy.ActionRequest{Trigger: proxy.TriggerManual}
+	ch := runtime.Channel{ID: "ch-1", DirPath: "/src/app"}
+	tests := []struct {
+		name     string
+		body     string
+		setup    func(pm *MockPluginManager)
+		wantCode int
+		wantBody string
+	}{
+		{name: "accepted", body: `{"channel_id":"ch-1"}`, setup: func(pm *MockPluginManager) {
+			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: "/src/app"}, nil).Once()
+			pm.On("RunAction", mock.Anything, "echo", "ping", ch, manual).Return(nil).Once()
+		}, wantCode: http.StatusAccepted, wantBody: `{"channel_id":"ch-1"}`},
+		{name: "thread runs in its channel", body: `{"channel_id":"th-1"}`, setup: func(pm *MockPluginManager) {
+			s.store.On("GetChannel", mock.Anything, "th-1").Return(&db.Channel{ChannelID: "th-1", ParentID: "ch-1", DirPath: "/src/app"}, nil).Once()
+			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: "/src/app"}, nil).Once()
+			pm.On("RunAction", mock.Anything, "echo", "ping", ch, manual).Return(nil).Once()
+		}, wantCode: http.StatusAccepted, wantBody: `{"channel_id":"ch-1"}`},
+		{name: "bad body", body: `{`, setup: func(*MockPluginManager) {}, wantCode: http.StatusBadRequest},
+		{name: "no channel", body: `{}`, setup: func(*MockPluginManager) {}, wantCode: http.StatusBadRequest, wantBody: "channel_id is required"},
+		{name: "channel lookup fails", body: `{"channel_id":"ch-1"}`, setup: func(*MockPluginManager) {
+			s.store.On("GetChannel", mock.Anything, "ch-1").Return(nil, errors.New("boom")).Once()
+		}, wantCode: http.StatusInternalServerError, wantBody: "boom"},
+		{name: "unknown channel", body: `{"channel_id":"ch-1"}`, setup: func(*MockPluginManager) {
+			s.store.On("GetChannel", mock.Anything, "ch-1").Return(nil, nil).Once()
+		}, wantCode: http.StatusNotFound, wantBody: "channel not found"},
+		{name: "not installed", body: `{"channel_id":"ch-1"}`, setup: func(pm *MockPluginManager) {
+			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: "/src/app"}, nil).Once()
+			pm.On("RunAction", mock.Anything, "echo", "ping", ch, manual).Return(install.ErrNotInstalled).Once()
+		}, wantCode: http.StatusNotFound},
+		{name: "unknown action", body: `{"channel_id":"ch-1"}`, setup: func(pm *MockPluginManager) {
+			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: "/src/app"}, nil).Once()
+			pm.On("RunAction", mock.Anything, "echo", "ping", ch, manual).Return(install.ErrUnknownAction).Once()
+		}, wantCode: http.StatusNotFound},
+		{name: "disabled", body: `{"channel_id":"ch-1"}`, setup: func(pm *MockPluginManager) {
+			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: "/src/app"}, nil).Once()
+			pm.On("RunAction", mock.Anything, "echo", "ping", ch, manual).Return(install.ErrNotRunnable).Once()
+		}, wantCode: http.StatusConflict},
+		{name: "plugin fails", body: `{"channel_id":"ch-1"}`, setup: func(pm *MockPluginManager) {
+			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: "/src/app"}, nil).Once()
+			pm.On("RunAction", mock.Anything, "echo", "ping", ch, manual).Return(errors.New("starting the plugin: unhealthy")).Once()
+		}, wantCode: http.StatusBadGateway, wantBody: "unhealthy"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			pm := s.pluginRoutes()
+			tt.setup(pm)
+			rec := s.testRequest("POST", "/api/plugins/echo/actions/ping", tt.body)
+			require.Equal(s.T(), tt.wantCode, rec.Code, rec.Body.String())
+			require.Contains(s.T(), rec.Body.String(), tt.wantBody)
+		})
+	}
 }
