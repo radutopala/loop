@@ -74,6 +74,7 @@ func (a *app) newPlugins(ctx context.Context, cfg *config.Config, store db.Store
 		IdleTimeout: pluginIdleTimeout,
 		StartWait:   pluginStartWait,
 		Proxy:       container.ProxySettingsFromConfig(cfg),
+		Unavailable: pluginsUnavailable(cfg),
 	}, logger)
 	mgr.SetImageGate(gate)
 	if err := mgr.RemoveLeftovers(ctx); err != nil {
@@ -81,4 +82,13 @@ func (a *app) newPlugins(ctx context.Context, cfg *config.Config, store db.Store
 	}
 	installer := install.NewInstaller(cli, ps, root, a.version)
 	return &plugins{docker: cli, runtime: mgr, service: install.NewService(installer, mgr, ps)}, nil
+}
+
+// pluginsUnavailable says why plugin containers can't run under cfg. They
+// aren't gated yet, so they don't start while agentgate is on.
+func pluginsUnavailable(cfg *config.Config) string {
+	if cfg.Gates.Agentgate.Enabled {
+		return "plugins don't run under agentgate yet; turn off gates.agentgate.enabled to run them"
+	}
+	return ""
 }

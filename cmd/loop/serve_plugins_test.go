@@ -10,6 +10,8 @@ import (
 	containertypes "github.com/docker/docker/api/types/container"
 	dockerclient "github.com/docker/docker/client"
 	"github.com/stretchr/testify/require"
+
+	"github.com/radutopala/loop/internal/config"
 )
 
 // listingDocker is a Docker client whose container list succeeds, with no
@@ -90,4 +92,11 @@ func (s *MainSuite) TestDefaultNewPluginDocker() {
 	c, err := newApp().newPluginDocker()
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), c.Close())
+}
+
+func (s *MainSuite) TestPluginsUnavailable() {
+	cfg := &config.Config{}
+	require.Empty(s.T(), pluginsUnavailable(cfg))
+	cfg.Gates.Agentgate.Enabled = true
+	require.Contains(s.T(), pluginsUnavailable(cfg), "gates.agentgate.enabled")
 }

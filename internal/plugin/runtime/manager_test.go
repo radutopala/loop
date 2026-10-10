@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -14,6 +15,7 @@ import (
 
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/mock"
@@ -50,6 +52,12 @@ func (m *mockDocker) ContainerList(ctx context.Context, options containertypes.L
 	args := m.Called(ctx, options)
 	v, _ := args.Get(0).([]containertypes.Summary)
 	return v, args.Error(1)
+}
+
+func (m *mockDocker) ContainerLogs(ctx context.Context, id string, options containertypes.LogsOptions) (io.ReadCloser, error) {
+	args := m.Called(ctx, id, options)
+	rc, _ := args.Get(0).(io.ReadCloser)
+	return rc, args.Error(1)
 }
 
 func (m *mockDocker) VolumeRemove(ctx context.Context, id string, force bool) error {
@@ -159,6 +167,17 @@ func (s *ManagerSuite) expectStart(id, port string) {
 	s.docker.On("ContainerStart", s.ctx, id, containertypes.StartOptions{}).Return(nil).Once()
 	s.docker.On("ContainerInspect", s.ctx, id).Return(running(true, port), nil).Once()
 }
+
+// logStream is a container log stream with out on stdout and errOut on
+// stderr, framed as Docker sends it for a container without a TTY.
+func logStream(out, errOut string) io.ReadCloser {
+	var buf bytes.Buffer
+	_, _ = stdcopy.NewStdWriter(&buf, stdcopy.Stdout).Write([]byte(out))
+	_, _ = stdcopy.NewStdWriter(&buf, stdcopy.Stderr).Write([]byte(errOut))
+	return io.NopCloser(&buf)
+}
+
+var logsOptions = containertypes.LogsOptions{ShowStdout: true, ShowStderr: true, Tail: "20"}
 
 func (s *ManagerSuite) expectDiscard(id string) {
 	s.docker.On("ContainerRemove", s.ctx, id, containertypes.RemoveOptions{Force: true}).Return(nil).Once()
@@ -315,12 +334,14 @@ func (s *ManagerSuite) TestEnsureFailures() {
 			started(running(true, "40001"))
 			s.healthy = false
 			s.docker.On("ContainerInspect", s.ctx, "c1").Return(running(false, ""), nil).Once()
-		}, wantErr: "exited with code 3 before becoming healthy"},
+			s.docker.On("ContainerLogs", s.ctx, "c1", logsOptions).Return(logStream("listening\n", "panic: no config\n"), nil).Once()
+		}, wantErr: "exited with code 3 before becoming healthy; its last log lines:\nlistening\npanic: no config"},
 		{name: "never healthy", discard: true, setup: func() {
 			started(running(true, "40001"))
 			s.healthy = false
 			s.m.cfg.StartWait = 0
 			s.docker.On("ContainerInspect", s.ctx, "c1").Return(running(true, ""), nil).Once()
+			s.docker.On("ContainerLogs", s.ctx, "c1", logsOptions).Return(nil, boom).Once()
 		}, wantErr: "not healthy after 0s"},
 	}
 	for _, tc := range tests {
@@ -349,10 +370,17 @@ func (s *ManagerSuite) TestEnsureCanceledWhileWaiting() {
 	s.m.pollInterval = time.Hour
 	s.m.healthy = func(context.Context, string, string) bool { cancel(); return false }
 	s.docker.On("ContainerInspect", s.ctx, "c1").Return(running(true, ""), nil).Once()
+	s.docker.On("ContainerLogs", s.ctx, "c1", logsOptions).Return(logStream("", " \n"), nil).Once()
 	s.expectDiscard("c1")
 	s.store.On("UpsertPluginContainer", s.ctx, mock.Anything).Return(nil).Once()
 	_, err := s.m.Ensure(s.ctx, s.plugin, s.channel)
-	require.ErrorIs(s.T(), err, context.Canceled)
+	require.EqualError(s.T(), err, context.Canceled.Error(), "blank logs add nothing")
+}
+
+func (s *ManagerSuite) TestEnsureUnavailable() {
+	s.m.cfg.Unavailable = "plugins are off"
+	_, err := s.m.Ensure(s.ctx, s.plugin, s.channel)
+	require.EqualError(s.T(), err, "plugins are off")
 }
 
 func (s *ManagerSuite) TestEnsureBacksOffThenFails() {

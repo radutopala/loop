@@ -4,16 +4,19 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,6 +24,7 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 	"github.com/docker/go-units"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -37,6 +41,7 @@ type DockerClient interface {
 	ContainerRemove(ctx context.Context, container string, options containertypes.RemoveOptions) error
 	ContainerInspect(ctx context.Context, containerID string) (containertypes.InspectResponse, error)
 	ContainerList(ctx context.Context, options containertypes.ListOptions) ([]containertypes.Summary, error)
+	ContainerLogs(ctx context.Context, container string, options containertypes.LogsOptions) (io.ReadCloser, error)
 	VolumeRemove(ctx context.Context, volumeID string, force bool) error
 }
 
@@ -103,6 +108,10 @@ const (
 	// maxFailures is how many starts in a row may fail before the container
 	// is marked failed and no longer started on use.
 	maxFailures = 3
+
+	// logLines and maxLogBytes bound the log tail a failed start records.
+	logLines    = 20
+	maxLogBytes = 8 << 10
 )
 
 // ContainerName is the name of a plugin's container, and of its data volume,
@@ -123,6 +132,9 @@ type Config struct {
 	StartWait time.Duration
 	// Proxy is the proxy plugin containers run with.
 	Proxy container.ProxySettings
+	// Unavailable, when set, says why plugin containers can't run; Ensure
+	// refuses with it.
+	Unavailable string
 }
 
 // instance is a running plugin container.
@@ -209,6 +221,9 @@ func (m *Manager) lock(k key) func() {
 // later use, after a backoff; after maxFailures in a row the container is
 // marked failed and Ensure refuses until Reset.
 func (m *Manager) Ensure(ctx context.Context, p Plugin, ch Channel) (Endpoint, error) {
+	if m.cfg.Unavailable != "" {
+		return Endpoint{}, errors.New(m.cfg.Unavailable)
+	}
 	id := p.Manifest.ID
 	k := key{id, ch.ID}
 	defer m.lock(k)()
@@ -355,9 +370,27 @@ func (m *Manager) boot(ctx context.Context, p Plugin, ch Channel, containerID, r
 	}
 	inst := &instance{containerID: containerID, hostPort: port, endpoint: Endpoint{URL: fmt.Sprintf("http://127.0.0.1:%d", port), Secret: secret}, lastUsed: m.now()}
 	if err := m.waitHealthy(ctx, containerID, inst.endpoint); err != nil {
-		return nil, err
+		return nil, m.withLogs(ctx, containerID, err)
 	}
 	return inst, nil
+}
+
+// withLogs adds the last lines a container logged to err, so a plugin that
+// fails to come up says why.
+func (m *Manager) withLogs(ctx context.Context, containerID string, err error) error {
+	rc, lerr := m.api.ContainerLogs(ctx, containerID, containertypes.LogsOptions{ShowStdout: true, ShowStderr: true, Tail: strconv.Itoa(logLines)})
+	if lerr != nil {
+		return err
+	}
+	defer rc.Close()
+	var buf bytes.Buffer
+	// A stream cut at the cap ends mid-frame; what came before it is kept.
+	_, _ = stdcopy.StdCopy(&buf, &buf, io.LimitReader(rc, maxLogBytes))
+	logs := strings.TrimSpace(buf.String())
+	if logs == "" {
+		return err
+	}
+	return fmt.Errorf("%w; its last log lines:\n%s", err, logs)
 }
 
 // portKey is the plugin's port as Docker names it.
