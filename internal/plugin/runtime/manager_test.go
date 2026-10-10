@@ -14,7 +14,9 @@ import (
 	"time"
 
 	containertypes "github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -62,6 +64,11 @@ func (m *mockDocker) ContainerLogs(ctx context.Context, id string, options conta
 
 func (m *mockDocker) VolumeRemove(ctx context.Context, id string, force bool) error {
 	return m.Called(ctx, id, force).Error(0)
+}
+
+func (m *mockDocker) ImageInspect(ctx context.Context, id string, _ ...client.ImageInspectOption) (image.InspectResponse, error) {
+	args := m.Called(ctx, id)
+	return args.Get(0).(image.InspectResponse), args.Error(1)
 }
 
 type mockStore struct {
@@ -377,12 +384,6 @@ func (s *ManagerSuite) TestEnsureCanceledWhileWaiting() {
 	require.EqualError(s.T(), err, context.Canceled.Error(), "blank logs add nothing")
 }
 
-func (s *ManagerSuite) TestEnsureUnavailable() {
-	s.m.cfg.Unavailable = "plugins are off"
-	_, err := s.m.Ensure(s.ctx, s.plugin, s.channel)
-	require.EqualError(s.T(), err, "plugins are off")
-}
-
 func (s *ManagerSuite) TestEnsureBacksOffThenFails() {
 	boom := errors.New("boom")
 	fail := func() {
@@ -500,6 +501,10 @@ func (s *ManagerSuite) TestRunIdleLoop() {
 
 func (s *ManagerSuite) TestRemove() {
 	run := filepath.Join(s.m.cfg.Root, "cogtest", "run", "ch1")
+	gate := filepath.Join(s.m.cfg.Root, "cogtest", "gate", "ch1")
+	audit := filepath.Join(s.m.cfg.Root, "cogtest", "audit", "ch1")
+	require.NoError(s.T(), os.MkdirAll(gate, 0o755))
+	require.NoError(s.T(), os.MkdirAll(audit, 0o755))
 	s.startOne("ch1", "c1")
 	s.m.failures[key{"cogtest", "ch1"}] = &failure{count: 1}
 	s.expectStopped("ch1", "c1")
@@ -508,6 +513,8 @@ func (s *ManagerSuite) TestRemove() {
 	s.docker.On("VolumeRemove", s.ctx, name, true).Return(nil).Once()
 	require.NoError(s.T(), s.m.Remove(s.ctx, "cogtest", "ch1", true))
 	require.NoDirExists(s.T(), run)
+	require.NoDirExists(s.T(), gate)
+	require.NoDirExists(s.T(), audit)
 	require.Empty(s.T(), s.m.failures)
 }
 
@@ -521,6 +528,8 @@ func (s *ManagerSuite) TestRemoveErrors() {
 	s.docker.On("VolumeRemove", s.ctx, name, true).Return(boom).Once()
 	err := s.m.Remove(s.ctx, "cogtest", "ch1", true)
 	require.ErrorContains(s.T(), err, "removing the plugin run dir")
+	require.ErrorContains(s.T(), err, "removing the plugin gate dir")
+	require.ErrorContains(s.T(), err, "removing the plugin gate audit dir")
 	require.ErrorContains(s.T(), err, "deleting the plugin container row: boom")
 	require.ErrorContains(s.T(), err, "removing the plugin data volume: boom")
 }

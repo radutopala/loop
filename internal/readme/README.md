@@ -1222,6 +1222,7 @@ Requires [Go 1.27+](https://go.dev/dl/).
 
 ```sh
 make build            # Build the loop binary
+make build-linux      # Build a linux loop (for plugins.gate_binary)
 make install          # Install to $GOPATH/bin
 make docker-build     # Build the Docker agent image (from local source)
 make restart          # Reinstall + restart daemon

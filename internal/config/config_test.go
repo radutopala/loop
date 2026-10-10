@@ -171,13 +171,14 @@ func (s *ConfigSuite) TestLoadPluginsConfig() {
 			"platforms": ["discord"],
 			"discord_token": "t",
 			"discord_app_id": "a",
-			"plugins": { "enabled": true }
+			"plugins": { "enabled": true, "gate_binary": "/opt/loop-linux" }
 		}`), nil
 	}
 
 	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.True(s.T(), cfg.Plugins.Enabled)
+	require.Equal(s.T(), "/opt/loop-linux", cfg.Plugins.GateBinary)
 }
 
 func (s *ConfigSuite) TestLoadBrowserEnabledExplicitFalse() {

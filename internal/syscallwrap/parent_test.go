@@ -384,6 +384,41 @@ func (s *ParentSuite) TestRunParentMissingHostUser() {
 	s.Require().Contains(err.Error(), envHostUser)
 }
 
+func (s *ParentSuite) TestRunParentUnknownApprover() {
+	f := newFakeParentDeps(s.T())
+	f.defaultEnv()
+	f.env[envApprover] = "ask-later"
+	err := f.wire().runParent()
+	s.Require().Error(err)
+	s.Require().Contains(err.Error(), envApprover)
+	s.Require().Empty(f.startedArgv)
+}
+
+func (s *ParentSuite) TestRunParentHTTPApproverExplicit() {
+	f := newFakeParentDeps(s.T())
+	f.defaultEnv()
+	f.env[envApprover] = approverHTTP
+
+	s.Require().NoError(f.wire().runParent())
+	s.Require().Equal(int32(1), atomic.LoadInt32(&f.approverCalls))
+	s.Require().Equal("abcd", f.approverToken)
+}
+
+// TestRunParentDenyApprover: deny-only mode needs no API URL or token, and
+// the gate server gets an approver that denies without asking.
+func (s *ParentSuite) TestRunParentDenyApprover() {
+	f := newFakeParentDeps(s.T())
+	f.env[envPolicyFile] = "/etc/loop/gate-policy.json"
+	f.env[envHostUser] = "1000"
+	f.env[envApprover] = approverDeny
+
+	s.Require().NoError(f.wire().runParent())
+	s.Require().Zero(atomic.LoadInt32(&f.approverCalls))
+	s.Require().Equal(int32(1), atomic.LoadInt32(&f.exitCodeCalled))
+	out := f.gateServerApprover.Request(context.Background(), "ch", agentgate.ApprovalRequest{})
+	s.Require().Equal(agentgate.Outcome{Decision: types.DecisionDeny, Reason: "deny-only"}, out)
+}
+
 // --- pre-spawn failures ---
 
 func (s *ParentSuite) TestRunParentPolicyLoadError() {
@@ -917,6 +952,47 @@ func (s *ParentSuite) TestDefaultLookupUserHappy() {
 	expectedGID, _ := strconv.Atoi(cur.Gid)
 	s.Require().Equal(expectedUID, uid)
 	s.Require().Equal(expectedGID, gid)
+}
+
+func (s *ParentSuite) TestParseUIDGIDRejectsSigns() {
+	for _, tc := range []struct{ uid, gid, want string }{
+		{"-1", "0", "parse uid"},
+		{"+1", "0", "parse uid"},
+		{"0", "-1", "parse gid"},
+		{"", "0", "parse uid"},
+	} {
+		_, _, err := parseUIDGID(tc.uid, tc.gid)
+		s.Require().ErrorContains(err, tc.want, "%q:%q", tc.uid, tc.gid)
+	}
+}
+
+func (s *ParentSuite) TestDefaultLookupUserNumeric() {
+	tests := []struct {
+		name    string
+		in      string
+		uid     int
+		gid     int
+		wantErr string
+	}{
+		{name: "uid only", in: "1000", uid: 1000, gid: 1000},
+		{name: "uid and gid", in: "1000:2000", uid: 1000, gid: 2000},
+		{name: "unknown to passwd", in: "54321", uid: 54321, gid: 54321},
+		{name: "empty gid", in: "1000:", wantErr: "parse gid"},
+		{name: "negative gid", in: "1000:-1", wantErr: "parse gid"},
+		{name: "trailing junk", in: "10x", wantErr: "parse uid"},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			uid, gid, err := defaultLookupUser(tc.in)
+			if tc.wantErr != "" {
+				s.Require().ErrorContains(err, tc.wantErr)
+				return
+			}
+			s.Require().NoError(err)
+			s.Require().Equal(tc.uid, uid)
+			s.Require().Equal(tc.gid, gid)
+		})
+	}
 }
 
 func (s *ParentSuite) TestDefaultLookupUserUnknown() {

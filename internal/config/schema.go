@@ -919,6 +919,11 @@ func buildSchema() *ConfigSchema {
 						Description: "Let the daemon install and run plugins. Global only.",
 						Default:     false,
 					},
+					"gate_binary": {
+						Type:        "string",
+						Title:       "Gate Binary",
+						Description: "A linux build of loop (make build-linux) that plugin containers run agentgate from. Empty downloads the release matching the daemon's version; a dev build needs this set.",
+					},
 				},
 			},
 

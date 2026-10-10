@@ -536,6 +536,10 @@ type Config struct {
 // them; it's global only, since installing a plugin is the owner's call.
 type PluginsConfig struct {
 	Enabled bool `json:"enabled"`
+	// GateBinary is a linux build of loop that plugin containers run
+	// agentgate from. Unset, the release matching the daemon's version is
+	// downloaded; a dev build has none, so it needs this set.
+	GateBinary string `json:"gate_binary"`
 }
 
 // GitHubConfig holds GitHub integration settings. GHUser names a `gh` CLI

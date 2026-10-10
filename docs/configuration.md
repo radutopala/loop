@@ -107,6 +107,7 @@ Browser settings are grouped under `"browser"`:
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `plugins.enabled` | `bool` | `false` | Lets the daemon install and run plugins (`loop plugin`). Global only: a project config can't turn it on. |
+| `plugins.gate_binary` | `string` | `""` | A linux build of loop (`make build-linux`) that plugin containers run agentgate from. Empty downloads the release matching the daemon's version; a dev build needs this set. |
 
 #### Mounts
 

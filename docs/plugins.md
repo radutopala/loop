@@ -5,8 +5,8 @@ channel. The plugin serves HTTP for Loop, calls Loop's Plugin API with a channel
 asks Loop for agent runs that call its tools, and can draw panels in the workspace from a static
 web bundle.
 
-Plugins are off unless `plugins.enabled` is set in the global config. They don't run under
-agentgate yet: while `gates.agentgate.enabled` is on, plugin containers don't start.
+Plugins are off unless `plugins.enabled` is set in the global config. While
+`gates.agentgate.enabled` is on, plugin containers run under agentgate (see [Agentgate](#agentgate)).
 
 ## Image layout
 
@@ -65,6 +65,34 @@ Capabilities are approved by the owner at install and checked on every call:
 | `LOOP_DATA_DIR` | `/data`, a volume per channel that outlives the container |
 
 The container is started when first needed and stopped when idle; keep state in `/data`.
+
+## Agentgate
+
+While `gates.agentgate.enabled` is on, a plugin container runs its image's entrypoint and command
+under `loop syscallwrap`, which starts as root, drops to the image's `USER` and traps the
+plugin's file, exec and unix-socket syscalls. Nobody is there to answer a prompt, so whatever the
+policy doesn't allow is denied. The policy is the manifest's `gate` rules first, then Loop's
+baseline:
+
+- every file op under `/data` and `/tmp`, and on the usual `/dev` files
+- reads, stats and listings anywhere else
+- any exec
+- no unix-socket connects
+
+```jsonc
+"gate": {
+  "files": [{ "paths": ["/data/cache/**"], "operations": ["delete"], "decision": "deny" }],
+  "commands": [{ "commands": ["curl", "wget"], "decision": "deny" }],
+}
+```
+
+The manifest may only allow or deny; `approve` is refused at install. Decisions go to an audit
+log under `~/.loop/plugins/<id>/audit/<channel>/`, kept per `gates.audit`.
+
+The gate needs a linux `loop` binary in the container, which plugin images don't have. Loop
+mounts the release matching the daemon's version, downloaded on first use, checked against the
+release's checksums and cached under `~/.loop/cache/gate-bin/`. A dev build has no release, so
+build one with `make build-linux` and point `plugins.gate_binary` at it.
 
 ## Loop → plugin
 

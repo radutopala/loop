@@ -1,4 +1,4 @@
-.PHONY: help build install test test-integration test-integration-browser test-integration-plugin test-component test-runner-build test-runner-push bdd-serve lint lint-go lint-app coverage coverage-check codeql-download codeql codeql-js docker-build docs-build docs-serve docs-capture run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-test app-install app-build-binary app-dist-linux app-icons _sync-loop-overrides
+.PHONY: help build build-linux install test test-integration test-integration-browser test-integration-plugin test-component test-runner-build test-runner-push bdd-serve lint lint-go lint-app coverage coverage-check codeql-download codeql codeql-js docker-build docs-build docs-serve docs-capture run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-test app-install app-build-binary app-dist-linux app-icons _sync-loop-overrides
 .DEFAULT_GOAL := help
 
 # Strip gate-child env inheritance when invoking make from inside a
@@ -21,6 +21,11 @@ LDFLAGS     := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=
 build: ## Build the loop binary
 	go generate ./internal/readme/
 	go build -ldflags "$(LDFLAGS)" -o bin/loop ./cmd/loop
+
+build-linux: ## Build a linux loop for plugins.gate_binary (GOARCH= defaults to the host's)
+	go generate ./internal/readme/
+	GOOS=linux GOARCH=$${GOARCH:-$$(go env GOARCH)} CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" \
+		-o bin/loop-linux-$${GOARCH:-$$(go env GOARCH)} ./cmd/loop
 
 install: ## Install loop to GOPATH/bin
 	go generate ./internal/readme/

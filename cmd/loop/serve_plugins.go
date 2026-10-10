@@ -9,10 +9,13 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/docker/docker/api/types"
+
 	"github.com/radutopala/loop/internal/apiauth"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/plugin/gatebin"
 	"github.com/radutopala/loop/internal/plugin/install"
 	"github.com/radutopala/loop/internal/plugin/proxy"
 	"github.com/radutopala/loop/internal/plugin/runtime"
@@ -33,6 +36,7 @@ const (
 type pluginDockerClient interface {
 	runtime.DockerClient
 	install.DockerClient
+	ServerVersion(ctx context.Context) (types.Version, error)
 	Close() error
 }
 
@@ -76,7 +80,7 @@ func (a *app) newPlugins(ctx context.Context, cfg *config.Config, store db.Store
 		IdleTimeout: pluginIdleTimeout,
 		StartWait:   pluginStartWait,
 		Proxy:       container.ProxySettingsFromConfig(cfg),
-		Unavailable: pluginsUnavailable(cfg),
+		Gate:        a.pluginGate(cfg, cli),
 	}, logger)
 	mgr.SetImageGate(gate)
 	if err := mgr.RemoveLeftovers(ctx); err != nil {
@@ -86,11 +90,25 @@ func (a *app) newPlugins(ctx context.Context, cfg *config.Config, store db.Store
 	return &plugins{docker: cli, runtime: mgr, service: install.NewService(installer, mgr, ps, proxy.NewClient(&http.Client{}))}, nil
 }
 
-// pluginsUnavailable says why plugin containers can't run under cfg. They
-// aren't gated yet, so they don't start while agentgate is on.
-func pluginsUnavailable(cfg *config.Config) string {
-	if cfg.Gates.Agentgate.Enabled {
-		return "plugins don't run under agentgate yet; turn off gates.agentgate.enabled to run them"
+// pluginGate is how plugin containers run under agentgate, or nil when
+// it's off. The gate's loop binary is found on the first start.
+func (a *app) pluginGate(cfg *config.Config, cli pluginDockerClient) *runtime.GateConfig {
+	if !cfg.Gates.Agentgate.Enabled {
+		return nil
 	}
-	return ""
+	bin := gatebin.New(gatebin.Config{
+		Override: cfg.Plugins.GateBinary,
+		Version:  a.version,
+		CacheDir: filepath.Join(cfg.LoopDir, "cache", "gate-bin"),
+		Arch: func(ctx context.Context) (string, error) {
+			v, err := cli.ServerVersion(ctx)
+			return v.Arch, err
+		},
+		Get: gatebin.HTTPGet(&http.Client{Timeout: 5 * time.Minute}),
+	})
+	return &runtime.GateConfig{
+		Binary:             bin.Path,
+		AuditRetentionDays: cfg.Gates.Audit.RetentionDays,
+		AuditVerbose:       cfg.Gates.Audit.Verbose,
+	}
 }

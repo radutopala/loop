@@ -22,8 +22,10 @@ import (
 
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 	"github.com/docker/go-units"
@@ -43,6 +45,7 @@ type DockerClient interface {
 	ContainerList(ctx context.Context, options containertypes.ListOptions) ([]containertypes.Summary, error)
 	ContainerLogs(ctx context.Context, container string, options containertypes.LogsOptions) (io.ReadCloser, error)
 	VolumeRemove(ctx context.Context, volumeID string, force bool) error
+	ImageInspect(ctx context.Context, imageID string, opts ...client.ImageInspectOption) (image.InspectResponse, error)
 }
 
 // Store records each plugin container's state.
@@ -132,9 +135,8 @@ type Config struct {
 	StartWait time.Duration
 	// Proxy is the proxy plugin containers run with.
 	Proxy container.ProxySettings
-	// Unavailable, when set, says why plugin containers can't run; Ensure
-	// refuses with it.
-	Unavailable string
+	// Gate, when set, runs plugin containers under agentgate.
+	Gate *GateConfig
 }
 
 // instance is a running plugin container.
@@ -221,9 +223,6 @@ func (m *Manager) lock(k key) func() {
 // later use, after a backoff; after maxFailures in a row the container is
 // marked failed and Ensure refuses until Reset.
 func (m *Manager) Ensure(ctx context.Context, p Plugin, ch Channel) (Endpoint, error) {
-	if m.cfg.Unavailable != "" {
-		return Endpoint{}, errors.New(m.cfg.Unavailable)
-	}
 	id := p.Manifest.ID
 	k := key{id, ch.ID}
 	defer m.lock(k)()
@@ -291,42 +290,45 @@ func (m *Manager) start(ctx context.Context, p Plugin, ch Channel) (*instance, e
 		return nil, err
 	}
 	memory, cpus := resources(p.Manifest.Resources)
-	resp, err := m.api.ContainerCreate(ctx,
-		&containertypes.Config{
-			Image:        p.Image,
-			Labels:       map[string]string{LabelKey: id, channelLabelKey: ch.ID},
-			ExposedPorts: nat.PortSet{portKey: struct{}{}},
-			Env: append([]string{
-				"LOOP_PLUGIN_ID=" + id,
-				"LOOP_CHANNEL_ID=" + ch.ID,
-				"LOOP_CHANNEL_DIR=" + ch.DirPath,
-				fmt.Sprintf("LOOP_PLUGIN_PORT=%d", Port),
-				"LOOP_API_URL=" + m.cfg.APIURL,
-				"LOOP_PLUGIN_TOKEN_FILE=" + runDir + "/" + tokenFile,
-				"LOOP_PLUGIN_SECRET_FILE=" + runDir + "/" + secretFile,
-				"LOOP_DATA_DIR=" + dataDir,
-			}, container.ProxyEnv(m.cfg.Proxy, m.getenv)...),
+	cfg := &containertypes.Config{
+		Image:        p.Image,
+		Labels:       map[string]string{LabelKey: id, channelLabelKey: ch.ID},
+		ExposedPorts: nat.PortSet{portKey: struct{}{}},
+		Env: append([]string{
+			"LOOP_PLUGIN_ID=" + id,
+			"LOOP_CHANNEL_ID=" + ch.ID,
+			"LOOP_CHANNEL_DIR=" + ch.DirPath,
+			fmt.Sprintf("LOOP_PLUGIN_PORT=%d", Port),
+			"LOOP_API_URL=" + m.cfg.APIURL,
+			"LOOP_PLUGIN_TOKEN_FILE=" + runDir + "/" + tokenFile,
+			"LOOP_PLUGIN_SECRET_FILE=" + runDir + "/" + secretFile,
+			"LOOP_DATA_DIR=" + dataDir,
+		}, container.ProxyEnv(m.cfg.Proxy, m.getenv)...),
+	}
+	host := &containertypes.HostConfig{
+		ExtraHosts:     []string{"host.docker.internal:host-gateway"},
+		ReadonlyRootfs: true,
+		Tmpfs:          map[string]string{"/tmp": "rw,noexec,nosuid,size=64m"},
+		SecurityOpt:    []string{"no-new-privileges"},
+		CapDrop:        []string{"ALL"},
+		Resources: containertypes.Resources{
+			Memory:    memory,
+			CPUQuota:  int64(cpus * cpuPeriod),
+			CPUPeriod: cpuPeriod,
+			PidsLimit: new(int64(pidsLimit)),
 		},
-		&containertypes.HostConfig{
-			ExtraHosts:     []string{"host.docker.internal:host-gateway"},
-			ReadonlyRootfs: true,
-			Tmpfs:          map[string]string{"/tmp": "rw,noexec,nosuid,size=64m"},
-			SecurityOpt:    []string{"no-new-privileges"},
-			CapDrop:        []string{"ALL"},
-			Resources: containertypes.Resources{
-				Memory:    memory,
-				CPUQuota:  int64(cpus * cpuPeriod),
-				CPUPeriod: cpuPeriod,
-				PidsLimit: new(int64(pidsLimit)),
-			},
-			PortBindings: nat.PortMap{portKey: []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: "0"}}},
-			Mounts: []mount.Mount{
-				{Type: mount.TypeVolume, Source: name, Target: dataDir},
-				{Type: mount.TypeBind, Source: run, Target: runDir, ReadOnly: true},
-			},
+		PortBindings: nat.PortMap{portKey: []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: "0"}}},
+		Mounts: []mount.Mount{
+			{Type: mount.TypeVolume, Source: name, Target: dataDir},
+			{Type: mount.TypeBind, Source: run, Target: runDir, ReadOnly: true},
 		},
-		nil, nil, name,
-	)
+	}
+	if m.cfg.Gate != nil {
+		if err := m.applyGate(ctx, p, ch, cfg, host); err != nil {
+			return nil, err
+		}
+	}
+	resp, err := m.api.ContainerCreate(ctx, cfg, host, nil, nil, name)
 	if err != nil {
 		return nil, fmt.Errorf("creating the plugin container: %w", err)
 	}
@@ -485,8 +487,8 @@ func (m *Manager) stopLocked(ctx context.Context, pluginID, channelID string) {
 	m.upsert(ctx, &db.PluginContainer{PluginID: pluginID, ChannelID: channelID, Status: db.PluginContainerStopped})
 }
 
-// Remove removes a plugin's container in a channel, its run dir and its
-// row; purge also removes its data volume.
+// Remove removes a plugin's container in a channel, its run and gate dirs
+// and its row; purge also removes its data volume and gate audit log.
 func (m *Manager) Remove(ctx context.Context, pluginID, channelID string, purge bool) error {
 	defer m.lock(key{pluginID, channelID})()
 	m.stopLocked(ctx, pluginID, channelID)
@@ -496,12 +498,18 @@ func (m *Manager) Remove(ctx context.Context, pluginID, channelID string, purge 
 	if err := os.RemoveAll(m.runDir(pluginID, channelID)); err != nil {
 		errs = append(errs, fmt.Errorf("removing the plugin run dir: %w", err))
 	}
+	if err := os.RemoveAll(m.gateDir(pluginID, channelID)); err != nil {
+		errs = append(errs, fmt.Errorf("removing the plugin gate dir: %w", err))
+	}
 	if err := m.store.DeletePluginContainer(ctx, pluginID, channelID); err != nil {
 		errs = append(errs, fmt.Errorf("deleting the plugin container row: %w", err))
 	}
 	if purge {
 		if err := m.api.VolumeRemove(ctx, ContainerName(pluginID, channelID), true); err != nil {
 			errs = append(errs, fmt.Errorf("removing the plugin data volume: %w", err))
+		}
+		if err := os.RemoveAll(m.auditDir(pluginID, channelID)); err != nil {
+			errs = append(errs, fmt.Errorf("removing the plugin gate audit dir: %w", err))
 		}
 	}
 	return errors.Join(errs...)

@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"syscall"
 	"time"
 
+	"github.com/docker/docker/api/types"
 	containertypes "github.com/docker/docker/api/types/container"
 	dockerclient "github.com/docker/docker/client"
 	"github.com/stretchr/testify/require"
@@ -94,9 +96,38 @@ func (s *MainSuite) TestDefaultNewPluginDocker() {
 	require.NoError(s.T(), c.Close())
 }
 
-func (s *MainSuite) TestPluginsUnavailable() {
-	cfg := &config.Config{}
-	require.Empty(s.T(), pluginsUnavailable(cfg))
+// versionlessDocker is a Docker client whose server version can't be read.
+type versionlessDocker struct {
+	*dockerclient.Client
+}
+
+func (versionlessDocker) ServerVersion(context.Context) (types.Version, error) {
+	return types.Version{}, errors.New("no daemon")
+}
+
+func (s *MainSuite) TestPluginGate() {
+	cfg := &config.Config{LoopDir: s.T().TempDir()}
+	c, err := noDocker()
+	require.NoError(s.T(), err)
+	cli := versionlessDocker{c}
+	require.Nil(s.T(), s.app.pluginGate(cfg, cli), "no gate while agentgate is off")
+
 	cfg.Gates.Agentgate.Enabled = true
-	require.Contains(s.T(), pluginsUnavailable(cfg), "gates.agentgate.enabled")
+	cfg.Gates.Audit.RetentionDays = 7
+	cfg.Gates.Audit.Verbose = true
+	bin := filepath.Join(cfg.LoopDir, "loop-linux")
+	require.NoError(s.T(), os.WriteFile(bin, []byte("ELF"), 0o755))
+	cfg.Plugins.GateBinary = bin
+	gate := s.app.pluginGate(cfg, cli)
+	require.Equal(s.T(), 7, gate.AuditRetentionDays)
+	require.True(s.T(), gate.AuditVerbose)
+	path, err := gate.Binary(context.Background())
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), bin, path)
+
+	// A release build downloads its release for the Docker daemon's arch.
+	cfg.Plugins.GateBinary = ""
+	s.app.version = "2026.10.3"
+	_, err = s.app.pluginGate(cfg, cli).Binary(context.Background())
+	require.ErrorContains(s.T(), err, "architecture: no daemon")
 }
