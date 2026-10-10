@@ -393,13 +393,13 @@ func (in *Installer) Discard(c *Candidate) {
 	}
 }
 
-// Remove forgets an installed plugin and deletes its extracted images. Its
-// containers and volumes are the runtime's to remove.
+// Remove forgets an installed plugin and deletes its dir. Its containers and
+// volumes are the runtime's to remove, first.
 func (in *Installer) Remove(ctx context.Context, pluginID string) error {
 	if err := in.store.DeletePluginState(ctx, pluginID); err != nil {
 		return fmt.Errorf("deleting the plugin: %w", err)
 	}
-	if err := os.RemoveAll(filepath.Join(in.root, pluginID, "images")); err != nil {
+	if err := os.RemoveAll(filepath.Join(in.root, pluginID)); err != nil {
 		return fmt.Errorf("deleting the extracted plugin: %w", err)
 	}
 	return nil

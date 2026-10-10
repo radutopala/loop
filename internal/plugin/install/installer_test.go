@@ -428,13 +428,14 @@ func (s *InstallerSuite) TestRemove() {
 	s.store.On("DeletePluginState", s.ctx, "echo").Return(nil).Once()
 	require.NoError(s.T(), s.in.Remove(s.ctx, "echo"))
 	require.NoDirExists(s.T(), c.Dir)
+	require.NoDirExists(s.T(), filepath.Join(s.root, "echo"))
 
 	s.store.On("DeletePluginState", s.ctx, "echo").Return(errors.New("boom")).Once()
 	require.EqualError(s.T(), s.in.Remove(s.ctx, "echo"), "deleting the plugin: boom")
 
-	// A file where the plugin's dir should be can't be descended into.
-	require.NoError(s.T(), os.RemoveAll(filepath.Join(s.root, "echo")))
-	require.NoError(s.T(), os.WriteFile(filepath.Join(s.root, "echo"), nil, 0o644))
+	// A file where the plugins root should be can't be descended into.
+	s.in.root = filepath.Join(s.T().TempDir(), "file")
+	require.NoError(s.T(), os.WriteFile(s.in.root, nil, 0o644))
 	s.store.On("DeletePluginState", s.ctx, "echo").Return(nil).Once()
 	require.ErrorContains(s.T(), s.in.Remove(s.ctx, "echo"), "deleting the extracted plugin")
 }
