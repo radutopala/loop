@@ -55,6 +55,7 @@ A `pane` is a pane id from the state, such as `docker-agent-1`, or a panel type,
 - **Steps stop at the first failure.** A failed step has `ok: false` and an `error`, and the steps after it don't run.
 - **A command stays in one channel.** That's the channel its `select_channel` opened, or else the one the window showed when the command started. If the user opens another channel while the command runs, the next step fails rather than read from or type into that channel's terminals.
 - **`wait_for` waits for new output.** It waits until the terminal's last `lines` match `match`, or, without `match`, until the terminal has been quiet for `quiet_ms`. After a `send_input` to the same pane in the same command, only output printed since then counts. A session that ended counts as done, and a pane that closes fails the step instead of waiting out the timeout.
+- **`match` uses RE2.** It's a multiline regular expression in [RE2 syntax](https://github.com/google/re2/wiki/Syntax), which matches in linear time, so a pattern can't stall the window. It has no lookarounds or backreferences.
 - **Input to a `docker-agent` pane goes in as one paste**, so a multi-line prompt stays one message. Text containing a bracketed-paste marker (`ESC [200~` or `ESC [201~`) is refused, because it would end the paste early.
 
 ## Security

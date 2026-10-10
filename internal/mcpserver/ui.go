@@ -36,7 +36,7 @@ type uiRunStep struct {
 	Text      string `json:"text,omitempty" jsonschema:"send_input: what to type"`
 	Submit    *bool  `json:"submit,omitempty" jsonschema:"send_input: whether to press enter after the text (default true)"`
 	Lines     *int   `json:"lines,omitempty" jsonschema:"read_output, wait_for: how many of the terminal's last lines (default 50, at most 2000)"`
-	Match     string `json:"match,omitempty" jsonschema:"wait_for: a regular expression (multiline) the last lines must match"`
+	Match     string `json:"match,omitempty" jsonschema:"wait_for: a regular expression (multiline, RE2 syntax: no lookarounds or backreferences) the last lines must match"`
 	QuietMS   *int   `json:"quiet_ms,omitempty" jsonschema:"wait_for without match: how long the terminal must be quiet, in ms (default 2000)"`
 }
 

@@ -1,3 +1,4 @@
+import { RE2JS } from "re2js";
 import { AGENT_OPEN_MODE_OPTIONS, type AgentOpenMode, PANEL_OPTIONS, type PanelType } from "../types/panels";
 import type { PaneInfo, PaneOptions, StepResult, TerminalInput, UiHost, UiStep, WorkspaceController } from "./types";
 
@@ -307,10 +308,12 @@ async function sendInput(step: UiStep, run: Run): Promise<StepOutput> {
  *  in the command, only output since counts. A session that ends is done. */
 async function waitForOutput(step: UiStep, run: Run): Promise<StepOutput> {
   const lines = linesOf(step);
-  let match: RegExp | undefined;
+  // RE2 matches in linear time: a backtracking RegExp from a command could
+  // take minutes on the window's thread for a pattern like ^(a+)+$.
+  let match: RE2JS | undefined;
   if (step.match !== undefined) {
     try {
-      match = new RegExp(step.match, "m");
+      match = RE2JS.compile(step.match, RE2JS.MULTILINE);
     } catch (err) {
       throw new StepError(`match: ${err instanceof Error ? err.message : String(err)}`);
     }

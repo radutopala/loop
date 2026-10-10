@@ -2780,7 +2780,7 @@ Runs steps in a window, in order, until one fails.
 | `open_file` | `path`, `line?` | Opens a file of the channel's roots in the editor |
 | `send_input` | `pane`, `text`, `submit?` | Types into an agent terminal |
 | `read_output` | `pane`, `lines?` | The terminal's last `lines` (default 50, at most 2000) |
-| `wait_for` | `pane`, `match?`, `quiet_ms?`, `lines?` | Waits until the last `lines` match the regular expression `match` (multiline), or, without it, until the terminal is quiet for `quiet_ms` (default 2000). After a `send_input` to that pane in the same command, only output since counts. A session that ended counts as done |
+| `wait_for` | `pane`, `match?`, `quiet_ms?`, `lines?` | Waits until the last `lines` match the regular expression `match` (multiline, [RE2 syntax](https://github.com/google/re2/wiki/Syntax), so no lookarounds or backreferences), or, without it, until the terminal is quiet for `quiet_ms` (default 2000). After a `send_input` to that pane in the same command, only output since counts. A session that ended counts as done |
 
 `open_mode` is for `docker-agent` panes. `item` names the playground of a `playground` pane, and `scope` (`global` or `project`) picks it when both scopes have one by that name.
 

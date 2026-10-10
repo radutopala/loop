@@ -578,7 +578,8 @@ describe("read_output and wait_for", () => {
     { name: "wait_for on a host shell", step: { op: "wait_for", pane: "host-shell" }, error: "wait_for only reads docker-agent and docker-shell panes, not host-shell" },
     { name: "0 lines", step: { op: "read_output", pane: "docker-agent", lines: 0 }, error: `lines must be a whole number from 1 to ${MAX_LINES}` },
     { name: "too many lines", step: { op: "wait_for", pane: "docker-agent", lines: MAX_LINES + 1 }, error: `lines must be a whole number from 1 to ${MAX_LINES}` },
-    { name: "a bad match", step: { op: "wait_for", pane: "docker-agent", match: "(" }, error: "match: Invalid regular expression: /(/m: Unterminated group" },
+    { name: "a bad match", step: { op: "wait_for", pane: "docker-agent", match: "(" }, error: "match: error parsing regexp: missing closing ): `(?m)(`" },
+    { name: "a match RE2 can't run", step: { op: "wait_for", pane: "docker-agent", match: "(?=x)" }, error: "match: error parsing regexp: invalid or unsupported Perl syntax: `(?=`" },
     { name: "a negative quiet_ms", step: { op: "wait_for", pane: "docker-agent", quiet_ms: -1 }, error: "quiet_ms must be a whole number from 0" },
   ])("refuses $name", async ({ step, error }) => {
     expect(await run([step])).toEqual([{ op: step.op, ok: false, error }]);
@@ -622,6 +623,19 @@ describe("read_output and wait_for", () => {
       { op: "wait_for", ok: true, pane: "docker-agent-1", output: "> 42" },
     ]);
     expect(sleeps).toBe(10);
+  });
+
+  it("matches in linear time, so a pattern can't stall the window", async () => {
+    // A backtracking RegExp takes tens of seconds on one such line.
+    t.text = `${"a".repeat(30)}!\n`.repeat(2000);
+    t.outputAt = host.clock;
+    host.onSleep = () => {
+      t.status = () => "completed";
+    };
+    const started = Date.now();
+    const results = await run([{ op: "wait_for", pane: "docker-agent", match: "^(a+)+$", lines: 2000 }]);
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(results).toEqual([{ op: "wait_for", ok: true, pane: "docker-agent-1", output: t.text }]);
   });
 
   it("fails when the window leaves the channel while it waits", async () => {
