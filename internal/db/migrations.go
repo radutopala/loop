@@ -480,6 +480,33 @@ var migrations = []migration{
 	// plugin's container, whose plugin plugin_id names.
 	sqlMigration(`ALTER TABLE api_tokens ADD COLUMN kind TEXT NOT NULL DEFAULT 'agent'`),
 	sqlMigration(`ALTER TABLE api_tokens ADD COLUMN plugin_id TEXT NOT NULL DEFAULT ''`),
+	// plugin_state holds each installed plugin: the image digest it's pinned
+	// to and the capabilities the owner approved (see PluginState).
+	sqlMigration(`CREATE TABLE IF NOT EXISTS plugin_state (
+		plugin_id       TEXT PRIMARY KEY,
+		image           TEXT NOT NULL,
+		digest          TEXT NOT NULL DEFAULT '',
+		version         TEXT NOT NULL,
+		api             TEXT NOT NULL,
+		approved_caps   TEXT NOT NULL DEFAULT '[]',
+		dev             INTEGER NOT NULL DEFAULT 0,
+		status          TEXT NOT NULL,
+		verified_key_id TEXT NOT NULL DEFAULT '',
+		installed_at    DATETIME NOT NULL,
+		updated_at      DATETIME NOT NULL
+	)`),
+	// plugin_containers holds a plugin's container in each channel it runs
+	// in (see PluginContainer).
+	sqlMigration(`CREATE TABLE IF NOT EXISTS plugin_containers (
+		plugin_id    TEXT NOT NULL,
+		channel_id   TEXT NOT NULL,
+		container_id TEXT NOT NULL DEFAULT '',
+		host_port    INTEGER NOT NULL DEFAULT 0,
+		status       TEXT NOT NULL,
+		last_error   TEXT NOT NULL DEFAULT '',
+		updated_at   DATETIME NOT NULL,
+		PRIMARY KEY (plugin_id, channel_id)
+	)`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the
