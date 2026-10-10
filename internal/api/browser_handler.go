@@ -143,7 +143,7 @@ func (s *browserService) handleBrowserWS(w http.ResponseWriter, r *http.Request)
 		stopCh: make(chan struct{}),
 		inputQ: newInputQueue(),
 	}
-	defer bc.cleanup()
+	defer bc.disconnect()
 	go bc.runInputWorker()
 
 	for {
@@ -649,10 +649,15 @@ func (bc *browserWSConn) watchMCPTabChanges() {
 	}
 }
 
-func (bc *browserWSConn) cleanup() {
-	// Stops the input worker, and any frame pipe still waiting on it.
+// disconnect ends the connection: it stops the input worker and any frame
+// pipe still waiting on it, then releases the session. A stop message only
+// releases the session, since the pane may start again on the same socket.
+func (bc *browserWSConn) disconnect() {
 	close(bc.stopCh)
+	bc.cleanup()
+}
 
+func (bc *browserWSConn) cleanup() {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
 
