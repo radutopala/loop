@@ -56,6 +56,8 @@ type ServiceStore interface {
 type Caller interface {
 	Action(ctx context.Context, ep runtime.Endpoint, action string, req proxy.ActionRequest) error
 	Tool(ctx context.Context, ep runtime.Endpoint, tool string, req proxy.ToolRequest) (*proxy.ToolResult, error)
+	RunDone(ctx context.Context, ep runtime.Endpoint, runID string, req proxy.RunDoneRequest) error
+	X(ctx context.Context, ep runtime.Endpoint, req proxy.XRequest) (*proxy.XResponse, error)
 }
 
 // AgentRun is an agent run a plugin asks for: the agent and the tools it
@@ -150,9 +152,9 @@ func (s *Service) RunAction(ctx context.Context, pluginID, action string, ch run
 	if !slices.ContainsFunc(m.Actions, func(a plugin.Action) bool { return a.ID == action }) {
 		return fmt.Errorf("%w: %s", ErrUnknownAction, action)
 	}
-	ep, err := s.runtime.Ensure(ctx, runtime.Plugin{Manifest: m, Image: st.Image}, ch)
+	ep, err := s.start(ctx, st, m, ch)
 	if err != nil {
-		return fmt.Errorf("starting the plugin: %w", err)
+		return err
 	}
 	return s.caller.Action(ctx, ep, action, req)
 }
@@ -202,11 +204,73 @@ func (s *Service) CallTool(ctx context.Context, pluginID, tool string, ch runtim
 	if err := m.Tools[i].ValidateInput(req.Input); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidInput, err)
 	}
-	ep, err := s.runtime.Ensure(ctx, runtime.Plugin{Manifest: m, Image: st.Image}, ch)
+	ep, err := s.start(ctx, st, m, ch)
 	if err != nil {
-		return nil, fmt.Errorf("starting the plugin: %w", err)
+		return nil, err
 	}
 	return s.caller.Tool(ctx, ep, tool, req)
+}
+
+// Allows returns nil when the plugin may run and the owner approved c for
+// it. An empty c checks only that it may run.
+func (s *Service) Allows(ctx context.Context, pluginID string, c plugin.Capability) error {
+	st, _, err := s.runnable(ctx, pluginID)
+	if err != nil {
+		return err
+	}
+	if c != "" && !slices.Contains(st.ApprovedCaps, string(c)) {
+		return fmt.Errorf("%w: %s", ErrNotApproved, c)
+	}
+	return nil
+}
+
+// RunDone tells the plugin's container in ch, starting it if it isn't
+// running, that its agent run runID ended.
+func (s *Service) RunDone(ctx context.Context, pluginID string, ch runtime.Channel, runID string, req proxy.RunDoneRequest) error {
+	ep, err := s.ensure(ctx, pluginID, ch)
+	if err != nil {
+		return err
+	}
+	return s.caller.RunDone(ctx, ep, runID, req)
+}
+
+// X forwards a call from the plugin's UI to its own API on its container in
+// ch, starting it if it isn't running.
+func (s *Service) X(ctx context.Context, pluginID string, ch runtime.Channel, req proxy.XRequest) (*proxy.XResponse, error) {
+	ep, err := s.ensure(ctx, pluginID, ch)
+	if err != nil {
+		return nil, err
+	}
+	return s.caller.X(ctx, ep, req)
+}
+
+// UI returns the dir the plugin's image was extracted to, which holds its
+// panels' files, and its manifest.
+func (s *Service) UI(ctx context.Context, pluginID string) (string, *plugin.Manifest, error) {
+	st, m, err := s.runnable(ctx, pluginID)
+	if err != nil {
+		return "", nil, err
+	}
+	return s.installer.Dir(st), m, nil
+}
+
+// ensure starts the plugin's container in ch, if it isn't running.
+func (s *Service) ensure(ctx context.Context, pluginID string, ch runtime.Channel) (runtime.Endpoint, error) {
+	st, m, err := s.runnable(ctx, pluginID)
+	if err != nil {
+		return runtime.Endpoint{}, err
+	}
+	return s.start(ctx, st, m, ch)
+}
+
+// start starts the container of the plugin st runs in ch, if it isn't
+// running.
+func (s *Service) start(ctx context.Context, st *db.PluginState, m *plugin.Manifest, ch runtime.Channel) (runtime.Endpoint, error) {
+	ep, err := s.runtime.Ensure(ctx, runtime.Plugin{Manifest: m, Image: st.Image}, ch)
+	if err != nil {
+		return runtime.Endpoint{}, fmt.Errorf("starting the plugin: %w", err)
+	}
+	return ep, nil
 }
 
 // runnable returns an installed plugin that may run, and its manifest.

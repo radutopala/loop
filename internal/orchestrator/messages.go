@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -33,7 +34,7 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *bot.IncomingMessa
 				// whose hidden thread was deleted meanwhile. It must not
 				// bring the thread back as a plain channel, where the run
 				// would be unrestricted.
-				o.pluginRunDone(msg)
+				o.pluginRunDone(ctx, msg, errors.New("the plugin's thread was deleted"))
 				o.logger.Debug("dropping the trigger", "reason", "hidden thread gone", "channel_id", msg.ChannelID, "author_id", msg.AuthorID)
 				return
 			}
@@ -295,7 +296,8 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 	// deferred to after the run saves its own.
 	o.sessionRunStarted(msg.ChannelID)
 	defer o.sessionRunDone(ctx, msg.ChannelID)
-	defer o.pluginRunDone(msg)
+	var runErr error
+	defer func() { o.pluginRunDone(ctx, msg, runErr) }()
 
 	// An explanation's or learn pass's run marks it running here and done
 	// or failed below.
@@ -303,6 +305,7 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 	pass := o.learnPassStarted(ctx, msg)
 	req, recent, channel, err := o.prepareAgentRequest(ctx, msg, reviewedTurn(expl, pass))
 	if err != nil {
+		runErr = err
 		o.explainRunDone(ctx, expl, "", err)
 		o.learnPassDone(ctx, pass, err)
 		return
@@ -339,6 +342,7 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 		// refetchHead the FE kicks off on status non-running can race the
 		// is_processed=1 DB write and overwrite the locally-applied flip
 		// with stale fetched rows.
+		runErr = err
 		o.markTriggerProcessed(ctx, msg, recent)
 		o.explainRunDone(ctx, expl, "", err)
 		o.learnPassDone(ctx, pass, err)

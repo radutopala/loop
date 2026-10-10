@@ -3,7 +3,11 @@ package api
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
+	"path/filepath"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/radutopala/loop/internal/db"
@@ -22,6 +26,10 @@ type PluginManager interface {
 	RunAction(ctx context.Context, pluginID, action string, ch runtime.Channel, req proxy.ActionRequest) error
 	AgentRun(ctx context.Context, pluginID, agentID string) (*install.AgentRun, error)
 	CallTool(ctx context.Context, pluginID, tool string, ch runtime.Channel, req proxy.ToolRequest) (*proxy.ToolResult, error)
+	Allows(ctx context.Context, pluginID string, c plugin.Capability) error
+	RunDone(ctx context.Context, pluginID string, ch runtime.Channel, runID string, req proxy.RunDoneRequest) error
+	X(ctx context.Context, pluginID string, ch runtime.Channel, req proxy.XRequest) (*proxy.XResponse, error)
+	UI(ctx context.Context, pluginID string) (string, *plugin.Manifest, error)
 }
 
 const pluginsDisabled = "plugins are disabled; set plugins.enabled in the global config"
@@ -38,6 +46,10 @@ type pluginInfo struct {
 	Status       string    `json:"status"`
 	InstalledAt  time.Time `json:"installed_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
+	// Name and Panels come from the manifest of a plugin that may run;
+	// Panels only when the owner approved ui.panel.
+	Name   string         `json:"name,omitempty"`
+	Panels []plugin.Panel `json:"panels,omitempty"`
 }
 
 // pluginCandidate is a pulled plugin image for the owner to review: what it
@@ -92,11 +104,18 @@ func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]pluginInfo, 0, len(states))
 	for _, st := range states {
-		out = append(out, pluginInfo{
+		info := pluginInfo{
 			ID: st.PluginID, Image: st.Image, Digest: st.Digest, Version: st.Version, API: st.API,
 			Capabilities: st.ApprovedCaps, Dev: st.Dev, Status: st.Status,
 			InstalledAt: st.InstalledAt, UpdatedAt: st.UpdatedAt,
-		})
+		}
+		if _, m, err := s.plugins.UI(r.Context(), st.PluginID); err == nil {
+			info.Name = m.Name
+			if m.UI != nil && slices.Contains(st.ApprovedCaps, string(plugin.CapUIPanel)) {
+				info.Panels = m.UI.Panels
+			}
+		}
+		out = append(out, info)
 	}
 	writeHTTPJSON(w, http.StatusOK, map[string]any{"plugins": out}, s.logger)
 }
@@ -175,22 +194,14 @@ func (s *Server) handleRunPluginAction(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "channel_id is required", http.StatusBadRequest)
 		return
 	}
-	ch, err := s.store.GetChannel(r.Context(), req.ChannelID)
-	if err == nil && ch != nil && ch.ParentID != "" {
-		ch, err = s.store.GetChannel(r.Context(), ch.ParentID)
-	}
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if ch == nil {
-		http.Error(w, "channel not found", http.StatusNotFound)
+	ch, ok := s.pluginChannel(w, r, req.ChannelID)
+	if !ok {
 		return
 	}
 	// Starting the container outlives a client that hangs up, so a slow
 	// start isn't counted as a failed one.
 	ctx := context.WithoutCancel(r.Context())
-	err = s.plugins.RunAction(ctx, r.PathValue("plugin"), r.PathValue("action"),
+	err := s.plugins.RunAction(ctx, r.PathValue("plugin"), r.PathValue("action"),
 		runtime.Channel{ID: ch.ChannelID, DirPath: ch.DirPath}, proxy.ActionRequest{Trigger: proxy.TriggerManual})
 	switch {
 	case errors.Is(err, install.ErrNotInstalled), errors.Is(err, install.ErrUnknownAction):
@@ -204,6 +215,133 @@ func (s *Server) handleRunPluginAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeHTTPJSON(w, http.StatusAccepted, map[string]string{"channel_id": ch.ChannelID}, s.logger)
+}
+
+// pluginChannel returns the channel a plugin serves for channelID: the
+// channel, or a thread's parent, since a plugin runs per channel.
+// Otherwise it answers the request and returns false.
+func (s *Server) pluginChannel(w http.ResponseWriter, r *http.Request, channelID string) (*db.Channel, bool) {
+	ch, err := s.store.GetChannel(r.Context(), channelID)
+	if err == nil && ch != nil && ch.ParentID != "" {
+		ch, err = s.store.GetChannel(r.Context(), ch.ParentID)
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return nil, false
+	}
+	if ch == nil {
+		http.Error(w, "channel not found", http.StatusNotFound)
+		return nil, false
+	}
+	return ch, true
+}
+
+// handlePluginX forwards a call of a plugin's panel to the plugin's own
+// API, /x/{path}, on its container in the channel_id query parameter's
+// channel. The rest of the query, the body and its type go along.
+func (s *Server) handlePluginX(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.plugins, pluginsDisabled) {
+		return
+	}
+	q := r.URL.Query()
+	channelID := q.Get("channel_id")
+	if channelID == "" {
+		http.Error(w, "channel_id is required", http.StatusBadRequest)
+		return
+	}
+	q.Del("channel_id")
+	ch, ok := s.pluginChannel(w, r, channelID)
+	if !ok {
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, proxy.MaxXBody))
+	if err != nil {
+		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	// Starting the container outlives a client that hangs up, so a slow
+	// start isn't counted as a failed one.
+	res, err := s.plugins.X(context.WithoutCancel(r.Context()), r.PathValue("plugin"),
+		runtime.Channel{ID: ch.ChannelID, DirPath: ch.DirPath}, proxy.XRequest{
+			Method: r.Method, Path: r.PathValue("path"), RawQuery: q.Encode(),
+			ContentType: r.Header.Get("Content-Type"), Body: body,
+		})
+	switch {
+	case errors.Is(err, install.ErrNotInstalled):
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	case errors.Is(err, install.ErrNotRunnable):
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	case err != nil:
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	ctype := res.ContentType
+	if ctype == "" {
+		ctype = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", ctype)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(res.Status)
+	_, _ = w.Write(res.Body)
+}
+
+// pluginPanelCSP is the policy of a plugin's panel pages, served under
+// prefix: an opaque origin, nothing loaded from outside the plugin's
+// bundle, no inline scripts, frames, form posts or navigation.
+func pluginPanelCSP(prefix string) string {
+	return "sandbox allow-scripts allow-forms; default-src 'none'; " +
+		"script-src " + prefix + " 'wasm-unsafe-eval'; style-src " + prefix + " 'unsafe-inline'; " +
+		"img-src " + prefix + " data: blob:; font-src " + prefix + " data:; media-src " + prefix + " blob:; " +
+		"worker-src " + prefix + " blob:; connect-src " + prefix + "; " +
+		"form-action 'none'; frame-src 'none'; base-uri 'none'"
+}
+
+// servePluginUI serves a file of the UI bundle of plugin pluginID, rel
+// under its /loop-plugin dir, while the plugin may run and draw panels.
+func (s *Server) servePluginUI(w http.ResponseWriter, r *http.Request, tok, pluginID, rel string) {
+	if !requireConfigured(w, s.plugins, pluginsDisabled) {
+		return
+	}
+	if err := s.plugins.Allows(r.Context(), pluginID, plugin.CapUIPanel); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	dir, _, err := s.plugins.UI(r.Context(), pluginID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	ui, ok := strings.CutPrefix(rel, "ui/")
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	abs, err := s.validateFilePath(filepath.Join(dir, "ui"), ui)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	f, err := s.sys.Open(abs)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || info.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	w.Header().Set("Content-Security-Policy", pluginPanelCSP(scheme+"://"+r.Host+"/c/"+tok+"/"))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-store")
+	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
 }
 
 func requireImage(w http.ResponseWriter, image string) bool {

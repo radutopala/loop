@@ -46,6 +46,16 @@ func (m *mockCaller) Tool(ctx context.Context, ep runtime.Endpoint, tool string,
 	return res, args.Error(1)
 }
 
+func (m *mockCaller) RunDone(ctx context.Context, ep runtime.Endpoint, runID string, req proxy.RunDoneRequest) error {
+	return m.Called(ctx, ep, runID, req).Error(0)
+}
+
+func (m *mockCaller) X(ctx context.Context, ep runtime.Endpoint, req proxy.XRequest) (*proxy.XResponse, error) {
+	args := m.Called(ctx, ep, req)
+	res, _ := args.Get(0).(*proxy.XResponse)
+	return res, args.Error(1)
+}
+
 func (m *mockRuntime) Remove(ctx context.Context, pluginID, channelID string, purge bool) error {
 	return m.Called(ctx, pluginID, channelID, purge).Error(0)
 }
@@ -358,4 +368,95 @@ func (s *ServiceSuite) TestCallTool() {
 		_, err := s.svc.CallTool(s.ctx, "echo", "echo", ch, call("say", `{}`))
 		require.ErrorIs(s.T(), err, ErrNotInstalled)
 	})
+}
+
+func (s *ServiceSuite) TestAllows() {
+	tests := []struct {
+		name    string
+		caps    []string
+		status  string
+		c       plugin.Capability
+		wantIs  error
+		wantErr string
+	}{
+		{name: "approved", caps: []string{"files.read"}, c: plugin.CapFilesRead},
+		{name: "may run", c: ""},
+		{name: "not approved", caps: []string{"git.read"}, c: plugin.CapFilesRead, wantErr: "capability not approved: files.read"},
+		{name: "disabled", status: db.PluginStatusDisabled, wantIs: ErrNotRunnable},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			defer s.TearDownTest()
+			status := tt.status
+			if status == "" {
+				status = db.PluginStatusInstalled
+			}
+			st := s.installed(status)
+			st.ApprovedCaps = tt.caps
+			s.store.On("GetPluginState", s.ctx, "echo").Return(st, nil).Once()
+			err := s.svc.Allows(s.ctx, "echo", tt.c)
+			switch {
+			case tt.wantIs != nil:
+				require.ErrorIs(s.T(), err, tt.wantIs)
+			case tt.wantErr != "":
+				require.EqualError(s.T(), err, tt.wantErr)
+			default:
+				require.NoError(s.T(), err)
+			}
+		})
+	}
+}
+
+func (s *ServiceSuite) TestRunDoneAndX() {
+	ch := runtime.Channel{ID: "ch1", DirPath: "/src"}
+	ep := runtime.Endpoint{URL: "http://127.0.0.1:1234", Secret: "s"}
+	done := proxy.RunDoneRequest{Status: proxy.RunStatusDone}
+	xreq := proxy.XRequest{Method: "GET", Path: "/quiz"}
+	xres := &proxy.XResponse{Status: 200, Body: []byte("{}")}
+
+	s.Run("forwarded", func() {
+		s.SetupTest()
+		defer s.TearDownTest()
+		s.store.On("GetPluginState", s.ctx, "echo").Return(s.installed(db.PluginStatusInstalled), nil).Twice()
+		s.runtime.On("Ensure", s.ctx, mock.Anything, ch).Return(ep, nil).Twice()
+		s.caller.On("RunDone", s.ctx, ep, "r1", done).Return(nil).Once()
+		s.caller.On("X", s.ctx, ep, xreq).Return(xres, nil).Once()
+		require.NoError(s.T(), s.svc.RunDone(s.ctx, "echo", ch, "r1", done))
+		got, err := s.svc.X(s.ctx, "echo", ch, xreq)
+		require.NoError(s.T(), err)
+		require.Equal(s.T(), xres, got)
+	})
+
+	s.Run("not installed", func() {
+		s.SetupTest()
+		defer s.TearDownTest()
+		s.store.On("GetPluginState", s.ctx, "echo").Return(nil, nil).Twice()
+		require.ErrorIs(s.T(), s.svc.RunDone(s.ctx, "echo", ch, "r1", done), ErrNotInstalled)
+		_, err := s.svc.X(s.ctx, "echo", ch, xreq)
+		require.ErrorIs(s.T(), err, ErrNotInstalled)
+	})
+
+	s.Run("start", func() {
+		s.SetupTest()
+		defer s.TearDownTest()
+		s.store.On("GetPluginState", s.ctx, "echo").Return(s.installed(db.PluginStatusInstalled), nil).Twice()
+		s.runtime.On("Ensure", s.ctx, mock.Anything, ch).Return(runtime.Endpoint{}, errors.New("unhealthy")).Twice()
+		require.EqualError(s.T(), s.svc.RunDone(s.ctx, "echo", ch, "r1", done), "starting the plugin: unhealthy")
+		_, err := s.svc.X(s.ctx, "echo", ch, xreq)
+		require.EqualError(s.T(), err, "starting the plugin: unhealthy")
+	})
+}
+
+func (s *ServiceSuite) TestUI() {
+	st := s.installed(db.PluginStatusInstalled)
+	s.store.On("GetPluginState", s.ctx, "echo").Return(st, nil).Once()
+	dir, m, err := s.svc.UI(s.ctx, "echo")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "echo", m.ID)
+	require.FileExists(s.T(), filepath.Join(dir, "plugin.json"))
+
+	s.store.On("GetPluginState", s.ctx, "echo").Return(nil, nil).Once()
+	_, _, err = s.svc.UI(s.ctx, "echo")
+	require.ErrorIs(s.T(), err, ErrNotInstalled)
 }

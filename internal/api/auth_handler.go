@@ -17,6 +17,7 @@ const contentCapTTL = time.Hour
 const (
 	capKindRaw        = "raw"
 	capKindPlayground = "playground"
+	capKindPlugin     = "plugin"
 )
 
 // playgroundCSP sandboxes playground pages like the iframe does, minus
@@ -77,10 +78,10 @@ func (s *Server) handleRotateToken(w http.ResponseWriter, _ *http.Request) {
 }
 
 type contentCapRequest struct {
-	Kind      string `json:"kind"`       // "raw" or "playground"
+	Kind      string `json:"kind"`       // "raw", "playground" or "plugin"
 	ChannelID string `json:"channel_id"` // raw: the channel; playground: set for a project playground
 	Root      int    `json:"root"`       // raw: the channel root index
-	Name      string `json:"name"`       // playground: its name
+	Name      string `json:"name"`       // playground: its name; plugin: the plugin's id
 }
 
 type contentCapResponse struct {
@@ -89,8 +90,8 @@ type contentCapResponse struct {
 }
 
 // handleCreateContentCap returns a base URL, /c/{cap}/, under which the
-// browser can load one channel root's files or one playground without an
-// Authorization header: iframes, images, video and <base href> can't send one.
+// browser can load one channel root's files, one playground or one
+// plugin's panels without an Authorization header: iframes, images, video and <base href> can't send one.
 func (s *Server) handleCreateContentCap(w http.ResponseWriter, r *http.Request) {
 	if s.caps == nil {
 		http.Error(w, "content links not configured", http.StatusNotImplemented)
@@ -114,8 +115,14 @@ func (s *Server) handleCreateContentCap(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		c = apiauth.Cap{Kind: capKindPlayground, ChannelID: req.ChannelID, Scope: req.Name}
+	case capKindPlugin:
+		if req.Name == "" {
+			http.Error(w, "name is required", http.StatusBadRequest)
+			return
+		}
+		c = apiauth.Cap{Kind: capKindPlugin, Scope: req.Name}
 	default:
-		http.Error(w, "kind must be raw or playground", http.StatusBadRequest)
+		http.Error(w, "kind must be raw, playground or plugin", http.StatusBadRequest)
 		return
 	}
 	writeHTTPJSON(w, http.StatusOK, contentCapResponse{
@@ -161,6 +168,8 @@ func (s *Server) handleContentCap(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.playground.servePlaygroundFile(w, pgDir, rel)
+	case capKindPlugin:
+		s.servePluginUI(w, r, tok, c.Scope, rel)
 	default:
 		http.NotFound(w, r)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -138,4 +139,109 @@ func (s *ClientSuite) TestTool() {
 func (s *ClientSuite) TestToolBadInput() {
 	_, err := NewClient(failingDoer{}).Tool(context.Background(), runtime.Endpoint{URL: "http://plugin"}, "echo", ToolRequest{Input: json.RawMessage("{")})
 	require.ErrorContains(s.T(), err, "encoding the tool call")
+}
+
+func (s *ClientSuite) TestRunDone() {
+	var got RunDoneRequest
+	var path, auth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path, auth = r.URL.EscapedPath(), r.Header.Get("Authorization")
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	req := RunDoneRequest{Status: RunStatusFailed, Error: "boom"}
+	require.NoError(s.T(), NewClient(srv.Client()).RunDone(context.Background(), runtime.Endpoint{URL: srv.URL, Secret: "sec"}, "ask-1", req))
+	require.Equal(s.T(), "/runs/ask-1/done", path)
+	require.Equal(s.T(), "Bearer sec", auth)
+	require.Equal(s.T(), req, got)
+}
+
+func (s *ClientSuite) TestX() {
+	tests := []struct {
+		name     string
+		req      XRequest
+		status   int
+		body     string
+		wantURL  string
+		want     *XResponse
+		wantErr  string
+		failDoer bool
+	}{
+		{
+			name:    "get with a query",
+			req:     XRequest{Method: http.MethodGet, Path: "quizzes/current", RawQuery: "full=1"},
+			status:  http.StatusOK,
+			body:    `{"id":1}`,
+			wantURL: "/x/quizzes/current?full=1",
+			want:    &XResponse{Status: http.StatusOK, ContentType: "application/json", Body: []byte(`{"id":1}`)},
+		},
+		{
+			name:    "post keeps the status",
+			req:     XRequest{Method: http.MethodPost, Path: "/attempts", ContentType: "application/json", Body: []byte(`{"a":1}`)},
+			status:  http.StatusConflict,
+			body:    `{"error":"busy"}`,
+			wantURL: "/x/attempts",
+			want:    &XResponse{Status: http.StatusConflict, ContentType: "application/json", Body: []byte(`{"error":"busy"}`)},
+		},
+		{
+			name:    "path can't leave /x",
+			req:     XRequest{Method: http.MethodGet, Path: "../../healthz"},
+			status:  http.StatusOK,
+			body:    `{}`,
+			wantURL: "/x/healthz",
+			want:    &XResponse{Status: http.StatusOK, ContentType: "application/json", Body: []byte(`{}`)},
+		},
+		{name: "bad method", req: XRequest{Method: "BAD METHOD", Path: "a"}, wantErr: "building the plugin request: "},
+		{name: "answer too big", req: XRequest{Method: http.MethodGet, Path: "big"}, status: http.StatusOK, body: strings.Repeat("x", MaxXBody+1), wantErr: "the plugin's answer is over 8 MB"},
+		{name: "unreachable", req: XRequest{Method: http.MethodGet, Path: "a"}, failDoer: true, wantErr: "calling the plugin: "},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			var gotURL, auth, ctype, body string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotURL, auth, ctype = r.URL.RequestURI(), r.Header.Get("Authorization"), r.Header.Get("Content-Type")
+				b, _ := io.ReadAll(r.Body)
+				body = string(b)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tt.status)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer srv.Close()
+
+			var doer Doer = srv.Client()
+			if tt.failDoer {
+				doer = failingDoer{}
+			}
+			res, err := NewClient(doer).X(context.Background(), runtime.Endpoint{URL: srv.URL, Secret: "sec"}, tt.req)
+			if tt.wantErr != "" {
+				require.ErrorContains(s.T(), err, tt.wantErr)
+				return
+			}
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tt.want, res)
+			require.Equal(s.T(), tt.wantURL, gotURL)
+			require.Equal(s.T(), "Bearer sec", auth)
+			require.Equal(s.T(), tt.req.ContentType, ctype)
+			require.Equal(s.T(), string(tt.req.Body), body)
+		})
+	}
+}
+
+// errBody fails on the first read.
+type errBody struct{}
+
+func (errBody) Read([]byte) (int, error) { return 0, errors.New("reset") }
+func (errBody) Close() error             { return nil }
+
+type errBodyDoer struct{}
+
+func (errBodyDoer) Do(*http.Request) (*http.Response, error) {
+	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: errBody{}}, nil
+}
+
+func (s *ClientSuite) TestXBodyFails() {
+	_, err := NewClient(errBodyDoer{}).X(context.Background(), runtime.Endpoint{URL: "http://plugin"}, XRequest{Method: http.MethodGet, Path: "a"})
+	require.EqualError(s.T(), err, "reading the plugin's answer: reset")
 }

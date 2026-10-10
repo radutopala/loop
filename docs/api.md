@@ -74,16 +74,16 @@ Owner only. Writes a new owner token and switches to it. Returns `204 No Content
 
 ### `POST /api/content-caps`
 
-Owner only. Iframes, images, video and `<base href>` can't send an `Authorization` header, so the UI loads them through a short-lived signed link instead. Returns a base URL that serves one channel root's files or one playground.
+Owner only. Iframes, images, video and `<base href>` can't send an `Authorization` header, so the UI loads them through a short-lived signed link instead. Returns a base URL that serves one channel root's files, one playground or one plugin's panels.
 
 **Request body:**
 
 | Field | Type | Description |
 |---|---|---|
-| `kind` | string | `raw` (a channel root's files) or `playground` |
+| `kind` | string | `raw` (a channel root's files), `playground` or `plugin` (a plugin's panel bundle) |
 | `channel_id` | string | `raw`: the channel (required). `playground`: set for a project playground, empty for a global one |
 | `root` | int | `raw`: the channel root index |
-| `name` | string | `playground`: its name (required) |
+| `name` | string | `playground`: its name (required). `plugin`: the plugin's id (required) |
 
 **Response (200):**
 ```json
@@ -95,6 +95,8 @@ The link is signed with a key that lives only in the running daemon, so links st
 ### `GET /c/{cap}/{path...}`
 
 Serves `path` under what the link names, like `GET /api/channels/{id}/raw/{root}/{path...}` and the playground routes do, with the same path checks: a path that leaves the root, symlinks included, gets 400. A bad or expired link gets `403 link expired or invalid`. Playground pages are sent with `Content-Security-Policy: sandbox allow-scripts allow-forms allow-modals allow-popups allow-downloads`, which gives them an opaque origin: agent-written JavaScript can't read the UI's storage even when both are served from the same origin.
+
+A `plugin` link serves the files under the plugin's `/loop-plugin/ui/`, so `path` starts with `ui/`, as a panel's `entry` does. It answers `403` unless the plugin may run and the owner approved `ui.panel`. Files are sent with `Cache-Control: no-store` and a policy that sandboxes the page the same way and lets it load scripts, styles, images, fonts and `fetch`es only from the link itself (plus `data:`/`blob:` for images, fonts and media), with no inline scripts, frames or form submission.
 
 ---
 
@@ -2995,6 +2997,7 @@ List the installed plugins.
   "plugins": [
     {
       "id": "echo",
+      "name": "Echo",
       "image": "ghcr.io/acme/loop-plugin-echo@sha256:…",
       "digest": "sha256:…",
       "version": "1.0.0",
@@ -3003,13 +3006,14 @@ List the installed plugins.
       "dev": false,
       "status": "installed",
       "installed_at": "2026-10-10T09:00:00Z",
-      "updated_at": "2026-10-10T09:00:00Z"
+      "updated_at": "2026-10-10T09:00:00Z",
+      "panels": [{"id": "main", "label": "Echo", "entry": "ui/main/index.html", "singleton": true}]
     }
   ]
 }
 ```
 
-`capabilities` are the ones the owner approved. `digest` is empty for a dev install.
+`capabilities` are the ones the owner approved. `digest` is empty for a dev install. `name` and `panels` come from the manifest of a plugin that may run; `panels` only when the owner approved `ui.panel`.
 
 ### `POST /api/plugins/inspect`
 
@@ -3121,6 +3125,26 @@ Called by a plugin agent's MCP server when the agent calls one of the plugin's t
 An unknown tool or an input the schema rejects comes back as `is_error: true`, so the agent sees why.
 
 **Errors:** `403` for any caller but the plugin's own agent run; `404` if the thread or its channel is gone; `502` if the container doesn't start or the plugin fails the call.
+
+### `ANY /api/plugins/{plugin}/x/{path...}?channel_id=`
+
+The plugin's own API for its panels. Loop sends the method, the query (without `channel_id`), the body (up to 8 MB) and its `Content-Type` to the plugin's `/x/{path}` in the channel's container, starting it if needed, and answers with the plugin's status, body and `Content-Type`. A thread uses its parent channel's container.
+
+**Errors:** `400` without `channel_id`; `404` if the channel or plugin doesn't exist; `409` if the plugin isn't runnable; `413` for a larger body; `502` if the container doesn't start or the call fails.
+
+### Plugin API v1
+
+Called by a plugin's container with the token in its `LOOP_PLUGIN_TOKEN_FILE`; that token can call nothing else, and it's held to the channel the container serves. Every route answers `403` for any other caller or without the capability the route needs, `409` if the plugin isn't runnable and `404` if its channel is gone.
+
+| Route | Capability | Answer |
+|---|---|---|
+| `GET /api/plugin/v1/channel` | | `{"id", "name", "dir_path", "platform", "model", "effort"}` |
+| `GET /api/plugin/v1/channel/files?path=&start=&end=` | `files.read` | `{"path", "content", "start", "end", "total_lines"}`; lines 1-based and inclusive, both optional; `.git/` refused; `404` if missing, `400` for a directory or a range past the end, `413` over the size limit |
+| `GET /api/plugin/v1/channel/tree?glob=` | `files.read` | `{"files", "truncated"?}`: the files git tracks, or every file outside `.git/` without git; the glob matches the path or its base name; at most 50,000 |
+| `GET /api/plugin/v1/channel/git/recent?days=` | `git.read` | `{"commits": [{"sha", "subject", "author", "time"}], "files": [{"path", "commits"}]}`; `days` defaults to 14, at most 365; the last 500 non-merge commits; `409` without git |
+| `GET /api/plugin/v1/channel/quality/hotspots?limit=` | `quality.read` | as `GET /api/channels/{id}/quality/complexity`; `503` before the first scan |
+| `POST /api/plugin/v1/events` | | body `{"type", "data"}` (up to 64 KB) → `204`; broadcast as a `plugin.event` event with `{"plugin_id", "type", "data"}` for the channel |
+| `POST /api/plugin/v1/notify` | `ui.notify` | body `{"title", "body"}` → `204`; broadcast as a `plugin.notify` event with `{"plugin_id", "title", "body"}` |
 
 ---
 

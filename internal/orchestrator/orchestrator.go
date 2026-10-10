@@ -106,6 +106,7 @@ type Orchestrator struct {
 	hiddenKinds       map[string]hiddenKind // runs of each kind of hidden thread (see shapeHiddenRun)
 	pluginRuns        sync.Map              // map[runID]*PluginRun — plugin runs queued or going on (see StartPluginRun)
 	activePluginRuns  sync.Map              // map[threadID]ActivePluginRun — the plugin run going on in each plugin thread
+	pluginNotifier    PluginRunNotifier     // tells a plugin its run ended; nil skips it
 
 	// loadWorktreeProjectConfig merges global → root project → worktree
 	// config for a worktree dir and its root checkout.

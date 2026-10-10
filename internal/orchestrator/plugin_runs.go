@@ -10,6 +10,8 @@ import (
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/plugin"
+	"github.com/radutopala/loop/internal/plugin/proxy"
+	"github.com/radutopala/loop/internal/plugin/runtime"
 	"github.com/radutopala/loop/internal/types"
 )
 
@@ -38,8 +40,22 @@ type PluginRun struct {
 	// Tools are the plugin's tools the agent gets.
 	Tools []plugin.Tool
 
-	// threadID is the plugin's hidden thread the run is queued in.
+	// threadID is the plugin's hidden thread the run is queued in, parent
+	// the channel it's a thread of.
 	threadID string
+	parent   *db.Channel
+}
+
+// PluginRunNotifier tells a plugin's container in ch that its agent run
+// runID ended.
+type PluginRunNotifier interface {
+	RunDone(ctx context.Context, pluginID string, ch runtime.Channel, runID string, req proxy.RunDoneRequest) error
+}
+
+// SetPluginRunNotifier configures what tells plugins their agent runs
+// ended; left unset, they aren't told.
+func (o *Orchestrator) SetPluginRunNotifier(n PluginRunNotifier) {
+	o.pluginNotifier = n
 }
 
 // ActivePluginRun is the plugin run going on in a plugin's hidden thread.
@@ -58,7 +74,7 @@ func (o *Orchestrator) StartPluginRun(ctx context.Context, parent *db.Channel, r
 		return "", "", err
 	}
 	runID = generateMessageID()
-	run.threadID = h.ChannelID
+	run.threadID, run.parent = h.ChannelID, parent
 	o.pluginRuns.Store(runID, &run)
 	o.logger.Info("plugin: run queued", "plugin", run.PluginID, "agent", run.Agent, "channel_id", parent.ChannelID, "thread_id", h.ChannelID, "run_id", runID)
 	o.HandleMessage(ctx, &bot.IncomingMessage{
@@ -119,13 +135,29 @@ func (o *Orchestrator) applyPluginRequest(req *agent.AgentRequest, msg *bot.Inco
 }
 
 // pluginRunDone forgets the plugin run msg started, once it has ended or
-// was dropped.
-func (o *Orchestrator) pluginRunDone(msg *bot.IncomingMessage) {
+// was dropped, and tells the plugin, failed when runErr is set. The plugin
+// is told in the background: it may have to start its container first.
+func (o *Orchestrator) pluginRunDone(ctx context.Context, msg *bot.IncomingMessage, runErr error) {
 	if msg.AuthorID != pluginAuthorID {
 		return
 	}
-	o.pluginRuns.Delete(msg.MessageID)
-	if a, ok := o.ActivePluginRun(msg.ChannelID); ok && a.ID == msg.MessageID {
+	v, ok := o.pluginRuns.LoadAndDelete(msg.MessageID)
+	if a, active := o.ActivePluginRun(msg.ChannelID); active && a.ID == msg.MessageID {
 		o.activePluginRuns.Delete(msg.ChannelID)
 	}
+	if !ok || o.pluginNotifier == nil {
+		return
+	}
+	run := v.(*PluginRun)
+	req := proxy.RunDoneRequest{Status: proxy.RunStatusDone}
+	if runErr != nil {
+		req = proxy.RunDoneRequest{Status: proxy.RunStatusFailed, Error: runErr.Error()}
+	}
+	ctx = context.WithoutCancel(ctx)
+	go func() {
+		ch := runtime.Channel{ID: run.parent.ChannelID, DirPath: run.parent.DirPath}
+		if err := o.pluginNotifier.RunDone(ctx, run.PluginID, ch, msg.MessageID, req); err != nil {
+			o.logger.Warn("plugin: telling the plugin its run ended", "plugin", run.PluginID, "run_id", msg.MessageID, "error", err)
+		}
+	}()
 }

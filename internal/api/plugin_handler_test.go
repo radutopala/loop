@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"time"
 
 	"github.com/stretchr/testify/mock"
@@ -99,10 +101,32 @@ func (s *ServerSuite) TestListPlugins() {
 		PluginID: "echo", Image: "ghcr.io/acme/echo@sha256:aa", Digest: "sha256:aa", Version: "1.0.0", API: "1",
 		ApprovedCaps: []string{"ui.panel"}, Status: db.PluginStatusInstalled, InstalledAt: at, UpdatedAt: at,
 	}}, nil).Once()
+	pm.On("UI", mock.Anything, "echo").Return("", nil, install.ErrNotRunnable).Once()
 	rec := s.testRequest("GET", "/api/plugins", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 	require.JSONEq(s.T(), `{"plugins":[{"id":"echo","image":"ghcr.io/acme/echo@sha256:aa","digest":"sha256:aa","version":"1.0.0","api":"1",
 		"capabilities":["ui.panel"],"dev":false,"status":"installed","installed_at":"2026-10-10T09:00:00Z","updated_at":"2026-10-10T09:00:00Z"}]}`, rec.Body.String())
+
+	// A plugin that may run shows its name, and its panels when approved.
+	panels := &plugin.Manifest{Name: "Echo", UI: &plugin.UI{Panels: []plugin.Panel{{ID: "main", Label: "Echo", Entry: "ui/main/index.html", Singleton: true}}}}
+	pm.On("List", mock.Anything).Return([]*db.PluginState{
+		{PluginID: "echo", ApprovedCaps: []string{"ui.panel"}, InstalledAt: at, UpdatedAt: at},
+		{PluginID: "quiet", InstalledAt: at, UpdatedAt: at},
+		{PluginID: "bare", ApprovedCaps: []string{"ui.panel"}, InstalledAt: at, UpdatedAt: at},
+	}, nil).Once()
+	pm.On("UI", mock.Anything, "bare").Return("/d", &plugin.Manifest{Name: "Bare"}, nil).Once()
+	pm.On("UI", mock.Anything, "echo").Return("/d", panels, nil).Once()
+	pm.On("UI", mock.Anything, "quiet").Return("/d", panels, nil).Once()
+	rec = s.testRequest("GET", "/api/plugins", "")
+	var list struct {
+		Plugins []pluginInfo `json:"plugins"`
+	}
+	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &list))
+	require.Equal(s.T(), "Echo", list.Plugins[0].Name)
+	require.Equal(s.T(), panels.UI.Panels, list.Plugins[0].Panels)
+	require.Equal(s.T(), "Echo", list.Plugins[1].Name)
+	require.Empty(s.T(), list.Plugins[1].Panels)
+	require.Empty(s.T(), list.Plugins[2].Panels)
 
 	pm.On("List", mock.Anything).Return(nil, nil).Once()
 	rec = s.testRequest("GET", "/api/plugins", "")
@@ -233,4 +257,88 @@ func (s *ServerSuite) TestRunPluginAction() {
 			require.Contains(s.T(), rec.Body.String(), tt.wantBody)
 		})
 	}
+}
+
+func (m *MockPluginManager) Allows(ctx context.Context, pluginID string, c plugin.Capability) error {
+	return m.Called(ctx, pluginID, c).Error(0)
+}
+
+func (m *MockPluginManager) RunDone(ctx context.Context, pluginID string, ch runtime.Channel, runID string, req proxy.RunDoneRequest) error {
+	return m.Called(ctx, pluginID, ch, runID, req).Error(0)
+}
+
+func (m *MockPluginManager) X(ctx context.Context, pluginID string, ch runtime.Channel, req proxy.XRequest) (*proxy.XResponse, error) {
+	args := m.Called(ctx, pluginID, ch, req)
+	v, _ := args.Get(0).(*proxy.XResponse)
+	return v, args.Error(1)
+}
+
+func (m *MockPluginManager) UI(ctx context.Context, pluginID string) (string, *plugin.Manifest, error) {
+	args := m.Called(ctx, pluginID)
+	v, _ := args.Get(1).(*plugin.Manifest)
+	return args.String(0), v, args.Error(2)
+}
+
+func (s *ServerSuite) TestPluginX() {
+	ch := runtime.Channel{ID: "ch-1", DirPath: "/src/app"}
+	tests := []struct {
+		name     string
+		method   string
+		target   string
+		body     string
+		setup    func(pm *MockPluginManager)
+		wantCode int
+		wantBody string
+		wantType string
+	}{
+		{name: "post", method: "POST", target: "/api/plugins/echo/x/quiz/answer?channel_id=th-1&q=1", body: `{"a":2}`, setup: func(pm *MockPluginManager) {
+			pm.On("X", mock.Anything, "echo", ch, proxy.XRequest{
+				Method: "POST", Path: "quiz/answer", RawQuery: "q=1", ContentType: "application/json", Body: []byte(`{"a":2}`),
+			}).Return(&proxy.XResponse{Status: http.StatusCreated, ContentType: "application/json", Body: []byte(`{"ok":true}`)}, nil).Once()
+		}, wantCode: http.StatusCreated, wantBody: `{"ok":true}`, wantType: "application/json"},
+		{name: "get without a type", method: "GET", target: "/api/plugins/echo/x/quiz?channel_id=ch-1", setup: func(pm *MockPluginManager) {
+			pm.On("X", mock.Anything, "echo", ch, proxy.XRequest{Method: "GET", Path: "quiz", ContentType: "application/json", Body: []byte{}}).
+				Return(&proxy.XResponse{Status: http.StatusOK, Body: []byte("hi")}, nil).Once()
+		}, wantCode: http.StatusOK, wantBody: "hi", wantType: "application/octet-stream"},
+		{name: "no channel", method: "GET", target: "/api/plugins/echo/x/quiz", wantCode: http.StatusBadRequest, wantBody: "channel_id is required"},
+		{name: "unknown channel", method: "GET", target: "/api/plugins/echo/x/quiz?channel_id=ghost", wantCode: http.StatusNotFound},
+		{name: "body too large", method: "POST", target: "/api/plugins/echo/x/quiz?channel_id=ch-1", body: strings.Repeat("a", proxy.MaxXBody+1), wantCode: http.StatusRequestEntityTooLarge},
+		{name: "not installed", method: "GET", target: "/api/plugins/echo/x/quiz?channel_id=ch-1", setup: func(pm *MockPluginManager) {
+			pm.On("X", mock.Anything, "echo", ch, mock.Anything).Return(nil, install.ErrNotInstalled).Once()
+		}, wantCode: http.StatusNotFound},
+		{name: "disabled", method: "GET", target: "/api/plugins/echo/x/quiz?channel_id=ch-1", setup: func(pm *MockPluginManager) {
+			pm.On("X", mock.Anything, "echo", ch, mock.Anything).Return(nil, install.ErrNotRunnable).Once()
+		}, wantCode: http.StatusConflict},
+		{name: "unreachable", method: "GET", target: "/api/plugins/echo/x/quiz?channel_id=ch-1", setup: func(pm *MockPluginManager) {
+			pm.On("X", mock.Anything, "echo", ch, mock.Anything).Return(nil, errors.New("calling the plugin: refused")).Once()
+		}, wantCode: http.StatusBadGateway, wantBody: "refused"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			pm := s.pluginRoutes()
+			s.mux.HandleFunc("/api/plugins/{plugin}/x/{path...}", s.srv.handlePluginX)
+			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: "/src/app"}, nil).Maybe()
+			s.store.On("GetChannel", mock.Anything, "th-1").Return(&db.Channel{ChannelID: "th-1", ParentID: "ch-1"}, nil).Maybe()
+			s.store.On("GetChannel", mock.Anything, "ghost").Return(nil, nil).Maybe()
+			if tt.setup != nil {
+				tt.setup(pm)
+			}
+			req := httptest.NewRequest(tt.method, tt.target, strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			s.mux.ServeHTTP(rec, req)
+			require.Equal(s.T(), tt.wantCode, rec.Code, rec.Body.String())
+			require.Contains(s.T(), rec.Body.String(), tt.wantBody)
+			if tt.wantType != "" {
+				require.Equal(s.T(), tt.wantType, rec.Header().Get("Content-Type"))
+			}
+		})
+	}
+
+	s.Run("disabled", func() {
+		s.SetupTest()
+		s.mux.HandleFunc("/api/plugins/{plugin}/x/{path...}", s.srv.handlePluginX)
+		require.Equal(s.T(), http.StatusNotImplemented, s.testRequest("GET", "/api/plugins/echo/x/quiz", "").Code)
+	})
 }

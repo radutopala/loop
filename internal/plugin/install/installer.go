@@ -349,9 +349,15 @@ func (in *Installer) imageDir(pluginID, image string) string {
 	return filepath.Join(in.root, pluginID, "images", hex)
 }
 
+// Dir is where the image st runs was extracted at install: its
+// /loop-plugin dir.
+func (in *Installer) Dir(st *db.PluginState) string {
+	return in.imageDir(st.PluginID, st.Image)
+}
+
 // Manifest reads the manifest of the image st runs, as extracted at install.
 func (in *Installer) Manifest(st *db.PluginState) (*plugin.Manifest, error) {
-	data, err := os.ReadFile(filepath.Join(in.imageDir(st.PluginID, st.Image), path.Base(plugin.ManifestPath)))
+	data, err := os.ReadFile(filepath.Join(in.Dir(st), path.Base(plugin.ManifestPath)))
 	if err != nil {
 		return nil, fmt.Errorf("reading the plugin's manifest: %w", err)
 	}

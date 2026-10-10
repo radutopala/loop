@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 	"time"
 
@@ -23,8 +24,14 @@ const (
 	ActionTimeout = 10 * time.Second
 	// ToolTimeout caps a tool call, which an agent waits on.
 	ToolTimeout = 60 * time.Second
+	// RunDoneTimeout caps telling a plugin one of its agent runs ended.
+	RunDoneTimeout = 10 * time.Second
+	// XTimeout caps a call to the plugin's own API for its UI.
+	XTimeout = 30 * time.Second
 	// maxToolResult caps a tool call's answer.
 	maxToolResult = 1 << 20
+	// MaxXBody caps the bodies of calls to the plugin's own API, both ways.
+	MaxXBody = 8 << 20
 	// maxErrorBody caps how much of a failed answer goes into the error.
 	maxErrorBody = 4 << 10
 )
@@ -57,6 +64,35 @@ type ToolRequest struct {
 type ToolResult struct {
 	Content string `json:"content"`
 	IsError bool   `json:"is_error"`
+}
+
+// Run statuses sent to POST /runs/{run_id}/done.
+const (
+	RunStatusDone   = "done"
+	RunStatusFailed = "failed"
+)
+
+// RunDoneRequest is the body of POST /runs/{run_id}/done: how an agent run
+// the plugin started ended.
+type RunDoneRequest struct {
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
+}
+
+// XRequest is a call from the plugin's UI to its own API, /x/{path}.
+type XRequest struct {
+	Method      string
+	Path        string
+	RawQuery    string
+	ContentType string
+	Body        []byte
+}
+
+// XResponse is the plugin's answer to an XRequest.
+type XResponse struct {
+	Status      int
+	ContentType string
+	Body        []byte
 }
 
 // Doer sends HTTP requests.
@@ -97,6 +133,47 @@ func (c *Client) Tool(ctx context.Context, ep runtime.Endpoint, tool string, req
 		return nil, err
 	}
 	return &res, nil
+}
+
+// RunDone tells the plugin at ep that its agent run runID ended.
+func (c *Client) RunDone(ctx context.Context, ep runtime.Endpoint, runID string, req RunDoneRequest) error {
+	ctx, cancel := context.WithTimeout(ctx, RunDoneTimeout)
+	defer cancel()
+	// RunDoneRequest always encodes.
+	body, _ := json.Marshal(req)
+	return c.post(ctx, ep, "/runs/"+url.PathEscape(runID)+"/done", body, nil)
+}
+
+// X sends req to /x/{path} on the plugin at ep and returns its answer,
+// whatever the status. The path is cleaned, so it can't leave /x.
+func (c *Client) X(ctx context.Context, ep runtime.Endpoint, req XRequest) (*XResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, XTimeout)
+	defer cancel()
+	u := ep.URL + "/x" + path.Clean("/"+req.Path)
+	if req.RawQuery != "" {
+		u += "?" + req.RawQuery
+	}
+	r, err := http.NewRequestWithContext(ctx, req.Method, u, bytes.NewReader(req.Body))
+	if err != nil {
+		return nil, fmt.Errorf("building the plugin request: %w", err)
+	}
+	if req.ContentType != "" {
+		r.Header.Set("Content-Type", req.ContentType)
+	}
+	r.Header.Set("Authorization", "Bearer "+ep.Secret)
+	resp, err := c.http.Do(r)
+	if err != nil {
+		return nil, fmt.Errorf("calling the plugin: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, MaxXBody+1))
+	if err != nil {
+		return nil, fmt.Errorf("reading the plugin's answer: %w", err)
+	}
+	if len(body) > MaxXBody {
+		return nil, fmt.Errorf("the plugin's answer is over %d MB", MaxXBody>>20)
+	}
+	return &XResponse{Status: resp.StatusCode, ContentType: resp.Header.Get("Content-Type"), Body: body}, nil
 }
 
 // post sends body to path on the plugin at ep and decodes its answer into

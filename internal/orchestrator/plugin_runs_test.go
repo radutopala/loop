@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -12,6 +13,8 @@ import (
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/plugin"
+	"github.com/radutopala/loop/internal/plugin/proxy"
+	"github.com/radutopala/loop/internal/plugin/runtime"
 	"github.com/radutopala/loop/internal/types"
 )
 
@@ -55,6 +58,7 @@ func (s *OrchestratorSuite) TestStartPluginRun() {
 		v, ok := s.orch.pluginRuns.Load(runID)
 		require.True(s.T(), ok)
 		require.Equal(s.T(), "plugin-1", v.(*PluginRun).threadID)
+		require.Equal(s.T(), parent, v.(*PluginRun).parent)
 	})
 }
 
@@ -150,11 +154,11 @@ func (s *OrchestratorSuite) TestPluginThreadRuns() {
 			require.Equal(s.T(), tc.run.Agent, active.Run.Agent)
 
 			// Only the run's own end forgets it.
-			s.orch.pluginRunDone(&bot.IncomingMessage{ChannelID: "plugin-1", MessageID: "run-1", AuthorID: "user-1"})
-			s.orch.pluginRunDone(&bot.IncomingMessage{ChannelID: "plugin-1", MessageID: "run-2", AuthorID: pluginAuthorID})
+			s.orch.pluginRunDone(s.ctx, &bot.IncomingMessage{ChannelID: "plugin-1", MessageID: "run-1", AuthorID: "user-1"}, nil)
+			s.orch.pluginRunDone(s.ctx, &bot.IncomingMessage{ChannelID: "plugin-1", MessageID: "run-2", AuthorID: pluginAuthorID}, nil)
 			_, ok = s.orch.ActivePluginRun("plugin-1")
 			require.True(s.T(), ok)
-			s.orch.pluginRunDone(&bot.IncomingMessage{ChannelID: "plugin-1", MessageID: "run-1", AuthorID: pluginAuthorID})
+			s.orch.pluginRunDone(s.ctx, &bot.IncomingMessage{ChannelID: "plugin-1", MessageID: "run-1", AuthorID: pluginAuthorID}, nil)
 			_, ok = s.orch.ActivePluginRun("plugin-1")
 			require.False(s.T(), ok)
 			_, ok = s.orch.pluginRuns.Load("run-1")
@@ -184,4 +188,54 @@ func (s *OrchestratorSuite) TestHandleMessagePluginTriggerNeverAutoCreates() {
 	s.store.AssertNotCalled(s.T(), "UpsertChannel", mock.Anything, mock.Anything)
 	_, ok := s.orch.pluginRuns.Load("run-1")
 	require.False(s.T(), ok)
+}
+
+type mockPluginRunNotifier struct {
+	mock.Mock
+	called chan struct{}
+}
+
+func (m *mockPluginRunNotifier) RunDone(ctx context.Context, pluginID string, ch runtime.Channel, runID string, req proxy.RunDoneRequest) error {
+	defer close(m.called)
+	return m.Called(ctx, pluginID, ch, runID, req).Error(0)
+}
+
+// TestPluginRunDoneNotifies covers the plugin being told its run ended,
+// in the background, with how it ended.
+func (s *OrchestratorSuite) TestPluginRunDoneNotifies() {
+	parent := &db.Channel{ChannelID: "ch1", DirPath: "/project"}
+	ch := runtime.Channel{ID: "ch1", DirPath: "/project"}
+	tests := []struct {
+		name    string
+		runErr  error
+		want    proxy.RunDoneRequest
+		callErr error
+	}{
+		{name: "done", want: proxy.RunDoneRequest{Status: proxy.RunStatusDone}},
+		{name: "failed", runErr: errors.New("agent crashed"), want: proxy.RunDoneRequest{Status: proxy.RunStatusFailed, Error: "agent crashed"}},
+		{name: "plugin unreachable", want: proxy.RunDoneRequest{Status: proxy.RunStatusDone}, callErr: errors.New("refused")},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			n := &mockPluginRunNotifier{called: make(chan struct{})}
+			n.On("RunDone", mock.Anything, "echo", ch, "run-1", tc.want).Return(tc.callErr).Once()
+			s.orch.SetPluginRunNotifier(n)
+			s.orch.pluginRuns.Store("run-1", &PluginRun{PluginID: "echo", threadID: "plugin-1", parent: parent})
+			s.orch.pluginRunDone(s.ctx, &bot.IncomingMessage{ChannelID: "plugin-1", MessageID: "run-1", AuthorID: pluginAuthorID}, tc.runErr)
+			<-n.called
+			n.AssertExpectations(s.T())
+		})
+	}
+
+	s.Run("run unknown or no notifier", func() {
+		s.SetupTest()
+		n := &mockPluginRunNotifier{called: make(chan struct{})}
+		s.orch.SetPluginRunNotifier(n)
+		s.orch.pluginRunDone(s.ctx, &bot.IncomingMessage{ChannelID: "plugin-1", MessageID: "run-9", AuthorID: pluginAuthorID}, nil)
+		s.orch.SetPluginRunNotifier(nil)
+		s.orch.pluginRuns.Store("run-1", &PluginRun{PluginID: "echo", parent: parent})
+		s.orch.pluginRunDone(s.ctx, &bot.IncomingMessage{ChannelID: "plugin-1", MessageID: "run-1", AuthorID: pluginAuthorID}, nil)
+		n.AssertNotCalled(s.T(), "RunDone", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	})
 }
