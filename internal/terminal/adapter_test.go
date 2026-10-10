@@ -204,15 +204,15 @@ func (s *AdapterSuite) TestSetOnExitDelegates() {
 	s.mock.execID = "exec-1"
 	s.mock.conn = newFakeConn()
 	exited := make(chan string, 1)
-	s.adapter.SetOnExit(func(containerID string) { exited <- containerID })
+	s.adapter.SetOnExit(func(sessionID, containerID string) { exited <- sessionID + " " + containerID })
 
 	sid, _, _, _, err := s.adapter.CreateSession(context.Background(), "container-1", nil)
 	require.NoError(s.T(), err)
 	_, err = s.adapter.StopSession(sid)
 	require.NoError(s.T(), err)
 	select {
-	case id := <-exited:
-		require.Equal(s.T(), "container-1", id)
+	case got := <-exited:
+		require.Equal(s.T(), sid+" container-1", got)
 	case <-time.After(5 * time.Second):
 		s.T().Fatal("timed out waiting for the exit hook")
 	}

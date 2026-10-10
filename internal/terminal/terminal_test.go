@@ -557,14 +557,14 @@ func (s *TerminalSuite) TestOnExit() {
 
 			mgr := NewManager(client, testLogger)
 			exited := make(chan string, 1)
-			mgr.SetOnExit(func(containerID string) { exited <- containerID })
+			mgr.SetOnExit(func(sessionID, containerID string) { exited <- sessionID + " " + containerID })
 			sess, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
 			require.NoError(s.T(), err)
 
 			tt.end(mgr, sess.ID(), pw)
 			select {
-			case id := <-exited:
-				require.Equal(s.T(), "ctr-1", id)
+			case got := <-exited:
+				require.Equal(s.T(), sess.ID()+" ctr-1", got)
 			case <-time.After(5 * time.Second):
 				s.T().Fatal("timed out waiting for the exit hook")
 			}

@@ -85,9 +85,9 @@ func (a *ManagerAdapter) LiveSessions(containerID string) int {
 	return a.mgr.LiveSessions(containerID)
 }
 
-// SetOnExit sets a func called with a session's container once the
+// SetOnExit sets a func called with a session's ID and container once the
 // session's exec ends.
-func (a *ManagerAdapter) SetOnExit(fn func(containerID string)) {
+func (a *ManagerAdapter) SetOnExit(fn func(sessionID, containerID string)) {
 	a.mgr.SetOnExit(fn)
 }
 

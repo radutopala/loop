@@ -3,11 +3,13 @@ package api
 import (
 	"encoding/base64"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	"github.com/radutopala/loop/internal/agentregistry"
 	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/terminal"
 )
@@ -516,10 +518,10 @@ func (s *TerminalHandlerSuite) TestCreateSessionClaimsShell() {
 // exitingTerminalManager is a MockTerminalManager that reports session exits.
 type exitingTerminalManager struct {
 	*MockTerminalManager
-	onExit func(containerID string)
+	onExit func(sessionID, containerID string)
 }
 
-func (m *exitingTerminalManager) SetOnExit(fn func(containerID string)) { m.onExit = fn }
+func (m *exitingTerminalManager) SetOnExit(fn func(sessionID, containerID string)) { m.onExit = fn }
 
 func (s *TerminalHandlerSuite) TestSessionExitReleasesShell() {
 	mgr := &exitingTerminalManager{MockTerminalManager: new(MockTerminalManager)}
@@ -532,13 +534,59 @@ func (s *TerminalHandlerSuite) TestSessionExitReleasesShell() {
 
 	s.srv.SetTerminalManager(mgr)
 	require.NotNil(s.T(), mgr.onExit)
-	mgr.onExit("ctr-1")
+	mgr.onExit("sess-1", "ctr-1")
 	reg.AssertCalled(s.T(), "ScheduleRemove", "ctr-1", 2*time.Minute)
 
 	// Without a terminal manager there's nothing to count sessions with.
 	s.srv.termManager = nil
 	s.srv.releaseShell("ctr-1")
 	reg.AssertNumberOfCalls(s.T(), "ScheduleRemove", 1)
+}
+
+func (s *TerminalHandlerSuite) TestSessionExitUnregistersAgent() {
+	tests := []struct {
+		name   string
+		noHub  bool
+		noReg  bool
+		exited string
+		want   bool // whether a-0 stays registered
+	}{
+		{name: "its pane's session", exited: "sess-0"},
+		{name: "without an events hub", noHub: true, exited: "sess-0"},
+		{name: "another session", exited: "sess-1", want: true},
+		{name: "without a registry", noReg: true, exited: "sess-0", want: true},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			agents := agentregistry.New()
+			agents.Register(&agentregistry.AgentInfo{AgentID: "a-0", ChannelID: "ch-1"})
+			agents.SetTerminal("ch-1", "a-0", "sess-0")
+			if !tt.noReg {
+				s.srv.SetAgentRegistry(agents)
+			}
+			defer func() { s.srv.agentRegistry = nil }()
+			var broadcast []Event
+			if !tt.noHub {
+				hub := NewEventsHub(slog.Default())
+				hub.captureHook = func(evt Event) { broadcast = append(broadcast, evt) }
+				s.srv.SetEventsHub(hub)
+				defer func() { s.srv.eventsHub = nil }()
+			}
+
+			mgr := &exitingTerminalManager{MockTerminalManager: new(MockTerminalManager)}
+			s.srv.SetTerminalManager(mgr)
+			mgr.onExit(tt.exited, "ctr-1")
+
+			require.Equal(s.T(), tt.want, agents.Get("ch-1", "a-0") != nil)
+			if !tt.noHub && !tt.want {
+				require.Len(s.T(), broadcast, 1)
+				require.Equal(s.T(), EventAgentInstanceUnregistered, broadcast[0].Type)
+				require.Equal(s.T(), "ch-1", broadcast[0].ChannelID)
+			} else {
+				require.Empty(s.T(), broadcast)
+			}
+		})
+	}
 }
 
 func (s *TerminalHandlerSuite) TestCloseDetachedSession() {

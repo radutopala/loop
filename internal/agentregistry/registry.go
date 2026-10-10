@@ -170,3 +170,32 @@ func (r *Registry) ClearTerminal(channelID, agentID, sessionID string) {
 		delete(r.terminals, channelID)
 	}
 }
+
+// ReleaseTerminal forgets the agents whose pane ran in terminal session
+// sessionID, which ended, and returns the ones that were registered. An
+// agent's own unregistering never runs then: closing the pane kills it.
+func (r *Registry) ReleaseTerminal(sessionID string) []*AgentInfo {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var released []*AgentInfo
+	for channelID, channelTerminals := range r.terminals {
+		for agentID, sid := range channelTerminals {
+			if sid != sessionID {
+				continue
+			}
+			delete(channelTerminals, agentID)
+			if info := r.agents[channelID][agentID]; info != nil {
+				released = append(released, info)
+				delete(r.agents[channelID], agentID)
+				if len(r.agents[channelID]) == 0 {
+					delete(r.agents, channelID)
+				}
+			}
+		}
+		if len(channelTerminals) == 0 {
+			delete(r.terminals, channelID)
+		}
+	}
+	return released
+}

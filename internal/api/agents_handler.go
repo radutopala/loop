@@ -3,11 +3,19 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 
+	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/agentregistry"
 	"github.com/radutopala/loop/internal/events"
 )
+
+// validAgentID matches the agent IDs the registry takes: pane IDs such as
+// "docker-agent-0". Messages are labelled with their sender's ID, which
+// keeps a label from closing early or starting a new line.
+var validAgentID = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 
 // SetAgentRegistry configures the agent registry.
 func (s *Server) SetAgentRegistry(r *agentregistry.Registry) {
@@ -34,6 +42,10 @@ func (s *Server) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.ChannelID == "" || body.AgentID == "" {
 		http.Error(w, "channel_id and agent_id required", http.StatusBadRequest)
+		return
+	}
+	if !validAgentID.MatchString(body.AgentID) {
+		http.Error(w, "invalid agent_id", http.StatusBadRequest)
 		return
 	}
 
@@ -143,6 +155,23 @@ func (s *Server) handleDeleteAgent(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// releaseAgentTerminal unregisters the agents whose pane ran in a terminal
+// session that ended. Closing a pane kills its agent, which never gets to
+// unregister itself.
+func (s *Server) releaseAgentTerminal(sessionID string) {
+	if s.agentRegistry == nil {
+		return
+	}
+	for _, a := range s.agentRegistry.ReleaseTerminal(sessionID) {
+		if s.eventsHub != nil {
+			s.eventsHub.BroadcastAgentInstanceUnregistered(a.ChannelID, events.AgentInstanceEventData{
+				AgentID:   a.AgentID,
+				ChannelID: a.ChannelID,
+			})
+		}
+	}
+}
+
 // handleSendAgentMessage handles POST /api/agents/{id}/message.
 func (s *Server) handleSendAgentMessage(w http.ResponseWriter, r *http.Request) {
 	if s.agentRegistry == nil {
@@ -163,6 +192,13 @@ func (s *Server) handleSendAgentMessage(w http.ResponseWriter, r *http.Request) 
 	}
 	if body.ChannelID == "" || body.Content == "" {
 		http.Error(w, "channel_id and content required", http.StatusBadRequest)
+		return
+	}
+	// The sender's label is all the target goes by, so it names the chat
+	// agent, which isn't registered, or an agent of the channel.
+	if from := body.FromAgentID; from != "" && from != agent.ChatAgentID &&
+		(!validAgentID.MatchString(from) || s.agentRegistry.Get(body.ChannelID, from) == nil) {
+		http.Error(w, "from_agent_id "+strconv.Quote(from)+" isn't an agent in channel "+body.ChannelID, http.StatusBadRequest)
 		return
 	}
 

@@ -213,7 +213,7 @@ type Manager struct {
 	idleTimeout    time.Duration
 	clientMaxBytes int
 	randRead       func([]byte) (int, error)
-	onExit         func(containerID string)
+	onExit         func(sessionID, containerID string)
 }
 
 // NewManager creates a new terminal session manager.
@@ -248,9 +248,9 @@ func (m *Manager) SetClientMaxBytes(n int) {
 	m.clientMaxBytes = n
 }
 
-// SetOnExit sets a func called with a session's container once the
+// SetOnExit sets a func called with a session's ID and container once the
 // session's exec ends: its process exited, it idled out or it was stopped.
-func (m *Manager) SetOnExit(fn func(containerID string)) {
+func (m *Manager) SetOnExit(fn func(sessionID, containerID string)) {
 	m.onExit = fn
 }
 
@@ -330,7 +330,7 @@ func (m *Manager) CreateSessionWithEnv(ctx context.Context, containerID string, 
 	go func() {
 		s.readLoop()
 		if m.onExit != nil {
-			m.onExit(s.containerID)
+			m.onExit(s.id, s.containerID)
 		}
 	}()
 

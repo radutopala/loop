@@ -1034,17 +1034,24 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 }
 
 // SetTerminalManager configures the terminal manager for WebSocket terminal sessions.
-// A shell container is released when a session's process ends in it.
+// When a session's process ends, its shell container is released and the
+// agent whose pane it ran is unregistered.
 func (s *Server) SetTerminalManager(mgr TerminalManager) {
 	s.termManager = mgr
 	if n, ok := mgr.(exitNotifier); ok {
-		n.SetOnExit(s.releaseShell)
+		n.SetOnExit(s.terminalExited)
 	}
 }
 
 // exitNotifier reports when a terminal session's exec ends.
 type exitNotifier interface {
-	SetOnExit(fn func(containerID string))
+	SetOnExit(fn func(sessionID, containerID string))
+}
+
+// terminalExited runs once a docker terminal session's exec ends.
+func (s *Server) terminalExited(sessionID, containerID string) {
+	s.releaseShell(containerID)
+	s.releaseAgentTerminal(sessionID)
 }
 
 // SetInteractiveCmdBuilder configures the command builder for interactive terminal sessions.

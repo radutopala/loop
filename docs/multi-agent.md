@@ -52,11 +52,13 @@ type AgentInfo struct {
 ### Lifecycle
 
 1. Frontend creates a terminal pane with `agent_id` in the WebSocket create message
-2. Terminal handler registers the agent in the registry
+2. Terminal handler records the pane's terminal session for the agent, and the Loop MCP server in it registers the agent with `POST /api/agents`
 3. `agent_instance.registered` event broadcast to frontend
 4. Agent appears in `useAgentRegistry` hook with status dot in pane header
 5. On shutdown, the MCP server calls `UnregisterAgent()` which sends `DELETE /api/agents/{id}` to the backend
-6. On WebSocket close, agent is also unregistered as a fallback, and `agent_instance.unregistered` fires
+6. When the pane's terminal session ends (pane closed, session reaped, shell exited or its container removed), the agent is unregistered and `agent_instance.unregistered` fires. Closing a pane kills its processes, so step 5 doesn't run then. A WebSocket disconnect only detaches the session, and the agent stays.
+
+Agent IDs are pane IDs such as `docker-agent-0`: letters, digits, `.`, `_` and `-`, up to 64 characters. Registering any other ID is refused (`400`).
 
 Chat runs (batch runs via Discord/Slack/local messages, AgentID `"chat"`) don't register.
 
@@ -106,6 +108,8 @@ Agent A calls send_agent_message tool
 
 The message goes in as one paste, so a multi-line message stays one prompt, and ends with a newline so prompts queued while the agent is busy stay on lines of their own. Content holding a bracketed-paste marker is refused (`400`).
 
+The sender label is checked: `from_agent_id` must be `"chat"` or an agent registered in the channel, else the message is refused (`400`). It can be left out, and the message goes in unlabelled. The label still can't tell apart the agents of one channel, which share a shell container and so the same API token: any of them can send under another's ID.
+
 The call fails, and the tool reports it, when the target has no terminal (`409`) or its terminal session is gone (`409`; the stale session is forgotten).
 
 ## Frontend Events
@@ -113,7 +117,7 @@ The call fails, and the tool reports it, when the target has no terminal (`409`)
 | Event | Payload | Trigger |
 |-------|---------|---------|
 | `agent_instance.registered` | `{agent_id, channel_id, name}` | Terminal session with agent_id created |
-| `agent_instance.unregistered` | `{agent_id, channel_id}` | Terminal session closed |
+| `agent_instance.unregistered` | `{agent_id, channel_id}` | Agent's terminal session ended, or its MCP server shut down |
 | `agent_instance.metadata` | `{agent_id, channel_id, name, status, work_summary}` | `PATCH /api/agents/{id}` called |
 
 The `useAgentRegistry` hook subscribes to these events and maintains a `Map<string, AgentInfo>` for real-time UI updates. Pane headers show:

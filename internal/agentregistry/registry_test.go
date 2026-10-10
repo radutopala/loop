@@ -196,3 +196,41 @@ func (s *RegistrySuite) TestTerminals() {
 	require.NotContains(s.T(), s.reg.terminals, "ch-1")
 	s.reg.ClearTerminal("ch-2", "a-0", "sess-1")
 }
+
+func (s *RegistrySuite) TestReleaseTerminal() {
+	s.reg.Register(&AgentInfo{AgentID: "a-0", ChannelID: "ch-1"})
+	s.reg.Register(&AgentInfo{AgentID: "a-1", ChannelID: "ch-1"})
+	s.reg.Register(&AgentInfo{AgentID: "a-0", ChannelID: "ch-2"})
+	s.reg.SetTerminal("ch-1", "a-0", "sess-0")
+	s.reg.SetTerminal("ch-1", "a-1", "sess-1")
+	s.reg.SetTerminal("ch-2", "a-0", "sess-2")
+	// A pane whose agent hasn't registered yet.
+	s.reg.SetTerminal("ch-3", "a-9", "sess-0")
+
+	tests := []struct {
+		name      string
+		sessionID string
+		want      []string
+	}{
+		{name: "no agent's session", sessionID: "sess-x"},
+		{name: "registered and unregistered agent", sessionID: "sess-0", want: []string{"a-0"}},
+		{name: "already released", sessionID: "sess-0"},
+		{name: "last agent of a channel", sessionID: "sess-2", want: []string{"a-0"}},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			var got []string
+			for _, a := range s.reg.ReleaseTerminal(tt.sessionID) {
+				got = append(got, a.AgentID)
+			}
+			require.Equal(s.T(), tt.want, got)
+		})
+	}
+
+	require.Nil(s.T(), s.reg.Get("ch-1", "a-0"))
+	require.NotNil(s.T(), s.reg.Get("ch-1", "a-1"))
+	require.Equal(s.T(), "sess-1", s.reg.Terminal("ch-1", "a-1"))
+	require.NotContains(s.T(), s.reg.agents, "ch-2")
+	require.NotContains(s.T(), s.reg.terminals, "ch-2")
+	require.NotContains(s.T(), s.reg.terminals, "ch-3")
+}
