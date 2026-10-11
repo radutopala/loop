@@ -351,6 +351,13 @@ func ValidateSchedule(taskType db.TaskType, schedule string) error {
 	return err
 }
 
+// NextRun is when a task of taskType on schedule first runs after now: the
+// zero time, so at once, for a schedule ValidateSchedule refuses.
+func NextRun(taskType db.TaskType, schedule string, now time.Time) time.Time {
+	t, _ := calculateNextRun(taskType, schedule, now)
+	return t
+}
+
 func calculateNextRun(taskType db.TaskType, schedule string, now time.Time) (time.Time, error) {
 	switch taskType {
 	case db.TaskTypeCron:

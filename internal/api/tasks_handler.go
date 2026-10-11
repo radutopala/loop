@@ -90,6 +90,8 @@ type taskResponse struct {
 	WorkflowName    string    `json:"workflow_name,omitempty"`
 	WorkflowInputs  string    `json:"workflow_inputs,omitempty"`
 	BashScript      string    `json:"bash_script,omitempty"`
+	PluginID        string    `json:"plugin_id,omitempty"`
+	PluginAction    string    `json:"plugin_action,omitempty"`
 }
 
 func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
@@ -213,6 +215,8 @@ func toTaskResponse(t *db.ScheduledTask) taskResponse {
 		WorkflowName:    t.WorkflowName,
 		WorkflowInputs:  t.WorkflowInputs,
 		BashScript:      t.BashScript,
+		PluginID:        t.PluginID,
+		PluginAction:    t.PluginAction,
 	}
 }
 

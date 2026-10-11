@@ -68,7 +68,52 @@ func (s *IntegrationSuite) TestPlugins() {
 	require.Len(s.T(), cs, 1)
 	require.Equal(s.T(), "ch2", cs[0].ChannelID)
 
+	daily := func() *ScheduledTask {
+		return &ScheduledTask{ChannelID: "ch1", Schedule: "0 9 * * *", Type: TaskTypeCron, Enabled: true, NextRunAt: now, PluginID: "cogtest", PluginAction: "daily"}
+	}
+	created, err := store.SeedPluginTask(ctx, daily())
+	require.NoError(s.T(), err)
+	require.True(s.T(), created)
+	created, err = store.SeedPluginTask(ctx, daily())
+	require.NoError(s.T(), err)
+	require.False(s.T(), created, "an action gets one task per channel")
+	tasks, err := store.ListScheduledTasks(ctx, "ch1")
+	require.NoError(s.T(), err)
+	require.Len(s.T(), tasks, 1)
+	require.Equal(s.T(), "cogtest", tasks[0].PluginID)
+	require.Equal(s.T(), "daily", tasks[0].PluginAction)
+	taskID := tasks[0].ID
+	_, err = store.InsertTaskRunLog(ctx, &TaskRunLog{TaskID: taskID, Status: RunStatusSuccess, StartedAt: now})
+	require.NoError(s.T(), err)
+
+	enabled := func() bool {
+		t, err := store.GetScheduledTask(ctx, taskID)
+		require.NoError(s.T(), err)
+		return t.Enabled
+	}
+	require.NoError(s.T(), store.SetPluginTasksPaused(ctx, "cogtest", "ch1", true))
+	require.False(s.T(), enabled())
+	require.NoError(s.T(), store.SetPluginTasksPaused(ctx, "cogtest", "ch1", false))
+	require.True(s.T(), enabled(), "a paused task comes back on")
+	require.NoError(s.T(), store.UpdateScheduledTaskEnabled(ctx, taskID, false))
+	require.NoError(s.T(), store.SetPluginTasksPaused(ctx, "cogtest", "ch1", true))
+	require.NoError(s.T(), store.SetPluginTasksPaused(ctx, "cogtest", "ch1", false))
+	require.False(s.T(), enabled(), "one the owner turned off stays off")
+
+	require.NoError(s.T(), store.DeleteScheduledTask(ctx, taskID))
+	created, err = store.SeedPluginTask(ctx, daily())
+	require.NoError(s.T(), err)
+	require.False(s.T(), created, "a task the owner deleted isn't created again")
+	_, err = store.SeedPluginTask(ctx, &ScheduledTask{ChannelID: "ch2", Schedule: "1h", Type: TaskTypeInterval, NextRunAt: now, PluginID: "cogtest", PluginAction: "daily"})
+	require.NoError(s.T(), err)
+
 	require.NoError(s.T(), store.DeletePluginState(ctx, "cogtest"))
+	tasks, err = store.ListScheduledTasks(ctx, "ch2")
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), tasks, "removing a plugin drops its tasks")
+	created, err = store.SeedPluginTask(ctx, daily())
+	require.NoError(s.T(), err)
+	require.True(s.T(), created, "and what it created, so a new install starts afresh")
 	got, err = store.GetPluginState(ctx, "cogtest")
 	require.NoError(s.T(), err)
 	require.Nil(s.T(), got)
@@ -112,9 +157,33 @@ func (s *StoreSuite) TestPluginsErrors() {
 			_, err := s.store.ListPluginStates(ctx)
 			return err
 		}},
-		{"delete state's containers", false, func() error {
-			s.mock.ExpectExec(`DELETE FROM plugin_containers`).WillReturnError(boom)
+		{"delete state", false, func() error {
+			s.mock.ExpectBegin()
+			s.mock.ExpectExec(`DELETE FROM task_run_logs`).WillReturnError(boom)
+			s.mock.ExpectRollback()
 			return s.store.DeletePluginState(ctx, "x")
+		}},
+		{"seed task's schedule", false, func() error {
+			s.mock.ExpectBegin()
+			s.mock.ExpectExec(`INSERT INTO plugin_schedules`).WillReturnError(boom)
+			s.mock.ExpectRollback()
+			_, err := s.store.SeedPluginTask(ctx, &ScheduledTask{})
+			return err
+		}},
+		{"seed task's schedule rows", false, func() error {
+			s.mock.ExpectBegin()
+			s.mock.ExpectExec(`INSERT INTO plugin_schedules`).WillReturnResult(sqlmock.NewErrorResult(boom))
+			s.mock.ExpectRollback()
+			_, err := s.store.SeedPluginTask(ctx, &ScheduledTask{})
+			return err
+		}},
+		{"seed task", false, func() error {
+			s.mock.ExpectBegin()
+			s.mock.ExpectExec(`INSERT INTO plugin_schedules`).WillReturnResult(sqlmock.NewResult(0, 1))
+			s.mock.ExpectExec(`INSERT INTO scheduled_tasks`).WillReturnError(boom)
+			s.mock.ExpectRollback()
+			_, err := s.store.SeedPluginTask(ctx, &ScheduledTask{})
+			return err
 		}},
 		{"list containers query", false, func() error {
 			s.mock.ExpectQuery(`FROM plugin_containers`).WillReturnError(boom)

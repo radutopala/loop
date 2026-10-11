@@ -507,6 +507,20 @@ var migrations = []migration{
 		updated_at   DATETIME NOT NULL,
 		PRIMARY KEY (plugin_id, channel_id)
 	)`),
+	// A plugin's scheduled task runs action plugin_action of plugin
+	// plugin_id; plugin_paused marks one Loop turned off because the
+	// channel's project stopped enabling the plugin.
+	sqlMigration(`ALTER TABLE scheduled_tasks ADD COLUMN plugin_id TEXT NOT NULL DEFAULT ''`),
+	sqlMigration(`ALTER TABLE scheduled_tasks ADD COLUMN plugin_action TEXT NOT NULL DEFAULT ''`),
+	sqlMigration(`ALTER TABLE scheduled_tasks ADD COLUMN plugin_paused INTEGER NOT NULL DEFAULT 0`),
+	// plugin_schedules holds each scheduled task Loop created for a plugin
+	// action in a channel, so one the owner deletes isn't created again.
+	sqlMigration(`CREATE TABLE IF NOT EXISTS plugin_schedules (
+		plugin_id  TEXT NOT NULL,
+		channel_id TEXT NOT NULL,
+		action     TEXT NOT NULL,
+		PRIMARY KEY (plugin_id, channel_id, action)
+	)`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the

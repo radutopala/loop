@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/radutopala/loop/internal/plugin"
 	"github.com/radutopala/loop/internal/plugin/proxy"
 	"github.com/radutopala/loop/internal/plugin/runtime"
+	"github.com/radutopala/loop/internal/types"
 )
 
 type mockRuntime struct {
@@ -176,11 +178,13 @@ func (s *ServiceSuite) TestRun() {
 			if len(tt.running) > 0 {
 				s.runtime.On("Stop", ctx, "echo", "ch1")
 			}
+			// Run and each tick sync the schedules too; a failed sync is logged.
+			s.store.On("ListPluginStates", ctx).Return(nil, errors.New("boom"))
 			changed := false
 			s.svc.Run(ctx, time.Millisecond, func() {
 				changed = true
 				cancel()
-			})
+			}, slog.New(slog.DiscardHandler))
 			require.Equal(s.T(), tt.changed, changed)
 		})
 	}
@@ -276,14 +280,114 @@ func (s *ServiceSuite) installed(status string) *db.PluginState {
 
 const actionManifest = `{
 	"id": "echo", "name": "Echo", "version": "1.0.0", "api": "1",
-	"capabilities": ["agent.write"],
-	"actions": [{"id": "ping"}],
+	"capabilities": ["agent.write", "schedule"],
+	"actions": [{"id": "ping"}, {"id": "daily", "default_schedule": {"type": "cron", "schedule": "0 9 * * *", "enabled": true}}],
 	"tools": [
 		{"name": "echo", "description": "Echoes text", "input_schema": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}},
 		{"name": "edit", "description": "Edits", "input_schema": {"type": "object"}},
 	],
 	"agents": [{"id": "say", "read_only": true, "tools": ["echo"]}, {"id": "writer", "tools": ["edit"]}],
 }`
+
+func (s *ServiceSuite) TestSyncSchedules() {
+	now := time.Date(2026, 10, 11, 8, 0, 0, 0, time.UTC)
+	local := types.PlatformLocal
+	channels := []*db.Channel{
+		{ChannelID: "on", GuildID: "g", DirPath: "/on", Platform: local},
+		{ChannelID: "off", Platform: local},
+		{ChannelID: "broken", Platform: local},
+		{ChannelID: "thread", ParentID: "on", Platform: local},
+		{ChannelID: "C0SLACK", Platform: types.PlatformSlack},
+	}
+	// setup enables echo in "on", fails to read the config of "broken" and
+	// disables it elsewhere.
+	setup := func() {
+		s.SetupTest()
+		s.svc.now = func() time.Time { return now }
+		s.svc.enabled = func(_ context.Context, pluginID string, ch runtime.Channel) (bool, error) {
+			s.Require().Equal("echo", pluginID)
+			if ch.ID == "broken" {
+				return false, errors.New("bad config")
+			}
+			return ch.ID == "on", nil
+		}
+	}
+	daily := &db.ScheduledTask{
+		ChannelID: "on", GuildID: "g", Schedule: "0 9 * * *", Type: db.TaskTypeCron,
+		Prompt: "Runs the echo plugin's daily action.", Enabled: true,
+		NextRunAt: time.Date(2026, 10, 11, 9, 0, 0, 0, time.UTC), PluginID: "echo", PluginAction: "daily",
+	}
+	approved := func(status string) *db.PluginState {
+		st := s.installed(status)
+		st.ApprovedCaps = []string{"agent.write", "schedule"}
+		return st
+	}
+	boom := errors.New("boom")
+
+	s.Run("seeds where enabled and pauses elsewhere", func() {
+		setup()
+		s.store.On("ListPluginStates", s.ctx).Return([]*db.PluginState{
+			{PluginID: "unscheduled", ApprovedCaps: []string{"ui.panel"}},
+			approved(db.PluginStatusInstalled),
+		}, nil).Once()
+		s.store.On("ListChannels", s.ctx).Return(channels, nil).Once()
+		s.store.On("SeedPluginTask", s.ctx, daily).Return(true, nil).Once()
+		s.store.On("SetPluginTasksPaused", s.ctx, "echo", "on", false).Return(nil).Once()
+		s.store.On("SetPluginTasksPaused", s.ctx, "echo", "off", true).Return(nil).Once()
+		require.NoError(s.T(), s.svc.SyncSchedules(s.ctx))
+		s.store.AssertExpectations(s.T())
+	})
+	s.Run("a disabled plugin's tasks pause everywhere", func() {
+		setup()
+		s.store.On("ListPluginStates", s.ctx).Return([]*db.PluginState{approved(db.PluginStatusDisabled)}, nil).Once()
+		s.store.On("ListChannels", s.ctx).Return(channels, nil).Once()
+		for _, id := range []string{"on", "off", "broken"} {
+			s.store.On("SetPluginTasksPaused", s.ctx, "echo", id, true).Return(nil).Once()
+		}
+		require.NoError(s.T(), s.svc.SyncSchedules(s.ctx))
+		s.store.AssertExpectations(s.T())
+	})
+
+	tests := []struct {
+		name    string
+		setup   func()
+		wantErr string
+	}{
+		{name: "plugins", setup: func() {
+			s.store.On("ListPluginStates", s.ctx).Return(nil, boom).Once()
+		}, wantErr: "listing the plugins: boom"},
+		{name: "manifest and channels", setup: func() {
+			s.store.On("ListPluginStates", s.ctx).Return([]*db.PluginState{
+				{PluginID: "echo", Image: "sha256:00", ApprovedCaps: []string{"schedule"}},
+				approved(db.PluginStatusInstalled),
+			}, nil).Once()
+			s.store.On("ListChannels", s.ctx).Return(nil, boom).Once()
+		}, wantErr: "echo: reading the plugin's manifest"},
+		{name: "channels", setup: func() {
+			s.store.On("ListPluginStates", s.ctx).Return([]*db.PluginState{approved(db.PluginStatusInstalled)}, nil).Once()
+			s.store.On("ListChannels", s.ctx).Return(nil, boom).Once()
+		}, wantErr: "listing the channels: boom"},
+		{name: "seed", setup: func() {
+			s.store.On("ListPluginStates", s.ctx).Return([]*db.PluginState{approved(db.PluginStatusInstalled)}, nil).Once()
+			s.store.On("ListChannels", s.ctx).Return(channels[:1], nil).Once()
+			s.store.On("SeedPluginTask", s.ctx, daily).Return(false, boom).Once()
+		}, wantErr: "creating echo's daily task in on: boom"},
+		{name: "pause", setup: func() {
+			s.store.On("ListPluginStates", s.ctx).Return([]*db.PluginState{approved(db.PluginStatusInstalled)}, nil).Once()
+			s.store.On("ListChannels", s.ctx).Return(channels[1:2], nil).Once()
+			s.store.On("SetPluginTasksPaused", s.ctx, "echo", "off", true).Return(boom).Once()
+		}, wantErr: "boom"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			setup()
+			tt.setup()
+			err := s.svc.SyncSchedules(s.ctx)
+			require.ErrorContains(s.T(), err, tt.wantErr)
+			s.store.AssertExpectations(s.T())
+		})
+	}
+}
 
 func (s *ServiceSuite) TestRunAction() {
 	st := s.installed(db.PluginStatusInstalled)

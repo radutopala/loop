@@ -74,6 +74,7 @@ func (s *ServerSuite) TestListPluginsInProject() {
 	// channel's project.
 	st := s.projectTrustStatus()
 	pm.On("StopDisabled", mock.Anything).Return(false).Once()
+	pm.On("SyncSchedules", mock.Anything).Return(nil).Once()
 	rec := s.testRequest("POST", "/api/config/project/trust?channel_id=ch-1", `{"hash":"`+st.Hash+`"}`)
 	require.Equal(s.T(), http.StatusNoContent, rec.Code, rec.Body.String())
 	s.store.On("GetChannel", mock.Anything, "th-1").Return(&db.Channel{ChannelID: "th-1", ParentID: "ch-1", DirPath: dir}, nil)
@@ -205,6 +206,7 @@ func (s *ServerSuite) TestPluginsChangedEvents() {
 
 	c := echoCandidate()
 	pm.On("Install", mock.Anything, "echo:1", false, "", []plugin.Capability(nil)).Return(c, nil).Once()
+	pm.On("SyncSchedules", mock.Anything).Return(nil).Once()
 	require.Equal(s.T(), http.StatusOK, s.testRequest("POST", "/api/plugins", `{"image":"echo:1"}`).Code)
 	pm.On("Remove", mock.Anything, "echo", false).Return(nil).Once()
 	require.Equal(s.T(), http.StatusNoContent, s.testRequest("DELETE", "/api/plugins/echo", "").Code)
@@ -214,12 +216,14 @@ func (s *ServerSuite) TestPluginsChangedEvents() {
 	require.Equal(s.T(), []string{EventPluginsChanged, EventPluginsChanged, EventPluginsChanged}, sent)
 
 	// A config write stops the containers of projects that disabled their
-	// plugin, then tells the app.
+	// plugin and syncs the plugins' schedules, then tells the app; a failed
+	// sync is only logged.
 	sys := new(testutil.MockSystem)
 	sys.On("UserHomeDir").Return("/home/test", nil)
 	sys.On("WriteFile", "/home/test/.loop/config.json", mock.Anything, os.FileMode(0644)).Return(nil)
 	s.srv.sys = sys
 	pm.On("StopDisabled", mock.Anything).Return(true).Once()
+	pm.On("SyncSchedules", mock.Anything).Return(errors.New("boom")).Once()
 	require.Equal(s.T(), http.StatusNoContent, s.testRequest("PUT", "/api/config", `{"content":"{}"}`).Code)
 	require.Len(s.T(), sent, 4)
 	sent = sent[:3]

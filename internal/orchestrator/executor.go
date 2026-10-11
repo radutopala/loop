@@ -35,6 +35,7 @@ type TaskExecutor struct {
 	timeAfterFunc    func(time.Duration, func()) *time.Timer
 	worktreeCreator  *worktree.Creator
 	workflowEngine   workflow.Engine
+	pluginActions    PluginActionRunner
 	activeRuns       *sync.Map // shared with Orchestrator for stop button support
 	channelLocks     *sync.Map // shared with Orchestrator: per-channel drain locks
 	tasks            *taskRegistry
@@ -83,6 +84,15 @@ func (e *TaskExecutor) SetEventBroadcaster(eb events.Broadcaster) {
 // SetWorktreeCreator sets the worktree creator for tasks with worktree=true.
 func (e *TaskExecutor) SetWorktreeCreator(wc *worktree.Creator) {
 	e.worktreeCreator = wc
+}
+
+// PluginActionRunner asks the plugin pluginID's container in channelID,
+// whose dir is dirPath, to run action for the scheduled task taskID.
+type PluginActionRunner func(ctx context.Context, pluginID, action, channelID, dirPath string, taskID int64) error
+
+// SetPluginActions sets how the scheduled tasks of plugin actions run.
+func (e *TaskExecutor) SetPluginActions(run PluginActionRunner) {
+	e.pluginActions = run
 }
 
 // SetWorkflowEngine sets the workflow engine for executing scheduled workflow tasks.
@@ -161,6 +171,11 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	// Workflow tasks: start a workflow run instead of an agent prompt.
 	if task.WorkflowName != "" {
 		return e.executeWorkflowTask(ctx, task, dirPath)
+	}
+
+	// Plugin tasks: ask the plugin's container to run the action.
+	if task.PluginID != "" {
+		return e.executePluginTask(ctx, task, dirPath)
 	}
 
 	// Worktree: on first run, create a git worktree; on subsequent runs, reuse
@@ -802,6 +817,18 @@ func (e *TaskExecutor) executeWorkflowTask(ctx context.Context, task *db.Schedul
 	}
 
 	return fmt.Sprintf("workflow run started: %s", runID), nil
+}
+
+// executePluginTask asks the plugin of a task with plugin_id set to run its
+// action in the task's channel.
+func (e *TaskExecutor) executePluginTask(ctx context.Context, task *db.ScheduledTask, dirPath string) (string, error) {
+	if e.pluginActions == nil {
+		return "", fmt.Errorf("plugins are disabled")
+	}
+	if err := e.pluginActions(ctx, task.PluginID, task.PluginAction, task.ChannelID, dirPath, task.ID); err != nil {
+		return "", fmt.Errorf("running the %s plugin's %s action: %w", task.PluginID, task.PluginAction, err)
+	}
+	return fmt.Sprintf("%s plugin's %s action started", task.PluginID, task.PluginAction), nil
 }
 
 // invitePermissionUsers invites all RBAC owner and member users to a thread.

@@ -563,6 +563,7 @@ func (s *SchedulerSuite) TestCalculateNextRun() {
 	for _, tc := range cases {
 		s.Run(tc.name, func() {
 			next, err := calculateNextRun(tc.taskType, tc.schedule, tc.now)
+			require.Equal(s.T(), next, NextRun(tc.taskType, tc.schedule, tc.now))
 			if tc.errMsg != "" {
 				require.Error(s.T(), err)
 				require.Contains(s.T(), err.Error(), tc.errMsg)

@@ -173,7 +173,7 @@ func (s *ServerSuite) TestListTasksSuccess() {
 	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	tasks := []*db.ScheduledTask{
 		{ID: 1, ChannelID: "ch1", Schedule: "0 9 * * *", Type: db.TaskTypeCron, Prompt: "task1", Enabled: true, NextRunAt: now, TemplateName: "my-template"},
-		{ID: 2, ChannelID: "ch1", Schedule: "5m", Type: db.TaskTypeInterval, Prompt: "task2", Enabled: true, NextRunAt: now},
+		{ID: 2, ChannelID: "ch1", Schedule: "5m", Type: db.TaskTypeInterval, Prompt: "task2", Enabled: true, NextRunAt: now, PluginID: "quiz", PluginAction: "daily"},
 	}
 	s.scheduler.On("ListTasks", mock.Anything, "ch1").Return(tasks, nil)
 
@@ -189,6 +189,8 @@ func (s *ServerSuite) TestListTasksSuccess() {
 	require.Equal(s.T(), "my-template", resp[0].TemplateName)
 	require.Equal(s.T(), int64(2), resp[1].ID)
 	require.Empty(s.T(), resp[1].TemplateName)
+	require.Equal(s.T(), "quiz", resp[1].PluginID)
+	require.Equal(s.T(), "daily", resp[1].PluginAction)
 	s.scheduler.AssertExpectations(s.T())
 }
 

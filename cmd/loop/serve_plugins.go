@@ -16,6 +16,7 @@ import (
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/orchestrator"
 	"github.com/radutopala/loop/internal/plugin/gatebin"
 	"github.com/radutopala/loop/internal/plugin/install"
 	"github.com/radutopala/loop/internal/plugin/proxy"
@@ -90,6 +91,13 @@ func (a *app) newPlugins(ctx context.Context, cfg *config.Config, reload func() 
 	}
 	installer := install.NewInstaller(cli, ps, root, a.version)
 	return &plugins{docker: cli, runtime: mgr, service: install.NewService(installer, mgr, ps, proxy.NewClient(&http.Client{}), pluginEnabled(cfg, reload, store))}, nil
+}
+
+// pluginActionRunner runs the scheduled tasks of plugin actions on svc.
+func pluginActionRunner(svc *install.Service) orchestrator.PluginActionRunner {
+	return func(ctx context.Context, pluginID, action, channelID, dirPath string, taskID int64) error {
+		return svc.RunAction(ctx, pluginID, action, runtime.Channel{ID: channelID, DirPath: dirPath}, proxy.ActionRequest{Trigger: proxy.TriggerSchedule, TaskID: taskID})
+	}
 }
 
 // pluginEnabled reports whether a plugin is enabled in a channel's project:

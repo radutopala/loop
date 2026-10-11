@@ -477,6 +477,21 @@ func (m *mockStore) ListPluginContainers(ctx context.Context, pluginID string) (
 	return v, args.Error(1)
 }
 
+func (m *mockStore) ListChannels(ctx context.Context) ([]*db.Channel, error) {
+	args := m.Called(ctx)
+	v, _ := args.Get(0).([]*db.Channel)
+	return v, args.Error(1)
+}
+
+func (m *mockStore) SeedPluginTask(ctx context.Context, task *db.ScheduledTask) (bool, error) {
+	args := m.Called(ctx, task)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *mockStore) SetPluginTasksPaused(ctx context.Context, pluginID, channelID string, paused bool) error {
+	return m.Called(ctx, pluginID, channelID, paused).Error(0)
+}
+
 func (s *InstallerSuite) TestManifest() {
 	hex := strings.TrimPrefix(digest, "sha256:")
 	st := &db.PluginState{PluginID: "echo", Image: "ghcr.io/acme/echo@" + digest}

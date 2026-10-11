@@ -16,6 +16,7 @@ import (
 
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/plugin/install"
 	"github.com/radutopala/loop/internal/plugin/runtime"
 	"github.com/radutopala/loop/internal/testutil"
 )
@@ -195,4 +196,13 @@ func (s *MainSuite) TestPluginEnabledWorktree() {
 
 	_, err = enabled(ctx, "echo", runtime.Channel{ID: "broken", DirPath: wt})
 	require.ErrorContains(s.T(), err, "db down")
+}
+
+func (s *MainSuite) TestPluginActionRunner() {
+	store, err := db.NewSQLiteStore(filepath.Join(s.T().TempDir(), "loop.db"))
+	require.NoError(s.T(), err)
+	defer store.Close()
+	run := pluginActionRunner(install.NewService(nil, nil, store, nil, nil))
+	err = run(context.Background(), "quiz", "daily", "ch1", "/src", 7)
+	require.ErrorIs(s.T(), err, install.ErrNotInstalled)
 }

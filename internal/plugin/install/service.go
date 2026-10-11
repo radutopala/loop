@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"time"
 
@@ -11,6 +12,8 @@ import (
 	"github.com/radutopala/loop/internal/plugin"
 	"github.com/radutopala/loop/internal/plugin/proxy"
 	"github.com/radutopala/loop/internal/plugin/runtime"
+	"github.com/radutopala/loop/internal/scheduler"
+	"github.com/radutopala/loop/internal/types"
 )
 
 var (
@@ -56,11 +59,14 @@ type Runtime interface {
 }
 
 // ServiceStore is the store the Service reads plugins and their containers
-// from.
+// from, and keeps their actions' scheduled tasks in.
 type ServiceStore interface {
 	Store
 	ListPluginStates(ctx context.Context) ([]*db.PluginState, error)
 	ListPluginContainers(ctx context.Context, pluginID string) ([]*db.PluginContainer, error)
+	ListChannels(ctx context.Context) ([]*db.Channel, error)
+	SeedPluginTask(ctx context.Context, task *db.ScheduledTask) (bool, error)
+	SetPluginTasksPaused(ctx context.Context, pluginID, channelID string, paused bool) error
 }
 
 // Caller calls into a running plugin.
@@ -86,12 +92,13 @@ type Service struct {
 	store     ServiceStore
 	caller    Caller
 	enabled   Enabled
+	now       func() time.Time
 }
 
 // NewService returns a Service that starts a plugin's container only in
 // the channels whose project enables it.
 func NewService(installer *Installer, runtime Runtime, store ServiceStore, caller Caller, enabled Enabled) *Service {
-	return &Service{installer: installer, runtime: runtime, store: store, caller: caller, enabled: enabled}
+	return &Service{installer: installer, runtime: runtime, store: store, caller: caller, enabled: enabled, now: time.Now}
 }
 
 // List returns the installed plugins.
@@ -125,10 +132,17 @@ func (s *Service) StopDisabled(ctx context.Context) bool {
 	return stopped
 }
 
-// Run stops, every interval until ctx ends, the containers left idle and
-// those whose project stopped enabling their plugin, calling changed when
-// it stopped any.
-func (s *Service) Run(ctx context.Context, interval time.Duration, changed func()) {
+// Run syncs the plugins' scheduled tasks, then, every interval until ctx
+// ends, stops the containers left idle and those whose project stopped
+// enabling their plugin, calling changed when it stopped any, and syncs the
+// tasks again, so a new channel gets its own.
+func (s *Service) Run(ctx context.Context, interval time.Duration, changed func(), logger *slog.Logger) {
+	sync := func() {
+		if err := s.SyncSchedules(ctx); err != nil {
+			logger.Warn("syncing plugin schedules", "error", err)
+		}
+	}
+	sync()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -140,8 +154,80 @@ func (s *Service) Run(ctx context.Context, interval time.Duration, changed func(
 			if s.StopDisabled(ctx) || idle {
 				changed()
 			}
+			sync()
 		}
 	}
+}
+
+// SyncSchedules keeps the scheduled tasks of plugin actions in step with
+// the projects enabling their plugins. In each channel whose project
+// enables a plugin the owner approved schedule for, it creates the task of
+// each action with a default_schedule, once, and turns back on the tasks
+// it paused; elsewhere it pauses them. Only desktop app channels get them:
+// threads run their channel's tasks, and plugins don't run in Slack or
+// Discord. A channel whose project config can't be read is left as it is.
+func (s *Service) SyncSchedules(ctx context.Context) error {
+	states, err := s.store.ListPluginStates(ctx)
+	if err != nil {
+		return fmt.Errorf("listing the plugins: %w", err)
+	}
+	var channels []*db.Channel
+	var errs []error
+	for _, st := range states {
+		if !slices.Contains(st.ApprovedCaps, string(plugin.CapSchedule)) {
+			continue
+		}
+		m, err := s.installer.Manifest(st)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", st.PluginID, err))
+			continue
+		}
+		if channels == nil {
+			if channels, err = s.store.ListChannels(ctx); err != nil {
+				return errors.Join(append(errs, fmt.Errorf("listing the channels: %w", err))...)
+			}
+		}
+		for _, c := range channels {
+			if c.ParentID == "" && c.Platform == types.PlatformLocal {
+				errs = append(errs, s.syncChannelSchedules(ctx, st, m, c))
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// syncChannelSchedules syncs the scheduled tasks of st's actions in c.
+func (s *Service) syncChannelSchedules(ctx context.Context, st *db.PluginState, m *plugin.Manifest, c *db.Channel) error {
+	on := st.Status == db.PluginStatusInstalled
+	if on {
+		var err error
+		if on, err = s.enabled(ctx, st.PluginID, runtime.Channel{ID: c.ChannelID, DirPath: c.DirPath}); err != nil {
+			return nil
+		}
+	}
+	if !on {
+		return s.store.SetPluginTasksPaused(ctx, st.PluginID, c.ChannelID, true)
+	}
+	for _, a := range m.Actions {
+		d := a.DefaultSchedule
+		if d == nil {
+			continue
+		}
+		if _, err := s.store.SeedPluginTask(ctx, &db.ScheduledTask{
+			ChannelID:    c.ChannelID,
+			GuildID:      c.GuildID,
+			Schedule:     d.Schedule,
+			Type:         d.Type,
+			Prompt:       fmt.Sprintf("Runs the %s plugin's %s action.", st.PluginID, a.ID),
+			Enabled:      d.Enabled,
+			NextRunAt:    scheduler.NextRun(d.Type, d.Schedule, s.now()),
+			PluginID:     st.PluginID,
+			PluginAction: a.ID,
+		}); err != nil {
+			return fmt.Errorf("creating %s's %s task in %s: %w", st.PluginID, a.ID, c.ChannelID, err)
+		}
+	}
+	return s.store.SetPluginTasksPaused(ctx, st.PluginID, c.ChannelID, false)
 }
 
 // Inspect pulls and validates an image so the owner can review what it

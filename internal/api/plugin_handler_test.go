@@ -76,6 +76,10 @@ func (m *MockPluginManager) StopDisabled(ctx context.Context) bool {
 	return m.Called(ctx).Bool(0)
 }
 
+func (m *MockPluginManager) SyncSchedules(ctx context.Context) error {
+	return m.Called(ctx).Error(0)
+}
+
 func (s *ServerSuite) pluginRoutes() *MockPluginManager {
 	pm := new(MockPluginManager)
 	s.srv.SetPluginManager(pm)
@@ -205,6 +209,7 @@ func (s *ServerSuite) TestInstallPlugin() {
 	c := echoCandidate()
 	c.Previous = nil
 	pm.On("Install", mock.Anything, "ghcr.io/acme/echo:1.1.0", false, "sha256:aa", caps).Return(c, nil).Once()
+	pm.On("SyncSchedules", mock.Anything).Return(nil).Once()
 	rec := s.testRequest("POST", "/api/plugins", `{"image":"ghcr.io/acme/echo:1.1.0","digest":"sha256:aa","approve":["ui.panel","files.read"]}`)
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 	var got pluginCandidate

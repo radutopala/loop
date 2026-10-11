@@ -99,12 +99,57 @@ func (s *SQLiteStore) ListPluginStates(ctx context.Context) ([]*PluginState, err
 	return out, rows.Err()
 }
 
-// DeletePluginState removes a plugin's state and its containers' rows.
+// DeletePluginState removes a plugin's state, its containers' rows and its
+// scheduled tasks.
 func (s *SQLiteStore) DeletePluginState(ctx context.Context, pluginID string) error {
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM plugin_containers WHERE plugin_id = ?`, pluginID); err != nil {
-		return err
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		for _, q := range []string{
+			`DELETE FROM task_run_logs WHERE task_id IN (SELECT id FROM scheduled_tasks WHERE plugin_id = ?)`,
+			`DELETE FROM scheduled_tasks WHERE plugin_id = ?`,
+			`DELETE FROM plugin_schedules WHERE plugin_id = ?`,
+			`DELETE FROM plugin_containers WHERE plugin_id = ?`,
+			`DELETE FROM plugin_state WHERE plugin_id = ?`,
+		} {
+			if _, err := tx.ExecContext(ctx, q, pluginID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// SeedPluginTask creates task, the scheduled task of a plugin action in its
+// channel, unless one was created there before, even if since deleted. It
+// reports whether it created it.
+func (s *SQLiteStore) SeedPluginTask(ctx context.Context, task *ScheduledTask) (bool, error) {
+	created := false
+	err := s.withTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			`INSERT INTO plugin_schedules (plugin_id, channel_id, action) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
+			task.PluginID, task.ChannelID, task.PluginAction)
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil || n == 0 {
+			return err
+		}
+		if _, err := insertScheduledTask(ctx, tx, s.nowFunc(), task); err != nil {
+			return err
+		}
+		created = true
+		return nil
+	})
+	return created, err
+}
+
+// SetPluginTasksPaused turns off the plugin's enabled scheduled tasks in
+// channelID, marking them paused, or turns the paused ones back on.
+func (s *SQLiteStore) SetPluginTasksPaused(ctx context.Context, pluginID, channelID string, paused bool) error {
+	q := `UPDATE scheduled_tasks SET enabled = 1, plugin_paused = 0, updated_at = ? WHERE plugin_id = ? AND channel_id = ? AND plugin_paused = 1`
+	if paused {
+		q = `UPDATE scheduled_tasks SET enabled = 0, plugin_paused = 1, updated_at = ? WHERE plugin_id = ? AND channel_id = ? AND enabled = 1`
 	}
-	_, err := s.db.ExecContext(ctx, `DELETE FROM plugin_state WHERE plugin_id = ?`, pluginID)
+	_, err := s.db.ExecContext(ctx, q, s.nowFunc(), pluginID, channelID)
 	return err
 }
 

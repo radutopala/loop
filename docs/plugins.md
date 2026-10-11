@@ -90,7 +90,11 @@ The image carries the label `dev.loop.plugin=1`, runs as a non-root `USER` (a nu
   "capabilities": ["agent.readonly", "files.read", "ui.panel"],
   "agents": [{ "id": "say", "read_only": true, "tools": ["echo"] }],
   "tools": [{ "name": "echo", "description": "Returns its input", "input_schema": { "type": "object" } }],
-  "actions": [{ "id": "ping" }],
+  "actions": [
+    { "id": "ping" },
+    // needs "schedule" in capabilities
+    { "id": "daily", "default_schedule": { "type": "cron", "schedule": "0 9 * * *", "enabled": true } },
+  ],
   "settings": { "count": { "type": "integer", "title": "Count", "minimum": 1, "maximum": 10, "default": 3 } },
   "ui": { "panels": [{ "id": "main", "label": "Echo", "entry": "ui/main/index.html", "singleton": true }] },
   "resources": { "memory": "128m", "cpus": 0.5 },
@@ -101,6 +105,19 @@ Each setting is a schema: `type` (`string`, `integer`, `number`, `boolean`, `arr
 `object`), with `title`, `description`, `default`, `enum`, `minimum`, `maximum`, `pattern`,
 `items`, `properties` and `additionalProperties`. Defaults are checked at install.
 
+### Scheduled actions
+
+An action with a `default_schedule` (type `cron` or `interval`) gets a scheduled task in each
+channel whose project enables the plugin, created once, enabled as `enabled` says. When it
+runs, Loop calls `POST /actions/{action}` on the channel's container with `"trigger":
+"schedule"` and the task's id, starting the container if it isn't running. The tasks show in
+the Tasks panel like any other, where the owner can change their schedule, turn them off or
+delete them; a deleted one isn't created again. A project that stops enabling the plugin
+pauses its tasks, and enabling it again resumes them, except those the owner turned off.
+Only desktop app channels get them: threads and worktree threads run their channel's, and
+plugins don't run in Slack or Discord. Removing the plugin deletes
+them.
+
 Capabilities are approved by the owner at install and checked on every call:
 
 | Capability | Grants |
@@ -110,6 +127,7 @@ Capabilities are approved by the owner at install and checked on every call:
 | `quality.read` | `GET /channel/quality/hotspots` |
 | `agent.readonly` | runs of read-only agents |
 | `agent.write` | runs of any agent |
+| `schedule` | actions' `default_schedule` tasks |
 | `ui.panel` | panels |
 | `ui.notify` | `POST /notify`, the bridge's `ui.notify` |
 | `ui.open_file` | the bridge's `ui.open_file` |

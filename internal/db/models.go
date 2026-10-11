@@ -244,6 +244,11 @@ type ScheduledTask struct {
 	// BashScript, when non-empty, makes the task run this script in the
 	// channel's agent container instead of an agent prompt or workflow.
 	BashScript string `json:"bash_script"`
+	// PluginID and PluginAction, when set, make the task ask the plugin's
+	// container in the channel to run the action. Loop creates these tasks
+	// as a project enables the plugin.
+	PluginID     string `json:"plugin_id,omitempty"`
+	PluginAction string `json:"plugin_action,omitempty"`
 }
 
 // TaskType represents the type of scheduled task.

@@ -73,14 +73,24 @@ func (s *Server) PluginsChanged() {
 }
 
 // pluginConfigChanged follows a config write: the panes learn of the
-// plugins' enablement anew, and the containers of the projects that stopped
-// enabling their plugin are stopped.
+// plugins' enablement anew, the containers of the projects that stopped
+// enabling their plugin are stopped, and the plugins' scheduled tasks
+// follow.
 func (s *Server) pluginConfigChanged(ctx context.Context) {
 	if s.plugins == nil {
 		return
 	}
 	s.plugins.StopDisabled(ctx)
+	s.syncPluginSchedules(ctx)
 	s.PluginsChanged()
+}
+
+// syncPluginSchedules creates, pauses and resumes the plugins' scheduled
+// tasks as the projects enabling them say.
+func (s *Server) syncPluginSchedules(ctx context.Context) {
+	if err := s.plugins.SyncSchedules(ctx); err != nil {
+		s.logger.Warn("syncing plugin schedules", "error", err)
+	}
 }
 
 // pluginInstalled reports whether plugin id is installed; otherwise it
