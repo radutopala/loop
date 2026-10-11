@@ -84,6 +84,34 @@ func (s *ServerSuite) TestListPluginsInProject() {
 	require.True(s.T(), *list.Plugins[2].Enabled)
 }
 
+func (s *ServerSuite) TestListPluginsSettings() {
+	pm := s.pluginRoutes()
+	s.pluginProjectSetup(`{"plugins": {"echo": {"settings": {"count": 9, "ghost": 1}}}}`)
+	global := s.srv.configs.load
+	s.srv.configs.load = func() (*config.Config, error) {
+		cfg, err := global()
+		cfg.Plugins.ByID["echo"] = config.PluginConfig{Settings: map[string]any{"count": 7.0, "lang": "fr"}}
+		return cfg, err
+	}
+	schema := map[string]*config.SchemaProperty{"count": {Type: "integer", Default: 5.0}, "lang": {Type: "string", Default: "en"}}
+	pm.On("List", mock.Anything).Return([]*db.PluginState{{PluginID: "echo"}, {PluginID: "quiz"}}, nil)
+	pm.On("UI", mock.Anything, "echo").Return("/d", &plugin.Manifest{Settings: schema}, nil)
+	pm.On("UI", mock.Anything, "quiz").Return("", nil, install.ErrNotRunnable)
+	pm.On("Containers", mock.Anything, mock.Anything).Return(nil, nil)
+
+	// The project's settings apply untrusted.
+	list := s.listPluginsIn("ch-1")
+	echo, quiz := list.Plugins[0], list.Plugins[1]
+	require.Equal(s.T(), schema, echo.SettingsSchema)
+	require.Equal(s.T(), map[string]any{"count": 7.0, "lang": "fr"}, echo.GlobalSettings)
+	require.Equal(s.T(), map[string]any{"count": 9.0, "ghost": 1.0}, echo.ProjectSettings)
+	require.Equal(s.T(), map[string]any{"count": 9.0, "lang": "fr"}, echo.Settings)
+	require.Equal(s.T(), []string{`setting "ghost": the plugin has no such setting`}, echo.SettingsProblems)
+	// A plugin that can't run has no manifest to resolve its settings by.
+	require.Nil(s.T(), quiz.SettingsSchema)
+	require.Nil(s.T(), quiz.Settings)
+}
+
 func (s *ServerSuite) TestListPluginsInProjectWithoutConfig() {
 	pm := s.pluginRoutes()
 	s.pluginProjectSetup("", "echo")

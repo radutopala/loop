@@ -101,17 +101,30 @@ type pluginChannelResponse struct {
 	Platform string `json:"platform"`
 	Model    string `json:"model"`
 	Effort   string `json:"effort"`
+	// Settings are the plugin's settings in the channel's project.
+	Settings map[string]any `json:"settings"`
 }
 
 // handlePluginChannel describes the channel the calling plugin serves.
 func (s *Server) handlePluginChannel(w http.ResponseWriter, r *http.Request) {
-	_, ch, ok := s.pluginCaller(w, r, "")
+	p, ch, ok := s.pluginCaller(w, r, "")
 	if !ok {
 		return
 	}
+	_, m, err := s.plugins.UI(r.Context(), p.PluginID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	proj, err := s.pluginProject(r.Context(), ch)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	settings, _ := m.ResolveSettings(proj.merged.Plugins.ByID[p.PluginID].Settings)
 	writeHTTPJSON(w, http.StatusOK, pluginChannelResponse{
 		ID: ch.ChannelID, Name: ch.Name, DirPath: ch.DirPath, Platform: string(ch.Platform),
-		Model: ch.ModelOverride, Effort: ch.EffortOverride,
+		Model: ch.ModelOverride, Effort: ch.EffortOverride, Settings: settings,
 	}, s.logger)
 }
 

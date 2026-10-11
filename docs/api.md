@@ -3014,7 +3014,7 @@ List the installed plugins.
 }
 ```
 
-`capabilities` are the ones the owner approved. `digest` is empty for a dev install. `name` and `panels` come from the manifest of a plugin that may run; `panels` only when the owner approved `ui.panel`.
+`capabilities` are the ones the owner approved. `digest` is empty for a dev install. `name` and `panels` come from the manifest of a plugin that may run; `panels` only when the owner approved `ui.panel`. `settings_schema` is the manifest's settings, and `global_settings` the global config's `plugins.<id>.settings`. With `channel_id`, `project_settings` are that channel's project config's own values, `settings` what the plugin runs with there (each default, then the global, then the project values) and `settings_problems` the values left out for no such setting or a value the schema refuses.
 
 ### `POST /api/plugins/inspect`
 
@@ -3155,7 +3155,7 @@ Called by a plugin's container with the token in its `LOOP_PLUGIN_TOKEN_FILE`; t
 
 | Route | Capability | Answer |
 |---|---|---|
-| `GET /api/plugin/v1/channel` | | `{"id", "name", "dir_path", "platform", "model", "effort"}` |
+| `GET /api/plugin/v1/channel` | | `{"id", "name", "dir_path", "platform", "model", "effort", "settings"}`; `settings` are the plugin's settings in the channel's project |
 | `GET /api/plugin/v1/channel/files?path=&start=&end=` | `files.read` | `{"path", "content", "start", "end", "total_lines"}`; lines 1-based and inclusive, both optional; `.git/` refused, and files agentgate denies the channel's agents (`403`); `404` if missing, `400` for a directory or a range past the end, `413` over the size limit |
 | `GET /api/plugin/v1/channel/tree?glob=` | `files.read` | `{"files", "truncated"?}`: the files git tracks, or every file outside `.git/` without git, less those agentgate denies the channel's agents; the glob matches the path or its base name; at most 50,000 |
 | `GET /api/plugin/v1/channel/git/recent?days=` | `git.read` | `{"commits": [{"sha", "subject", "author", "time"}], "files": [{"path", "commits"}]}`; `days` defaults to 14, at most 365; the last 500 non-merge commits; `409` without git |

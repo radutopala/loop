@@ -59,6 +59,8 @@ export interface BridgeHost {
   capabilities: string[];
   request: (method: string, path: string, body?: unknown) => Promise<PluginXResponse>;
   theme: () => PluginTheme;
+  /** The plugin's settings in the channel's project. */
+  settings: () => Record<string, unknown>;
   notify: (title: string, body: string) => void;
   openFile: (path: string, line?: number) => Promise<void>;
   loadState: () => unknown;
@@ -95,6 +97,8 @@ export async function callBridge(host: BridgeHost, method: string, params: Param
     }
     case "theme.get":
       return host.theme();
+    case "settings.get":
+      return host.settings();
     case "ui.notify":
       needs(host, "ui.notify");
       host.notify(str(params, "title"), str(params, "body", false));

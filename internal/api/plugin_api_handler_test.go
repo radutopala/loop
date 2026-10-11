@@ -111,10 +111,63 @@ func (s *ServerSuite) TestPluginAPIOnlyPlugins() {
 }
 
 func (s *ServerSuite) TestPluginChannel() {
-	s.pluginAPIRoutes("", "/src/app")
+	pm := s.pluginAPIRoutes("", "/src/app")
+	pm.On("UI", mock.Anything, "echo").Return("/d", &plugin.Manifest{}, nil).Once()
 	rec := s.requestAs(echoPlugin, "GET", "/api/plugin/v1/channel", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
-	require.JSONEq(s.T(), `{"id":"ch-1","name":"app","dir_path":"/src/app","platform":"local","model":"sonnet","effort":"high"}`, rec.Body.String())
+	require.JSONEq(s.T(), `{"id":"ch-1","name":"app","dir_path":"/src/app","platform":"local","model":"sonnet","effort":"high","settings":{}}`, rec.Body.String())
+}
+
+func (s *ServerSuite) TestPluginChannelSettings() {
+	count := func(def any) *config.SchemaProperty { return &config.SchemaProperty{Type: "integer", Default: def} }
+	m := &plugin.Manifest{Settings: map[string]*config.SchemaProperty{"count": count(5.0), "lang": {Type: "string", Default: "en"}, "depth": count(nil)}}
+	tests := []struct {
+		name     string
+		global   map[string]any
+		project  string
+		wantCode int
+		wantBody string
+	}{
+		{name: "defaults", wantCode: http.StatusOK, wantBody: `{"count":5,"lang":"en"}`},
+		{
+			name: "global then project", global: map[string]any{"count": 7.0, "depth": 2.0},
+			project:  `{"plugins": {"echo": {"settings": {"count": 9, "lang": 3}}}}`,
+			wantCode: http.StatusOK, wantBody: `{"count":9,"lang":"en","depth":2}`,
+		},
+		{name: "broken project config", project: `{"plugins": {"echo": {"enabled": "yes"}}}`, wantCode: http.StatusInternalServerError, wantBody: "plugins.echo"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			dir := s.T().TempDir()
+			if tt.project != "" {
+				s.writeProject(dir, tt.project)
+			}
+			pm := s.pluginAPIRoutes("", dir)
+			s.srv.configs.load = func() (*config.Config, error) {
+				return &config.Config{Plugins: config.PluginsConfig{ByID: map[string]config.PluginConfig{"echo": {Settings: tt.global}}}}, nil
+			}
+			pm.On("UI", mock.Anything, "echo").Return("/d", m, nil).Once()
+			rec := s.requestAs(echoPlugin, "GET", "/api/plugin/v1/channel", "")
+			require.Equal(s.T(), tt.wantCode, rec.Code, rec.Body.String())
+			if tt.wantCode != http.StatusOK {
+				require.Contains(s.T(), rec.Body.String(), tt.wantBody)
+				return
+			}
+			var got struct {
+				Settings json.RawMessage `json:"settings"`
+			}
+			require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &got))
+			require.JSONEq(s.T(), tt.wantBody, string(got.Settings))
+		})
+	}
+}
+
+func (s *ServerSuite) TestPluginChannelNotRunnable() {
+	pm := s.pluginAPIRoutes("", "/src/app")
+	pm.On("UI", mock.Anything, "echo").Return("", nil, install.ErrNotRunnable).Once()
+	rec := s.requestAs(echoPlugin, "GET", "/api/plugin/v1/channel", "")
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 }
 
 func (s *ServerSuite) TestPluginFile() {

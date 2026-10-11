@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/plugin"
 	"github.com/radutopala/loop/internal/plugin/install"
@@ -62,6 +63,17 @@ type pluginInfo struct {
 	// none. They differ while the owner hasn't trusted the project config.
 	Enabled        *bool `json:"enabled,omitempty"`
 	ProjectEnabled *bool `json:"project_enabled,omitempty"`
+	// SettingsSchema is the settings the manifest declares, and
+	// GlobalSettings the global config's values for them.
+	SettingsSchema map[string]*config.SchemaProperty `json:"settings_schema,omitempty"`
+	GlobalSettings map[string]any                    `json:"global_settings,omitempty"`
+	// ProjectSettings are the channel_id's project config's own values, and
+	// Settings what the plugin runs with there: each default, overridden by
+	// the global then the project values. SettingsProblems are the values
+	// left out, for no such setting or a value its schema refuses.
+	ProjectSettings  map[string]any `json:"project_settings,omitempty"`
+	Settings         map[string]any `json:"settings,omitempty"`
+	SettingsProblems []string       `json:"settings_problems,omitempty"`
 	// Containers are the plugin's containers, one per channel it ran in.
 	Containers []pluginContainerInfo `json:"containers"`
 }
@@ -150,8 +162,10 @@ func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request) {
 			InstalledAt: st.InstalledAt, UpdatedAt: st.UpdatedAt,
 			Containers: []pluginContainerInfo{},
 		}
-		if _, m, err := s.plugins.UI(ctx, st.PluginID); err == nil {
+		_, m, err := s.plugins.UI(ctx, st.PluginID)
+		if err == nil {
 			info.Name = m.Name
+			info.SettingsSchema = m.Settings
 			if m.UI != nil && slices.Contains(st.ApprovedCaps, string(plugin.CapUIPanel)) {
 				info.Panels = m.UI.Panels
 			}
@@ -161,10 +175,15 @@ func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request) {
 		}
 		if global != nil {
 			info.EnabledByDefault = global.Plugins.EnabledFor(st.PluginID)
+			info.GlobalSettings = global.Plugins.ByID[st.PluginID].Settings
 		}
 		if proj != nil {
 			on := proj.merged.Plugins.EnabledFor(st.PluginID)
 			info.Enabled, info.ProjectEnabled = &on, proj.own.ByID[st.PluginID].Enabled
+			info.ProjectSettings = proj.own.ByID[st.PluginID].Settings
+			if m != nil {
+				info.Settings, info.SettingsProblems = m.ResolveSettings(proj.merged.Plugins.ByID[st.PluginID].Settings)
+			}
 		}
 		containers, err := s.plugins.Containers(ctx, st.PluginID)
 		if err != nil {

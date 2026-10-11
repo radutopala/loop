@@ -551,6 +551,9 @@ type PluginConfig struct {
 	// Enabled turns the plugin on. The global value is every project's
 	// default; a project's own value overrides it.
 	Enabled *bool `json:"enabled,omitempty"`
+	// Settings are the plugin's settings, as its manifest declares them. A
+	// project's values override the global ones, setting by setting.
+	Settings map[string]any `json:"settings,omitempty"`
 }
 
 // pluginsReserved are the plugins block's own keys, which no plugin id

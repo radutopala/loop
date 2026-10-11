@@ -9,6 +9,9 @@ type SchemaProperty struct {
 	Description          string                     `json:"description,omitempty"`
 	Enum                 []any                      `json:"enum,omitempty"`
 	Default              any                        `json:"default,omitempty"`
+	Minimum              *float64                   `json:"minimum,omitempty"`
+	Maximum              *float64                   `json:"maximum,omitempty"`
+	Pattern              string                     `json:"pattern,omitempty"`
 	Items                *SchemaProperty            `json:"items,omitempty"`
 	Properties           map[string]*SchemaProperty `json:"properties,omitempty"`
 	AdditionalProperties *SchemaProperty            `json:"additionalProperties,omitempty"`

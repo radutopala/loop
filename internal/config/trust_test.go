@@ -573,6 +573,20 @@ func (s *TrustSuite) TestMergePlugins() {
 	require.False(s.T(), merged.Plugins.EnabledFor("echo"))
 }
 
+func (s *TrustSuite) TestMergePluginSettings() {
+	main := &Config{Plugins: PluginsConfig{ByID: map[string]PluginConfig{"quiz": {Settings: map[string]any{"count": float64(5), "lang": "en"}}}}}
+
+	// Settings only shape what the plugin does with the capabilities the
+	// owner approved: they apply untrusted, each over the global one.
+	s.project(`{"plugins": {"quiz": {"settings": {"count": 8}}, "echo": {"settings": {"loud": true}}, "bare": {}}}`)
+	merged, err := s.loader().loadProjectConfig("/proj", main)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), map[string]any{"count": float64(8), "lang": "en"}, merged.Plugins.ByID["quiz"].Settings)
+	require.Equal(s.T(), map[string]any{"loud": true}, merged.Plugins.ByID["echo"].Settings)
+	require.Nil(s.T(), merged.Plugins.ByID["bare"].Settings)
+	require.Equal(s.T(), map[string]any{"count": float64(5), "lang": "en"}, main.Plugins.ByID["quiz"].Settings, "the global config is left as it was")
+}
+
 func (s *TrustSuite) TestProjectPlugins() {
 	on := true
 	tests := []struct {

@@ -10,6 +10,7 @@ import {
   pluginXRequest,
   removePlugin,
   setPluginEnabled,
+  setPluginSetting,
   stopPluginContainer,
   withPluginEnabled,
 } from "./plugins";
@@ -205,6 +206,22 @@ describe("setPluginEnabled", () => {
     fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
     await setPluginEnabled("echo", false);
     expect(JSON.parse(JSON.parse(fetchMock.mock.calls[1]![1].body).content)).toEqual({ plugins: { echo: { enabled: false } } });
+  });
+});
+
+describe("setPluginSetting", () => {
+  it("sets a setting, then removes it", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ raw: '{"plugins": {"echo": {"enabled": true}}}', content: {} })));
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await setPluginSetting("echo", "count", 7, "ch-1");
+    const set = JSON.parse(JSON.parse(fetchMock.mock.calls[1]![1].body).content);
+    expect(set).toEqual({ plugins: { echo: { enabled: true, settings: { count: 7 } } } });
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ raw: JSON.stringify(set), content: {} })));
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await setPluginSetting("echo", "count", undefined);
+    expect(fetchMock.mock.calls[2]![0]).toBe("http://localhost:8222/api/config");
+    expect(JSON.parse(JSON.parse(fetchMock.mock.calls[3]![1].body).content)).toEqual({ plugins: { echo: { enabled: true, settings: {} } } });
   });
 });
 

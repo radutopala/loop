@@ -15,6 +15,7 @@ import { useEventStream } from "../../hooks/useEventStream";
 import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
 import type { WSEvent } from "../../types";
+import { PluginSettings } from "./PluginSettings";
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -286,6 +287,7 @@ function PluginCard({ colors, plugin, onChanged }: { colors: ColorPalette; plugi
           {plugin.actions.join(", ")}
         </div>
       )}
+      <PluginSettings colors={colors} plugin={plugin} onChanged={onChanged} />
       <div style={{ marginTop: 8, marginBottom: 4, color: colors.textDim }}>Containers</div>
       <ContainerRows colors={colors} plugin={plugin} onError={setError} />
       {error && <div style={{ color: colors.error, marginTop: 6 }}>{error}</div>}
@@ -416,6 +418,15 @@ export function ProjectPluginsSection({ colors, channelId, onConfigChanged }: { 
                 The project config says {p.project_enabled ? "on" : "off"}, but it takes effect only once you trust the project config.
               </div>
             )}
+            <PluginSettings
+              colors={colors}
+              plugin={p}
+              channelId={channelId}
+              onChanged={() => {
+                reload();
+                onConfigChanged();
+              }}
+            />
             <div style={{ marginTop: 6 }}>
               <ContainerRows colors={colors} plugin={p} only={channelId} onError={setToggleError} />
             </div>

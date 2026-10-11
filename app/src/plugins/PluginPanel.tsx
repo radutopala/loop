@@ -82,6 +82,7 @@ export function PluginPanel({ plugin: ref, channelId, channelName, dirPath, leaf
         capabilities: found.plugin.capabilities,
         request: (method, path, body) => pluginXRequest(pluginId, channelId, method, path, body),
         theme: () => pluginTheme(colors),
+        settings: () => found.plugin.settings ?? {},
         notify: (title, body) => {
           new Notification(title, { body });
         },
@@ -114,6 +115,12 @@ export function PluginPanel({ plugin: ref, channelId, channelName, dirPath, leaf
   useEffect(() => {
     bridgeRef.current?.notify("theme", pluginTheme(colors));
   }, [colors]);
+
+  // The panel learns of its settings anew as a config write changes them.
+  const settingsJSON = JSON.stringify(found?.plugin.settings ?? {});
+  useEffect(() => {
+    bridgeRef.current?.notify("settings", JSON.parse(settingsJSON));
+  }, [settingsJSON]);
 
   const agent = usePluginAgent(pluginId, channelId, subscribeChannelEvents);
   const [agentOpen, setAgentOpen] = usePluginAgentOpen(agentOpenKey(pluginId, channelId, leafId), leafId, overlayHost);

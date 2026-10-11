@@ -1,6 +1,6 @@
 import { applyEdits, modify, type ParseError, parse } from "jsonc-parser";
 import { apiFetch, getApiUrl } from "./api";
-import { fetchGlobalConfig, fetchProjectConfig, saveGlobalConfig, saveProjectConfig } from "./configApi";
+import { fetchGlobalConfig, fetchProjectConfig, type SchemaProperty, saveGlobalConfig, saveProjectConfig } from "./configApi";
 
 /** A panel a plugin draws in the workspace. */
 export interface PluginPanelInfo {
@@ -41,6 +41,15 @@ export interface PluginInfo {
   enabled?: boolean;
   /** Listed for a channel: the project config's own setting, if any. */
   project_enabled?: boolean;
+  /** The settings the plugin's manifest declares. */
+  settings_schema?: Record<string, SchemaProperty>;
+  /** The global config's values for them. */
+  global_settings?: Record<string, unknown>;
+  /** Listed for a channel: its project config's own values, and the
+   *  settings the plugin runs with there, with the values left out. */
+  project_settings?: Record<string, unknown>;
+  settings?: Record<string, unknown>;
+  settings_problems?: string[];
   containers?: PluginContainerInfo[];
 }
 
@@ -139,9 +148,10 @@ export async function fetchPluginAgent(id: string, channelId: string): Promise<P
 /** The window event telling plugin views their list changed. */
 export const PLUGINS_CHANGED = "loop:plugins-changed";
 
-/** raw, a config file's text, with plugins.<id>.enabled set to enabled and
- *  everything else, comments too, left as it was. */
-export function withPluginEnabled(raw: string, id: string, enabled: boolean): string {
+/** raw, a config file's text, with plugins.<id>.<path> set to value, or
+ *  removed when value is undefined, and everything else, comments too, left
+ *  as it was. */
+export function withPluginValue(raw: string, id: string, path: string[], value: unknown): string {
   const text = raw.trim() === "" ? "{}\n" : raw;
   const errors: ParseError[] = [];
   parse(text, errors, { allowTrailingComma: true });
@@ -149,17 +159,35 @@ export function withPluginEnabled(raw: string, id: string, enabled: boolean): st
   const eol = text.includes("\r\n") ? "\r\n" : "\n";
   const indent = /\n(\s+)"/.exec(text)?.[1];
   const formattingOptions = { insertSpaces: !indent?.startsWith("\t"), tabSize: indent && !indent.startsWith("\t") ? indent.length : 2, eol };
-  return applyEdits(text, modify(text, ["plugins", id, "enabled"], enabled, { formattingOptions }));
+  return applyEdits(text, modify(text, ["plugins", id, ...path], value, { formattingOptions }));
 }
 
-/** Sets plugins.<id>.enabled in channelId's project config, or in the
- *  global config without one, then tells plugin views. */
-export async function setPluginEnabled(id: string, enabled: boolean, channelId?: string | null): Promise<void> {
+/** raw with plugins.<id>.enabled set to enabled. */
+export function withPluginEnabled(raw: string, id: string, enabled: boolean): string {
+  return withPluginValue(raw, id, ["enabled"], enabled);
+}
+
+/** Sets plugins.<id>.<path> in channelId's project config, or in the global
+ *  config without one, then tells plugin views. */
+async function setPluginValue(id: string, path: string[], value: unknown, channelId?: string | null): Promise<void> {
   const cfg = channelId ? await fetchProjectConfig(channelId) : await fetchGlobalConfig();
-  const text = withPluginEnabled(cfg.raw ?? "", id, enabled);
+  const text = withPluginValue(cfg.raw ?? "", id, path, value);
   if (channelId) await saveProjectConfig(channelId, text);
   else await saveGlobalConfig(text);
   window.dispatchEvent(new Event(PLUGINS_CHANGED));
+}
+
+/** Sets plugins.<id>.enabled in channelId's project config, or in the
+ *  global config without one. */
+export function setPluginEnabled(id: string, enabled: boolean, channelId?: string | null): Promise<void> {
+  return setPluginValue(id, ["enabled"], enabled, channelId);
+}
+
+/** Sets the plugin's setting key in channelId's project config, or in the
+ *  global config without one; undefined removes it, so the value below
+ *  applies. */
+export function setPluginSetting(id: string, key: string, value: unknown, channelId?: string | null): Promise<void> {
+  return setPluginValue(id, ["settings", key], value, channelId);
 }
 
 /** The answer of a plugin's own API, its body decoded when it's JSON. */

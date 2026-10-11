@@ -30,6 +30,23 @@ already open says so, and every call to the plugin answers `409`. A container al
 there is stopped as soon as Loop writes the config or the owner trusts it, and within a minute of
 an edit made outside Loop.
 
+### Settings
+
+A plugin declares its settings in its manifest, and they're set under `plugins.<id>.settings`:
+
+```jsonc
+// <project>/.loop/config.json
+{ "plugins": { "cogtest": { "enabled": true, "settings": { "question_count": 8 } } } }
+```
+
+A setting takes its manifest default, then the global config's value, then the project's,
+setting by setting. Unlike `enabled`, a project's settings apply without the owner trusting its
+config: they only tune the plugin. A value for a setting the manifest doesn't declare, or one its
+schema refuses, is left out, and Settings → Plugins says so. Settings → Plugins edits both: the
+global values on Global → Plugins, the project's on Project → Plugins; an emptied field unsets
+its value. The plugin reads its settings with `GET /channel`, and a panel with the bridge's
+`settings.get`.
+
 ## Managing plugins
 
 Settings → Plugins installs (after showing the capabilities the image asks for), upgrades and
@@ -38,7 +55,7 @@ from the shell. The API behind both:
 
 | Route | |
 |---|---|
-| `GET /api/plugins?channel_id=` | the installed plugins with their `actions`, `enabled_by_default` and `containers` (`channel_id`, `channel_name`, `status`, `last_error`, `updated_at`); with `channel_id`, also `enabled` and `project_enabled` (the project file's own value) for that channel's project, and a top-level `project_trusted` |
+| `GET /api/plugins?channel_id=` | the installed plugins with their `actions`, `enabled_by_default`, `settings_schema`, `global_settings` and `containers` (`channel_id`, `channel_name`, `status`, `last_error`, `updated_at`); with `channel_id`, also `enabled` and `project_enabled` (the project file's own value), `project_settings`, `settings` and `settings_problems` for that channel's project, and a top-level `project_trusted` |
 | `POST /api/plugins/inspect` | body `{"image", "dev"}`: pulls and checks an image, installing nothing |
 | `POST /api/plugins` | body `{"image", "dev", "digest", "approve": […]}`: installs or upgrades |
 | `DELETE /api/plugins/{id}?purge=` | removes a plugin; `purge` also deletes its data in every channel |
@@ -74,10 +91,15 @@ The image carries the label `dev.loop.plugin=1`, runs as a non-root `USER` (a nu
   "agents": [{ "id": "say", "read_only": true, "tools": ["echo"] }],
   "tools": [{ "name": "echo", "description": "Returns its input", "input_schema": { "type": "object" } }],
   "actions": [{ "id": "ping" }],
+  "settings": { "count": { "type": "integer", "title": "Count", "minimum": 1, "maximum": 10, "default": 3 } },
   "ui": { "panels": [{ "id": "main", "label": "Echo", "entry": "ui/main/index.html", "singleton": true }] },
   "resources": { "memory": "128m", "cpus": 0.5 },
 }
 ```
+
+Each setting is a schema: `type` (`string`, `integer`, `number`, `boolean`, `array` or
+`object`), with `title`, `description`, `default`, `enum`, `minimum`, `maximum`, `pattern`,
+`items`, `properties` and `additionalProperties`. Defaults are checked at install.
 
 Capabilities are approved by the owner at install and checked on every call:
 
@@ -164,7 +186,7 @@ channel id. A route needing a capability the owner didn't approve answers `403`.
 
 | Route | Capability | Answer |
 |---|---|---|
-| `GET /channel` | | `{"id", "name", "dir_path", "platform", "model", "effort"}` |
+| `GET /channel` | | `{"id", "name", "dir_path", "platform", "model", "effort", "settings"}`; `settings` are the plugin's settings in the channel's project |
 | `GET /channel/files?path=&start=&end=` | `files.read` | `{"path", "content", "start", "end", "total_lines"}`; lines are 1-based and inclusive, both optional (without them `content` is the whole file); `.git/` is refused, and so is a file the channel's agents may not read under agentgate (`403`); `404` if missing, `400` for a directory or a range past the end, `413` over the size limit |
 | `GET /channel/tree?glob=` | `files.read` | `{"files": ["a/b.go", …], "truncated": true}`: the files git tracks (or every file outside `.git/` without git), leaving out files agentgate keeps from the channel's agents, optionally filtered by a glob matched against the path or its base name; at most 50,000, with `truncated` set when there were more |
 | `GET /channel/git/recent?days=` | `git.read` | `{"commits": [{"sha", "subject", "author", "time"}], "files": [{"path", "commits"}]}`; files most-changed first; `days` defaults to 14, at most 365; the last 500 commits; `409` when the dir isn't a git repository |
@@ -216,6 +238,7 @@ On load the host posts `{"type": "loop-plugin:init"}` to the frame with a `Messa
 | `state.get` | | the panel's saved UI state, or `null` |
 | `state.set` | `{"value"}` | `null`; up to 64 KB of JSON, kept per plugin, channel and panel |
 | `theme.get` | | `{"mode": "dark"\|"light", "vars": {"--bg": "…", …}}` |
+| `settings.get` | | the plugin's settings in the channel's project |
 | `ui.notify` | `{"title", "body"}` | `null`; needs `ui.notify` |
 | `ui.open_file` | `{"path", "line"?}` | `null`; opens a file of the channel in the editor; needs `ui.open_file` |
 
@@ -228,3 +251,4 @@ Host notifications:
 |---|---|
 | `event` | `{"type", "data"}`: an event the plugin's container sent with `POST /events` |
 | `theme` | as `theme.get`, when the theme changes |
+| `settings` | as `settings.get`, when a config write changes them |

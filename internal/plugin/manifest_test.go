@@ -111,6 +111,13 @@ func (s *ManifestSuite) TestValidate() {
 		{name: "settings", edit: func(m *Manifest) {
 			m.Settings = map[string]*config.SchemaProperty{"Bad-Name": {Type: "string"}, "color": {Type: "colour"}, "nothing": nil, "ok": {Type: "boolean"}}
 		}, wantErr: []string{`setting "Bad-Name" must match`, `setting "color": type must be one of`, `setting "nothing": type must be one of`}},
+		{name: "setting defaults", edit: func(m *Manifest) {
+			m.Settings = map[string]*config.SchemaProperty{
+				"count": {Type: "integer", Default: "five"},
+				"lang":  {Type: "string", Enum: []any{"en", "ro"}, Default: "ro"},
+				"code":  {Type: "string", Pattern: "(", Default: "x"},
+			}
+		}, wantErr: []string{`setting "count": `, `(its default)`, `setting "code": its schema: `}},
 		{name: "tools", edit: func(m *Manifest) {
 			m.Tools = []Tool{
 				tool,

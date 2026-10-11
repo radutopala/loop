@@ -276,6 +276,12 @@ func (m *Manifest) validateSettings(add func(string, ...any)) {
 		}
 		if p == nil || !slices.Contains(settingTypes, p.Type) {
 			add("setting %q: type must be one of %s", name, strings.Join(settingTypes, ", "))
+			continue
+		}
+		if p.Default != nil {
+			if err := m.checkSetting(name, p.Default); err != nil {
+				add("%v (its default)", err)
+			}
 		}
 	}
 }

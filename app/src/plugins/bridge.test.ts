@@ -12,6 +12,7 @@ function host(over: Partial<BridgeHost> = {}): BridgeHost {
     capabilities: ["ui.notify", "ui.open_file"],
     request: vi.fn(async () => ({ status: 200, body: { ok: true } })),
     theme: () => pluginTheme(darkColors),
+    settings: () => ({ question_count: 5 }),
     notify: vi.fn(),
     openFile: vi.fn(async () => {}),
     loadState: vi.fn(() => undefined),
@@ -47,6 +48,10 @@ describe("callBridge", () => {
     const h = host();
     await expect(callBridge(h, "api.request", { method: "POST", path: "quizzes", body: { n: 1 } })).resolves.toEqual({ status: 200, body: { ok: true } });
     expect(h.request).toHaveBeenCalledWith("POST", "quizzes", { n: 1 });
+  });
+
+  it("settings.get", async () => {
+    await expect(callBridge(host(), "settings.get", {})).resolves.toEqual({ question_count: 5 });
   });
 
   it("context.get", async () => {
