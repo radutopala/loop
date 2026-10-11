@@ -10,12 +10,15 @@ import (
 
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/plugin"
 )
 
 // pluginProject is what a channel's project config says about plugins.
 type pluginProject struct {
 	// merged is the config the channel runs with.
 	merged *config.Config
+	// global is the global config's plugins settings.
+	global config.PluginsConfig
 	// own is the project config file's plugins settings as written, which
 	// apply only once the owner trusts them.
 	own config.PluginsConfig
@@ -29,10 +32,11 @@ func (s *Server) pluginProject(ctx context.Context, ch *db.Channel) (pluginProje
 	if err != nil {
 		return pluginProject{}, err
 	}
-	p := pluginProject{merged: s.configs.merged(dir, ""), trusted: true}
-	if p.merged == nil {
+	global, merged := s.configs.layered(dir, "")
+	if merged == nil {
 		return pluginProject{}, errors.New("loading config failed")
 	}
+	p := pluginProject{merged: merged, global: global.Plugins, trusted: true}
 	data, err := s.sys.ReadFile(filepath.Join(dir, ".loop", "config.json"))
 	switch {
 	case os.IsNotExist(err):
@@ -51,6 +55,13 @@ func (s *Server) pluginProject(ctx context.Context, ch *db.Channel) (pluginProje
 		p.trusted = st.Trusted
 	}
 	return p, nil
+}
+
+// settings resolves the settings of the plugin id with manifest m: the
+// project's values over the global ones, each refused value left out so
+// the one below it applies.
+func (p pluginProject) settings(m *plugin.Manifest, id string) (map[string]any, []string) {
+	return m.ResolveSettings(p.global.ByID[id].Settings, p.own.ByID[id].Settings)
 }
 
 // PluginsChanged tells the app the plugins, their enablement or their

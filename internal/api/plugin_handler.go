@@ -182,7 +182,7 @@ func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request) {
 			info.Enabled, info.ProjectEnabled = &on, proj.own.ByID[st.PluginID].Enabled
 			info.ProjectSettings = proj.own.ByID[st.PluginID].Settings
 			if m != nil {
-				info.Settings, info.SettingsProblems = m.ResolveSettings(proj.merged.Plugins.ByID[st.PluginID].Settings)
+				info.Settings, info.SettingsProblems = proj.settings(m, st.PluginID)
 			}
 		}
 		containers, err := s.plugins.Containers(ctx, st.PluginID)

@@ -121,7 +121,7 @@ func (s *Server) handlePluginChannel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	settings, _ := m.ResolveSettings(proj.merged.Plugins.ByID[p.PluginID].Settings)
+	settings, _ := proj.settings(m, p.PluginID)
 	writeHTTPJSON(w, http.StatusOK, pluginChannelResponse{
 		ID: ch.ChannelID, Name: ch.Name, DirPath: ch.DirPath, Platform: string(ch.Platform),
 		Model: ch.ModelOverride, Effort: ch.EffortOverride, Settings: settings,

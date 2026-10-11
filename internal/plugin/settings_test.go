@@ -42,6 +42,12 @@ func (s *SettingsSuite) TestResolveSettings() {
 			want: map[string]any{"count": float64(8), "lang": "en", "code": "abc", "tags": []any{"a"}, "style": map[string]any{"bold": true, "color": "red"}},
 		},
 		{
+			name:         "a value below the minimum is left out",
+			layers:       []map[string]any{{"count": float64(0)}},
+			want:         map[string]any{"count": float64(5)},
+			wantProblems: []string{`setting "count": 0 is below the minimum, 1`},
+		},
+		{
 			name: "values the schema refuses are left out",
 			layers: []map[string]any{
 				{"count": float64(3)},
@@ -49,9 +55,9 @@ func (s *SettingsSuite) TestResolveSettings() {
 			},
 			want: map[string]any{"count": float64(3)},
 			wantProblems: []string{
-				`setting "code": `,
-				`setting "count": `,
-				`setting "lang": `,
+				`setting "code": pattern: "A1" does not match`,
+				`setting "count": 11 is above the maximum, 10`,
+				`setting "lang": enum:`,
 				`setting "nope": the plugin has no such setting`,
 				`setting "style": `,
 			},

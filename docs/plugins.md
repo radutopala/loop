@@ -42,7 +42,7 @@ A plugin declares its settings in its manifest, and they're set under `plugins.<
 A setting takes its manifest default, then the global config's value, then the project's,
 setting by setting. Unlike `enabled`, a project's settings apply without the owner trusting its
 config: they only tune the plugin. A value for a setting the manifest doesn't declare, or one its
-schema refuses, is left out, and Settings → Plugins says so. Settings → Plugins edits both: the
+schema refuses, is left out, so the value below it applies, and Settings → Plugins says so. Settings → Plugins edits both: the
 global values on Global → Plugins, the project's on Project → Plugins; an emptied field unsets
 its value. The plugin reads its settings with `GET /channel`, and a panel with the bridge's
 `settings.get`.

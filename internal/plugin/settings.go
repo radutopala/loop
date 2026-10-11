@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
 
@@ -35,12 +36,21 @@ func (m *Manifest) checkSetting(name string, v any) error {
 	if p == nil {
 		return fmt.Errorf("setting %q: the plugin has no such setting", name)
 	}
+	// The schema's own errors print bounds as fractions: these read plainly.
+	if n, ok := v.(float64); ok {
+		if p.Minimum != nil && n < *p.Minimum {
+			return fmt.Errorf("setting %q: %v is below the minimum, %v", name, n, *p.Minimum)
+		}
+		if p.Maximum != nil && n > *p.Maximum {
+			return fmt.Errorf("setting %q: %v is above the maximum, %v", name, n, *p.Maximum)
+		}
+	}
 	rs, err := jsonSchema(p).Resolve(nil)
 	if err != nil {
 		return fmt.Errorf("setting %q: its schema: %w", name, err)
 	}
 	if err := rs.Validate(v); err != nil {
-		return fmt.Errorf("setting %q: %w", name, err)
+		return fmt.Errorf("setting %q: %s", name, strings.TrimPrefix(err.Error(), "validating root: "))
 	}
 	return nil
 }

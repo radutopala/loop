@@ -134,6 +134,11 @@ func (s *ServerSuite) TestPluginChannelSettings() {
 			project:  `{"plugins": {"echo": {"settings": {"count": 9, "lang": 3}}}}`,
 			wantCode: http.StatusOK, wantBody: `{"count":9,"lang":"en","depth":2}`,
 		},
+		{
+			name: "a refused project value leaves the global one", global: map[string]any{"count": 7.0},
+			project:  `{"plugins": {"echo": {"settings": {"count": "many"}}}}`,
+			wantCode: http.StatusOK, wantBody: `{"count":7,"lang":"en"}`,
+		},
 		{name: "broken project config", project: `{"plugins": {"echo": {"enabled": "yes"}}}`, wantCode: http.StatusInternalServerError, wantBody: "plugins.echo"},
 	}
 	for _, tt := range tests {

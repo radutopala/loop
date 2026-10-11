@@ -24,25 +24,32 @@ type configResolver struct {
 // layer errors fall back to the outer layer (a broken inner config should
 // not hide the global one).
 func (c *configResolver) merged(workdir, parentDirPath string) *config.Config {
+	_, merged := c.layered(workdir, parentDirPath)
+	return merged
+}
+
+// layered is merged, with the global config it merged over: both nil on a
+// global-load error.
+func (c *configResolver) layered(workdir, parentDirPath string) (global, merged *config.Config) {
 	load := c.load
 	if load == nil {
 		load = config.Load
 	}
 	cfg, err := load()
 	if err != nil || cfg == nil {
-		return nil
+		return nil, nil
 	}
 	switch {
 	case workdir != "" && parentDirPath != "":
 		if pc, perr := c.worktreeLoader()(workdir, parentDirPath, cfg); perr == nil && pc != nil {
-			return pc
+			return cfg, pc
 		}
 	case workdir != "":
 		if pc, perr := c.projectLoader()(workdir, cfg); perr == nil && pc != nil {
-			return pc
+			return cfg, pc
 		}
 	}
-	return cfg
+	return cfg, cfg
 }
 
 // projectLoader returns the project config loader, defaulting to the config
