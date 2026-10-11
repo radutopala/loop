@@ -329,8 +329,8 @@ func (s *ServerSuite) TestDeleteChannelCleansUpContainers() {
 
 	// The plugin runtime stops its own containers.
 	pm := new(MockPluginManager)
-	pm.On("StopChannel", mock.Anything, "ch-1").Return(true).Once()
-	pm.On("StopChannel", mock.Anything, "t-1").Return(false).Once()
+	pm.On("RemoveChannel", mock.Anything, "ch-1").Return(true, nil).Once()
+	pm.On("RemoveChannel", mock.Anything, "t-1").Return(false, errors.New("docker down")).Once()
 	s.srv.SetPluginManager(pm)
 
 	s.srv.containerRegistry = reg
@@ -366,7 +366,7 @@ func (s *ServerSuite) TestDeleteThreadMarksContainers() {
 	s.srv.containerRegistry = reg
 	s.srv.containerKeepAlive = time.Minute
 	pm := new(MockPluginManager)
-	pm.On("StopChannel", mock.Anything, "thread-1").Return(true).Once()
+	pm.On("RemoveChannel", mock.Anything, "thread-1").Return(true, nil).Once()
 	s.srv.SetPluginManager(pm)
 
 	rec := s.testRequest("DELETE", "/api/threads/thread-1", "")

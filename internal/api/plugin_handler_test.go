@@ -79,8 +79,9 @@ func (m *MockPluginManager) Audit(pluginID, channelID string, limit int) ([]agen
 	return v, args.Error(1)
 }
 
-func (m *MockPluginManager) StopChannel(ctx context.Context, channelID string) bool {
-	return m.Called(ctx, channelID).Bool(0)
+func (m *MockPluginManager) RemoveChannel(ctx context.Context, channelID string) (bool, error) {
+	args := m.Called(ctx, channelID)
+	return args.Bool(0), args.Error(1)
 }
 
 func (m *MockPluginManager) StopDisabled(ctx context.Context) bool {

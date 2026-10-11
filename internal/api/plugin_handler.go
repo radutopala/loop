@@ -34,7 +34,7 @@ type PluginManager interface {
 	UI(ctx context.Context, pluginID string) (string, *plugin.Manifest, error)
 	Containers(ctx context.Context, pluginID string) ([]*db.PluginContainer, error)
 	Stop(ctx context.Context, pluginID, channelID string)
-	StopChannel(ctx context.Context, channelID string) bool
+	RemoveChannel(ctx context.Context, channelID string) (bool, error)
 	Audit(pluginID, channelID string, limit int) ([]agentgate.AuditEntry, error)
 	StopDisabled(ctx context.Context) bool
 	SyncSchedules(ctx context.Context) error

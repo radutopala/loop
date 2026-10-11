@@ -124,17 +124,43 @@ func (s *Service) Audit(pluginID, channelID string, limit int) ([]agentgate.Audi
 	return s.runtime.Audit(pluginID, channelID, limit)
 }
 
-// StopChannel stops every plugin's container in channelID, keeping their
-// data, and reports whether it stopped any.
-func (s *Service) StopChannel(ctx context.Context, channelID string) bool {
-	stopped := false
-	for _, r := range s.runtime.Running() {
-		if r.Channel.ID == channelID {
-			s.runtime.Stop(ctx, r.PluginID, channelID)
-			stopped = true
+// RemoveChannel removes every plugin's container in a deleted channel,
+// with its row, keeping its data dir and gate audit log, and reports
+// whether it removed any.
+func (s *Service) RemoveChannel(ctx context.Context, channelID string) (bool, error) {
+	return s.removeWhere(ctx, func(id string) bool { return id == channelID })
+}
+
+// PruneChannels removes the plugin containers of channels that no longer
+// exist, as RemoveChannel does.
+func (s *Service) PruneChannels(ctx context.Context) error {
+	channels, err := s.store.ListChannels(ctx)
+	if err != nil {
+		return fmt.Errorf("listing channels: %w", err)
+	}
+	exists := make(map[string]bool, len(channels))
+	for _, ch := range channels {
+		exists[ch.ChannelID] = true
+	}
+	_, err = s.removeWhere(ctx, func(id string) bool { return !exists[id] })
+	return err
+}
+
+// removeWhere removes every plugin's container in the channels match picks.
+func (s *Service) removeWhere(ctx context.Context, match func(channelID string) bool) (bool, error) {
+	containers, err := s.store.ListPluginContainers(ctx, "")
+	if err != nil {
+		return false, fmt.Errorf("listing plugin containers: %w", err)
+	}
+	removed := false
+	var errs []error
+	for _, c := range containers {
+		if match(c.ChannelID) {
+			errs = append(errs, s.runtime.Remove(ctx, c.PluginID, c.ChannelID, false))
+			removed = true
 		}
 	}
-	return stopped
+	return removed, errors.Join(errs...)
 }
 
 // StopDisabled stops the containers whose channel's project no longer

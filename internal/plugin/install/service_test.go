@@ -145,18 +145,44 @@ func (s *ServiceSuite) TestAudit() {
 	require.Equal(s.T(), want, got)
 }
 
-func (s *ServiceSuite) TestStopChannel() {
-	s.runtime.On("Running").Return([]runtime.Running{
-		{PluginID: "echo", Channel: runtime.Channel{ID: "ch1"}},
-		{PluginID: "quiz", Channel: runtime.Channel{ID: "ch1"}},
-		{PluginID: "echo", Channel: runtime.Channel{ID: "ch2"}},
-	}).Once()
-	s.runtime.On("Stop", s.ctx, "echo", "ch1").Once()
-	s.runtime.On("Stop", s.ctx, "quiz", "ch1").Once()
-	require.True(s.T(), s.svc.StopChannel(s.ctx, "ch1"))
+func (s *ServiceSuite) TestRemoveChannel() {
+	all := []*db.PluginContainer{
+		{PluginID: "echo", ChannelID: "ch1"},
+		{PluginID: "quiz", ChannelID: "ch1"},
+		{PluginID: "echo", ChannelID: "ch2"},
+	}
+	s.store.On("ListPluginContainers", s.ctx, "").Return(all, nil).Once()
+	s.runtime.On("Remove", s.ctx, "echo", "ch1", false).Return(nil).Once()
+	s.runtime.On("Remove", s.ctx, "quiz", "ch1", false).Return(errors.New("busy")).Once()
+	removed, err := s.svc.RemoveChannel(s.ctx, "ch1")
+	require.True(s.T(), removed)
+	require.EqualError(s.T(), err, "busy")
 
-	s.runtime.On("Running").Return([]runtime.Running{{PluginID: "echo", Channel: runtime.Channel{ID: "ch2"}}}).Once()
-	require.False(s.T(), s.svc.StopChannel(s.ctx, "ch1"))
+	s.store.On("ListPluginContainers", s.ctx, "").Return(all[2:], nil).Once()
+	removed, err = s.svc.RemoveChannel(s.ctx, "ch1")
+	require.False(s.T(), removed)
+	require.NoError(s.T(), err)
+
+	s.store.On("ListPluginContainers", s.ctx, "").Return(nil, errors.New("boom")).Once()
+	removed, err = s.svc.RemoveChannel(s.ctx, "ch1")
+	require.False(s.T(), removed)
+	require.EqualError(s.T(), err, "listing plugin containers: boom")
+}
+
+func (s *ServiceSuite) TestPruneChannels() {
+	s.store.On("ListChannels", s.ctx).Return([]*db.Channel{{ChannelID: "ch1"}, {ChannelID: "t1"}}, nil).Once()
+	s.store.On("ListPluginContainers", s.ctx, "").Return([]*db.PluginContainer{
+		{PluginID: "echo", ChannelID: "ch1"},
+		{PluginID: "echo", ChannelID: "gone"},
+		{PluginID: "quiz", ChannelID: "t1"},
+		{PluginID: "quiz", ChannelID: "gone"},
+	}, nil).Once()
+	s.runtime.On("Remove", s.ctx, "echo", "gone", false).Return(nil).Once()
+	s.runtime.On("Remove", s.ctx, "quiz", "gone", false).Return(nil).Once()
+	require.NoError(s.T(), s.svc.PruneChannels(s.ctx))
+
+	s.store.On("ListChannels", s.ctx).Return(nil, errors.New("boom")).Once()
+	require.EqualError(s.T(), s.svc.PruneChannels(s.ctx), "listing channels: boom")
 }
 
 func (s *ServiceSuite) TestStopDisabled() {
