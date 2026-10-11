@@ -1,12 +1,14 @@
 // Package proxy calls into plugin containers: the Loop → plugin half of the
-// contract. Every call has a timeout and reads a capped answer, so a slow or
-// misbehaving plugin can't hold the daemon up.
+// contract. Every call has a timeout, reads a capped answer and goes through
+// the container's circuit breaker, so a slow or misbehaving plugin can't
+// hold the daemon up.
 package proxy
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -102,34 +104,69 @@ type Doer interface {
 
 // Client calls plugin containers.
 type Client struct {
-	http Doer
+	http     Doer
+	breakers *breakers
 }
 
 // NewClient returns a Client sending its requests with doer.
 func NewClient(doer Doer) *Client {
-	return &Client{http: doer}
+	return &Client{http: doer, breakers: newBreakers(time.Now)}
+}
+
+// noAnswer is a call the plugin container didn't answer.
+type noAnswer struct{ err error }
+
+func (e *noAnswer) Error() string { return "calling the plugin: " + e.err.Error() }
+func (e *noAnswer) Unwrap() error { return e.err }
+
+// call runs fn with a timeout, unless the breaker of the container at ep is
+// open, and records on the breaker whether the container answered.
+func (c *Client) call(ctx context.Context, ep runtime.Endpoint, timeout time.Duration, fn func(context.Context) error) error {
+	if err := c.breakers.allow(ep); err != nil {
+		return err
+	}
+	cctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	err := fn(cctx)
+	var na *noAnswer
+	if errors.As(err, &na) || errors.Is(cctx.Err(), context.DeadlineExceeded) {
+		c.breakers.done(ep, ctx, err)
+	} else {
+		c.breakers.done(ep, ctx, nil)
+	}
+	return err
+}
+
+// do sends r, marking a failure to get an answer as noAnswer.
+func (c *Client) do(r *http.Request) (*http.Response, error) {
+	resp, err := c.http.Do(r)
+	if err != nil {
+		return nil, &noAnswer{err}
+	}
+	return resp, nil
 }
 
 // Action asks the plugin at ep to run action. The plugin accepts it with
 // any 2xx; it reports how the work went through events, later.
 func (c *Client) Action(ctx context.Context, ep runtime.Endpoint, action string, req ActionRequest) error {
-	ctx, cancel := context.WithTimeout(ctx, ActionTimeout)
-	defer cancel()
 	// ActionRequest always encodes.
 	body, _ := json.Marshal(req)
-	return c.post(ctx, ep, "/actions/"+url.PathEscape(action), body, nil)
+	return c.call(ctx, ep, ActionTimeout, func(ctx context.Context) error {
+		return c.post(ctx, ep, "/actions/"+url.PathEscape(action), body, nil)
+	})
 }
 
 // Tool calls tool on the plugin at ep and returns its answer.
 func (c *Client) Tool(ctx context.Context, ep runtime.Endpoint, tool string, req ToolRequest) (*ToolResult, error) {
-	ctx, cancel := context.WithTimeout(ctx, ToolTimeout)
-	defer cancel()
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("encoding the tool call: %w", err)
 	}
 	var res ToolResult
-	if err := c.post(ctx, ep, "/tools/"+url.PathEscape(tool), body, &res); err != nil {
+	err = c.call(ctx, ep, ToolTimeout, func(ctx context.Context) error {
+		return c.post(ctx, ep, "/tools/"+url.PathEscape(tool), body, &res)
+	})
+	if err != nil {
 		return nil, err
 	}
 	return &res, nil
@@ -137,18 +174,26 @@ func (c *Client) Tool(ctx context.Context, ep runtime.Endpoint, tool string, req
 
 // RunDone tells the plugin at ep that its agent run runID ended.
 func (c *Client) RunDone(ctx context.Context, ep runtime.Endpoint, runID string, req RunDoneRequest) error {
-	ctx, cancel := context.WithTimeout(ctx, RunDoneTimeout)
-	defer cancel()
 	// RunDoneRequest always encodes.
 	body, _ := json.Marshal(req)
-	return c.post(ctx, ep, "/runs/"+url.PathEscape(runID)+"/done", body, nil)
+	return c.call(ctx, ep, RunDoneTimeout, func(ctx context.Context) error {
+		return c.post(ctx, ep, "/runs/"+url.PathEscape(runID)+"/done", body, nil)
+	})
 }
 
 // X sends req to /x/{path} on the plugin at ep and returns its answer,
 // whatever the status. The path is cleaned, so it can't leave /x.
 func (c *Client) X(ctx context.Context, ep runtime.Endpoint, req XRequest) (*XResponse, error) {
-	ctx, cancel := context.WithTimeout(ctx, XTimeout)
-	defer cancel()
+	var res *XResponse
+	err := c.call(ctx, ep, XTimeout, func(ctx context.Context) error {
+		var err error
+		res, err = c.x(ctx, ep, req)
+		return err
+	})
+	return res, err
+}
+
+func (c *Client) x(ctx context.Context, ep runtime.Endpoint, req XRequest) (*XResponse, error) {
 	u := ep.URL + "/x" + path.Clean("/"+req.Path)
 	if req.RawQuery != "" {
 		u += "?" + req.RawQuery
@@ -161,9 +206,9 @@ func (c *Client) X(ctx context.Context, ep runtime.Endpoint, req XRequest) (*XRe
 		r.Header.Set("Content-Type", req.ContentType)
 	}
 	r.Header.Set("Authorization", "Bearer "+ep.Secret)
-	resp, err := c.http.Do(r)
+	resp, err := c.do(r)
 	if err != nil {
-		return nil, fmt.Errorf("calling the plugin: %w", err)
+		return nil, err
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, MaxXBody+1))
@@ -185,9 +230,9 @@ func (c *Client) post(ctx context.Context, ep runtime.Endpoint, path string, bod
 	}
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("Authorization", "Bearer "+ep.Secret)
-	resp, err := c.http.Do(r)
+	resp, err := c.do(r)
 	if err != nil {
-		return fmt.Errorf("calling the plugin: %w", err)
+		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {

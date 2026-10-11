@@ -303,6 +303,9 @@ func (s *Server) handleRunPluginAction(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, install.ErrNotRunnable), errors.Is(err, install.ErrNotEnabled):
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
+	case errors.Is(err, proxy.ErrUnavailable):
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
 	case err != nil:
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -367,6 +370,9 @@ func (s *Server) handlePluginX(w http.ResponseWriter, r *http.Request) {
 		return
 	case errors.Is(err, install.ErrNotRunnable), errors.Is(err, install.ErrNotEnabled):
 		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	case errors.Is(err, proxy.ErrUnavailable):
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	case err != nil:
 		http.Error(w, err.Error(), http.StatusBadGateway)

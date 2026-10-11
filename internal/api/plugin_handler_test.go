@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -314,6 +315,10 @@ func (s *ServerSuite) TestRunPluginAction() {
 			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: "/src/app"}, nil).Once()
 			pm.On("RunAction", mock.Anything, "echo", "ping", ch, manual).Return(errors.New("starting the plugin: unhealthy")).Once()
 		}, wantCode: http.StatusBadGateway, wantBody: "unhealthy"},
+		{name: "plugin not answering", body: `{"channel_id":"ch-1"}`, setup: func(pm *MockPluginManager) {
+			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: "/src/app"}, nil).Once()
+			pm.On("RunAction", mock.Anything, "echo", "ping", ch, manual).Return(fmt.Errorf("%w: 3 calls in a row failed", proxy.ErrUnavailable)).Once()
+		}, wantCode: http.StatusServiceUnavailable, wantBody: "isn't answering"},
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
@@ -383,6 +388,9 @@ func (s *ServerSuite) TestPluginX() {
 		{name: "unreachable", method: "GET", target: "/api/plugins/echo/x/quiz?channel_id=ch-1", setup: func(pm *MockPluginManager) {
 			pm.On("X", mock.Anything, "echo", ch, mock.Anything).Return(nil, errors.New("calling the plugin: refused")).Once()
 		}, wantCode: http.StatusBadGateway, wantBody: "refused"},
+		{name: "not answering", method: "GET", target: "/api/plugins/echo/x/quiz?channel_id=ch-1", setup: func(pm *MockPluginManager) {
+			pm.On("X", mock.Anything, "echo", ch, mock.Anything).Return(nil, proxy.ErrUnavailable).Once()
+		}, wantCode: http.StatusServiceUnavailable, wantBody: "isn't answering"},
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {

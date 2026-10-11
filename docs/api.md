@@ -3087,7 +3087,7 @@ Run a plugin action by hand in a channel, thread or worktree thread. The plugin'
 
 `channel_id` is the channel the action ran in.
 
-**Errors:** `400` without `channel_id`; `404` if the channel or plugin doesn't exist, or the plugin has no such action; `409` if the plugin isn't runnable; `502` if its container doesn't start or the plugin refuses the action.
+**Errors:** `400` without `channel_id`; `404` if the channel or plugin doesn't exist, or the plugin has no such action; `409` if the plugin isn't runnable; `502` if its container doesn't start or the plugin refuses the action; `503` while the plugin isn't answering (see [Plugins](plugins.md#when-a-plugin-stops-answering)).
 
 ### `POST /api/plugin/v1/runs`
 
@@ -3141,7 +3141,7 @@ Called by a plugin agent's MCP server when the agent calls one of the plugin's t
 {"content": "hi", "is_error": false}
 ```
 
-An unknown tool or an input the schema rejects comes back as `is_error: true`, so the agent sees why.
+An unknown tool, an input the schema rejects, or a plugin that isn't answering comes back as `is_error: true`, so the agent sees why.
 
 **Errors:** `403` for any caller but the plugin's own agent run; `404` if the thread or its channel is gone; `502` if the container doesn't start or the plugin fails the call.
 
@@ -3149,7 +3149,7 @@ An unknown tool or an input the schema rejects comes back as `is_error: true`, s
 
 The plugin's own API for its panels. Loop sends the method, the query (without `channel_id`), the body (up to 8 MB) and its `Content-Type` to the plugin's `/x/{path}` in the container of the channel, thread or worktree thread, starting it if needed, and answers with the plugin's status, body and `Content-Type`.
 
-**Errors:** `400` without `channel_id`; `404` if the channel or plugin doesn't exist; `409` if the plugin isn't runnable; `413` for a larger body; `502` if the container doesn't start or the call fails.
+**Errors:** `400` without `channel_id`; `404` if the channel or plugin doesn't exist; `409` if the plugin isn't runnable; `413` for a larger body; `502` if the container doesn't start or the call fails; `503` while the plugin isn't answering.
 
 ### Plugin API v1
 

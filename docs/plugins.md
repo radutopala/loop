@@ -200,6 +200,16 @@ any other.
 
 Tool input is validated against the tool's `input_schema` before it reaches the plugin.
 
+### When a plugin stops answering
+
+Each call has a time limit: 10 s for actions and `/runs/{run_id}/done`, 60 s for tools, 30 s for
+`/x`. A tool answer is capped at 1 MB and an `/x` body at 8 MB.
+
+When a container leaves 3 calls in a row unanswered (it refused the connection or ran out of
+time), Loop stops calling it for 30 s and fails those calls at once: `/x` and actions with `503`,
+tool calls with an `is_error` result the agent sees. After that, one call tries the container
+again; an answer, of any status, closes the breaker. A container that restarts starts afresh.
+
 ## Plugin → Loop: Plugin API v1
 
 Calls go to `$LOOP_API_URL/api/plugin/v1/...` with `Authorization: Bearer <contents of
