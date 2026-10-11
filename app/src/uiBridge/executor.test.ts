@@ -572,9 +572,21 @@ describe("more steps", () => {
     expect(ws.replacing).toEqual([undefined, "chat"]);
   });
 
+  it("waits for the plugins to be listed", async () => {
+    const listed = ws.plugins;
+    ws.plugins = null;
+    let sleeps = 0;
+    host.onSleep = () => {
+      sleeps++;
+      if (sleeps === 3) ws.plugins = listed;
+    };
+    expect(await run([{ op: "add_pane", panel: "plugin", item: "quiz" }])).toEqual([{ op: "add_pane", ok: true, pane: "plugin-0" }]);
+    expect(sleeps).toBe(3);
+  });
+
   it("refuses a plugin pane until there is a plugin panel", async () => {
     ws.plugins = null;
-    expect(await run([{ op: "add_pane", panel: "plugin", item: "quiz" }])).toEqual([{ op: "add_pane", ok: false, error: "the plugins aren't listed yet; try again" }]);
+    expect(await run([{ op: "add_pane", panel: "plugin", item: "quiz" }], 500)).toEqual([{ op: "add_pane", ok: false, error: "timed out waiting for the plugins to be listed" }]);
     ws.plugins = [];
     expect(await run([{ op: "add_pane", panel: "plugin", item: "quiz" }])).toEqual([{ op: "add_pane", ok: false, error: 'no plugin panel "quiz"; plugin panels: none' }]);
   });
