@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/radutopala/loop/internal/plugin"
 	"github.com/radutopala/loop/internal/plugin/runtime"
 	"github.com/radutopala/loop/internal/testutil"
 )
@@ -33,6 +34,7 @@ func (s *ClientSuite) TestSpec() {
 	_, err := c.Tool(ctx, ep, "echo", ToolRequest{RunID: "r1", Input: []byte(`{}`)})
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), c.RunDone(ctx, ep, "r1", RunDoneRequest{Status: RunStatusDone}))
+	require.NoError(s.T(), c.Event(ctx, ep, Event{Type: "message.created", ChannelID: "ch1"}))
 	for _, m := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
 		_, err := c.X(ctx, ep, XRequest{Method: m, Path: "api/items/1"})
 		require.NoError(s.T(), err)
@@ -41,4 +43,6 @@ func (s *ClientSuite) TestSpec() {
 	slices.Sort(called)
 	want := slices.DeleteFunc(spec.Routes(), func(r string) bool { return r == "GET /healthz" })
 	require.Equal(s.T(), want, slices.Compact(called))
+	require.Equal(s.T(), slices.Sorted(slices.Values(plugin.Events)), spec.Enum("Event", "type"),
+		"the events a manifest may subscribe to aren't the spec's")
 }

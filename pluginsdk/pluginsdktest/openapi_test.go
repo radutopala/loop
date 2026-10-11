@@ -47,6 +47,8 @@ type specOp struct {
 type spec struct {
 	ops map[string]specOp
 	mux *http.ServeMux
+	// eventTypes is the Event schema's type enum.
+	eventTypes []string
 }
 
 func loadSpec(t *testing.T, file string) *spec {
@@ -54,11 +56,22 @@ func loadSpec(t *testing.T, file string) *spec {
 	data, err := os.ReadFile(file)
 	require.NoError(t, err)
 	var doc struct {
-		Paths map[string]map[string]yaml.Node `yaml:"paths"`
+		Paths      map[string]map[string]yaml.Node `yaml:"paths"`
+		Components struct {
+			Schemas struct {
+				Event struct {
+					Properties struct {
+						Type struct {
+							Enum []string `yaml:"enum"`
+						} `yaml:"type"`
+					} `yaml:"properties"`
+				} `yaml:"Event"`
+			} `yaml:"schemas"`
+		} `yaml:"components"`
 	}
 	require.NoError(t, yaml.Unmarshal(data, &doc), file)
 	methods := []string{"get", "put", "post", "delete", "options", "head", "patch", "trace"}
-	s := &spec{ops: map[string]specOp{}, mux: http.NewServeMux()}
+	s := &spec{ops: map[string]specOp{}, mux: http.NewServeMux(), eventTypes: doc.Components.Schemas.Event.Properties.Type.Enum}
 	for p, item := range doc.Paths {
 		for key, node := range item {
 			if !slices.Contains(methods, key) {
@@ -230,6 +243,12 @@ func (s *OpenAPISuite) TestServer() {
 		}
 		require.NotEmpty(s.T(), s.contract.route(method, path), "the server's %q isn't in %s", p, contractSpec)
 	}
+}
+
+// TestEventTypes checks that the SDK names the events the contract sends.
+func (s *OpenAPISuite) TestEventTypes() {
+	require.ElementsMatch(s.T(), []string{pluginsdk.EventMessageCreated, pluginsdk.EventAgentStatus, pluginsdk.EventQualityScanned},
+		s.contract.eventTypes)
 }
 
 // TestFakeLoop checks that the fake serves the spec's operations, all of

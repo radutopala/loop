@@ -158,6 +158,26 @@ func (s *ClientSuite) TestRunDone() {
 	require.Equal(s.T(), req, got)
 }
 
+func (s *ClientSuite) TestEvent() {
+	var got map[string]any
+	var path, auth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path, auth = r.URL.EscapedPath(), r.Header.Get("Authorization")
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	evt := Event{Type: "message.created", ChannelID: "ch1", ThreadID: "th1", Data: map[string]string{"content": "hi"}, Timestamp: 7}
+	require.NoError(s.T(), NewClient(srv.Client()).Event(context.Background(), runtime.Endpoint{URL: srv.URL, Secret: "sec"}, evt))
+	require.Equal(s.T(), "/events", path)
+	require.Equal(s.T(), "Bearer sec", auth)
+	require.Equal(s.T(), map[string]any{"type": "message.created", "channel_id": "ch1", "thread_id": "th1", "data": map[string]any{"content": "hi"}, "timestamp": float64(7)}, got)
+
+	err := NewClient(failingDoer{}).Event(context.Background(), runtime.Endpoint{URL: "http://plugin"}, Event{Data: make(chan int)})
+	require.ErrorContains(s.T(), err, "encoding the event")
+}
+
 func (s *ClientSuite) TestX() {
 	tests := []struct {
 		name     string

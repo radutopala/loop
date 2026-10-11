@@ -28,6 +28,8 @@ const (
 	ToolTimeout = 60 * time.Second
 	// RunDoneTimeout caps telling a plugin one of its agent runs ended.
 	RunDoneTimeout = 10 * time.Second
+	// EventTimeout caps handing a plugin a Loop event it subscribes to.
+	EventTimeout = 10 * time.Second
 	// XTimeout caps a call to the plugin's own API for its UI.
 	XTimeout = 30 * time.Second
 	// maxToolResult caps a tool call's answer.
@@ -79,6 +81,16 @@ const (
 type RunDoneRequest struct {
 	Status string `json:"status"`
 	Error  string `json:"error,omitempty"`
+}
+
+// Event is the body of POST /events: a Loop event in the channel the
+// container serves, or in ThreadID, one of its threads.
+type Event struct {
+	Type      string `json:"type"`
+	ChannelID string `json:"channel_id"`
+	ThreadID  string `json:"thread_id,omitempty"`
+	Data      any    `json:"data"`
+	Timestamp int64  `json:"timestamp"`
 }
 
 // XRequest is a call from the plugin's UI to its own API, /x/{path}.
@@ -178,6 +190,17 @@ func (c *Client) RunDone(ctx context.Context, ep runtime.Endpoint, runID string,
 	body, _ := json.Marshal(req)
 	return c.call(ctx, ep, RunDoneTimeout, func(ctx context.Context) error {
 		return c.post(ctx, ep, "/runs/"+url.PathEscape(runID)+"/done", body, nil)
+	})
+}
+
+// Event hands the plugin at ep a Loop event it subscribes to.
+func (c *Client) Event(ctx context.Context, ep runtime.Endpoint, evt Event) error {
+	body, err := json.Marshal(evt)
+	if err != nil {
+		return fmt.Errorf("encoding the event: %w", err)
+	}
+	return c.call(ctx, ep, EventTimeout, func(ctx context.Context) error {
+		return c.post(ctx, ep, "/events", body, nil)
 	})
 }
 

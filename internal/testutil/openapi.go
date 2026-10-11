@@ -20,6 +20,14 @@ type OpenAPI struct {
 	// method and path, as in "GET /channel".
 	Capabilities map[string][]string
 	mux          *http.ServeMux
+	schemas      map[string]openAPISchema
+}
+
+// openAPISchema is the part of a schema of components.schemas Enum reads.
+type openAPISchema struct {
+	Properties map[string]struct {
+		Enum []string `yaml:"enum"`
+	} `yaml:"properties"`
 }
 
 // LoadOpenAPI reads the OpenAPI spec at file.
@@ -28,12 +36,15 @@ func LoadOpenAPI(t testing.TB, file string) *OpenAPI {
 	data, err := os.ReadFile(file)
 	require.NoError(t, err)
 	var doc struct {
-		Paths map[string]map[string]yaml.Node `yaml:"paths"`
+		Paths      map[string]map[string]yaml.Node `yaml:"paths"`
+		Components struct {
+			Schemas map[string]openAPISchema `yaml:"schemas"`
+		} `yaml:"components"`
 	}
 	require.NoError(t, yaml.Unmarshal(data, &doc), file)
 	// The keys of a path item that are operations.
 	methods := []string{"get", "put", "post", "delete", "options", "head", "patch", "trace"}
-	spec := &OpenAPI{Capabilities: map[string][]string{}, mux: http.NewServeMux()}
+	spec := &OpenAPI{Capabilities: map[string][]string{}, mux: http.NewServeMux(), schemas: doc.Components.Schemas}
 	for p, item := range doc.Paths {
 		for key, node := range item {
 			if !slices.Contains(methods, key) {
@@ -62,4 +73,9 @@ func (o *OpenAPI) Route(method, path string) string {
 // Routes returns the spec's operations, sorted.
 func (o *OpenAPI) Routes() []string {
 	return slices.Sorted(maps.Keys(o.Capabilities))
+}
+
+// Enum returns the enum of property of components.schemas' schema, sorted.
+func (o *OpenAPI) Enum(schema, property string) []string {
+	return slices.Sorted(slices.Values(o.schemas[schema].Properties[property].Enum))
 }

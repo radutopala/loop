@@ -59,6 +59,18 @@ type RunDoneRequest struct {
 	Error  string `json:"error,omitempty"`
 }
 
+// Event is the body of POST /events: a Loop event the plugin subscribes
+// to, in ChannelID or, when ThreadID is set, one of its threads. Data is
+// the event's data as the app's events WebSocket carries it.
+type Event struct {
+	Type      string          `json:"type"`
+	ChannelID string          `json:"channel_id"`
+	ThreadID  string          `json:"thread_id,omitempty"`
+	Data      json.RawMessage `json:"data"`
+	// Timestamp is when Loop sent it, in Unix milliseconds.
+	Timestamp int64 `json:"timestamp"`
+}
+
 // Health is the answer to GET /healthz.
 type Health struct {
 	API     string `json:"api"`
@@ -74,8 +86,12 @@ type ToolFunc func(ctx context.Context, req ToolRequest) (ToolResult, error)
 // RunDoneFunc learns that an agent run the plugin started ended.
 type RunDoneFunc func(ctx context.Context, runID string, req RunDoneRequest) error
 
+// EventFunc takes a Loop event the plugin subscribes to. Loop waits for it
+// for up to 10 s; hand long work to Server.Go.
+type EventFunc func(ctx context.Context, evt Event) error
+
 const (
-	// MaxBody caps the body of an action, tool or run call.
+	// MaxBody caps the body of an action, tool, run or event call.
 	MaxBody = 1 << 20
 	// MaxXBody caps the body of a call to /x, as Loop does.
 	MaxXBody = 8 << 20
@@ -84,7 +100,7 @@ const (
 )
 
 // Server serves the Loop → plugin contract: /healthz, /actions, /tools,
-// /runs/{run_id}/done and the plugin's own API under /x, behind the secret
+// /runs/{run_id}/done, /events and the plugin's own API under /x, behind the secret
 // Loop hands the container.
 type Server struct {
 	// Secret is the contents of LOOP_PLUGIN_SECRET_FILE. A Server without
@@ -98,6 +114,8 @@ type Server struct {
 	Tools map[string]ToolFunc
 	// RunDone, when set, learns when the plugin's agent runs end.
 	RunDone RunDoneFunc
+	// Events, when set, takes the Loop events the manifest subscribes to.
+	Events EventFunc
 	// X serves the plugin's API for its UI, with the /x prefix stripped.
 	X http.Handler
 	// Logger gets failures; nil discards them.
@@ -152,6 +170,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /actions/{action}", s.action)
 	mux.HandleFunc("POST /tools/{tool}", s.tool)
 	mux.HandleFunc("POST /runs/{run_id}/done", s.runDone)
+	mux.HandleFunc("POST /events", s.event)
 	if s.X != nil {
 		mux.Handle("/x/", http.StripPrefix("/x", http.MaxBytesHandler(s.X, MaxXBody)))
 	}
@@ -236,6 +255,22 @@ func (s *Server) runDone(w http.ResponseWriter, r *http.Request) {
 	if s.RunDone != nil {
 		if err := s.RunDone(r.Context(), r.PathValue("run_id"), req); err != nil {
 			s.Logger.Error("run done", "run_id", r.PathValue("run_id"), "err", err)
+			WriteError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) event(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, MaxBody)
+	var evt Event
+	if !DecodeJSON(w, r, &evt) {
+		return
+	}
+	if s.Events != nil {
+		if err := s.Events(r.Context(), evt); err != nil {
+			s.Logger.Error("event", "type", evt.Type, "err", err)
 			WriteError(w, http.StatusInternalServerError, err.Error())
 			return
 		}

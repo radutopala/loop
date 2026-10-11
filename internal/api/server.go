@@ -174,6 +174,7 @@ type Server struct {
 	imageManager            ImageManager
 	plugins                 PluginManager
 	pluginRunner            PluginRunner
+	deliverAsync            func(func()) // runs a plugin event's delivery; go in production, inline in tests
 	server                  *http.Server
 	listener                net.Listener
 	stopErr                 error // if set, Stop returns this error (for testing)
@@ -391,6 +392,7 @@ func NewServer(sched scheduler.Scheduler, channels ChannelEnsurer, threads Threa
 		threads:         threads,
 		messages:        messages,
 		removeMCPConfig: bot.RemoveMCPConfig,
+		deliverAsync:    func(f func()) { go f() },
 		worktreeCreator: &worktree.Creator{
 			Sys: sys,
 			Run: worktree.ExecCommandRunner,

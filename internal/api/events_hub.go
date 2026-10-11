@@ -106,6 +106,9 @@ type EventsHub struct {
 	// it after marshalling so tests can observe events without registering
 	// a real websocket. Production code never sets it.
 	captureHook func(Event)
+	// observers see every event Broadcast sends, after its timestamp is
+	// set. They run on the broadcasting goroutine, so they must not block.
+	observers []func(Event)
 }
 
 type eventConn struct {
@@ -138,6 +141,13 @@ func (h *EventsHub) Register(conn *websocket.Conn, channels []string) *eventConn
 	return ec
 }
 
+// Observe makes fn see every event Broadcast sends from now on.
+func (h *EventsHub) Observe(fn func(Event)) {
+	h.mu.Lock()
+	h.observers = append(h.observers, fn)
+	h.mu.Unlock()
+}
+
 // Unregister removes a subscriber.
 func (h *EventsHub) Unregister(ec *eventConn) {
 	h.mu.Lock()
@@ -162,7 +172,11 @@ func (h *EventsHub) Broadcast(evt Event) {
 	for ec := range h.subscribers {
 		subs = append(subs, ec)
 	}
+	observers := h.observers
 	h.mu.RUnlock()
+	for _, fn := range observers {
+		fn(evt)
+	}
 
 	for _, ec := range subs {
 		ec.writeMu.Lock()

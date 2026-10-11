@@ -105,6 +105,16 @@ Each setting is a schema: `type` (`string`, `integer`, `number`, `boolean`, `arr
 `object`), with `title`, `description`, `default`, `enum`, `minimum`, `maximum`, `pattern`,
 `items`, `properties` and `additionalProperties`. Defaults are checked at install.
 
+### Events
+
+`"events": ["message.created", "agent.status", "quality.scanned"]` subscribes the plugin to those
+Loop events, and needs `events.subscribe`. Loop sends each one to `POST /events` on the
+container of the channel it happened in, starting the container if it isn't running, when the
+channel's project enables the plugin. An event in one of the channel's threads goes to the
+channel's container with the thread's id; events in hidden threads, such as the plugin's own
+agent runs, aren't sent. Delivery is best effort: each event is sent once, in no set order, and
+dropped when the plugin doesn't take it.
+
 ### Scheduled actions
 
 An action with a `default_schedule` (type `cron` or `interval`) gets a scheduled task in each
@@ -132,6 +142,7 @@ Capabilities are approved by the owner at install and checked on every call:
 | `ui.notify` | `POST /notify`, the bridge's `ui.notify` |
 | `ui.open_file` | the bridge's `ui.open_file` |
 | `memory.write` | `PUT /memory/{name}`, `DELETE /memory/{name}` |
+| `events.subscribe` | the manifest's `events`, sent to `POST /events` |
 
 ## Container environment
 
@@ -202,13 +213,14 @@ any other.
 | `POST /actions/{action}` | `{"trigger": "manual"\|"schedule", "task_id": 0}` | `202` quickly; do the work afterwards |
 | `POST /tools/{tool}` | `{"run_id", "agent", "thread_id", "input": {…}}` | `200 {"content": "…", "is_error": false}`; the agent sees `content`, and `is_error` lets it retry |
 | `POST /runs/{run_id}/done` | `{"status": "done"\|"failed", "error": "…"}` | `204`; sent when an agent run the plugin started ends |
+| `POST /events` | `{"type", "channel_id", "thread_id", "data": {…}, "timestamp"}` | `204`; a Loop event the manifest subscribes to, with `data` as the app's events WebSocket carries it |
 | `ANY /x/{path}` | whatever the plugin's UI sends | the plugin's own API for its UI, proxied by Loop with method, query, body and `Content-Type` |
 
 Tool input is validated against the tool's `input_schema` before it reaches the plugin.
 
 ### When a plugin stops answering
 
-Each call has a time limit: 10 s for actions and `/runs/{run_id}/done`, 60 s for tools, 30 s for
+Each call has a time limit: 10 s for actions, `/runs/{run_id}/done` and `/events`, 60 s for tools, 30 s for
 `/x`. A tool answer is capped at 1 MB and an `/x` body at 8 MB.
 
 When a container leaves 3 calls in a row unanswered (it refused the connection or ran out of
@@ -257,9 +269,10 @@ written in Go:
 
 - `LoadEnv` reads the container environment; `Env.Secret`, `Env.Client` and `Env.Listen` give the
   secret, a Plugin API client and the listener.
-- `Server` serves `/healthz`, `/actions`, `/tools`, `/runs/{run_id}/done` and your own `X` handler
-  under `/x`, behind the secret. An action answers `202` and runs its `ActionFunc` in the
-  background; a tool's error becomes a result with `is_error` set. `Server.Go` runs other
+- `Server` serves `/healthz`, `/actions`, `/tools`, `/runs/{run_id}/done`, `/events` and your own
+  `X` handler under `/x`, behind the secret. An action answers `202` and runs its `ActionFunc` in
+  the background; a tool's error becomes a result with `is_error` set; `Events` takes each event
+  while Loop waits, so hand long work to `Server.Go`. `Server.Go` runs other
   background work, which `Close` cancels.
 - `Client` (the `API` interface) calls the Plugin API; a non-2xx answer is a `StatusError`, which
   `HasStatus` checks.

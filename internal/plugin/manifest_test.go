@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -29,7 +30,8 @@ const cogtest = `{
   "version": "1.0.0",
   "api": "1",
   "loop": ">=2026.11.0",
-  "capabilities": ["files.read", "git.read", "quality.read", "agent.readonly", "schedule", "ui.panel", "ui.notify", "ui.open_file", "memory.write"],
+  "capabilities": ["files.read", "git.read", "quality.read", "agent.readonly", "schedule", "ui.panel", "ui.notify", "ui.open_file", "memory.write", "events.subscribe"],
+  "events": ["message.created"],
   "gate": {
     "commands": [{"commands": ["git"], "args_patterns": ["^log"], "decision": "allow"}],
     "files": [{"paths": ["/data/**"], "operations": ["write"], "decision": "allow"}],
@@ -64,7 +66,7 @@ func (s *ManifestSuite) TestParseManifestErrors() {
 		wantErr string
 	}{
 		{name: "not JSON", data: `{`, wantErr: "parsing plugin manifest"},
-		{name: "unknown field", data: `{"id": "x1", "events": ["a"]}`, wantErr: `unknown field "events"`},
+		{name: "unknown field", data: `{"id": "x1", "hooks": ["a"]}`, wantErr: `unknown field "hooks"`},
 		{name: "invalid", data: `{"id": "X"}`, wantErr: `id "X" must match`},
 	} {
 		s.Run(tc.name, func() {
@@ -180,6 +182,15 @@ func (s *ManifestSuite) TestValidate() {
 			`ui.panels[3]: entry "ui/app.js" must be`,
 		}},
 		{name: "empty ui", edit: func(m *Manifest) { m.UI = &UI{} }},
+		{name: "events", edit: func(m *Manifest) { m.Events = []string{"message.created", "message.streaming", "message.created"} }, wantErr: []string{
+			`events needs capability "events.subscribe"`,
+			`events[1]: "message.streaming" is not an event a plugin can subscribe to (message.created, agent.status, quality.scanned)`,
+			`events[2]: "message.created" is listed twice`,
+		}},
+		{name: "events with the capability", edit: func(m *Manifest) {
+			m.Capabilities = []Capability{CapEventsSub}
+			m.Events = slices.Clone(Events)
+		}},
 		{name: "resources", edit: func(m *Manifest) { m.Resources = &Resources{Memory: "lots", CPUs: -1} },
 			wantErr: []string{`resources.memory "lots" is not a size like 256m`, "resources.cpus must not be negative"}},
 		{name: "zero memory", edit: func(m *Manifest) { m.Resources = &Resources{Memory: "0"} },

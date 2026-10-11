@@ -150,6 +150,29 @@ func (s *ServerSuite) TestRunDone() {
 	require.Equal(s.T(), http.StatusNoContent, s.call(http.MethodPost, "/runs/bad/done", `{"status":"done"}`).Code, "without RunDone the end is ignored")
 }
 
+func (s *ServerSuite) TestEvents() {
+	var got []Event
+	s.srv.Events = func(_ context.Context, evt Event) error {
+		if evt.Type == EventAgentStatus {
+			return errors.New("busy")
+		}
+		got = append(got, evt)
+		return nil
+	}
+	body := `{"type":"message.created","channel_id":"ch1","thread_id":"th1","data":{"id":1},"timestamp":7}`
+	require.Equal(s.T(), http.StatusNoContent, s.call(http.MethodPost, "/events", body).Code)
+	require.Equal(s.T(), []Event{{Type: EventMessageCreated, ChannelID: "ch1", ThreadID: "th1", Data: json.RawMessage(`{"id":1}`), Timestamp: 7}}, got)
+
+	w := s.call(http.MethodPost, "/events", `{"type":"agent.status"}`)
+	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
+	require.JSONEq(s.T(), `{"error":"busy"}`, w.Body.String())
+	require.Contains(s.T(), s.logs.String(), `msg=event type=agent.status err=busy`)
+	require.Equal(s.T(), http.StatusBadRequest, s.call(http.MethodPost, "/events", `nope`).Code)
+
+	s.srv.Events = nil
+	require.Equal(s.T(), http.StatusNoContent, s.call(http.MethodPost, "/events", body).Code, "without Events the event is ignored")
+}
+
 func (s *ServerSuite) TestX() {
 	w := s.call(http.MethodPut, "/x/quizzes/3?q=1", `{"a":1}`)
 	require.Equal(s.T(), http.StatusOK, w.Code)

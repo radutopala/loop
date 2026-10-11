@@ -23,6 +23,14 @@ const (
 	CapUINotify      = "ui.notify"
 	CapUIOpenFile    = "ui.open_file"
 	CapMemoryWrite   = "memory.write"
+	CapEventsSub     = "events.subscribe"
+)
+
+// Loop events a manifest may subscribe to.
+const (
+	EventMessageCreated = "message.created"
+	EventAgentStatus    = "agent.status"
+	EventQualityScanned = "quality.scanned"
 )
 
 // Manifest is a plugin's plugin.json. Loop checks it at install; reading it
@@ -43,6 +51,9 @@ type Manifest struct {
 	Actions      []Action            `json:"actions,omitempty"`
 	UI           *UI                 `json:"ui,omitempty"`
 	Resources    *Resources          `json:"resources,omitempty"`
+	// Events are the Loop events Loop sends to the plugin's POST /events;
+	// they need CapEventsSub.
+	Events []string `json:"events,omitempty"`
 }
 
 // Gate is the agentgate rules a plugin asks for on top of Loop's baseline.

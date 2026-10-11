@@ -77,6 +77,7 @@ type Caller interface {
 	Tool(ctx context.Context, ep runtime.Endpoint, tool string, req proxy.ToolRequest) (*proxy.ToolResult, error)
 	RunDone(ctx context.Context, ep runtime.Endpoint, runID string, req proxy.RunDoneRequest) error
 	X(ctx context.Context, ep runtime.Endpoint, req proxy.XRequest) (*proxy.XResponse, error)
+	Event(ctx context.Context, ep runtime.Endpoint, evt proxy.Event) error
 }
 
 // AgentRun is an agent run a plugin asks for: the agent and the tools it
@@ -433,6 +434,42 @@ func (s *Service) X(ctx context.Context, pluginID string, ch runtime.Channel, re
 		return nil, err
 	}
 	return s.caller.X(ctx, ep, req)
+}
+
+// Deliver hands evt, a Loop event in ch, to each plugin that subscribes to
+// its type, has events.subscribe approved and is enabled by ch's project,
+// starting its container in ch if it isn't running. It returns each
+// plugin's failure.
+func (s *Service) Deliver(ctx context.Context, ch runtime.Channel, evt proxy.Event) error {
+	states, err := s.store.ListPluginStates(ctx)
+	if err != nil {
+		return fmt.Errorf("listing plugins: %w", err)
+	}
+	var errs []error
+	for _, st := range states {
+		if st.Status != db.PluginStatusInstalled || !slices.Contains(st.ApprovedCaps, string(plugin.CapEventsSub)) {
+			continue
+		}
+		m, err := s.installer.Manifest(st)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", st.PluginID, err))
+			continue
+		}
+		if !slices.Contains(m.Events, evt.Type) {
+			continue
+		}
+		ep, err := s.start(ctx, st, m, ch)
+		if errors.Is(err, ErrNotEnabled) {
+			continue
+		}
+		if err == nil {
+			err = s.caller.Event(ctx, ep, evt)
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", st.PluginID, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // UI returns the dir the plugin's image was extracted to, which holds its

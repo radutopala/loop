@@ -64,6 +64,10 @@ func (m *mockCaller) X(ctx context.Context, ep runtime.Endpoint, req proxy.XRequ
 	return res, args.Error(1)
 }
 
+func (m *mockCaller) Event(ctx context.Context, ep runtime.Endpoint, evt proxy.Event) error {
+	return m.Called(ctx, ep, evt).Error(0)
+}
+
 func (m *mockRuntime) StopIdle(ctx context.Context) bool {
 	return m.Called(ctx).Bool(0)
 }
@@ -702,6 +706,86 @@ func (s *ServiceSuite) TestRunDoneAndX() {
 		require.EqualError(s.T(), s.svc.RunDone(s.ctx, "echo", ch, "r1", done), "starting the plugin: unhealthy")
 		_, err := s.svc.X(s.ctx, "echo", ch, xreq)
 		require.EqualError(s.T(), err, "starting the plugin: unhealthy")
+	})
+}
+
+const eventsManifest = `{
+	"id": "echo", "name": "Echo", "version": "1.0.0", "api": "1",
+	"capabilities": ["events.subscribe"],
+	"events": ["message.created"],
+}`
+
+// subscriber returns echo installed with eventsManifest and caps approved.
+func (s *ServiceSuite) subscriber(caps ...string) *db.PluginState {
+	st := s.installed(db.PluginStatusInstalled)
+	require.NoError(s.T(), os.WriteFile(filepath.Join(s.in.Dir(st), "plugin.json"), []byte(eventsManifest), 0o644))
+	st.ApprovedCaps = caps
+	return st
+}
+
+func (s *ServiceSuite) TestDeliver() {
+	ch := runtime.Channel{ID: "ch1", DirPath: "/src"}
+	ep := runtime.Endpoint{URL: "http://127.0.0.1:1234", Secret: "s"}
+	evt := proxy.Event{Type: "message.created", ChannelID: "ch1", Data: map[string]string{"content": "hi"}}
+	sub := string(plugin.CapEventsSub)
+	tests := []struct {
+		name    string
+		evt     proxy.Event
+		states  func() []*db.PluginState
+		setup   func()
+		wantErr string
+	}{
+		{name: "delivered", states: func() []*db.PluginState { return []*db.PluginState{s.subscriber(sub)} }, setup: func() {
+			s.runtime.On("Ensure", s.ctx, mock.Anything, ch).Return(ep, nil).Once()
+			s.caller.On("Event", s.ctx, ep, evt).Return(nil).Once()
+		}},
+		{name: "not approved", states: func() []*db.PluginState { return []*db.PluginState{s.subscriber()} }},
+		{name: "not installed", states: func() []*db.PluginState {
+			st := s.subscriber(sub)
+			st.Status = db.PluginStatusDisabled
+			return []*db.PluginState{st}
+		}},
+		{name: "another type", evt: proxy.Event{Type: "agent.status"}, states: func() []*db.PluginState { return []*db.PluginState{s.subscriber(sub)} }},
+		{name: "not enabled in the channel", states: func() []*db.PluginState { return []*db.PluginState{s.subscriber(sub)} }, setup: func() {
+			s.enabled = false
+		}},
+		{name: "no manifest", states: func() []*db.PluginState {
+			return []*db.PluginState{{PluginID: "echo", Image: "sha256:00", Status: db.PluginStatusInstalled, ApprovedCaps: []string{sub}}}
+		}, wantErr: "echo: reading the plugin's manifest"},
+		{name: "start fails", states: func() []*db.PluginState { return []*db.PluginState{s.subscriber(sub)} }, setup: func() {
+			s.runtime.On("Ensure", s.ctx, mock.Anything, ch).Return(runtime.Endpoint{}, errors.New("unhealthy")).Once()
+		}, wantErr: "echo: starting the plugin: unhealthy"},
+		{name: "call fails", states: func() []*db.PluginState { return []*db.PluginState{s.subscriber(sub)} }, setup: func() {
+			s.runtime.On("Ensure", s.ctx, mock.Anything, ch).Return(ep, nil).Once()
+			s.caller.On("Event", s.ctx, ep, evt).Return(errors.New("the plugin answered 500")).Once()
+		}, wantErr: "echo: the plugin answered 500"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			defer s.TearDownTest()
+			s.store.On("ListPluginStates", s.ctx).Return(tt.states(), nil).Once()
+			if tt.setup != nil {
+				tt.setup()
+			}
+			e := tt.evt
+			if e.Type == "" {
+				e = evt
+			}
+			err := s.svc.Deliver(s.ctx, ch, e)
+			if tt.wantErr == "" {
+				require.NoError(s.T(), err)
+				return
+			}
+			require.ErrorContains(s.T(), err, tt.wantErr)
+		})
+	}
+
+	s.Run("store", func() {
+		s.SetupTest()
+		defer s.TearDownTest()
+		s.store.On("ListPluginStates", s.ctx).Return(nil, errors.New("boom")).Once()
+		require.EqualError(s.T(), s.svc.Deliver(s.ctx, ch, evt), "listing plugins: boom")
 	})
 }
 

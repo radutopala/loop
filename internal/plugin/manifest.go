@@ -51,14 +51,19 @@ const (
 	CapUINotify      Capability = "ui.notify"
 	CapUIOpenFile    Capability = "ui.open_file"
 	CapMemoryWrite   Capability = "memory.write"
+	CapEventsSub     Capability = "events.subscribe"
 )
 
 // Capabilities lists every capability a manifest may ask for.
 var Capabilities = []Capability{
 	CapFilesRead, CapGitRead, CapQualityRead,
 	CapAgentReadOnly, CapAgentWrite, CapSchedule,
-	CapUIPanel, CapUINotify, CapUIOpenFile, CapMemoryWrite,
+	CapUIPanel, CapUINotify, CapUIOpenFile, CapMemoryWrite, CapEventsSub,
 }
+
+// Events lists the Loop events a manifest may subscribe to, each one in a
+// channel, as the app's events WebSocket names them.
+var Events = []string{"message.created", "agent.status", "quality.scanned"}
 
 // Manifest is a plugin's plugin.json: who it is, what it may do and what it
 // contributes to Loop.
@@ -73,13 +78,15 @@ type Manifest struct {
 	Capabilities []Capability `json:"capabilities,omitempty"`
 	// Gate holds the agentgate rules the plugin asks for on top of Loop's
 	// baseline for plugin containers. Allow and deny only.
-	Gate      *Gate                             `json:"gate,omitempty"`
-	Settings  map[string]*config.SchemaProperty `json:"settings,omitempty"`
-	Agents    []Agent                           `json:"agents,omitempty"`
-	Tools     []Tool                            `json:"tools,omitempty"`
-	Actions   []Action                          `json:"actions,omitempty"`
-	UI        *UI                               `json:"ui,omitempty"`
-	Resources *Resources                        `json:"resources,omitempty"`
+	Gate     *Gate                             `json:"gate,omitempty"`
+	Settings map[string]*config.SchemaProperty `json:"settings,omitempty"`
+	Agents   []Agent                           `json:"agents,omitempty"`
+	Tools    []Tool                            `json:"tools,omitempty"`
+	Actions  []Action                          `json:"actions,omitempty"`
+	// Events are the Loop events Loop sends to the plugin's POST /events.
+	Events    []string   `json:"events,omitempty"`
+	UI        *UI        `json:"ui,omitempty"`
+	Resources *Resources `json:"resources,omitempty"`
 }
 
 // Gate is a plugin's agentgate rules.
@@ -222,6 +229,7 @@ func (m *Manifest) Validate() error {
 	tools := m.validateTools(add)
 	m.validateAgents(add, tools)
 	m.validateActions(add)
+	m.validateEvents(add)
 	m.validateUI(add)
 	m.validateResources(add)
 	if len(errs) > 0 {
@@ -356,6 +364,22 @@ func (m *Manifest) validateActions(add func(string, ...any)) {
 		if err := scheduler.ValidateSchedule(s.Type, s.Schedule); err != nil {
 			add("actions[%d]: %v", i, err)
 		}
+	}
+}
+
+func (m *Manifest) validateEvents(add func(string, ...any)) {
+	if len(m.Events) > 0 && !m.Has(CapEventsSub) {
+		add("events needs capability %q", CapEventsSub)
+	}
+	seen := map[string]bool{}
+	for i, e := range m.Events {
+		if !slices.Contains(Events, e) {
+			add("events[%d]: %q is not an event a plugin can subscribe to (%s)", i, e, strings.Join(Events, ", "))
+		}
+		if seen[e] {
+			add("events[%d]: %q is listed twice", i, e)
+		}
+		seen[e] = true
 	}
 }
 

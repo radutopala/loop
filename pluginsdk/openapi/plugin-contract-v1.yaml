@@ -8,7 +8,7 @@ info:
     plugin-api-v1.yaml.
 
     Every request carries the secret Loop hands the container; refuse any
-    other. Each call has a time limit: 10 s for actions and run ends, 60 s
+    other. Each call has a time limit: 10 s for actions, run ends and events, 60 s
     for tools, 30 s for /x. Loop reads at most 1 MB of a tool's answer and
     8 MB of an /x answer.
 
@@ -31,6 +31,8 @@ tags:
     description: The manifest's actions.
   - name: tools
     description: The tools the plugin's agents call.
+  - name: events
+    description: Loop events the plugin subscribes to.
   - name: ui
     description: The plugin's own API for its panels.
 paths:
@@ -130,6 +132,34 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/RunDoneRequest"
+      responses:
+        "204":
+          description: Received.
+        "400":
+          description: The body isn't JSON.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500":
+          description: The plugin failed to take it.
+  /events:
+    post:
+      operationId: event
+      tags: [events]
+      summary: A Loop event the plugin subscribes to
+      description: |
+        Sent for each Loop event of a type in the manifest's `events`, when
+        the owner approved events.subscribe and the channel's project
+        enables the plugin. Loop starts the container to deliver it. An
+        event in one of the channel's threads carries thread_id; events in
+        hidden threads, such as the plugin's own agent runs, aren't sent.
+        Delivery is best effort: an event is sent once, in no set order, and
+        dropped when the plugin doesn't take it. Loop takes any 2xx as
+        received.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Event"
       responses:
         "204":
           description: Received.
@@ -254,3 +284,21 @@ components:
         error:
           type: string
           description: Why the run failed.
+    Event:
+      type: object
+      required: [type, channel_id, data, timestamp]
+      properties:
+        type:
+          type: string
+          enum: [message.created, agent.status, quality.scanned]
+        channel_id:
+          type: string
+          description: The channel the container serves.
+        thread_id:
+          type: string
+          description: The thread of the channel the event happened in, if any.
+        data:
+          description: The event's data, as the app's events WebSocket carries it.
+        timestamp:
+          type: integer
+          description: When Loop sent it, in Unix milliseconds.
