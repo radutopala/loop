@@ -174,6 +174,7 @@ type Server struct {
 	imageManager            ImageManager
 	plugins                 PluginManager
 	pluginRunner            PluginRunner
+	badges                  PluginBadgeStore
 	deliverAsync            func(func()) // runs a plugin event's delivery; go in production, inline in tests
 	server                  *http.Server
 	listener                net.Listener
@@ -686,6 +687,8 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/plugin/v1/memory/{name}", s.handlePutPluginMemory)
 	mux.HandleFunc("DELETE /api/plugin/v1/memory/{name}", s.handleDeletePluginMemory)
 	mux.HandleFunc("POST /api/plugin/v1/ui/commands", s.handlePluginUICommand)
+	mux.HandleFunc("PUT /api/plugin/v1/badge", s.handlePutPluginBadge)
+	mux.HandleFunc("DELETE /api/plugin/v1/badge", s.handleDeletePluginBadge)
 	mux.HandleFunc("GET /api/health", handleHealth)
 	mux.HandleFunc("POST /api/auth/rotate", s.handleRotateToken)
 	mux.HandleFunc("POST /api/content-caps", s.handleCreateContentCap)

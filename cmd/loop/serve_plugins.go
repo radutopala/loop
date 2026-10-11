@@ -12,6 +12,7 @@ import (
 
 	"github.com/docker/docker/api/types"
 
+	"github.com/radutopala/loop/internal/api"
 	"github.com/radutopala/loop/internal/apiauth"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/container"
@@ -49,6 +50,7 @@ type pluginStore interface {
 	runtime.Store
 	install.ServiceStore
 	orchestrator.PluginRunStore
+	api.PluginBadgeStore
 }
 
 // plugins is the plugin system the daemon runs when plugins.enabled is set.

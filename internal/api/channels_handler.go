@@ -80,6 +80,8 @@ type channelResponse struct {
 	// TrustPending is set when the channel's project config has fields
 	// waiting for the owner's trust: they don't apply until then.
 	TrustPending bool `json:"trust_pending,omitempty"`
+	// PluginBadges are the labels plugins show on the row.
+	PluginBadges []pluginBadge `json:"plugin_badges,omitempty"`
 }
 
 func (s *Server) handleEnsureChannel(w http.ResponseWriter, r *http.Request) {
@@ -170,6 +172,7 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	reviews := s.reviewSummaries()
+	badges := s.pluginBadgesByChannel(r.Context())
 
 	query := r.URL.Query().Get("query")
 	platformFilter := r.URL.Query().Get("platform")
@@ -286,6 +289,7 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 			TicketURL:        ch.TicketURL,
 			LastActivityAt:   lastActivity,
 			TrustPending:     trustPendingFor(trustDir),
+			PluginBadges:     badges[ch.ChannelID],
 		})
 	}
 

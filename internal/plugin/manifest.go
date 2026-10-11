@@ -53,6 +53,7 @@ const (
 	CapMemoryWrite   Capability = "memory.write"
 	CapEventsSub     Capability = "events.subscribe"
 	CapUIRun         Capability = "ui.run"
+	CapUIBadge       Capability = "ui.badge"
 )
 
 // Capabilities lists every capability a manifest may ask for.
@@ -60,7 +61,7 @@ var Capabilities = []Capability{
 	CapFilesRead, CapGitRead, CapQualityRead,
 	CapAgentReadOnly, CapAgentWrite, CapSchedule,
 	CapUIPanel, CapUINotify, CapUIOpenFile, CapMemoryWrite, CapEventsSub,
-	CapUIRun,
+	CapUIRun, CapUIBadge,
 }
 
 // Events lists the Loop events a manifest may subscribe to, each one in a

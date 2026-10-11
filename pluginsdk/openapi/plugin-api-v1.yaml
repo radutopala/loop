@@ -417,6 +417,49 @@ paths:
         "504":
           description: The window didn't answer within the timeout.
           content: { text/plain: { schema: { type: string } } }
+  /badge:
+    put:
+      operationId: setBadge
+      tags: [ui]
+      summary: Show a badge on the channel's sidebar row
+      description: |
+        Sets the plugin's badge on the sidebar row of its channel, or of
+        the thread it serves, replacing the one it set before. The badge
+        stays until the plugin clears it or is removed. The text is
+        trimmed. The body is capped at 64 KB.
+      x-loop-capabilities: [ui.badge]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Badge"
+      responses:
+        "204":
+          description: The badge is shown.
+        "400":
+          description: The body isn't JSON or is over 64 KB, the text is empty, too long or has control characters, or the title is too long.
+          content: { text/plain: { schema: { type: string } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/ChannelNotFound" }
+        "409": { $ref: "#/components/responses/NotRunnable" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { $ref: "#/components/responses/PluginsDisabled" }
+    delete:
+      operationId: clearBadge
+      tags: [ui]
+      summary: Clear the plugin's badge
+      x-loop-capabilities: [ui.badge]
+      responses:
+        "204":
+          description: The badge is gone, or never was there.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/ChannelNotFound" }
+        "409": { $ref: "#/components/responses/NotRunnable" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { $ref: "#/components/responses/PluginsDisabled" }
 components:
   securitySchemes:
     pluginToken:
@@ -635,3 +678,16 @@ components:
               ok: { type: boolean }
               error: { type: string }
             additionalProperties: true
+    Badge:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          minLength: 1
+          maxLength: 16
+          description: The label, one line.
+        title:
+          type: string
+          maxLength: 200
+          description: The tooltip.

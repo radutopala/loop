@@ -163,6 +163,7 @@ List all channels with optional filtering. Enriches each channel with container 
 - `description` is what the channel or thread is for, set via [`POST /api/channels/{id}/description`](#post-apichannelsiddescription). Omitted when empty.
 - `ticket_url` is the URL of the channel or thread's ticket, set via [`POST /api/channels/{id}/ticket`](#post-apichannelsidticket). Omitted when unset.
 - `trust_pending` is `true` when the project config's host-reaching fields changed since you last trusted them, so they don't apply yet (see [`GET /api/config/project/trust`](#get-apiconfigprojecttrust)). For a worktree chain it's the root checkout's config. Omitted otherwise, and when the config can't be read.
+- `plugin_badges` are the badges plugins set on the row with [`PUT /api/plugin/v1/badge`](#plugin-api-v1), as `[{"plugin_id", "text", "title"?}]` in plugin id order. Omitted when there are none, when plugins are off, or when the lookup fails. The sidebar patches them live from `plugin.badge` events.
 - `task_id` is set on a thread a scheduled task created for its output: the id of that task. Omitted on every other channel and thread, including ones that host tasks. The sidebar's hide-task-threads toggle filters on it.
 - `locked` is true when the channel/thread is guarded against accidental deletion (toggle via [`PATCH /api/channels/{id}/lock`](#patch-apichannelsidlock)). `DELETE /api/channels/{id}` and `DELETE /api/threads/{id}` return `409 Conflict` while a row is locked.
 - Hidden learn and explain threads (`kind: "learn"` or `"explain"`, see [Learn](#learn) and [Explain](#explain)) are left out of the list.
@@ -3166,6 +3167,8 @@ Called by a plugin's container with the token in its `LOOP_PLUGIN_TOKEN_FILE`; t
 | `POST /api/plugin/v1/notify` | `ui.notify` | body `{"title", "body"}` → `204`; broadcast as a `plugin.notify` event with `{"plugin_id", "title", "body"}`. At most five a minute per plugin: past that `429` with `Retry-After` in seconds |
 | `PUT /api/plugin/v1/memory/{name}` | `memory.write` | body `{"content"}` (up to 256 KB) → `204`; writes `plugin-<plugin>-<name>.md` in `~/.claude/projects/<encoded dir>/memory/` for the channel's dir, which `search_memory` indexes. `name` matches `^[a-z0-9][a-z0-9-]{0,63}$` (`400` otherwise); `409` when the channel has no dir |
 | `DELETE /api/plugin/v1/memory/{name}` | `memory.write` | removes that file → `204`, also when it's already gone |
+| `PUT /api/plugin/v1/badge` | `ui.badge` | body `{"text", "title"?}` → `204`; keeps the plugin's badge on the channel's sidebar row (see `plugin_badges` in [`GET /api/channels`](#get-apichannels)) and broadcasts a `plugin.badge` event with `{"plugin_id", "text", "title"?}` to every window. `text` is trimmed and must be 1 to 16 characters on one line, `title` at most 200 (`400` otherwise) |
+| `DELETE /api/plugin/v1/badge` | `ui.badge` | removes the plugin's badge → `204`, also when there was none; broadcasts `plugin.badge` with an empty `text` |
 | `POST /api/plugin/v1/ui/commands` | `ui.run` | as [`POST /api/ui/commands`](#post-apiuicommands), held to the channel: the first step is `select_channel`, and each `select_channel` names the channel or one of its threads that isn't hidden (`403` otherwise) |
 
 ---

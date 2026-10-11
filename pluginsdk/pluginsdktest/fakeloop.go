@@ -20,6 +20,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 
@@ -57,6 +59,12 @@ type Notification struct {
 	Body  string
 }
 
+// Badge is the badge the plugin shows on its channel's sidebar row.
+type Badge struct {
+	Text  string
+	Title string
+}
+
 // StartedRun is an agent run the plugin started.
 type StartedRun struct {
 	pluginsdk.RunRequest
@@ -80,6 +88,7 @@ type FakeLoop struct {
 	runs          []StartedRun
 	memory        map[string]string
 	uiCommands    []pluginsdk.UICommand
+	badge         *Badge
 }
 
 // NewFakeLoop starts a FakeLoop serving cfg, stopped when t ends.
@@ -102,6 +111,8 @@ func NewFakeLoop(t testing.TB, cfg Config) *FakeLoop {
 	mux.HandleFunc("PUT /api/plugin/v1/memory/{name}", f.allow(pluginsdk.CapMemoryWrite, f.putMemory))
 	mux.HandleFunc("DELETE /api/plugin/v1/memory/{name}", f.allow(pluginsdk.CapMemoryWrite, f.deleteMemory))
 	mux.HandleFunc("POST /api/plugin/v1/ui/commands", f.allow(pluginsdk.CapUIRun, f.runUI))
+	mux.HandleFunc("PUT /api/plugin/v1/badge", f.allow(pluginsdk.CapUIBadge, f.setBadge))
+	mux.HandleFunc("DELETE /api/plugin/v1/badge", f.allow(pluginsdk.CapUIBadge, f.clearBadge))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+f.token {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -146,6 +157,17 @@ func (f *FakeLoop) UICommands() []pluginsdk.UICommand {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.uiCommands)
+}
+
+// Badge returns the plugin's badge, or nil when it shows none.
+func (f *FakeLoop) Badge() *Badge {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.badge == nil {
+		return nil
+	}
+	b := *f.badge
+	return &b
 }
 
 // Memory returns the plugin's memory files by name.
@@ -363,6 +385,34 @@ func (f *FakeLoop) putMemory(w http.ResponseWriter, r *http.Request) {
 func (f *FakeLoop) deleteMemory(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	delete(f.memory, r.PathValue("name"))
+	f.mu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// setBadge checks a badge as Loop does and keeps it.
+func (f *FakeLoop) setBadge(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Text  string `json:"text"`
+		Title string `json:"title"`
+	}
+	if !pluginsdk.DecodeJSON(w, r, &req) {
+		return
+	}
+	req.Text = strings.TrimSpace(req.Text)
+	if req.Text == "" || utf8.RuneCountInString(req.Text) > 16 || strings.ContainsFunc(req.Text, unicode.IsControl) ||
+		utf8.RuneCountInString(req.Title) > 200 {
+		http.Error(w, "text must be one line of 1 to 16 characters, and title at most 200", http.StatusBadRequest)
+		return
+	}
+	f.mu.Lock()
+	f.badge = &Badge{Text: req.Text, Title: req.Title}
+	f.mu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (f *FakeLoop) clearBadge(w http.ResponseWriter, _ *http.Request) {
+	f.mu.Lock()
+	f.badge = nil
 	f.mu.Unlock()
 	w.WriteHeader(http.StatusNoContent)
 }

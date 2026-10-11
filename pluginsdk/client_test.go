@@ -154,6 +154,13 @@ func (s *ClientSuite) TestWrites() {
 
 	require.NoError(s.T(), s.client.DeleteMemory(ctx, "quiz-notes"))
 	s.requireCall(http.MethodDelete, "/memory/quiz-notes", "")
+
+	require.NoError(s.T(), s.client.SetBadge(ctx, "3 due", "3 quizzes due"))
+	s.requireCall(http.MethodPut, "/badge", "")
+	require.JSONEq(s.T(), `{"text":"3 due","title":"3 quizzes due"}`, s.body)
+
+	require.NoError(s.T(), s.client.ClearBadge(ctx))
+	s.requireCall(http.MethodDelete, "/badge", "")
 }
 
 // deadlineDoer records how long the request had to run.
@@ -265,6 +272,13 @@ func (s *ClientSuite) TestErrors() {
 			call:    func() error { _, err := s.client.RunUI(ctx, UICommand{}); return err },
 			wantErr: "POST /ui/commands: Loop answered 403: no ui.run",
 			status:  http.StatusForbidden,
+		},
+		{
+			name:    "badge refused",
+			setup:   func() { s.answer(http.StatusBadRequest, "text is required") },
+			call:    func() error { return s.client.SetBadge(ctx, "", "") },
+			wantErr: "PUT /badge: Loop answered 400: text is required",
+			status:  http.StatusBadRequest,
 		},
 		{
 			name:    "run refused",

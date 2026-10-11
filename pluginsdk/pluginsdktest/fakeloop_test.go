@@ -234,6 +234,26 @@ func (s *FakeLoopSuite) TestMemory() {
 	require.True(s.T(), pluginsdk.HasStatus(err, http.StatusForbidden))
 }
 
+func (s *FakeLoopSuite) TestBadge() {
+	f := NewFakeLoop(s.T(), Config{Manifest: &pluginsdk.Manifest{Capabilities: []string{pluginsdk.CapUIBadge}}})
+	c := f.Client()
+	require.Nil(s.T(), f.Badge())
+	require.NoError(s.T(), c.SetBadge(s.ctx, " 3 due ", "3 quizzes due"))
+	require.Equal(s.T(), &Badge{Text: "3 due", Title: "3 quizzes due"}, f.Badge())
+	for _, b := range [][2]string{{"", ""}, {strings.Repeat("a", 17), ""}, {"a\nb", ""}, {"a", strings.Repeat("a", 201)}} {
+		err := c.SetBadge(s.ctx, b[0], b[1])
+		require.True(s.T(), pluginsdk.HasStatus(err, http.StatusBadRequest), b)
+	}
+	require.Equal(s.T(), http.StatusBadRequest, s.raw(f, http.MethodPut, "/badge", "{"))
+	require.Equal(s.T(), &Badge{Text: "3 due", Title: "3 quizzes due"}, f.Badge(), "a refused badge keeps the last one")
+	require.NoError(s.T(), c.ClearBadge(s.ctx))
+	require.Nil(s.T(), f.Badge())
+
+	denied := NewFakeLoop(s.T(), Config{Manifest: &pluginsdk.Manifest{}})
+	err := denied.Client().SetBadge(s.ctx, "a", "")
+	require.True(s.T(), pluginsdk.HasStatus(err, http.StatusForbidden))
+}
+
 func (s *FakeLoopSuite) TestRunUI() {
 	f := NewFakeLoop(s.T(), Config{Manifest: &pluginsdk.Manifest{Capabilities: []string{pluginsdk.CapUIRun}}, Threads: []string{"th1"}})
 	c := f.Client()

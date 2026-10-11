@@ -71,7 +71,7 @@ interface UseChatStateStoreOptions {
 }
 
 /** Channel events the sidebar shows for every row, not just the selected one. */
-const SIDEBAR_EVENTS = new Set(["channel.created", "channel.deleted", "channel.updated", "channel.agent_config", "review.status"]);
+const SIDEBAR_EVENTS = new Set(["channel.created", "channel.deleted", "channel.updated", "channel.agent_config", "review.status", "plugin.badge"]);
 
 /**
  * App-level store that keeps per-channel chat state in memory and maintains a

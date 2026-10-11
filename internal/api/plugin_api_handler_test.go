@@ -39,6 +39,8 @@ func (s *ServerSuite) pluginAPIRoutes(c plugin.Capability, dir string) *MockPlug
 	s.mux.HandleFunc("PUT /api/plugin/v1/memory/{name}", s.srv.handlePutPluginMemory)
 	s.mux.HandleFunc("DELETE /api/plugin/v1/memory/{name}", s.srv.handleDeletePluginMemory)
 	s.mux.HandleFunc("POST /api/plugin/v1/ui/commands", s.srv.handlePluginUICommand)
+	s.mux.HandleFunc("PUT /api/plugin/v1/badge", s.srv.handlePutPluginBadge)
+	s.mux.HandleFunc("DELETE /api/plugin/v1/badge", s.srv.handleDeletePluginBadge)
 	s.srv.sys = osutil.RealSystem{}
 	pm.On("Allows", mock.Anything, "echo", c).Return(nil).Maybe()
 	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{
@@ -107,7 +109,7 @@ func (s *ServerSuite) TestPluginAPIOnlyPlugins() {
 		"GET /api/plugin/v1/channel/git/recent", "GET /api/plugin/v1/channel/quality/hotspots",
 		"POST /api/plugin/v1/events", "POST /api/plugin/v1/notify",
 		"PUT /api/plugin/v1/memory/notes", "DELETE /api/plugin/v1/memory/notes",
-		"POST /api/plugin/v1/ui/commands",
+		"POST /api/plugin/v1/ui/commands", "PUT /api/plugin/v1/badge", "DELETE /api/plugin/v1/badge",
 	} {
 		method, path, _ := strings.Cut(route, " ")
 		rec := s.requestAs(owner, method, path, "{}")

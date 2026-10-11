@@ -1,4 +1,4 @@
-import type { Channel } from "../../types";
+import type { Channel, PluginBadge } from "../../types";
 
 // Sidebar status-pill registry. One row per pill kind: the store tracks
 // membership in a single Map<PillKind, Set<channelId>> and the sidebar
@@ -39,4 +39,9 @@ export const REVIEWING_PILL: Omit<PillSpec, "kind"> = { label: "rev…", color: 
  */
 export function trustPillIds(channels: ReadonlyArray<Pick<Channel, "id" | "parent_id" | "trust_pending">>): Set<string> {
   return new Set(channels.filter((c) => c.trust_pending && !c.parent_id).map((c) => c.id));
+}
+
+/** A plugin badge's tooltip: the plugin, then its title or else its text. */
+export function pluginBadgeTitle(b: PluginBadge): string {
+  return `${b.plugin_id}: ${b.title || b.text}`;
 }

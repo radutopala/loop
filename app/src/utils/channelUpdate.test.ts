@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Channel, ChannelUpdatedData } from "../types";
-import { applyChannelUpdate, applyReviewStatus, replayChannelPatches } from "./channelUpdate";
+import { applyChannelUpdate, applyPluginBadge, applyReviewStatus, replayChannelPatches } from "./channelUpdate";
 
 const channel: Channel = {
   id: "t1",
@@ -81,5 +81,29 @@ describe("replayChannelPatches", () => {
     const got = replayChannelPatches(list, [{ at: 5, id: "t1", apply: ticket("https://x.example/1") }], 10);
     expect(got.channels).toBe(list);
     expect(got.pending).toEqual([]);
+  });
+});
+
+describe("applyPluginBadge", () => {
+  const quiz = { plugin_id: "quiz", text: "3", title: "3 due" };
+  const audit = { plugin_id: "audit", text: "ok" };
+
+  it("adds a badge, in plugin id order", () => {
+    const one = applyPluginBadge(channel, quiz);
+    expect(one.plugin_badges).toEqual([quiz]);
+    expect(applyPluginBadge(one, audit).plugin_badges).toEqual([audit, quiz]);
+    expect(channel.plugin_badges).toBeUndefined();
+  });
+
+  it("replaces the plugin's badge", () => {
+    const c = { ...channel, plugin_badges: [audit, quiz] };
+    expect(applyPluginBadge(c, { plugin_id: "quiz", text: "4" }).plugin_badges).toEqual([audit, { plugin_id: "quiz", text: "4" }]);
+  });
+
+  it("clears the plugin's badge on an empty text", () => {
+    const c = { ...channel, plugin_badges: [audit, quiz] };
+    expect(applyPluginBadge(c, { plugin_id: "quiz", text: "" }).plugin_badges).toEqual([audit]);
+    expect(applyPluginBadge({ ...channel, plugin_badges: [quiz] }, { plugin_id: "quiz", text: "" }).plugin_badges).toBeUndefined();
+    expect(applyPluginBadge(channel, { plugin_id: "quiz", text: "" }).plugin_badges).toBeUndefined();
   });
 });

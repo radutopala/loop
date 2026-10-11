@@ -4,7 +4,7 @@ import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { Channel } from "../../types";
 import type { PillKind } from "./pills";
-import { REVIEWING_PILL, SIDEBAR_PILLS } from "./pills";
+import { pluginBadgeTitle, REVIEWING_PILL, SIDEBAR_PILLS } from "./pills";
 import { RowInfoPopup } from "./RowInfoPopup";
 import { useExpandToSelected, useRevealSelected } from "./reveal";
 import { SessionKindIcon } from "./SessionKindIcon";
@@ -80,7 +80,8 @@ export function ThreadItem({
   const isUnread = unreadIdsRef?.current?.has(thread.id) ?? false;
   const activePills = SIDEBAR_PILLS.filter((p) => pillsRef?.current?.get(p.kind)?.has(thread.id));
   const reviewing = !!thread.review_running;
-  const hasAnyPill = activePills.length > 0 || reviewing;
+  const badges = thread.plugin_badges ?? [];
+  const hasAnyPill = activePills.length > 0 || reviewing || badges.length > 0;
   const displayName = sessionName(thread);
 
   return (
@@ -261,6 +262,15 @@ export function ThreadItem({
               marginLeft={isUnread || activePills.length > 0 || thread.diff_additions > 0 || thread.diff_deletions > 0 ? 4 : "auto"}
             />
           )}
+          {badges.map((b, i) => (
+            <StatusPill
+              key={`plugin:${b.plugin_id}`}
+              label={b.text}
+              color={colors.textMuted}
+              title={pluginBadgeTitle(b)}
+              marginLeft={isUnread || activePills.length > 0 || reviewing || i > 0 || thread.diff_additions > 0 || thread.diff_deletions > 0 ? 4 : "auto"}
+            />
+          ))}
           {(thread.container_running || thread.agent_running || isRunningMapRef?.current?.get(thread.id) || reviewing) && (
             <span
               style={{

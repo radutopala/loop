@@ -144,6 +144,7 @@ Capabilities are approved by the owner at install and checked on every call:
 | `memory.write` | `PUT /memory/{name}`, `DELETE /memory/{name}` |
 | `events.subscribe` | the manifest's `events`, sent to `POST /events` |
 | `ui.run` | `POST /ui/commands`: drives an app window, in the plugin's channel and its threads |
+| `ui.badge` | `PUT /badge`, `DELETE /badge`: a short label on the channel's sidebar row |
 
 ## Container environment
 
@@ -248,6 +249,8 @@ channel id. A route needing a capability the owner didn't approve answers `403`.
 | `PUT /memory/{name}` | `memory.write` | body `{"content"}` (up to 256 KB) → `204`; writes `plugin-<id>-<name>.md` into the auto-memory dir of the channel's dir, where the channel's agents find it with `search_memory` once memory is on. `name` is lowercase letters, digits and dashes, at most 64 (`400` otherwise); `409` when the channel has no dir |
 | `DELETE /memory/{name}` | `memory.write` | `204`, also when there was no such file |
 | `POST /ui/commands` | `ui.run` | body `{"steps", "client_id"?, "timeout"?}` → `200 {"client_id", "results", "error"?}`; an app window runs the [UI bridge steps](api.md#post-apiuicommands) and Loop answers when it's done, up to `timeout` (a Go duration, `1m` by default, at most `10m`). The first step is `select_channel`, and each `select_channel` opens the plugin's channel or one of its threads (`403` otherwise); terminal steps work only on the agent and shell panes. `404` when no window is open, `502` when it goes away, `504` when it doesn't answer in time |
+| `PUT /badge` | `ui.badge` | body `{"text", "title"?}` → `204`; shows `text` (trimmed, 1 to 16 characters on one line) on the sidebar row of the plugin's channel, or of the thread its container serves, with `title` (at most 200 characters) as its tooltip. It replaces the plugin's badge there and stays until the plugin clears it or is removed |
+| `DELETE /badge` | `ui.badge` | `204`, also when there was no badge |
 
 ### Agent runs
 

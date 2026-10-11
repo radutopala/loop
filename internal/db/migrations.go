@@ -539,6 +539,16 @@ var migrations = []migration{
 	// done marks a plugin run that ended well as Loop stopped: its plugin is
 	// told once Loop is back.
 	sqlMigration(`ALTER TABLE plugin_runs ADD COLUMN done INTEGER NOT NULL DEFAULT 0`),
+	// plugin_badges holds the label a plugin shows on a channel's sidebar
+	// row (see PluginBadge).
+	sqlMigration(`CREATE TABLE IF NOT EXISTS plugin_badges (
+		plugin_id  TEXT NOT NULL,
+		channel_id TEXT NOT NULL,
+		text       TEXT NOT NULL,
+		title      TEXT NOT NULL DEFAULT '',
+		updated_at DATETIME NOT NULL,
+		PRIMARY KEY (plugin_id, channel_id)
+	)`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the

@@ -25,6 +25,7 @@ const (
 	CapMemoryWrite   = "memory.write"
 	CapEventsSub     = "events.subscribe"
 	CapUIRun         = "ui.run"
+	CapUIBadge       = "ui.badge"
 )
 
 // Loop events a manifest may subscribe to.

@@ -99,8 +99,8 @@ func (s *SQLiteStore) ListPluginStates(ctx context.Context) ([]*PluginState, err
 	return out, rows.Err()
 }
 
-// DeletePluginState removes a plugin's state, its containers' rows and its
-// scheduled tasks.
+// DeletePluginState removes a plugin's state, its containers' rows, its
+// badges and its scheduled tasks.
 func (s *SQLiteStore) DeletePluginState(ctx context.Context, pluginID string) error {
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		for _, q := range []string{
@@ -108,6 +108,7 @@ func (s *SQLiteStore) DeletePluginState(ctx context.Context, pluginID string) er
 			`DELETE FROM scheduled_tasks WHERE plugin_id = ?`,
 			`DELETE FROM plugin_schedules WHERE plugin_id = ?`,
 			`DELETE FROM plugin_containers WHERE plugin_id = ?`,
+			`DELETE FROM plugin_badges WHERE plugin_id = ?`,
 			`DELETE FROM plugin_state WHERE plugin_id = ?`,
 		} {
 			if _, err := tx.ExecContext(ctx, q, pluginID); err != nil {

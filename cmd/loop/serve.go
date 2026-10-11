@@ -795,6 +795,7 @@ func (a *app) serve() error {
 	}
 	if plug != nil {
 		apiSrv.SetPluginManager(plug.service)
+		apiSrv.SetPluginBadges(plug.store)
 		eventsHub.Observe(apiSrv.ForwardToPlugins)
 		go plug.service.Run(ctx, pluginIdleInterval, apiSrv.PluginsChanged, logger)
 		executor.SetPluginActions(pluginActionRunner(plug.service))

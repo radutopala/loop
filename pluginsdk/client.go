@@ -129,6 +129,8 @@ type API interface {
 	WriteMemory(ctx context.Context, name, content string) error
 	DeleteMemory(ctx context.Context, name string) error
 	RunUI(ctx context.Context, cmd UICommand) (*UIReply, error)
+	SetBadge(ctx context.Context, text, title string) error
+	ClearBadge(ctx context.Context) error
 }
 
 // StatusError is a non-2xx answer from Loop.
@@ -339,6 +341,18 @@ func (c *Client) WriteMemory(ctx context.Context, name, content string) error {
 // DeleteMemory removes the plugin's memory file name. Needs memory.write.
 func (c *Client) DeleteMemory(ctx context.Context, name string) error {
 	return c.do(ctx, http.MethodDelete, "/memory/"+url.PathEscape(name), nil, nil, nil)
+}
+
+// SetBadge shows text, at most 16 characters on one line, on the sidebar
+// row of the plugin's channel, with title as its tooltip. It replaces the
+// plugin's badge there and stays until ClearBadge. Needs ui.badge.
+func (c *Client) SetBadge(ctx context.Context, text, title string) error {
+	return c.do(ctx, http.MethodPut, "/badge", nil, map[string]string{"text": text, "title": title}, nil)
+}
+
+// ClearBadge removes the plugin's badge. Needs ui.badge.
+func (c *Client) ClearBadge(ctx context.Context) error {
+	return c.do(ctx, http.MethodDelete, "/badge", nil, nil, nil)
 }
 
 // uiGrace is how much longer than a UI command's timeout RunUI waits, so
