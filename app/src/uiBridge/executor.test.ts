@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import type { PluginPaneOption } from "../plugins/PluginPanelsContext";
 import type { SessionStatus } from "../types";
 import type { PanelType } from "../types/panels";
 import { INPUT_QUIET_MS, MAX_LINES, runSteps, WAIT_QUIET_MS } from "./executor";
@@ -15,6 +16,11 @@ class FakeWorkspace implements WorkspaceController {
   fail = "";
   maximized: string | null = null;
   opts: (PaneOptions | undefined)[] = [];
+  plugins: PluginPaneOption[] | null = [
+    { key: "quiz/today", ref: { id: "quiz", panel: "today", label: "Quiz" }, description: "Quiz plugin", disabled: false },
+    { key: "stats/a", ref: { id: "stats", panel: "a", label: "A" }, description: "Stats plugin", disabled: false },
+    { key: "stats/b", ref: { id: "stats", panel: "b", label: "B" }, description: "Stats plugin", disabled: true },
+  ];
 
   view() {
     return { tab: this.tab, tabs: this.tabs, canvas: this.canvas, panes: this.panes };
@@ -44,6 +50,11 @@ class FakeWorkspace implements WorkspaceController {
     this.panes = [...this.panes, pane];
     this.calls.push(`add ${panel} ${nextTo ?? "-"} ${direction}${before ? " before" : ""} ${openMode ?? ""}`.trim());
     return pane.id;
+  }
+  replacing: (string | undefined)[] = [];
+  pluginPanes(replacing?: string) {
+    this.replacing.push(replacing);
+    return this.plugins;
   }
   removePane(id: string) {
     if (this.fail) throw new Error(this.fail);
@@ -513,7 +524,12 @@ describe("more steps", () => {
     { name: "open_file without a path", step: { op: "open_file" }, error: "path is required" },
     { name: "open_file at line 0", step: { op: "open_file", path: "main.go", line: 0 }, error: "line must be a whole number from 1" },
     { name: "open_file of no such file", step: { op: "open_file", path: "nope.go" }, error: `no file "nope.go" in the channel's roots` },
-    { name: "item on a non-playground pane", step: { op: "add_pane", panel: "notes", item: "board" }, error: "item and scope are for playground panes" },
+    { name: "item on a non-playground pane", step: { op: "add_pane", panel: "notes", item: "board" }, error: "item and scope are for playground and plugin panes" },
+    { name: "a plugin pane without an item", step: { op: "add_pane", panel: "plugin" }, error: "item is required for a plugin pane: plugin/panel, or the plugin's id" },
+    { name: "scope on a plugin pane", step: { op: "add_pane", panel: "plugin", item: "quiz", scope: "global" }, error: "scope is for playground panes" },
+    { name: "no such plugin panel", step: { op: "add_pane", panel: "plugin", item: "nope" }, error: 'no plugin panel "nope"; plugin panels: quiz/today, stats/a, stats/b' },
+    { name: "a plugin of several panels by its id", step: { op: "add_pane", panel: "plugin", item: "stats" }, error: 'plugin "stats" has several panels; give plugin/panel: stats/a, stats/b' },
+    { name: "a shown once plugin panel shown", step: { op: "replace_pane", pane: "chat", panel: "plugin", item: "stats/b" }, error: "the tab already shows stats/b, which shows once" },
     { name: "scope without an item", step: { op: "add_pane", panel: "playground", scope: "global" }, error: "item is required with scope" },
     { name: "an unknown scope", step: { op: "add_pane", panel: "playground", item: "board", scope: "team" }, error: 'unknown scope "team"; use global or project' },
     { name: "no such playground", step: { op: "add_pane", panel: "playground", item: "nope" }, error: 'no playground "nope"; playgrounds: board (global), both (global), both (project)' },
@@ -540,6 +556,27 @@ describe("more steps", () => {
       { op: "add_pane", ok: true, pane: "docker-agent-2" },
     ]);
     expect(ws.opts).toEqual([{ playground: { name: "board", scope: "global" } }, { playground: { name: "both", scope: "project" } }, { openMode: "fresh" }]);
+  });
+
+  it("opens a plugin pane on a plugin panel", async () => {
+    expect(
+      await run([
+        { op: "add_pane", panel: "plugin", item: "quiz" },
+        { op: "replace_pane", pane: "chat", panel: "plugin", item: "stats/a" },
+      ]),
+    ).toEqual([
+      { op: "add_pane", ok: true, pane: "plugin-0" },
+      { op: "replace_pane", ok: true, pane: "plugin-1" },
+    ]);
+    expect(ws.opts).toEqual([{ plugin: { id: "quiz", panel: "today", label: "Quiz" } }, { plugin: { id: "stats", panel: "a", label: "A" } }]);
+    expect(ws.replacing).toEqual([undefined, "chat"]);
+  });
+
+  it("refuses a plugin pane until there is a plugin panel", async () => {
+    ws.plugins = null;
+    expect(await run([{ op: "add_pane", panel: "plugin", item: "quiz" }])).toEqual([{ op: "add_pane", ok: false, error: "the plugins aren't listed yet; try again" }]);
+    ws.plugins = [];
+    expect(await run([{ op: "add_pane", panel: "plugin", item: "quiz" }])).toEqual([{ op: "add_pane", ok: false, error: 'no plugin panel "quiz"; plugin panels: none' }]);
   });
 
   it.each(["maximize_pane", "restore_pane", "open_file"])("does %s only on a split tab", async (op) => {

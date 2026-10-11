@@ -1,4 +1,5 @@
 import { RE2JS } from "re2js";
+import type { PluginPaneOption } from "../plugins/PluginPanelsContext";
 import { AGENT_OPEN_MODE_OPTIONS, type AgentOpenMode, PANEL_OPTIONS, type PanelType } from "../types/panels";
 import type { PaneInfo, PaneOptions, StepResult, TerminalInput, UiHost, UiStep, WorkspaceController } from "./types";
 
@@ -105,7 +106,7 @@ function findPane(panes: PaneInfo[], pane: string | undefined): PaneInfo {
 
 function panelOf(panel: string | undefined): PanelType {
   if (!panel) throw new StepError("panel is required");
-  if (!PANEL_OPTIONS.some((o) => o.panel === panel)) throw new StepError(`unknown panel "${panel}"`);
+  if (panel !== "plugin" && !PANEL_OPTIONS.some((o) => o.panel === panel)) throw new StepError(`unknown panel "${panel}"`);
   return panel as PanelType;
 }
 
@@ -124,14 +125,34 @@ function attempt<T>(fn: () => T): T {
   }
 }
 
-/** The playground a playground pane a step makes shows, checked against
- *  the channel's. */
-async function paneOptions(step: UiStep, panel: PanelType, channelId: string, host: UiHost): Promise<PaneOptions> {
+/** The plugin panel a plugin pane a step makes shows: item names it as
+ *  plugin/panel, or as the plugin's id when it has one panel. */
+function pluginPane(step: UiStep, ws: WorkspaceController, replacing: string | undefined): PaneOptions["plugin"] {
+  if (step.scope !== undefined) throw new StepError("scope is for playground panes");
+  if (!step.item) throw new StepError("item is required for a plugin pane: plugin/panel, or the plugin's id");
+  const all = ws.pluginPanes(replacing);
+  if (all === null) throw new StepError("the plugins aren't listed yet; try again");
+  const found = all.filter((o) => o.key === step.item || o.ref.id === step.item);
+  if (found.length === 0) throw new StepError(`no plugin panel "${step.item}"; plugin panels: ${all.map((o) => o.key).join(", ") || "none"}`);
+  if (found.length > 1) throw new StepError(`plugin "${step.item}" has several panels; give plugin/panel: ${found.map((o) => o.key).join(", ")}`);
+  const [option] = found as [PluginPaneOption];
+  if (option.disabled) throw new StepError(`the tab already shows ${option.key}, which shows once`);
+  return option.ref;
+}
+
+/** How the pane a step makes starts: an agent's open mode, the playground
+ *  a playground pane shows, checked against the channel's, or the panel a
+ *  plugin pane shows; replacing is the pane a replace_pane step replaces. */
+async function paneOptions(step: UiStep, panel: PanelType, channelId: string, host: UiHost, ws: WorkspaceController, replacing?: string): Promise<PaneOptions> {
   const opts: PaneOptions = {};
   const openMode = openModeOf(step.open_mode);
   if (openMode) opts.openMode = openMode;
+  if (panel === "plugin") {
+    opts.plugin = pluginPane(step, ws, replacing);
+    return opts;
+  }
   if (step.item === undefined && step.scope === undefined) return opts;
-  if (panel !== "playground") throw new StepError("item and scope are for playground panes");
+  if (panel !== "playground") throw new StepError("item and scope are for playground and plugin panes");
   if (!step.item) throw new StepError("item is required with scope");
   if (step.scope !== undefined && step.scope !== "global" && step.scope !== "project") throw new StepError(`unknown scope "${step.scope}"; use global or project`);
   const all = await host.playgrounds(channelId);
@@ -210,7 +231,7 @@ async function runStep(step: UiStep, run: Run): Promise<StepOutput> {
       const { channelId, ws } = splitWorkspace(run);
       const pane = findPane(ws.view().panes, step.pane);
       const panel = panelOf(step.panel);
-      const opts = await paneOptions(step, panel, channelId, host);
+      const opts = await paneOptions(step, panel, channelId, host, ws, pane.id);
       stillOn(run);
       return { pane: attempt(() => ws.replacePane(pane.id, panel, opts)) };
     }
@@ -222,7 +243,7 @@ async function runStep(step: UiStep, run: Run): Promise<StepOutput> {
       if (direction !== "horizontal" && direction !== "vertical") throw new StepError(`unknown direction "${direction}"; use horizontal or vertical`);
       const side = step.side ?? "after";
       if (side !== "before" && side !== "after") throw new StepError(`unknown side "${side}"; use before or after`);
-      const opts = await paneOptions(step, panel, channelId, host);
+      const opts = await paneOptions(step, panel, channelId, host, ws);
       stillOn(run);
       return { pane: attempt(() => ws.addPane(panel, nextTo, direction, side === "before", opts)) };
     }

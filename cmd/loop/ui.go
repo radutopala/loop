@@ -45,6 +45,7 @@ fails:
   {"op":"restore_pane"}                       put it back
   {"op":"open_file","path":"cmd/main.go","line":12}
   {"op":"add_pane","panel":"playground","item":"board","scope":"project"}
+  {"op":"add_pane","panel":"plugin","item":"cogtest/quiz"}  a plugin's panel (or its id)
   {"op":"send_input","pane":"docker-agent","text":"…","submit":true}
   {"op":"read_output","pane":"docker-agent","lines":50}
   {"op":"wait_for","pane":"docker-agent","match":"regexp","quiet_ms":2000}

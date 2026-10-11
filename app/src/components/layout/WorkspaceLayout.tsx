@@ -31,7 +31,7 @@ import {
   saveLayoutType,
 } from "../../layouts/persistence";
 import { PluginPanel } from "../../plugins/PluginPanel";
-import { PluginPanelsProvider, pluginPaneKey, shownPluginPanes, useInstalledPlugins, usePluginPanelsValue } from "../../plugins/PluginPanelsContext";
+import { PluginPanelsProvider, pluginPaneKey, pluginPaneOptions, shownPluginPanes, useInstalledPlugins, usePluginPanelsValue } from "../../plugins/PluginPanelsContext";
 import { EmptyLayoutPicker } from "../../splitPane/AddPanelButton";
 import { PaneLeafHeader } from "../../splitPane/PaneLeafHeader";
 import { paneBoxStyle, SplitPaneLayout } from "../../splitPane/SplitPaneLayout";
@@ -796,7 +796,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       setTree(t);
     };
     const newLeaf = (panel: PanelType, opts: PaneOptions = {}) => {
-      const leaf = makeLeaf(leafIdForPanel(channelId, panel), panel, 1, panel === "docker-agent" ? opts.openMode : undefined);
+      if (panel === "plugin" && !opts.plugin) throw new Error("a plugin pane needs the plugin panel it shows");
+      const leaf = makeLeaf(leafIdForPanel(channelId, panel), panel, 1, panel === "docker-agent" ? opts.openMode : undefined, panel === "plugin" ? opts.plugin : undefined);
       // A playground pane reads the playground it shows when it mounts.
       if (panel === "playground" && opts.playground) storageSetJSON(`playground-active:${channelId}:${leaf.id}`, opts.playground);
       return leaf;
@@ -821,7 +822,14 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               : collectLeaves(t).map((l) => {
                   const status = statusMapRef.current.get(l.id);
                   const busy = getTerminalInput(channelId, l.id)?.busy();
-                  return { id: l.id, panel: l.panel, ...(l.openMode ? { open_mode: l.openMode } : {}), ...(status ? { status } : {}), ...(busy !== undefined ? { busy } : {}) };
+                  return {
+                    id: l.id,
+                    panel: l.panel,
+                    ...(l.openMode ? { open_mode: l.openMode } : {}),
+                    ...(l.plugin ? { plugin: pluginPaneKey(l.plugin) } : {}),
+                    ...(status ? { status } : {}),
+                    ...(busy !== undefined ? { busy } : {}),
+                  };
                 }),
           ...(!canvas && maximizedLeafIdRef.current ? { maximized: maximizedLeafIdRef.current } : {}),
         };
@@ -834,6 +842,13 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       createTab: (name) => addLayoutRef.current("split", name),
       renameTab: (name, newName) => handleRenameLayoutRef.current(name, newName),
       removeTab: (name) => handleDeleteLayoutRef.current(name),
+      pluginPanes: (replacing) => {
+        const { plugins } = pluginPanelsRef.current;
+        if (plugins === null) return null;
+        // The tree as the steps left it, not as it last rendered.
+        const current = treeRef.current;
+        return pluginPaneOptions({ plugins, shown: shownPluginPanes(current && replacing ? removeLeaf(current, replacing) : current) });
+      },
       replacePane: (id, panel, opts) => {
         const current = treeRef.current;
         const old = leafOf(id);
@@ -1059,6 +1074,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     return new Set((canvasState?.tiles ?? []).flatMap((t) => (t.panel === "plugin" && t.plugin ? [pluginPaneKey(t.plugin)] : [])));
   }, [layoutType, tree, canvasState]);
   const pluginPanels = usePluginPanelsValue(installedPlugins, shownPlugins);
+  const pluginPanelsRef = useRef(pluginPanels);
+  pluginPanelsRef.current = pluginPanels;
 
   // The chat is mounted once, into chatHost (see ChatSlot); it renders once a slot holds the host.
   const [chatHost] = useState(createChatHost);

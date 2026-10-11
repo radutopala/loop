@@ -1,5 +1,6 @@
+import type { PluginPaneOption } from "../plugins/PluginPanelsContext";
 import type { SessionStatus } from "../types";
-import type { AgentOpenMode, PanelType } from "../types/panels";
+import type { AgentOpenMode, PanelType, PluginPaneRef } from "../types/panels";
 
 /** A step of a command from the daemon (POST /api/ui/commands). */
 export interface UiStep {
@@ -26,7 +27,8 @@ export interface UiStep {
   /** open_file: a path in one of the channel's roots. */
   path?: string;
   line?: number;
-  /** replace_pane, add_pane: the playground a playground pane shows. */
+  /** replace_pane, add_pane: the playground a playground pane shows, or
+   *  the panel a plugin pane shows, as plugin/panel or the plugin's id. */
   item?: string;
   scope?: string;
 }
@@ -48,6 +50,8 @@ export interface PaneInfo {
   id: string;
   panel: PanelType;
   open_mode?: AgentOpenMode;
+  /** A plugin pane's panel, as plugin/panel. */
+  plugin?: string;
   status?: SessionStatus;
   /** An agent terminal that's printing, e.g. the Claude TUI at work. */
   busy?: boolean;
@@ -74,6 +78,7 @@ export interface PlaygroundPick {
 export interface PaneOptions {
   openMode?: AgentOpenMode;
   playground?: PlaygroundPick;
+  plugin?: PluginPaneRef;
 }
 
 /** What a mounted WorkspaceLayout lets steps do. Pane ops take a pane id and
@@ -97,6 +102,9 @@ export interface WorkspaceController {
   removePane(id: string): void;
   /** Makes the pane fill the tab, or, with null, puts it back. */
   maximize(id: string | null): void;
+  /** The plugin panels a pane can show, as the add-pane menus offer them,
+   *  with the pane replacing taken out; null until the plugins are listed. */
+  pluginPanes(replacing?: string): PluginPaneOption[] | null;
 }
 
 /** An agent terminal's input. Only docker-agent and docker-shell panes

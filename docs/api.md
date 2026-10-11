@@ -2730,7 +2730,8 @@ The connected windows and what each shows.
         "canvas": false,
         "panes": [
           {"id": "chat", "panel": "chat"},
-          {"id": "docker-agent-0", "panel": "docker-agent", "open_mode": "fresh", "status": "running", "busy": true}
+          {"id": "docker-agent-0", "panel": "docker-agent", "open_mode": "fresh", "status": "running", "busy": true},
+          {"id": "plugin-1", "panel": "plugin", "plugin": "cogtest/quiz"}
         ],
         "maximized": "docker-agent-0"
       }
@@ -2739,7 +2740,7 @@ The connected windows and what each shows.
 }
 ```
 
-`busy` is an agent terminal that printed in the last 1.5s, e.g. the Claude TUI at work. `status` is `connecting`, `running`, `completed` or `failed`.
+`plugin` is the panel a `plugin` pane shows, as `plugin/panel`. `busy` is an agent terminal that printed in the last 1.5s, e.g. the Claude TUI at work. `status` is `connecting`, `running`, `completed` or `failed`.
 
 **Errors:** `400` invalid `after`.
 
@@ -2784,7 +2785,7 @@ Runs steps in a window, in order, until one fails.
 | `read_output` | `pane`, `lines?` | The terminal's last `lines` (default 50, at most 2000) |
 | `wait_for` | `pane`, `match?`, `quiet_ms?`, `lines?` | Waits until the last `lines` match the regular expression `match` (multiline, [RE2 syntax](https://github.com/google/re2/wiki/Syntax), so no lookarounds or backreferences), or, without it, until the terminal is quiet for `quiet_ms` (default 2000). After a `send_input` to that pane in the same command, only output since counts. A session that ended counts as done |
 
-`open_mode` is for `docker-agent` panes. `item` names the playground of a `playground` pane, and `scope` (`global` or `project`) picks it when both scopes have one by that name.
+`open_mode` is for `docker-agent` panes. `item` names the playground of a `playground` pane, and `scope` (`global` or `project`) picks it when both scopes have one by that name. For a `plugin` pane, `item` names the plugin panel as `plugin/panel`, or as the plugin's id when it has one panel; it must be a panel of an installed plugin the project enables.
 
 Terminal steps (`send_input`, `read_output`, `wait_for`) work only on `docker-agent` and `docker-shell` panes, which run in containers. A host shell is refused, by the daemon and again by the window.
 

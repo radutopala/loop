@@ -20,6 +20,8 @@ describe("the ui_run schema", () => {
   });
 
   it("lists the panels", () => {
-    expect(goList("uiPanels")).toEqual(PANEL_OPTIONS.map((o) => o.panel).sort());
+    // A plugin pane isn't in PANEL_OPTIONS: the add-pane menus offer the
+    // installed plugins' panels instead.
+    expect(goList("uiPanels")).toEqual([...PANEL_OPTIONS.map((o) => o.panel), "plugin"].sort());
   });
 });

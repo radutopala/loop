@@ -29,7 +29,7 @@ type uiRunStep struct {
 	NextTo    string `json:"next_to,omitempty" jsonschema:"add_pane: the pane (id or panel type) the new one goes beside; without it, the new pane spans the tab's edge"`
 	Direction string `json:"direction,omitempty" jsonschema:"add_pane: horizontal makes a column, vertical a row (default horizontal); beside a pane in a row of columns (or a column of rows) it joins that row with an equal share"`
 	Side      string `json:"side,omitempty" jsonschema:"add_pane: after puts the new pane right of or below next_to (or the tab), before left of or above it (default after)"`
-	Item      string `json:"item,omitempty" jsonschema:"replace_pane, add_pane of a playground: the playground it shows"`
+	Item      string `json:"item,omitempty" jsonschema:"replace_pane, add_pane of a playground: the playground it shows; of a plugin: its panel, as plugin/panel, or the plugin's id when it has one panel"`
 	Scope     string `json:"scope,omitempty" jsonschema:"With item: the playground's scope, when both have one by that name"`
 	Path      string `json:"path,omitempty" jsonschema:"open_file: a path in one of the channel's roots"`
 	Line      *int   `json:"line,omitempty" jsonschema:"open_file: the line to show, from 1"`
@@ -41,8 +41,8 @@ type uiRunStep struct {
 }
 
 // uiOps are the ops of a ui_run step; uiPanels are the panels a pane step
-// makes. Keep them in sync with the app's executor and PANEL_OPTIONS
-// (app/src/uiBridge/schemaSync.test.ts checks).
+// makes. Keep them in sync with the app's executor and PANEL_OPTIONS, plus
+// "plugin" (app/src/uiBridge/schemaSync.test.ts checks).
 var (
 	uiOps = []any{
 		"select_channel", "set_tab", "create_tab", "rename_tab", "remove_tab",
@@ -52,7 +52,7 @@ var (
 	uiPanels = []any{
 		"chat", "editor", "file-tree", "memory", "git", "docker-agent", "docker-shell", "host-shell",
 		"docker-browser", "host-browser", "sessions", "playground", "notes", "tasks", "kanban",
-		"workflows", "audit", "quality", "review",
+		"workflows", "audit", "quality", "review", "plugin",
 	}
 )
 
