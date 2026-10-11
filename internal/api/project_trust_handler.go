@@ -77,6 +77,8 @@ func (s *Server) handleTrustProjectConfig(w http.ResponseWriter, r *http.Request
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// Trusted, the project's plugins settings apply.
+	s.pluginConfigChanged(r.Context())
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -58,6 +59,14 @@ func (m *mockCaller) X(ctx context.Context, ep runtime.Endpoint, req proxy.XRequ
 	args := m.Called(ctx, ep, req)
 	res, _ := args.Get(0).(*proxy.XResponse)
 	return res, args.Error(1)
+}
+
+func (m *mockRuntime) StopIdle(ctx context.Context) bool {
+	return m.Called(ctx).Bool(0)
+}
+
+func (m *mockRuntime) Running() []runtime.Running {
+	return m.Called().Get(0).([]runtime.Running)
 }
 
 func (m *mockRuntime) Remove(ctx context.Context, pluginID, channelID string, purge bool) error {
@@ -117,6 +126,64 @@ func (s *ServiceSuite) TestList() {
 	got, err := s.svc.List(s.ctx)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), states, got)
+}
+
+func (s *ServiceSuite) TestStopDisabled() {
+	s.runtime.On("Running").Return([]runtime.Running{
+		{PluginID: "echo", Channel: runtime.Channel{ID: "on"}},
+		{PluginID: "echo", Channel: runtime.Channel{ID: "off"}},
+		{PluginID: "echo", Channel: runtime.Channel{ID: "broken"}},
+	}).Once()
+	s.svc.enabled = func(_ context.Context, pluginID string, ch runtime.Channel) (bool, error) {
+		s.Require().Equal("echo", pluginID)
+		if ch.ID == "broken" {
+			return false, errors.New("bad config")
+		}
+		return ch.ID == "on", nil
+	}
+	s.runtime.On("Stop", s.ctx, "echo", "off").Once()
+	require.True(s.T(), s.svc.StopDisabled(s.ctx))
+
+	s.runtime.On("Running").Return([]runtime.Running{{PluginID: "echo", Channel: runtime.Channel{ID: "on"}}}).Once()
+	require.False(s.T(), s.svc.StopDisabled(s.ctx))
+}
+
+func (s *ServiceSuite) TestRun() {
+	tests := []struct {
+		name    string
+		idle    bool
+		running []runtime.Running
+		changed bool
+	}{
+		{name: "nothing stopped", running: []runtime.Running{}},
+		{name: "idle stopped", idle: true, running: []runtime.Running{}, changed: true},
+		{name: "disabled stopped", running: []runtime.Running{{PluginID: "echo", Channel: runtime.Channel{ID: "ch1"}}}, changed: true},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			defer s.TearDownTest()
+			s.enabled = false
+			ctx, cancel := context.WithCancel(s.ctx)
+			defer cancel()
+			// A tick may land before the cancel does: expect each call again.
+			s.runtime.On("StopIdle", ctx).Return(tt.idle)
+			s.runtime.On("Running").Return(tt.running).Run(func(mock.Arguments) {
+				if !tt.changed {
+					cancel()
+				}
+			})
+			if len(tt.running) > 0 {
+				s.runtime.On("Stop", ctx, "echo", "ch1")
+			}
+			changed := false
+			s.svc.Run(ctx, time.Millisecond, func() {
+				changed = true
+				cancel()
+			})
+			require.Equal(s.T(), tt.changed, changed)
+		})
+	}
 }
 
 func (s *ServiceSuite) TestContainersAndStop() {

@@ -45,13 +45,14 @@ func WithConfigHistory(store ConfigHistoryStore) Option {
 // lockConfig takes path's config lock for an edit by source. Whatever the
 // file holds when the lock is taken is recorded first, as an external edit
 // when Loop didn't write it, then the edit's result is recorded as source's
-// when the returned unlock runs.
+// when the returned unlock runs. The plugins then follow the config.
 func (s *Server) lockConfig(path, source string) func() {
 	unlock := s.configLocks.lock(path)
 	s.recordConfig(path, db.ConfigSourceExternal)
 	return func() {
 		s.recordConfig(path, source)
 		unlock()
+		s.pluginConfigChanged(context.Background())
 	}
 }
 

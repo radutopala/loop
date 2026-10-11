@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/plugin"
@@ -50,6 +51,8 @@ type Runtime interface {
 	StopPlugin(ctx context.Context, pluginID string)
 	Stop(ctx context.Context, pluginID, channelID string)
 	Remove(ctx context.Context, pluginID, channelID string, purge bool) error
+	StopIdle(ctx context.Context) bool
+	Running() []runtime.Running
 }
 
 // ServiceStore is the store the Service reads plugins and their containers
@@ -104,6 +107,41 @@ func (s *Service) Containers(ctx context.Context, pluginID string) ([]*db.Plugin
 // Stop stops the plugin's container in channelID, keeping its data.
 func (s *Service) Stop(ctx context.Context, pluginID, channelID string) {
 	s.runtime.Stop(ctx, pluginID, channelID)
+}
+
+// StopDisabled stops the containers whose channel's project no longer
+// enables their plugin, and reports whether it stopped any. A container
+// whose project config can't be read keeps running: its config is
+// mid-edit, or broken until the owner fixes it.
+func (s *Service) StopDisabled(ctx context.Context) bool {
+	stopped := false
+	for _, r := range s.runtime.Running() {
+		if on, err := s.enabled(ctx, r.PluginID, r.Channel); err != nil || on {
+			continue
+		}
+		s.runtime.Stop(ctx, r.PluginID, r.Channel.ID)
+		stopped = true
+	}
+	return stopped
+}
+
+// Run stops, every interval until ctx ends, the containers left idle and
+// those whose project stopped enabling their plugin, calling changed when
+// it stopped any.
+func (s *Service) Run(ctx context.Context, interval time.Duration, changed func()) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			idle := s.runtime.StopIdle(ctx)
+			if s.StopDisabled(ctx) || idle {
+				changed()
+			}
+		}
+	}
 }
 
 // Inspect pulls and validates an image so the owner can review what it

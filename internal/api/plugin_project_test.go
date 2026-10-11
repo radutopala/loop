@@ -14,6 +14,7 @@ import (
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/plugin"
 	"github.com/radutopala/loop/internal/plugin/install"
+	"github.com/radutopala/loop/internal/testutil"
 )
 
 // pluginProjectSetup gives channel ch-1 a real project dir with content as
@@ -72,6 +73,7 @@ func (s *ServerSuite) TestListPluginsInProject() {
 	// Trusted, they do; a thread, in its channel's dir, answers for its
 	// channel's project.
 	st := s.projectTrustStatus()
+	pm.On("StopDisabled", mock.Anything).Return(false).Once()
 	rec := s.testRequest("POST", "/api/config/project/trust?channel_id=ch-1", `{"hash":"`+st.Hash+`"}`)
 	require.Equal(s.T(), http.StatusNoContent, rec.Code, rec.Body.String())
 	s.store.On("GetChannel", mock.Anything, "th-1").Return(&db.Channel{ChannelID: "th-1", ParentID: "ch-1", DirPath: dir}, nil)
@@ -182,6 +184,17 @@ func (s *ServerSuite) TestPluginsChangedEvents() {
 	pm.On("Stop", mock.Anything, "echo", "ch-1").Once()
 	require.Equal(s.T(), http.StatusNoContent, s.testRequest("POST", "/api/plugins/echo/channels/ch-1/stop", "").Code)
 	require.Equal(s.T(), []string{EventPluginsChanged, EventPluginsChanged, EventPluginsChanged}, sent)
+
+	// A config write stops the containers of projects that disabled their
+	// plugin, then tells the app.
+	sys := new(testutil.MockSystem)
+	sys.On("UserHomeDir").Return("/home/test", nil)
+	sys.On("WriteFile", "/home/test/.loop/config.json", mock.Anything, os.FileMode(0644)).Return(nil)
+	s.srv.sys = sys
+	pm.On("StopDisabled", mock.Anything).Return(true).Once()
+	require.Equal(s.T(), http.StatusNoContent, s.testRequest("PUT", "/api/config", `{"content":"{}"}`).Code)
+	require.Len(s.T(), sent, 4)
+	sent = sent[:3]
 
 	// A failed install changes nothing.
 	pm.On("Install", mock.Anything, "echo:1", false, "", []plugin.Capability(nil)).Return(nil, errors.New("pull failed")).Once()

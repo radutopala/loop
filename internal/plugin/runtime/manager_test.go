@@ -488,8 +488,9 @@ func (s *ManagerSuite) TestStopIdleAndStopAll() {
 	s.now = s.now.Add(6 * time.Minute)
 
 	s.expectStopped("ch1", "c1")
-	s.m.StopIdle(s.ctx)
+	require.True(s.T(), s.m.StopIdle(s.ctx))
 	require.Len(s.T(), s.m.running, 1)
+	require.False(s.T(), s.m.StopIdle(s.ctx))
 
 	s.expectStopped("ch2", "c2")
 	s.m.StopAll(s.ctx)
@@ -509,16 +510,14 @@ func (s *ManagerSuite) TestStopPlugin() {
 	require.Equal(s.T(), map[key]*failure{other: {count: 1}}, s.m.failures)
 }
 
-func (s *ManagerSuite) TestRunIdleLoop() {
-	ctx, cancel := context.WithCancel(s.ctx)
-	s.ctx = ctx
+func (s *ManagerSuite) TestRunning() {
+	require.Empty(s.T(), s.m.Running())
 	s.startOne("ch1", "c1")
-	s.now = s.now.Add(time.Hour)
-	s.docker.On("ContainerRemove", s.ctx, "c1", mock.Anything).Return(nil).Once()
-	s.tokens.On("Revoke", "c1").Return(nil).Once()
-	s.store.On("UpsertPluginContainer", s.ctx, mock.Anything).Return(nil).Once().Run(func(mock.Arguments) { cancel() })
-	s.m.RunIdleLoop(s.ctx, time.Millisecond)
-	require.Empty(s.T(), s.m.running)
+	s.startOne("ch2", "c2")
+	require.ElementsMatch(s.T(), []Running{
+		{PluginID: "cogtest", Channel: Channel{ID: "ch1", DirPath: "/work"}},
+		{PluginID: "cogtest", Channel: Channel{ID: "ch2", DirPath: "/work"}},
+	}, s.m.Running())
 }
 
 // envOf is a getenv over vars.

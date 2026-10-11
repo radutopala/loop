@@ -795,7 +795,7 @@ func (a *app) serve() error {
 	}
 	if plug != nil {
 		apiSrv.SetPluginManager(plug.service)
-		go plug.runtime.RunIdleLoop(ctx, pluginIdleInterval)
+		go plug.service.Run(ctx, pluginIdleInterval, apiSrv.PluginsChanged)
 	}
 
 	// Ensure agent image asynchronously so the API is available during builds.

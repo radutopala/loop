@@ -53,12 +53,23 @@ func (s *Server) pluginProject(ctx context.Context, ch *db.Channel) (pluginProje
 	return p, nil
 }
 
-// pluginsChanged tells the app the plugins, their enablement or their
+// PluginsChanged tells the app the plugins, their enablement or their
 // containers changed.
-func (s *Server) pluginsChanged() {
+func (s *Server) PluginsChanged() {
 	if s.eventsHub != nil {
 		s.eventsHub.Broadcast(Event{Type: EventPluginsChanged, Global: true})
 	}
+}
+
+// pluginConfigChanged follows a config write: the panes learn of the
+// plugins' enablement anew, and the containers of the projects that stopped
+// enabling their plugin are stopped.
+func (s *Server) pluginConfigChanged(ctx context.Context) {
+	if s.plugins == nil {
+		return
+	}
+	s.plugins.StopDisabled(ctx)
+	s.PluginsChanged()
 }
 
 // pluginInstalled reports whether plugin id is installed; otherwise it
@@ -89,6 +100,6 @@ func (s *Server) handleStopPluginContainer(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	s.plugins.Stop(r.Context(), id, r.PathValue("channel"))
-	s.pluginsChanged()
+	s.PluginsChanged()
 	w.WriteHeader(http.StatusNoContent)
 }

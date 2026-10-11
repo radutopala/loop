@@ -32,6 +32,7 @@ type PluginManager interface {
 	UI(ctx context.Context, pluginID string) (string, *plugin.Manifest, error)
 	Containers(ctx context.Context, pluginID string) ([]*db.PluginContainer, error)
 	Stop(ctx context.Context, pluginID, channelID string)
+	StopDisabled(ctx context.Context) bool
 }
 
 const pluginsDisabled = "plugins are disabled; set plugins.enabled in the global config"
@@ -222,7 +223,7 @@ func (s *Server) handleInstallPlugin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
-	s.pluginsChanged()
+	s.PluginsChanged()
 	writeHTTPJSON(w, http.StatusOK, newPluginCandidate(c), s.logger)
 }
 
@@ -239,7 +240,7 @@ func (s *Server) handleRemovePlugin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.pluginsChanged()
+	s.PluginsChanged()
 	w.WriteHeader(http.StatusNoContent)
 }
 

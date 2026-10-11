@@ -72,6 +72,10 @@ func (m *MockPluginManager) Stop(ctx context.Context, pluginID, channelID string
 	m.Called(ctx, pluginID, channelID)
 }
 
+func (m *MockPluginManager) StopDisabled(ctx context.Context) bool {
+	return m.Called(ctx).Bool(0)
+}
+
 func (s *ServerSuite) pluginRoutes() *MockPluginManager {
 	pm := new(MockPluginManager)
 	s.srv.SetPluginManager(pm)

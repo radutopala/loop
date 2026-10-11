@@ -27,7 +27,8 @@ channel's project config. Each channel, thread and worktree thread runs a contai
 with its own data, and the plugin's agent runs go in a hidden thread of each. In a
 project that doesn't enable the plugin, its panels are left out of the add-pane menus, a pane
 already open says so, and every call to the plugin answers `409`. A container already running
-there stays up until it's idle or stopped.
+there is stopped as soon as Loop writes the config or the owner trusts it, and within a minute of
+an edit made outside Loop.
 
 ## Managing plugins
 
@@ -43,7 +44,9 @@ from the shell. The API behind both:
 | `DELETE /api/plugins/{id}?purge=` | removes a plugin; `purge` also deletes its data in every channel |
 | `POST /api/plugins/{id}/channels/{channel}/stop` | stops the plugin's container in a channel, keeping its data |
 
-Installing, removing and stopping send a `plugins.changed` event to every client.
+Installing, removing and stopping send a `plugins.changed` event to every client, and so do every
+config write Loop makes, trusting a project config, and the idle or disabled containers the
+daemon stops on its own; open panes and Settings → Plugins list the plugins again on it.
 
 ## Image layout
 

@@ -29,7 +29,8 @@ const (
 	// pluginStartWait caps how long a started plugin container has to answer
 	// its health check.
 	pluginStartWait = 30 * time.Second
-	// pluginIdleInterval is how often idle plugin containers are looked for.
+	// pluginIdleInterval is how often plugin containers left idle, or in a
+	// project that stopped enabling their plugin, are looked for.
 	pluginIdleInterval = time.Minute
 )
 

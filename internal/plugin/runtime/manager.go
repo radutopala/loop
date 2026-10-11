@@ -145,6 +145,7 @@ type Config struct {
 
 // instance is a running plugin container.
 type instance struct {
+	channel     Channel
 	containerID string
 	hostPort    int
 	endpoint    Endpoint
@@ -400,7 +401,7 @@ func (m *Manager) boot(ctx context.Context, p Plugin, ch Channel, containerID, r
 	if port == 0 {
 		return nil, fmt.Errorf("plugin container has no host port for %s", portKey)
 	}
-	inst := &instance{containerID: containerID, hostPort: port, endpoint: Endpoint{URL: fmt.Sprintf("http://127.0.0.1:%d", port), Secret: secret}, lastUsed: m.now()}
+	inst := &instance{channel: ch, containerID: containerID, hostPort: port, endpoint: Endpoint{URL: fmt.Sprintf("http://127.0.0.1:%d", port), Secret: secret}, lastUsed: m.now()}
 	if err := m.waitHealthy(ctx, containerID, inst.endpoint); err != nil {
 		return nil, m.withLogs(ctx, containerID, err)
 	}
@@ -545,8 +546,9 @@ func (m *Manager) Remove(ctx context.Context, pluginID, channelID string, purge 
 	return errors.Join(errs...)
 }
 
-// StopIdle stops the containers unused for longer than IdleTimeout.
-func (m *Manager) StopIdle(ctx context.Context) {
+// StopIdle stops the containers unused for longer than IdleTimeout, and
+// reports whether it stopped any.
+func (m *Manager) StopIdle(ctx context.Context) bool {
 	cutoff := m.now().Add(-m.cfg.IdleTimeout)
 	m.mu.Lock()
 	var idle []key
@@ -559,20 +561,24 @@ func (m *Manager) StopIdle(ctx context.Context) {
 	for _, k := range idle {
 		m.Stop(ctx, k.pluginID, k.channelID)
 	}
+	return len(idle) > 0
 }
 
-// RunIdleLoop stops idle containers every interval until ctx ends.
-func (m *Manager) RunIdleLoop(ctx context.Context, interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			m.StopIdle(ctx)
-		}
+// Running is a plugin's container running in a channel.
+type Running struct {
+	PluginID string
+	Channel  Channel
+}
+
+// Running returns the running containers.
+func (m *Manager) Running() []Running {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]Running, 0, len(m.running))
+	for k, inst := range m.running {
+		out = append(out, Running{PluginID: k.pluginID, Channel: inst.channel})
 	}
+	return out
 }
 
 // RemoveLeftovers removes the plugin containers an earlier run of this
