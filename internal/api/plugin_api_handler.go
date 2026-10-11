@@ -11,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/radutopala/loop/internal/agentgate"
@@ -423,6 +424,11 @@ func (s *Server) handlePluginNotify(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Title == "" {
 		http.Error(w, "title is required", http.StatusBadRequest)
+		return
+	}
+	if ok, wait := s.notifyLimit.allow(p.PluginID); !ok {
+		w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(wait.Seconds()))))
+		http.Error(w, "too many notifications; try again later", http.StatusTooManyRequests)
 		return
 	}
 	if s.eventsHub != nil {

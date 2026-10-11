@@ -171,7 +171,7 @@ channel id. A route needing a capability the owner didn't approve answers `403`.
 | `GET /channel/quality/hotspots?limit=` | `quality.read` | the latest quality scan's functions, worst first: `{"functions": [{"path", "name", "start_line", "cyclomatic", "cognitive", "max_nesting", "param_count", "loc", "score"}]}`; `503` before the first scan |
 | `POST /runs` | `agent.readonly` / `agent.write` | body `{"agent", "prompt", "model"?, "effort"?}` → `202 {"run_id", "thread_id"}`; see below |
 | `POST /events` | | body `{"type", "data"}` → `204`; sent to the plugin's panels in the channel as `type` |
-| `POST /notify` | `ui.notify` | body `{"title", "body"}` → `204`; a desktop notification |
+| `POST /notify` | `ui.notify` | body `{"title", "body"}` → `204`; a desktop notification. Five a minute per plugin; past that `429` with `Retry-After` |
 
 ### Agent runs
 

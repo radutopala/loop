@@ -145,6 +145,7 @@ type Server struct {
 	threads                 ThreadEnsurer
 	removeMCPConfig         func(dirPath, channelID string) error // removes a deleted channel's MCP config files
 	configLocks             configLocks                           // serializes edits of each config.json
+	notifyLimit             notifyLimit                           // caps each plugin's desktop notifications
 	ui                      *uibridge.Bridge                      // the app windows the UI routes drive
 	uiStateWaitOverride     time.Duration                         // tests shorten GET /api/ui/state's wait
 	history                 configHistory                         // records each config.json's revisions; see lockConfig
