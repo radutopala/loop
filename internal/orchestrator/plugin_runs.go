@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/radutopala/loop/internal/agent"
@@ -40,10 +41,25 @@ type PluginRun struct {
 	// Tools are the plugin's tools the agent gets.
 	Tools []plugin.Tool
 
-	// threadID is the plugin's hidden thread the run is queued in, parent
-	// the channel it's a thread of.
+	// tools is the JSON of Tools; threadID is the plugin's hidden thread
+	// the run is queued in, parent the channel it's a thread of.
+	tools    string
 	threadID string
 	parent   *db.Channel
+}
+
+// PluginRunStore keeps plugin runs from when they're queued until they
+// end, so a restart can pick them up.
+type PluginRunStore interface {
+	InsertPluginRun(ctx context.Context, r *db.PluginRun) error
+	DeletePluginRun(ctx context.Context, runID string) error
+	ListPluginRuns(ctx context.Context) ([]*db.PluginRun, error)
+}
+
+// SetPluginRunStore configures where plugin runs are kept; left unset,
+// they're kept in memory only and a restart loses them.
+func (o *Orchestrator) SetPluginRunStore(s PluginRunStore) {
+	o.pluginRunStore = s
 }
 
 // PluginRunNotifier tells a plugin's container in ch that its agent run
@@ -73,8 +89,20 @@ func (o *Orchestrator) StartPluginRun(ctx context.Context, parent *db.Channel, r
 	if err != nil {
 		return "", "", err
 	}
+	tools, err := json.Marshal(run.Tools)
+	if err != nil {
+		return "", "", fmt.Errorf("encoding the plugin's tools: %w", err)
+	}
 	runID = generateMessageID()
-	run.threadID, run.parent = h.ChannelID, parent
+	run.tools, run.threadID, run.parent = string(tools), h.ChannelID, parent
+	if o.pluginRunStore != nil {
+		if err := o.pluginRunStore.InsertPluginRun(ctx, &db.PluginRun{
+			RunID: runID, PluginID: run.PluginID, Agent: run.Agent, ReadOnly: run.ReadOnly, Prompt: run.Prompt,
+			Model: run.Model, Effort: run.Effort, Tools: run.tools, ThreadID: h.ChannelID, ChannelID: parent.ChannelID,
+		}); err != nil {
+			return "", "", fmt.Errorf("storing the run: %w", err)
+		}
+	}
 	o.pluginRuns.Store(runID, &run)
 	o.logger.Info("plugin: run queued", "plugin", run.PluginID, "agent", run.Agent, "channel_id", parent.ChannelID, "thread_id", h.ChannelID, "run_id", runID)
 	o.HandleMessage(ctx, &bot.IncomingMessage{
@@ -119,24 +147,21 @@ func (o *Orchestrator) admitPluginRun(threadID string, msg *bot.IncomingMessage)
 func (o *Orchestrator) applyPluginRequest(req *agent.AgentRequest, msg *bot.IncomingMessage, parent *db.Channel) error {
 	v, _ := o.pluginRuns.Load(msg.MessageID)
 	run := v.(*PluginRun)
-	tools, err := json.Marshal(run.Tools)
-	if err != nil {
-		return fmt.Errorf("encoding the plugin's tools: %w", err)
-	}
 	req.AgentID = agent.PluginAgentID(run.PluginID, run.Agent)
 	req.ReadOnly = run.ReadOnly
 	req.SessionID, req.ForkSession, req.ResumeAt = "", false, ""
 	req.Model = cmp.Or(run.Model, parent.ModelOverride)
 	req.Effort = cmp.Or(run.Effort, parent.EffortOverride)
 	req.SystemPrompt = fmt.Sprintf(pluginSystemPrompt, run.PluginID)
-	req.MCPArgs = []string{"--plugin-id", run.PluginID, "--plugin-tools", string(tools)}
+	req.MCPArgs = []string{"--plugin-id", run.PluginID, "--plugin-tools", run.tools}
 	o.activePluginRuns.Store(msg.ChannelID, ActivePluginRun{ID: msg.MessageID, Run: *run})
 	return nil
 }
 
 // pluginRunDone forgets the plugin run msg started, once it has ended or
-// was dropped, and tells the plugin, failed when runErr is set. The plugin
-// is told in the background: it may have to start its container first.
+// was dropped, and tells the plugin, failed when runErr is set. A run the
+// shutdown cut short stays stored: the plugin couldn't be told before Loop
+// exits, so RecoverPluginRuns fails it on the next start.
 func (o *Orchestrator) pluginRunDone(ctx context.Context, msg *bot.IncomingMessage, runErr error) {
 	if msg.AuthorID != pluginAuthorID {
 		return
@@ -145,10 +170,63 @@ func (o *Orchestrator) pluginRunDone(ctx context.Context, msg *bot.IncomingMessa
 	if a, active := o.ActivePluginRun(msg.ChannelID); active && a.ID == msg.MessageID {
 		o.activePluginRuns.Delete(msg.ChannelID)
 	}
-	if !ok || o.pluginNotifier == nil {
+	if ok && !o.stopping() {
+		o.endPluginRun(ctx, msg.MessageID, v.(*PluginRun), runErr)
+	}
+}
+
+// errPluginRunInterrupted fails the plugin runs Loop stopped in the middle
+// of.
+var errPluginRunInterrupted = errors.New("loop stopped before the run ended")
+
+// RecoverPluginRuns picks up the plugin runs the prior daemon run left:
+// those whose message still waits in their thread's queue resume with it,
+// the rest fail and their plugin is told. Call it at startup after
+// ResetStaleRunningMessages, before the queues resume.
+func (o *Orchestrator) RecoverPluginRuns(ctx context.Context) {
+	if o.pluginRunStore == nil {
 		return
 	}
-	run := v.(*PluginRun)
+	runs, err := o.pluginRunStore.ListPluginRuns(ctx)
+	if err != nil {
+		o.logger.Error("plugin: listing the runs to recover", "error", err)
+		return
+	}
+	for _, r := range runs {
+		parent, err := o.store.GetChannel(ctx, r.ChannelID)
+		if err != nil {
+			o.logger.Error("plugin: looking up a run's channel", "run_id", r.RunID, "channel_id", r.ChannelID, "error", err)
+			continue
+		}
+		run := &PluginRun{
+			PluginID: r.PluginID, Agent: r.Agent, ReadOnly: r.ReadOnly, Prompt: r.Prompt, Model: r.Model, Effort: r.Effort,
+			tools: r.Tools, threadID: r.ThreadID, parent: parent,
+		}
+		// Only StartPluginRun writes the column, from Tools.
+		_ = json.Unmarshal([]byte(r.Tools), &run.Tools)
+		if r.Queued && parent != nil {
+			o.pluginRuns.Store(r.RunID, run)
+			o.logger.Info("plugin: run resumes", "plugin", r.PluginID, "run_id", r.RunID, "thread_id", r.ThreadID)
+			continue
+		}
+		o.logger.Warn("plugin: run interrupted by the prior daemon run", "plugin", r.PluginID, "run_id", r.RunID, "thread_id", r.ThreadID)
+		o.endPluginRun(ctx, r.RunID, run, errPluginRunInterrupted)
+	}
+}
+
+// endPluginRun drops the stored run runID and tells its plugin it ended,
+// failed when runErr is set; a run whose channel is gone has no container
+// to tell. The plugin is told in the background: it may have to start its
+// container first.
+func (o *Orchestrator) endPluginRun(ctx context.Context, runID string, run *PluginRun, runErr error) {
+	if o.pluginRunStore != nil {
+		if err := o.pluginRunStore.DeletePluginRun(ctx, runID); err != nil {
+			o.logger.Warn("plugin: dropping the ended run", "plugin", run.PluginID, "run_id", runID, "error", err)
+		}
+	}
+	if o.pluginNotifier == nil || run.parent == nil {
+		return
+	}
 	req := proxy.RunDoneRequest{Status: proxy.RunStatusDone}
 	if runErr != nil {
 		req = proxy.RunDoneRequest{Status: proxy.RunStatusFailed, Error: runErr.Error()}
@@ -156,8 +234,8 @@ func (o *Orchestrator) pluginRunDone(ctx context.Context, msg *bot.IncomingMessa
 	ctx = context.WithoutCancel(ctx)
 	go func() {
 		ch := runtime.Channel{ID: run.parent.ChannelID, DirPath: run.parent.DirPath}
-		if err := o.pluginNotifier.RunDone(ctx, run.PluginID, ch, msg.MessageID, req); err != nil {
-			o.logger.Warn("plugin: telling the plugin its run ended", "plugin", run.PluginID, "run_id", msg.MessageID, "error", err)
+		if err := o.pluginNotifier.RunDone(ctx, run.PluginID, ch, runID, req); err != nil {
+			o.logger.Warn("plugin: telling the plugin its run ended", "plugin", run.PluginID, "run_id", runID, "error", err)
 		}
 	}()
 }

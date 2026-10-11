@@ -224,6 +224,10 @@ thread, with a fresh session. The agent gets the tools the manifest gives it as 
 `plugin_<tool>`; a read-only agent runs read-only. The plugin sends the whole prompt. When the run
 ends Loop calls `POST /runs/{run_id}/done` on the plugin.
 
+Loop keeps each run in its database until it ends, so a restart of Loop doesn't lose it: a run still
+waiting in the thread's queue runs once Loop is back, and one that was going on fails, with
+`/runs/{run_id}/done` sent as `failed`.
+
 ## Go SDK
 
 `github.com/radutopala/loop/pluginsdk` implements both halves of the contract for a plugin

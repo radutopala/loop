@@ -836,6 +836,7 @@ func (a *app) serve() error {
 	apiSrv.SetPluginRunner(orch)
 	if plug != nil {
 		orch.SetPluginRunNotifier(plug.service)
+		orch.SetPluginRunStore(plug.store)
 	}
 	if statsClient, ok := dockerClient.(api.ContainerStatsFetcher); ok {
 		apiSrv.SetContainerStatsFetcher(statsClient)
@@ -900,6 +901,8 @@ func (a *app) serve() error {
 	} else if n > 0 {
 		logger.Warn("failed learn passes interrupted by the prior daemon run", "count", n)
 	}
+	// Plugin runs likewise; their plugins are told of those that fail.
+	orch.RecoverPluginRuns(ctx)
 	if pending, err := store.ListPendingChannels(ctx); err != nil {
 		logger.Error("listing pending channels", "error", err)
 	} else {

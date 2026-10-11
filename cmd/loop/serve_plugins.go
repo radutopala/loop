@@ -43,15 +43,18 @@ type pluginDockerClient interface {
 	Close() error
 }
 
-// pluginStore keeps installed plugins and their containers.
+// pluginStore keeps installed plugins, their containers and their agent
+// runs.
 type pluginStore interface {
 	runtime.Store
 	install.ServiceStore
+	orchestrator.PluginRunStore
 }
 
 // plugins is the plugin system the daemon runs when plugins.enabled is set.
 type plugins struct {
 	docker  pluginDockerClient
+	store   pluginStore
 	runtime *runtime.Manager
 	service *install.Service
 }
@@ -90,7 +93,7 @@ func (a *app) newPlugins(ctx context.Context, cfg *config.Config, reload func() 
 		logger.Warn("removing leftover plugin containers", "error", err)
 	}
 	installer := install.NewInstaller(cli, ps, root, a.version)
-	return &plugins{docker: cli, runtime: mgr, service: install.NewService(installer, mgr, ps, proxy.NewClient(&http.Client{}), pluginEnabled(cfg, reload, store))}, nil
+	return &plugins{docker: cli, store: ps, runtime: mgr, service: install.NewService(installer, mgr, ps, proxy.NewClient(&http.Client{}), pluginEnabled(cfg, reload, store))}, nil
 }
 
 // pluginActionRunner runs the scheduled tasks of plugin actions on svc.

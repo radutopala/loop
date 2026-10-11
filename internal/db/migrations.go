@@ -521,6 +521,21 @@ var migrations = []migration{
 		action     TEXT NOT NULL,
 		PRIMARY KEY (plugin_id, channel_id, action)
 	)`),
+	// plugin_runs holds each plugin agent run from when it's queued until it
+	// ends (see PluginRun).
+	sqlMigration(`CREATE TABLE IF NOT EXISTS plugin_runs (
+		run_id     TEXT PRIMARY KEY,
+		plugin_id  TEXT NOT NULL,
+		agent      TEXT NOT NULL,
+		read_only  INTEGER NOT NULL DEFAULT 0,
+		prompt     TEXT NOT NULL,
+		model      TEXT NOT NULL DEFAULT '',
+		effort     TEXT NOT NULL DEFAULT '',
+		tools      TEXT NOT NULL DEFAULT '[]',
+		thread_id  TEXT NOT NULL,
+		channel_id TEXT NOT NULL,
+		created_at DATETIME NOT NULL
+	)`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the

@@ -101,12 +101,13 @@ type Orchestrator struct {
 	sessions          sessionSwitches  // session switches deferred to a run's end
 	tasks             *taskRegistry
 	delayPollInterval time.Duration         // how often the delay poller wakes; 0 disables it
-	delayStop         chan struct{}         // closed by Stop to end the delay poller
+	delayStop         chan struct{}         // closed by Stop to end the delay poller; see stopping
 	delayStopOnce     sync.Once             // guards delayStop close
 	hiddenKinds       map[string]hiddenKind // runs of each kind of hidden thread (see shapeHiddenRun)
 	pluginRuns        sync.Map              // map[runID]*PluginRun — plugin runs queued or going on (see StartPluginRun)
 	activePluginRuns  sync.Map              // map[threadID]ActivePluginRun — the plugin run going on in each plugin thread
 	pluginNotifier    PluginRunNotifier     // tells a plugin its run ended; nil skips it
+	pluginRunStore    PluginRunStore        // keeps plugin runs across restarts; nil keeps them in memory only
 
 	// loadWorktreeProjectConfig merges global → root project → worktree
 	// config for a worktree dir and its root checkout.
@@ -507,6 +508,17 @@ func (o *Orchestrator) Stop() error {
 		return fmt.Errorf("shutdown errors: %s", strings.Join(errs, "; "))
 	}
 	return nil
+}
+
+// stopping reports whether Stop has begun: runs that end from now on were
+// cut short by the shutdown.
+func (o *Orchestrator) stopping() bool {
+	select {
+	case <-o.delayStop:
+		return true
+	default:
+		return false
+	}
 }
 
 const recentMessageLimit = 50
