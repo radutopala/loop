@@ -32,6 +32,8 @@ tags:
     description: Agent runs the plugin starts.
   - name: ui
     description: The plugin's panels and the desktop.
+  - name: memory
+    description: Memory files the channel's agents search.
 paths:
   /channel:
     get:
@@ -315,6 +317,61 @@ paths:
           content: { text/plain: { schema: { type: string } } }
         "500": { $ref: "#/components/responses/InternalError" }
         "501": { $ref: "#/components/responses/PluginsDisabled" }
+  /memory/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        description: The plugin's name for the file.
+        schema: { type: string, pattern: "^[a-z0-9][a-z0-9-]{0,63}$" }
+    put:
+      operationId: writeMemory
+      tags: [memory]
+      summary: Write a memory file
+      description: |
+        Writes plugin-<plugin id>-<name>.md into Claude Code's auto-memory
+        dir for the channel's dir, which Loop indexes for search_memory.
+        Replaces a file of the same name. The body is capped at 256 KB.
+      x-loop-capabilities: [memory.write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Memory"
+      responses:
+        "204":
+          description: The file was written.
+        "400":
+          description: The name isn't valid, or the body isn't JSON or is over 256 KB.
+          content: { text/plain: { schema: { type: string } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/ChannelNotFound" }
+        "409":
+          description: The plugin can't run, or the channel has no dir.
+          content: { text/plain: { schema: { type: string } } }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { $ref: "#/components/responses/PluginsDisabled" }
+    delete:
+      operationId: deleteMemory
+      tags: [memory]
+      summary: Remove a memory file
+      x-loop-capabilities: [memory.write]
+      responses:
+        "204":
+          description: The file is gone, or never was there.
+        "400":
+          description: The name isn't valid.
+          content: { text/plain: { schema: { type: string } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/ChannelNotFound" }
+        "409":
+          description: The plugin can't run, or the channel has no dir.
+          content: { text/plain: { schema: { type: string } } }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { $ref: "#/components/responses/PluginsDisabled" }
 components:
   securitySchemes:
     pluginToken:
@@ -490,3 +547,9 @@ components:
       properties:
         title: { type: string, minLength: 1 }
         body: { type: string }
+    Memory:
+      type: object
+      properties:
+        content:
+          type: string
+          description: The file's Markdown.

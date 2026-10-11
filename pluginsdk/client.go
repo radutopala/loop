@@ -101,6 +101,8 @@ type API interface {
 	StartRun(ctx context.Context, req RunRequest) (*Run, error)
 	Event(ctx context.Context, typ string, data any) error
 	Notify(ctx context.Context, title, body string) error
+	WriteMemory(ctx context.Context, name, content string) error
+	DeleteMemory(ctx context.Context, name string) error
 }
 
 // StatusError is a non-2xx answer from Loop.

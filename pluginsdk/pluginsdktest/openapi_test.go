@@ -98,7 +98,7 @@ func (s *spec) routes() []string {
 // sample turns a route into a request path, filling in its parameters.
 func sample(route string) (method, path string) {
 	method, path, _ = strings.Cut(route, " ")
-	return method, strings.NewReplacer("{action}", "a", "{tool}", "t", "{run_id}", "r1", "{path}", "p/q").Replace(path)
+	return method, strings.NewReplacer("{action}", "a", "{tool}", "t", "{run_id}", "r1", "{path}", "p/q", "{name}", "notes").Replace(path)
 }
 
 // muxPatterns returns the patterns file registers with Handle or HandleFunc.
@@ -176,6 +176,8 @@ func (s *OpenAPISuite) TestClient() {
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), c.Event(ctx, "done", nil))
 	require.NoError(s.T(), c.Notify(ctx, "t", "b"))
+	require.NoError(s.T(), c.WriteMemory(ctx, "notes", "x"))
+	require.NoError(s.T(), c.DeleteMemory(ctx, "notes"))
 
 	require.NotContains(s.T(), rec.routes, "", "a call isn't in %s", apiSpec)
 	slices.Sort(rec.routes)
@@ -241,7 +243,7 @@ func (s *OpenAPISuite) TestFakeLoop() {
 	require.Equal(s.T(), s.api.routes(), served)
 
 	all := []string{pluginsdk.CapFilesRead, pluginsdk.CapGitRead, pluginsdk.CapQualityRead,
-		pluginsdk.CapAgentReadOnly, pluginsdk.CapAgentWrite, pluginsdk.CapUINotify}
+		pluginsdk.CapAgentReadOnly, pluginsdk.CapAgentWrite, pluginsdk.CapUINotify, pluginsdk.CapMemoryWrite}
 	tests := []struct {
 		name string
 		caps []string
