@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { paneHeaderSlotRef } from "../components/chat/LearnBadge";
 import type { AgentInfo } from "../hooks/useAgentRegistry";
 import { type ContainerStatsByType, fmtBytes, statsForPanel } from "../hooks/useContainerStats";
 import { usePluginPanels } from "../plugins/PluginPanelsContext";
@@ -335,6 +336,7 @@ export function CanvasTile({
         )}
         <div
           id={`pane-header-slot-${tile.id}`}
+          ref={paneHeaderSlotRef}
           style={{
             display: "flex",
             alignItems: "center",

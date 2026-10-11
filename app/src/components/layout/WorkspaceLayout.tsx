@@ -1090,6 +1090,46 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     [chatHost],
   );
 
+  // Each plugin pane is mounted once, into a host of its own that the pane's
+  // slot moves in, as the chat's is: maximized, restored or moved, its frame
+  // keeps its page instead of loading it again.
+  const pluginLeaves = useMemo((): LeafNode[] => {
+    if (layoutType === "canvas") {
+      return (canvasState?.tiles ?? []).flatMap((t) => (t.panel === "plugin" && t.plugin ? [{ type: "leaf", id: t.id, panel: "plugin", flex: 1, plugin: t.plugin } satisfies LeafNode] : []));
+    }
+    return tree ? collectLeaves(tree).filter((l) => l.panel === "plugin" && l.plugin) : [];
+  }, [layoutType, tree, canvasState]);
+  const pluginHostsRef = useRef(new Map<string, HTMLDivElement>());
+  const pluginHost = useCallback((leafId: string) => {
+    let host = pluginHostsRef.current.get(leafId);
+    if (!host) {
+      host = createChatHost();
+      pluginHostsRef.current.set(leafId, host);
+    }
+    return host;
+  }, []);
+  const placePluginHost = useCallback(() => {}, []);
+  // A pane's host goes with the pane, and every host with the layout.
+  useEffect(() => {
+    const hosts = pluginHostsRef.current;
+    const kept = new Set(pluginLeaves.map((l) => l.id));
+    for (const [id, host] of hosts) {
+      if (kept.has(id)) continue;
+      host.closest("[data-chat-park]")?.remove();
+      host.remove();
+      hosts.delete(id);
+    }
+  }, [pluginLeaves]);
+  useEffect(
+    () => () => {
+      for (const host of pluginHostsRef.current.values()) {
+        host.closest("[data-chat-park]")?.remove();
+        host.remove();
+      }
+    },
+    [],
+  );
+
   // Opening the Learn view makes the layout under it inert, so focus left
   // there (on the chat pane's Learn badge, say) would drop to nowhere: it
   // goes to the chat's composer, which moves into the view keeping it.
@@ -1324,21 +1364,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         case "quality":
           return <QualityPanel key={`layout-quality-${channelId}`} channelId={channelId} dirPath={dirPath} branch={branch} embedded onClose={() => handleRemoveLeaf(leaf.id)} />;
         case "plugin":
-          return (
-            <PluginPanel
-              key={`layout-plugin-${channelId}-${leaf.id}`}
-              plugin={leaf.plugin}
-              channelId={channelId}
-              channelName={channel.name}
-              dirPath={dirPath}
-              leafId={leaf.id}
-              roots={editorState.roots}
-              subscribeChannelEvents={subscribeChannelEvents}
-              getChatState={getChatState}
-              onChatStateUnmount={onChatStateUnmount}
-              overlayHost={overlayHost}
-            />
-          );
+          return <ChatSlot host={pluginHost(leaf.id)} active onAttach={placePluginHost} />;
         case "review":
           return (
             <ReviewPanel
@@ -1385,10 +1411,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       explainShown,
       chatHost,
       placeChatHost,
-      subscribeChannelEvents,
-      getChatState,
-      onChatStateUnmount,
-      overlayHost,
+      pluginHost,
+      placePluginHost,
     ],
   );
 
@@ -1926,6 +1950,24 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             )}
           </div>
           {chatHostPlaced && portalLeafId && createPortal(renderChat(portalLeafId), chatHost)}
+          {pluginLeaves.map((leaf) =>
+            createPortal(
+              <PluginPanel
+                plugin={leaf.plugin}
+                channelId={channelId}
+                channelName={channel.name}
+                dirPath={dirPath}
+                leafId={leaf.id}
+                roots={editorState.roots}
+                subscribeChannelEvents={subscribeChannelEvents}
+                getChatState={getChatState}
+                onChatStateUnmount={onChatStateUnmount}
+                overlayHost={overlayHost}
+              />,
+              pluginHost(leaf.id),
+              `layout-plugin-${channelId}-${leaf.id}`,
+            ),
+          )}
         </PluginPanelsProvider>
       </ShortcutsVersionContext.Provider>
     </div>

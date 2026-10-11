@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { paneHeaderSlotRef } from "../components/chat/LearnBadge";
 import type { AgentInfo } from "../hooks/useAgentRegistry";
 import { type ContainerStatsByType, fmtBytes, statsForPanel } from "../hooks/useContainerStats";
 import { usePluginPanels } from "../plugins/PluginPanelsContext";
@@ -218,7 +219,7 @@ export function PaneLeafHeader({
           {Math.round(statsEntry.cpu_percent)}% · {fmtBytes(statsEntry.mem_usage)}
         </span>
       )}
-      <div id={`pane-header-slot-${leafId}`} style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }} />
+      <div id={`pane-header-slot-${leafId}`} ref={paneHeaderSlotRef} style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }} />
     </div>
   );
 }
