@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { WSEvent } from "../types";
-import { startedRunThread } from "./PluginAgent";
+import { agentOpenKey, startedRunThread } from "./PluginAgent";
 
 function event(type: string, data: unknown): WSEvent {
   return { type, data } as WSEvent;
@@ -15,5 +15,11 @@ describe("startedRunThread", () => {
     { name: "another event", ev: event("agent.status", { plugin_id: "cogtest", thread_id: "plugin:cogtest-abc123" }), want: null },
   ])("answers $name", ({ ev, want }) => {
     expect(startedRunThread(ev, "cogtest")).toBe(want);
+  });
+});
+
+describe("agentOpenKey", () => {
+  it("keys a pane's agent view by plugin, channel and leaf", () => {
+    expect(agentOpenKey("cogtest", "ch1", "leaf-2")).toBe("plugin-agent-open:cogtest:ch1:leaf-2");
   });
 });

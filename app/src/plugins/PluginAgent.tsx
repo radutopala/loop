@@ -11,6 +11,7 @@ import { useTheme } from "../ThemeContext";
 import { fonts } from "../theme";
 import type { AgentStatusData, WSEvent } from "../types";
 import { logErr } from "../utils/log";
+import { storageGetJSON, storageSetJSON } from "../utils/storage";
 
 /** Subscribes a listener to a channel's events, as the app's store does. */
 export type SubscribeChannelEvents = (channelId: string, listener: ChatEventListener) => () => void;
@@ -76,6 +77,63 @@ export function usePluginAgent(pluginId: string, channelId: string, subscribeCha
   }, [threadId, subscribeChannelEvents]);
 
   return { threadId, running, onEvent };
+}
+
+/** The window event a plugin pane sends, with its leaf id, as it opens its
+ *  agent's view: the other panes close theirs, so one view lies over the
+ *  layout at a time. */
+export const PLUGIN_AGENT_OPENED = "loop:plugin-agent-opened";
+
+/** Where whether a pane's agent view is open is kept. */
+export function agentOpenKey(pluginId: string, channelId: string, leafId: string): string {
+  return `plugin-agent-open:${pluginId}:${channelId}:${leafId}`;
+}
+
+/** Whether the pane leafId's agent view is open, kept under storageKey so
+ *  it opens again as the pane comes back. Opening it closes the other
+ *  panes' views; Escape closes it, unless something took the key first or
+ *  the layout under host is hidden. */
+export function usePluginAgentOpen(storageKey: string, leafId: string, host: HTMLElement | null | undefined): [boolean, (open: boolean) => void] {
+  const [open, setOpenState] = useState(() => storageGetJSON<boolean>(storageKey) === true);
+  useEffect(() => setOpenState(storageGetJSON<boolean>(storageKey) === true), [storageKey]);
+  const setOpen = useCallback(
+    (next: boolean) => {
+      setOpenState(next);
+      storageSetJSON(storageKey, next);
+      if (next) window.dispatchEvent(new CustomEvent<string>(PLUGIN_AGENT_OPENED, { detail: leafId }));
+    },
+    [storageKey, leafId],
+  );
+
+  useEffect(() => {
+    const onOpened = (e: Event) => {
+      if ((e as CustomEvent<string>).detail !== leafId) setOpen(false);
+    };
+    window.addEventListener(PLUGIN_AGENT_OPENED, onOpened);
+    return () => window.removeEventListener(PLUGIN_AGENT_OPENED, onOpened);
+  }, [leafId, setOpen]);
+
+  useEffect(() => {
+    if (!open || !host) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const onKey = (e: KeyboardEvent) => {
+      // A hidden layout (under Settings, say) has no offsetParent.
+      if (e.key !== "Escape" || host.offsetParent === null) return;
+      // As the Learn view does: whatever takes Escape marks it handled,
+      // but a listener added later only sees it after this one.
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (!e.defaultPrevented) setOpen(false);
+      });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      clearTimeout(timer);
+    };
+  }, [open, host, setOpen]);
+
+  return [open, setOpen];
 }
 
 /**

@@ -14,7 +14,7 @@ import type { WSEvent } from "../types";
 import type { PluginPaneRef } from "../types/panels";
 import { storageGetJSON, storageSetJSON } from "../utils/storage";
 import { BRIDGE_INIT, type Bridge, type BridgeHost, connectBridge, pluginTheme } from "./bridge";
-import { PluginAgentBadge, PluginAgentThread, type SubscribeChannelEvents, usePluginAgent } from "./PluginAgent";
+import { agentOpenKey, PluginAgentBadge, PluginAgentThread, type SubscribeChannelEvents, usePluginAgent, usePluginAgentOpen } from "./PluginAgent";
 import { findPluginPanel, usePluginPanels } from "./PluginPanelsContext";
 
 export interface PluginPanelProps {
@@ -116,7 +116,7 @@ export function PluginPanel({ plugin: ref, channelId, channelName, dirPath, leaf
   }, [colors]);
 
   const agent = usePluginAgent(pluginId, channelId, subscribeChannelEvents);
-  const [agentOpen, setAgentOpen] = useState(false);
+  const [agentOpen, setAgentOpen] = usePluginAgentOpen(agentOpenKey(pluginId, channelId, leafId), leafId, overlayHost);
   const agentThread = agentOpen && overlayHost ? agent.threadId : null;
   const [frameSlot, setFrameSlot] = useState<HTMLDivElement | null>(null);
   const frameBoxRef = useRef<HTMLDivElement>(null);
@@ -219,7 +219,7 @@ export function PluginPanel({ plugin: ref, channelId, channelName, dirPath, leaf
       </div>
     );
   }
-  const toggleAgent = () => setAgentOpen((o) => !o);
+  const toggleAgent = () => setAgentOpen(!agentOpen);
   const badge = (slotLeafId: string) =>
     agent.threadId !== null && overlayHost ? <PluginAgentBadge leafId={slotLeafId} running={agent.running} open={agentThread !== null} onToggle={toggleAgent} /> : null;
   const viewLeafId = `plugin-agent-${leafId}`;
