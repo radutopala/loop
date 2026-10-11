@@ -372,6 +372,51 @@ paths:
           content: { text/plain: { schema: { type: string } } }
         "500": { $ref: "#/components/responses/InternalError" }
         "501": { $ref: "#/components/responses/PluginsDisabled" }
+  /ui/commands:
+    post:
+      operationId: runUI
+      tags: [ui]
+      summary: Drive an app window
+      description: |
+        Runs UI bridge steps in an app window, in order, until one fails,
+        as Loop's POST /api/ui/commands does; Loop's API docs list the
+        steps. The first step is select_channel, and each select_channel
+        opens the plugin's channel or one of its threads. Terminal steps
+        work only on docker-agent and docker-shell panes. The answer comes
+        when the window has run the steps, which can take up to `timeout`.
+      x-loop-capabilities: [ui.run]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UICommand"
+      responses:
+        "200":
+          description: The window ran the steps; a failed step has ok false and an error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UIReply"
+        "400":
+          description: The body isn't JSON, a step has no op, the timeout is bad, or a terminal step names another pane.
+          content: { text/plain: { schema: { type: string } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: The owner didn't approve ui.run, or a select_channel opens another channel.
+          content: { text/plain: { schema: { type: string } } }
+        "404":
+          description: The channel is gone, no app window is open, or there is no window client_id.
+          content: { text/plain: { schema: { type: string } } }
+        "409": { $ref: "#/components/responses/NotRunnable" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { $ref: "#/components/responses/PluginsDisabled" }
+        "502":
+          description: The window went away before it answered.
+          content: { text/plain: { schema: { type: string } } }
+        "504":
+          description: The window didn't answer within the timeout.
+          content: { text/plain: { schema: { type: string } } }
 components:
   securitySchemes:
     pluginToken:
@@ -553,3 +598,40 @@ components:
         content:
           type: string
           description: The file's Markdown.
+    UICommand:
+      type: object
+      required: [steps]
+      properties:
+        client_id:
+          type: string
+          description: The window to drive; left out, the one the user last focused.
+        timeout:
+          type: string
+          description: How long to wait for the window, as a Go duration; 1m when left out, at most 10m.
+        steps:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [op]
+            properties:
+              op: { type: string, minLength: 1 }
+            additionalProperties: true
+    UIReply:
+      type: object
+      required: [client_id, results]
+      properties:
+        client_id: { type: string }
+        error:
+          type: string
+          description: Why the window couldn't run the steps at all.
+        results:
+          type: array
+          items:
+            type: object
+            required: [op, ok]
+            properties:
+              op: { type: string }
+              ok: { type: boolean }
+              error: { type: string }
+            additionalProperties: true

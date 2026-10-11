@@ -30,7 +30,7 @@ const cogtest = `{
   "version": "1.0.0",
   "api": "1",
   "loop": ">=2026.11.0",
-  "capabilities": ["files.read", "git.read", "quality.read", "agent.readonly", "schedule", "ui.panel", "ui.notify", "ui.open_file", "memory.write", "events.subscribe"],
+  "capabilities": ["files.read", "git.read", "quality.read", "agent.readonly", "schedule", "ui.panel", "ui.notify", "ui.open_file", "memory.write", "events.subscribe", "ui.run"],
   "events": ["message.created"],
   "gate": {
     "commands": [{"commands": ["git"], "args_patterns": ["^log"], "decision": "allow"}],

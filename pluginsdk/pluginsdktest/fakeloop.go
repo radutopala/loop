@@ -4,6 +4,7 @@
 package pluginsdktest
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -18,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -39,6 +41,8 @@ type Config struct {
 	// Hotspots is GET /channel/quality/hotspots's answer; nil answers 503,
 	// as before the first quality scan.
 	Hotspots []pluginsdk.Hotspot
+	// Threads are the channel's threads a UI command may open.
+	Threads []string
 }
 
 // Event is an event the plugin sent to its panels.
@@ -75,6 +79,7 @@ type FakeLoop struct {
 	notifications []Notification
 	runs          []StartedRun
 	memory        map[string]string
+	uiCommands    []pluginsdk.UICommand
 }
 
 // NewFakeLoop starts a FakeLoop serving cfg, stopped when t ends.
@@ -96,6 +101,7 @@ func NewFakeLoop(t testing.TB, cfg Config) *FakeLoop {
 	mux.HandleFunc("POST /api/plugin/v1/notify", f.allow(pluginsdk.CapUINotify, f.notify))
 	mux.HandleFunc("PUT /api/plugin/v1/memory/{name}", f.allow(pluginsdk.CapMemoryWrite, f.putMemory))
 	mux.HandleFunc("DELETE /api/plugin/v1/memory/{name}", f.allow(pluginsdk.CapMemoryWrite, f.deleteMemory))
+	mux.HandleFunc("POST /api/plugin/v1/ui/commands", f.allow(pluginsdk.CapUIRun, f.runUI))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+f.token {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -133,6 +139,13 @@ func (f *FakeLoop) Runs() []StartedRun {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.runs)
+}
+
+// UICommands returns the UI commands the plugin ran, oldest first.
+func (f *FakeLoop) UICommands() []pluginsdk.UICommand {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.uiCommands)
 }
 
 // Memory returns the plugin's memory files by name.
@@ -352,4 +365,57 @@ func (f *FakeLoop) deleteMemory(w http.ResponseWriter, r *http.Request) {
 	delete(f.memory, r.PathValue("name"))
 	f.mu.Unlock()
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// runUI checks a UI command as Loop does and answers that the window ran
+// every step.
+func (f *FakeLoop) runUI(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ClientID string             `json:"client_id"`
+		Steps    []pluginsdk.UIStep `json:"steps"`
+		Timeout  string             `json:"timeout"`
+	}
+	if !pluginsdk.DecodeJSON(w, r, &req) {
+		return
+	}
+	if len(req.Steps) == 0 || slices.ContainsFunc(req.Steps, func(step pluginsdk.UIStep) bool { return step["op"] == "" || step["op"] == nil }) {
+		http.Error(w, "steps is required, and every step needs an op", http.StatusBadRequest)
+		return
+	}
+	cmd := pluginsdk.UICommand{ClientID: req.ClientID, Steps: req.Steps}
+	if req.Timeout != "" {
+		d, err := time.ParseDuration(req.Timeout)
+		if err != nil || d <= 0 || d > 10*time.Minute {
+			http.Error(w, "timeout must be a Go duration up to 10m", http.StatusBadRequest)
+			return
+		}
+		cmd.Timeout = d
+	}
+	if msg := f.uiRefusal(req.Steps); msg != "" {
+		http.Error(w, msg, http.StatusForbidden)
+		return
+	}
+	results := make([]map[string]any, len(req.Steps))
+	for i, step := range req.Steps {
+		results[i] = map[string]any{"op": step["op"], "ok": true}
+	}
+	f.mu.Lock()
+	f.uiCommands = append(f.uiCommands, cmd)
+	f.mu.Unlock()
+	clientID := cmp.Or(req.ClientID, "window")
+	pluginsdk.WriteJSON(w, http.StatusOK, pluginsdk.UIReply{ClientID: clientID, Results: results})
+}
+
+// uiRefusal returns why Loop would refuse steps, or "" when it runs them.
+func (f *FakeLoop) uiRefusal(steps []pluginsdk.UIStep) string {
+	if steps[0]["op"] != "select_channel" {
+		return "a plugin's command starts with select_channel, to its channel or one of its threads"
+	}
+	for _, step := range steps {
+		id, _ := step["channel_id"].(string)
+		if step["op"] == "select_channel" && id != f.cfg.Channel.ID && !slices.Contains(f.cfg.Threads, id) {
+			return "channel " + id + " isn't the plugin's channel or one of its threads"
+		}
+	}
+	return ""
 }

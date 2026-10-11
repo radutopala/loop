@@ -24,6 +24,7 @@ const (
 	CapUIOpenFile    = "ui.open_file"
 	CapMemoryWrite   = "memory.write"
 	CapEventsSub     = "events.subscribe"
+	CapUIRun         = "ui.run"
 )
 
 // Loop events a manifest may subscribe to.

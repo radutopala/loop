@@ -685,6 +685,7 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/plugin/v1/notify", s.handlePluginNotify)
 	mux.HandleFunc("PUT /api/plugin/v1/memory/{name}", s.handlePutPluginMemory)
 	mux.HandleFunc("DELETE /api/plugin/v1/memory/{name}", s.handleDeletePluginMemory)
+	mux.HandleFunc("POST /api/plugin/v1/ui/commands", s.handlePluginUICommand)
 	mux.HandleFunc("GET /api/health", handleHealth)
 	mux.HandleFunc("POST /api/auth/rotate", s.handleRotateToken)
 	mux.HandleFunc("POST /api/content-caps", s.handleCreateContentCap)

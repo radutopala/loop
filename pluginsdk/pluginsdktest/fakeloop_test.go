@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -230,5 +231,45 @@ func (s *FakeLoopSuite) TestMemory() {
 
 	denied := NewFakeLoop(s.T(), Config{Manifest: &pluginsdk.Manifest{}})
 	err = denied.Client().WriteMemory(s.ctx, "notes", "x")
+	require.True(s.T(), pluginsdk.HasStatus(err, http.StatusForbidden))
+}
+
+func (s *FakeLoopSuite) TestRunUI() {
+	f := NewFakeLoop(s.T(), Config{Manifest: &pluginsdk.Manifest{Capabilities: []string{pluginsdk.CapUIRun}}, Threads: []string{"th1"}})
+	c := f.Client()
+	open := pluginsdk.UIStep{"op": "select_channel", "channel_id": "ch1"}
+
+	reply, err := c.RunUI(s.ctx, pluginsdk.UICommand{Steps: []pluginsdk.UIStep{open, {"op": "wait", "ms": 10}}})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), &pluginsdk.UIReply{ClientID: "window", Results: []map[string]any{
+		{"op": "select_channel", "ok": true}, {"op": "wait", "ok": true}}}, reply)
+	thread := pluginsdk.UICommand{ClientID: "w1", Steps: []pluginsdk.UIStep{{"op": "select_channel", "channel_id": "th1"}}, Timeout: 5 * time.Minute}
+	reply, err = c.RunUI(s.ctx, thread)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "w1", reply.ClientID)
+
+	tests := []struct {
+		name   string
+		cmd    pluginsdk.UICommand
+		status int
+	}{
+		{name: "no steps", status: http.StatusBadRequest},
+		{name: "a step without an op", cmd: pluginsdk.UICommand{Steps: []pluginsdk.UIStep{open, {"ms": 1}}}, status: http.StatusBadRequest},
+		{name: "a long timeout", cmd: pluginsdk.UICommand{Steps: []pluginsdk.UIStep{open}, Timeout: time.Hour}, status: http.StatusBadRequest},
+		{name: "not opening the channel first", cmd: pluginsdk.UICommand{Steps: []pluginsdk.UIStep{{"op": "wait"}}}, status: http.StatusForbidden},
+		{name: "another channel", cmd: pluginsdk.UICommand{Steps: []pluginsdk.UIStep{open, {"op": "select_channel", "channel_id": "ch2"}}}, status: http.StatusForbidden},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			_, err := c.RunUI(s.ctx, tt.cmd)
+			require.True(s.T(), pluginsdk.HasStatus(err, tt.status), "%v", err)
+		})
+	}
+	require.Equal(s.T(), http.StatusBadRequest, s.raw(f, http.MethodPost, "/ui/commands", "{"))
+	require.Equal(s.T(), http.StatusBadRequest, s.raw(f, http.MethodPost, "/ui/commands", `{"steps":[{"op":"wait"}],"timeout":"soon"}`))
+	require.Equal(s.T(), []pluginsdk.UICommand{{Steps: []pluginsdk.UIStep{open, {"op": "wait", "ms": float64(10)}}}, thread}, f.UICommands())
+
+	denied := NewFakeLoop(s.T(), Config{Manifest: &pluginsdk.Manifest{}})
+	_, err = denied.Client().RunUI(s.ctx, pluginsdk.UICommand{Steps: []pluginsdk.UIStep{open}})
 	require.True(s.T(), pluginsdk.HasStatus(err, http.StatusForbidden))
 }

@@ -191,6 +191,8 @@ func (s *OpenAPISuite) TestClient() {
 	require.NoError(s.T(), c.Notify(ctx, "t", "b"))
 	require.NoError(s.T(), c.WriteMemory(ctx, "notes", "x"))
 	require.NoError(s.T(), c.DeleteMemory(ctx, "notes"))
+	_, err = c.RunUI(ctx, pluginsdk.UICommand{Steps: []pluginsdk.UIStep{{"op": "select_channel", "channel_id": "ch1"}}})
+	require.NoError(s.T(), err)
 
 	require.NotContains(s.T(), rec.routes, "", "a call isn't in %s", apiSpec)
 	slices.Sort(rec.routes)
@@ -262,7 +264,7 @@ func (s *OpenAPISuite) TestFakeLoop() {
 	require.Equal(s.T(), s.api.routes(), served)
 
 	all := []string{pluginsdk.CapFilesRead, pluginsdk.CapGitRead, pluginsdk.CapQualityRead,
-		pluginsdk.CapAgentReadOnly, pluginsdk.CapAgentWrite, pluginsdk.CapUINotify, pluginsdk.CapMemoryWrite}
+		pluginsdk.CapAgentReadOnly, pluginsdk.CapAgentWrite, pluginsdk.CapUINotify, pluginsdk.CapMemoryWrite, pluginsdk.CapUIRun}
 	tests := []struct {
 		name string
 		caps []string
@@ -283,7 +285,7 @@ func (s *OpenAPISuite) TestFakeLoop() {
 			for _, route := range s.api.routes() {
 				method, path := sample(route)
 				req, err := http.NewRequest(method, loop.URL+apiPrefix+path+"?path=a.go",
-					strings.NewReader(`{"agent":"gen","prompt":"p","type":"t","title":"t"}`))
+					strings.NewReader(`{"agent":"gen","prompt":"p","type":"t","title":"t","steps":[{"op":"select_channel","channel_id":"ch1"}]}`))
 				require.NoError(s.T(), err)
 				req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(token)))
 				resp, err := http.DefaultClient.Do(req)

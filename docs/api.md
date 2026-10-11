@@ -3166,6 +3166,7 @@ Called by a plugin's container with the token in its `LOOP_PLUGIN_TOKEN_FILE`; t
 | `POST /api/plugin/v1/notify` | `ui.notify` | body `{"title", "body"}` → `204`; broadcast as a `plugin.notify` event with `{"plugin_id", "title", "body"}`. At most five a minute per plugin: past that `429` with `Retry-After` in seconds |
 | `PUT /api/plugin/v1/memory/{name}` | `memory.write` | body `{"content"}` (up to 256 KB) → `204`; writes `plugin-<plugin>-<name>.md` in `~/.claude/projects/<encoded dir>/memory/` for the channel's dir, which `search_memory` indexes. `name` matches `^[a-z0-9][a-z0-9-]{0,63}$` (`400` otherwise); `409` when the channel has no dir |
 | `DELETE /api/plugin/v1/memory/{name}` | `memory.write` | removes that file → `204`, also when it's already gone |
+| `POST /api/plugin/v1/ui/commands` | `ui.run` | as [`POST /api/ui/commands`](#post-apiuicommands), held to the channel: the first step is `select_channel`, and each `select_channel` names the channel or one of its threads that isn't hidden (`403` otherwise) |
 
 ---
 

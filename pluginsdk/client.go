@@ -91,6 +91,31 @@ type Run struct {
 	ThreadID string `json:"thread_id"`
 }
 
+// UIStep is a UI bridge step: its op and the op's fields, as Loop's API
+// docs list them.
+type UIStep map[string]any
+
+// UICommand is steps for an app window to run in order. The first step is
+// select_channel, and each select_channel opens the plugin's channel or one
+// of its threads.
+type UICommand struct {
+	// ClientID picks the window; "" is the one the user last focused.
+	ClientID string
+	Steps    []UIStep
+	// Timeout is how long to wait for the window; zero is a minute, and
+	// Loop allows up to ten.
+	Timeout time.Duration
+}
+
+// UIReply is how the window ran the steps. A failed step has ok false and
+// an error, and the steps after it don't run.
+type UIReply struct {
+	ClientID string           `json:"client_id"`
+	Results  []map[string]any `json:"results"`
+	// Error is why the window couldn't run the steps at all.
+	Error string `json:"error,omitempty"`
+}
+
 // API is Loop's Plugin API v1, as the plugin's channel-scoped token sees it.
 type API interface {
 	Channel(ctx context.Context) (*Channel, error)
@@ -103,6 +128,7 @@ type API interface {
 	Notify(ctx context.Context, title, body string) error
 	WriteMemory(ctx context.Context, name, content string) error
 	DeleteMemory(ctx context.Context, name string) error
+	RunUI(ctx context.Context, cmd UICommand) (*UIReply, error)
 }
 
 // StatusError is a non-2xx answer from Loop.
@@ -161,9 +187,14 @@ func NewClient(baseURL, tokenFile string) *Client {
 const maxAnswer = 8 << 20
 
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, in, out any) error {
-	if c.Timeout > 0 {
+	return c.doFor(ctx, c.Timeout, method, path, query, in, out)
+}
+
+// doFor is do capped at timeout instead of c.Timeout.
+func (c *Client) doFor(ctx context.Context, timeout time.Duration, method, path string, query url.Values, in, out any) error {
+	if timeout > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, c.Timeout)
+		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
 	token, err := os.ReadFile(c.TokenFile)
@@ -308,4 +339,31 @@ func (c *Client) WriteMemory(ctx context.Context, name, content string) error {
 // DeleteMemory removes the plugin's memory file name. Needs memory.write.
 func (c *Client) DeleteMemory(ctx context.Context, name string) error {
 	return c.do(ctx, http.MethodDelete, "/memory/"+url.PathEscape(name), nil, nil, nil)
+}
+
+// uiGrace is how much longer than a UI command's timeout RunUI waits, so
+// Loop's own answer to a window that ran out of time gets back.
+const uiGrace = 10 * time.Second
+
+// RunUI has an app window run cmd and returns how it went. It waits for the
+// window, up to cmd.Timeout. Needs ui.run.
+func (c *Client) RunUI(ctx context.Context, cmd UICommand) (*UIReply, error) {
+	body := map[string]any{"steps": cmd.Steps}
+	if cmd.ClientID != "" {
+		body["client_id"] = cmd.ClientID
+	}
+	wait := time.Minute
+	if cmd.Timeout > 0 {
+		body["timeout"] = cmd.Timeout.String()
+		wait = cmd.Timeout
+	}
+	timeout := c.Timeout
+	if timeout > 0 {
+		timeout = max(timeout, wait+uiGrace)
+	}
+	var reply UIReply
+	if err := c.doFor(ctx, timeout, http.MethodPost, "/ui/commands", nil, body, &reply); err != nil {
+		return nil, err
+	}
+	return &reply, nil
 }

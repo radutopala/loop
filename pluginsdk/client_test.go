@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -155,6 +156,74 @@ func (s *ClientSuite) TestWrites() {
 	s.requireCall(http.MethodDelete, "/memory/quiz-notes", "")
 }
 
+// deadlineDoer records how long the request had to run.
+type deadlineDoer struct {
+	next Doer
+	left time.Duration
+	set  bool
+}
+
+func (d *deadlineDoer) Do(r *http.Request) (*http.Response, error) {
+	var at time.Time
+	at, d.set = r.Context().Deadline()
+	d.left = time.Until(at)
+	return d.next.Do(r)
+}
+
+func (s *ClientSuite) TestRunUI() {
+	tests := []struct {
+		name     string
+		timeout  time.Duration
+		cmd      UICommand
+		wantBody string
+		wantWait time.Duration
+	}{
+		{
+			name:     "the default timeout",
+			timeout:  20 * time.Second,
+			cmd:      UICommand{Steps: []UIStep{{"op": "select_channel", "channel_id": "ch1"}}},
+			wantBody: `{"steps":[{"op":"select_channel","channel_id":"ch1"}]}`,
+			wantWait: 70 * time.Second,
+		},
+		{
+			name:     "a window and a timeout",
+			timeout:  20 * time.Second,
+			cmd:      UICommand{ClientID: "w1", Steps: []UIStep{{"op": "wait", "ms": 10}}, Timeout: 5 * time.Minute},
+			wantBody: `{"client_id":"w1","steps":[{"op":"wait","ms":10}],"timeout":"5m0s"}`,
+			wantWait: 5*time.Minute + 10*time.Second,
+		},
+		{
+			name:     "a longer client timeout",
+			timeout:  time.Hour,
+			cmd:      UICommand{Steps: []UIStep{{"op": "wait"}}, Timeout: time.Second},
+			wantBody: `{"steps":[{"op":"wait"}],"timeout":"1s"}`,
+			wantWait: time.Hour,
+		},
+		{
+			name:     "no client timeout",
+			cmd:      UICommand{Steps: []UIStep{{"op": "wait"}}},
+			wantBody: `{"steps":[{"op":"wait"}]}`,
+		},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			d := &deadlineDoer{next: s.srv.Client()}
+			s.client.HTTP, s.client.Timeout = d, tt.timeout
+			s.answer(http.StatusOK, `{"client_id":"w1","results":[{"op":"wait","ok":true}]}`)
+
+			reply, err := s.client.RunUI(context.Background(), tt.cmd)
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), &UIReply{ClientID: "w1", Results: []map[string]any{{"op": "wait", "ok": true}}}, reply)
+			s.requireCall(http.MethodPost, "/ui/commands", "")
+			require.JSONEq(s.T(), tt.wantBody, s.body)
+			require.Equal(s.T(), tt.wantWait > 0, d.set)
+			if d.set {
+				require.InDelta(s.T(), tt.wantWait.Seconds(), d.left.Seconds(), 5)
+			}
+		})
+	}
+}
+
 func (s *ClientSuite) TestErrors() {
 	ctx := context.Background()
 	tests := []struct {
@@ -189,6 +258,13 @@ func (s *ClientSuite) TestErrors() {
 			setup:   func() { s.answer(http.StatusAccepted, `{}`) },
 			call:    func() error { _, err := s.client.StartRun(ctx, RunRequest{}); return err },
 			wantErr: "Loop answered without a run_id",
+		},
+		{
+			name:    "ui refused",
+			setup:   func() { s.answer(http.StatusForbidden, "no ui.run") },
+			call:    func() error { _, err := s.client.RunUI(ctx, UICommand{}); return err },
+			wantErr: "POST /ui/commands: Loop answered 403: no ui.run",
+			status:  http.StatusForbidden,
 		},
 		{
 			name:    "run refused",

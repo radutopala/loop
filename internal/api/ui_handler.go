@@ -144,25 +144,41 @@ var errUIStep = errors.New("invalid step")
 
 // handleRunUICommand sends steps to an app window and returns its results.
 func (s *Server) handleRunUICommand(w http.ResponseWriter, r *http.Request) {
-	var req uiCommandRequest
-	if !decodeJSON(w, r, &req) {
+	req, steps, ok := parseUICommand(w, r)
+	if !ok {
 		return
-	}
-	var steps []uiStep
-	if err := json.Unmarshal(req.Steps, &steps); err != nil || len(steps) == 0 {
-		http.Error(w, "steps must be a non-empty array of objects", http.StatusBadRequest)
-		return
-	}
-	for _, step := range steps {
-		if step.Op == "" {
-			http.Error(w, "every step needs an op", http.StatusBadRequest)
-			return
-		}
 	}
 	if msg := s.uiAgentRefusal(r, steps); msg != "" {
 		http.Error(w, msg, http.StatusForbidden)
 		return
 	}
+	s.runUICommand(w, r, req, steps)
+}
+
+// parseUICommand reads a command's body and the part of its steps the
+// daemon checks. Otherwise it answers the request and returns false.
+func parseUICommand(w http.ResponseWriter, r *http.Request) (uiCommandRequest, []uiStep, bool) {
+	var req uiCommandRequest
+	if !decodeJSON(w, r, &req) {
+		return req, nil, false
+	}
+	var steps []uiStep
+	if err := json.Unmarshal(req.Steps, &steps); err != nil || len(steps) == 0 {
+		http.Error(w, "steps must be a non-empty array of objects", http.StatusBadRequest)
+		return req, nil, false
+	}
+	for _, step := range steps {
+		if step.Op == "" {
+			http.Error(w, "every step needs an op", http.StatusBadRequest)
+			return req, nil, false
+		}
+	}
+	return req, steps, true
+}
+
+// runUICommand sends a parsed command to its window and answers with the
+// window's results.
+func (s *Server) runUICommand(w http.ResponseWriter, r *http.Request, req uiCommandRequest, steps []uiStep) {
 	timeout := uiCommandTimeout
 	if req.Timeout != "" {
 		d, err := time.ParseDuration(req.Timeout)
