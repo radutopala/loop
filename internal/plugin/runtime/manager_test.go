@@ -566,40 +566,21 @@ func (s *ManagerSuite) TestEnsureUser() {
 	}
 }
 
-func (s *ManagerSuite) TestEnsureMountsTheChannelDir() {
-	tests := []struct {
-		name      string
-		readFiles bool
-		dirPath   string
-		want      bool
-	}{
-		{name: "files.read", readFiles: true, dirPath: "/work", want: true},
-		{name: "not approved", dirPath: "/work"},
-		{name: "no dir", readFiles: true},
-	}
-	for _, tt := range tests {
-		s.Run(tt.name, func() {
-			s.SetupTest()
-			s.plugin.ReadFiles = tt.readFiles
-			s.channel.DirPath = tt.dirPath
-			s.expectNoLeftover()
-			s.docker.On("ContainerCreate", s.ctx, mock.Anything, mock.Anything, (*network.NetworkingConfig)(nil), (*ocispec.Platform)(nil), name).
-				Return(containertypes.CreateResponse{ID: "c1"}, nil).Once()
-			s.tokens.On("IssuePlugin", "c1", "ch1", tt.dirPath, "cogtest").Return("tok", nil).Once()
-			s.docker.On("ContainerStart", s.ctx, "c1", containertypes.StartOptions{}).Return(nil).Once()
-			s.docker.On("ContainerInspect", s.ctx, "c1").Return(running(true, "40001"), nil).Once()
-			s.expectRow(db.PluginContainerRunning, "c1", 40001, "")
-			_, err := s.m.Ensure(s.ctx, s.plugin, s.channel)
-			require.NoError(s.T(), err)
-			host := s.docker.Calls[1].Arguments.Get(2).(*containertypes.HostConfig)
-			channelDir := mount.Mount{Type: mount.TypeBind, Source: "/work", Target: "/work", ReadOnly: true}
-			if tt.want {
-				require.Contains(s.T(), host.Mounts, channelDir)
-			} else {
-				require.Len(s.T(), host.Mounts, 2)
-			}
-			s.TearDownTest()
-		})
+func (s *ManagerSuite) TestEnsureDoesNotMountTheChannelDir() {
+	// Plugins read the channel's files through Loop, never from a mount.
+	s.channel.DirPath = "/work"
+	s.expectNoLeftover()
+	s.docker.On("ContainerCreate", s.ctx, mock.Anything, mock.Anything, (*network.NetworkingConfig)(nil), (*ocispec.Platform)(nil), name).
+		Return(containertypes.CreateResponse{ID: "c1"}, nil).Once()
+	s.tokens.On("IssuePlugin", "c1", "ch1", "/work", "cogtest").Return("tok", nil).Once()
+	s.docker.On("ContainerStart", s.ctx, "c1", containertypes.StartOptions{}).Return(nil).Once()
+	s.docker.On("ContainerInspect", s.ctx, "c1").Return(running(true, "40001"), nil).Once()
+	s.expectRow(db.PluginContainerRunning, "c1", 40001, "")
+	_, err := s.m.Ensure(s.ctx, s.plugin, s.channel)
+	require.NoError(s.T(), err)
+	host := s.docker.Calls[1].Arguments.Get(2).(*containertypes.HostConfig)
+	for _, m := range host.Mounts {
+		require.NotEqual(s.T(), "/work", m.Source)
 	}
 }
 

@@ -80,7 +80,7 @@ Capabilities are approved by the owner at install and checked on every call:
 
 | Capability | Grants |
 |---|---|
-| `files.read` | `GET /channel/files`, `GET /channel/tree`, and the channel's dir mounted read-only |
+| `files.read` | `GET /channel/files`, `GET /channel/tree` |
 | `git.read` | `GET /channel/git/recent` |
 | `quality.read` | `GET /channel/quality/hotspots` |
 | `agent.readonly` | runs of read-only agents |
@@ -94,7 +94,7 @@ Capabilities are approved by the owner at install and checked on every call:
 | Variable | Value |
 |---|---|
 | `LOOP_PLUGIN_ID` | the plugin's id |
-| `LOOP_CHANNEL_ID`, `LOOP_CHANNEL_DIR` | the channel the container serves and its dir on the host, mounted read-only at the same path once `files.read` is approved |
+| `LOOP_CHANNEL_ID`, `LOOP_CHANNEL_DIR` | the channel the container serves and its dir on the host. The dir isn't mounted: read its files through `GET /channel/files` and `GET /channel/tree` |
 | `LOOP_PLUGIN_PORT` | the port to serve on |
 | `LOOP_API_URL` | Loop's API, for the Plugin API |
 | `LOOP_PLUGIN_TOKEN_FILE` | the plugin token for the Plugin API |

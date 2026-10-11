@@ -223,20 +223,13 @@ func (s *ServiceSuite) TestRunAction() {
 	ch := runtime.Channel{ID: "ch1", DirPath: "/src"}
 	ep := runtime.Endpoint{URL: "http://127.0.0.1:1234", Secret: "s"}
 	req := proxy.ActionRequest{Trigger: proxy.TriggerManual}
-	s.store.On("GetPluginState", s.ctx, "echo").Return(st, nil).Twice()
-	s.caller.On("Action", s.ctx, ep, "ping", req).Return(nil).Twice()
+	s.store.On("GetPluginState", s.ctx, "echo").Return(st, nil).Once()
+	s.caller.On("Action", s.ctx, ep, "ping", req).Return(nil).Once()
 
-	// The container gets the channel's dir once the owner approved
-	// files.read.
-	for _, readFiles := range []bool{false, true} {
-		if readFiles {
-			st.ApprovedCaps = []string{"agent.write", "files.read"}
-		}
-		s.runtime.On("Ensure", s.ctx, mock.MatchedBy(func(p runtime.Plugin) bool {
-			return p.Manifest.ID == "echo" && p.Image == st.Image && p.ReadFiles == readFiles
-		}), ch).Return(ep, nil).Once()
-		require.NoError(s.T(), s.svc.RunAction(s.ctx, "echo", "ping", ch, req))
-	}
+	s.runtime.On("Ensure", s.ctx, mock.MatchedBy(func(p runtime.Plugin) bool {
+		return p.Manifest.ID == "echo" && p.Image == st.Image
+	}), ch).Return(ep, nil).Once()
+	require.NoError(s.T(), s.svc.RunAction(s.ctx, "echo", "ping", ch, req))
 }
 
 func (s *ServiceSuite) TestRunActionFailures() {

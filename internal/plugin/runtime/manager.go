@@ -66,9 +66,6 @@ type Tokens interface {
 type Plugin struct {
 	Manifest *plugin.Manifest
 	Image    string
-	// ReadFiles mounts the channel's dir read-only at its own path: the
-	// owner approved files.read.
-	ReadFiles bool
 }
 
 // Channel is the channel a plugin container runs for.
@@ -355,9 +352,6 @@ func (m *Manager) start(ctx context.Context, p Plugin, ch Channel) (*instance, e
 			{Type: mount.TypeBind, Source: data, Target: dataDir},
 			{Type: mount.TypeBind, Source: run, Target: runDir, ReadOnly: true},
 		},
-	}
-	if p.ReadFiles && ch.DirPath != "" {
-		host.Mounts = append(host.Mounts, mount.Mount{Type: mount.TypeBind, Source: ch.DirPath, Target: ch.DirPath, ReadOnly: true})
 	}
 	if m.cfg.Gate != nil {
 		if err := m.applyGate(ctx, p, ch, cfg, host); err != nil {

@@ -293,7 +293,7 @@ func (s *Service) start(ctx context.Context, st *db.PluginState, m *plugin.Manif
 	if !on {
 		return runtime.Endpoint{}, ErrNotEnabled
 	}
-	ep, err := s.runtime.Ensure(ctx, runtime.Plugin{Manifest: m, Image: st.Image, ReadFiles: slices.Contains(st.ApprovedCaps, string(plugin.CapFilesRead))}, ch)
+	ep, err := s.runtime.Ensure(ctx, runtime.Plugin{Manifest: m, Image: st.Image}, ch)
 	if err != nil {
 		return runtime.Endpoint{}, fmt.Errorf("starting the plugin: %w", err)
 	}
