@@ -256,6 +256,26 @@ func (s *ManagerSuite) TestEnsureStartsThenReuses() {
 	require.Equal(s.T(), s.now, s.m.running[key{"cogtest", "ch1"}].lastUsed)
 }
 
+func (s *ManagerSuite) TestEnsureFollowsAPortChange() {
+	s.expectStart("c1", "40001")
+	s.expectRow(db.PluginContainerRunning, "c1", 40001, "")
+	ep, err := s.m.Ensure(s.ctx, s.plugin, s.channel)
+	require.NoError(s.T(), err)
+
+	// docker restart from outside Loop publishes the port anew.
+	s.docker.On("ContainerInspect", s.ctx, "c1").Return(running(true, "40009"), nil).Once()
+	s.expectRow(db.PluginContainerRunning, "c1", 40009, "")
+	moved, err := s.m.Ensure(s.ctx, s.plugin, s.channel)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), Endpoint{URL: "http://127.0.0.1:40009", Secret: ep.Secret}, moved)
+
+	// No port in the inspect keeps the last one.
+	s.docker.On("ContainerInspect", s.ctx, "c1").Return(running(true, ""), nil).Once()
+	again, err := s.m.Ensure(s.ctx, s.plugin, s.channel)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), moved, again)
+}
+
 func (s *ManagerSuite) TestEnsureReplacesExitedContainer() {
 	s.expectStart("c1", "40001")
 	s.expectRow(db.PluginContainerRunning, "c1", 40001, "")

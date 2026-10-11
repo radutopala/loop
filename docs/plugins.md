@@ -144,7 +144,8 @@ Capabilities are approved by the owner at install and checked on every call:
 | `LOOP_PLUGIN_SECRET_FILE` | the secret Loop sends to the plugin |
 | `LOOP_DATA_DIR` | `/data`, the host dir `~/.loop/plugins/<id>/data/<channel>/`, which outlives the container |
 
-The container is started when first needed and stopped when idle; keep state in `/data`. It runs
+The container is started when first needed and stopped when idle; keep state in `/data`. A
+`docker restart` of it is fine: Loop finds the new port it's published on. It runs
 as the daemon's user, so the files it writes there belong to you on the host. A daemon running as
 root, in a container, names the user with `LOOP_HOST_UID` and `LOOP_HOST_GID`; plugin containers
 never run as root. Removing the plugin keeps the files; `--purge` deletes them.

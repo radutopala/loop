@@ -245,11 +245,8 @@ func (m *Manager) Ensure(ctx context.Context, p Plugin, ch Channel) (Endpoint, e
 	f := m.failures[k]
 	m.mu.Unlock()
 	if inst != nil {
-		if m.isRunning(ctx, inst.containerID) {
-			m.mu.Lock()
-			inst.lastUsed = m.now()
-			m.mu.Unlock()
-			return inst.endpoint, nil
+		if info, ok := m.inspectRunning(ctx, inst.containerID); ok {
+			return m.touch(ctx, k, inst, hostPort(info)), nil
 		}
 		m.logger.Info("plugin container exited", "plugin_id", id, "channel_id", ch.ID, "container_id", inst.containerID)
 		m.discard(ctx, k, inst.containerID)
@@ -392,12 +389,7 @@ func (m *Manager) boot(ctx context.Context, p Plugin, ch Channel, containerID, r
 	if err != nil {
 		return nil, fmt.Errorf("inspecting the plugin container: %w", err)
 	}
-	port := 0
-	if info.NetworkSettings != nil {
-		if b := info.NetworkSettings.Ports[portKey]; len(b) > 0 {
-			port, _ = strconv.Atoi(b[0].HostPort)
-		}
-	}
+	port := hostPort(info)
 	if port == 0 {
 		return nil, fmt.Errorf("plugin container has no host port for %s", portKey)
 	}
@@ -666,9 +658,42 @@ func (m *Manager) removeByName(ctx context.Context, name string) {
 	}
 }
 
-func (m *Manager) isRunning(ctx context.Context, containerID string) bool {
+// inspectRunning inspects a container, ok when it's running.
+func (m *Manager) inspectRunning(ctx context.Context, containerID string) (containertypes.InspectResponse, bool) {
 	info, err := m.api.ContainerInspect(ctx, containerID)
-	return err == nil && info.State != nil && info.State.Running
+	return info, err == nil && info.State != nil && info.State.Running
+}
+
+// hostPort is the host port a container's plugin port is published on, 0
+// when it has none.
+func hostPort(info containertypes.InspectResponse) int {
+	port := 0
+	if info.NetworkSettings != nil {
+		if b := info.NetworkSettings.Ports[portKey]; len(b) > 0 {
+			port, _ = strconv.Atoi(b[0].HostPort)
+		}
+	}
+	return port
+}
+
+// touch marks a running instance used and returns its endpoint. A
+// container restarted outside Loop, by docker restart, comes back on
+// another host port; the endpoint follows it.
+func (m *Manager) touch(ctx context.Context, k key, inst *instance, port int) Endpoint {
+	m.mu.Lock()
+	inst.lastUsed = m.now()
+	moved := port != 0 && port != inst.hostPort
+	if moved {
+		inst.hostPort = port
+		inst.endpoint.URL = fmt.Sprintf("http://127.0.0.1:%d", port)
+	}
+	ep := inst.endpoint
+	m.mu.Unlock()
+	if moved {
+		m.logger.Info("plugin container moved to another port", "plugin_id", k.pluginID, "channel_id", k.channelID, "container_id", inst.containerID, "url", ep.URL)
+		m.upsert(ctx, &db.PluginContainer{PluginID: k.pluginID, ChannelID: k.channelID, ContainerID: inst.containerID, HostPort: port, Status: db.PluginContainerRunning})
+	}
+	return ep
 }
 
 func (m *Manager) upsert(ctx context.Context, c *db.PluginContainer) {
