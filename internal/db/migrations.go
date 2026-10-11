@@ -536,6 +536,9 @@ var migrations = []migration{
 		channel_id TEXT NOT NULL,
 		created_at DATETIME NOT NULL
 	)`),
+	// done marks a plugin run that ended well as Loop stopped: its plugin is
+	// told once Loop is back.
+	sqlMigration(`ALTER TABLE plugin_runs ADD COLUMN done INTEGER NOT NULL DEFAULT 0`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the

@@ -53,6 +53,7 @@ type PluginRun struct {
 type PluginRunStore interface {
 	InsertPluginRun(ctx context.Context, r *db.PluginRun) error
 	DeletePluginRun(ctx context.Context, runID string) error
+	MarkPluginRunDone(ctx context.Context, runID string) error
 	ListPluginRuns(ctx context.Context) ([]*db.PluginRun, error)
 }
 
@@ -170,8 +171,16 @@ func (o *Orchestrator) pluginRunDone(ctx context.Context, msg *bot.IncomingMessa
 	if a, active := o.ActivePluginRun(msg.ChannelID); active && a.ID == msg.MessageID {
 		o.activePluginRuns.Delete(msg.ChannelID)
 	}
-	if ok && !o.stopping() {
+	switch {
+	case !ok:
+	case !o.stopping():
 		o.endPluginRun(ctx, msg.MessageID, v.(*PluginRun), runErr)
+	case runErr == nil && o.pluginRunStore != nil:
+		// Loop is stopping: the run stays stored for the next start to tell
+		// the plugin, which fails it unless it's marked as ended well.
+		if err := o.pluginRunStore.MarkPluginRunDone(context.WithoutCancel(ctx), msg.MessageID); err != nil {
+			o.logger.Warn("plugin: marking the run done", "plugin", v.(*PluginRun).PluginID, "run_id", msg.MessageID, "error", err)
+		}
 	}
 }
 
@@ -180,8 +189,9 @@ func (o *Orchestrator) pluginRunDone(ctx context.Context, msg *bot.IncomingMessa
 var errPluginRunInterrupted = errors.New("loop stopped before the run ended")
 
 // RecoverPluginRuns picks up the plugin runs the prior daemon run left:
-// those whose message still waits in their thread's queue resume with it,
-// the rest fail and their plugin is told. Call it at startup after
+// those that ended well as it stopped end now, those whose message still
+// waits in their thread's queue resume with it, the rest fail; the plugin
+// is told of each that ends. Call it at startup after
 // ResetStaleRunningMessages, before the queues resume.
 func (o *Orchestrator) RecoverPluginRuns(ctx context.Context) {
 	if o.pluginRunStore == nil {
@@ -204,7 +214,12 @@ func (o *Orchestrator) RecoverPluginRuns(ctx context.Context) {
 		}
 		// Only StartPluginRun writes the column, from Tools.
 		_ = json.Unmarshal([]byte(r.Tools), &run.Tools)
-		if r.Queued && parent != nil {
+		switch {
+		case r.Done:
+			o.logger.Info("plugin: run ended as the prior daemon run stopped", "plugin", r.PluginID, "run_id", r.RunID, "thread_id", r.ThreadID)
+			o.endPluginRun(ctx, r.RunID, run, nil)
+			continue
+		case r.Queued && parent != nil:
 			o.pluginRuns.Store(r.RunID, run)
 			o.logger.Info("plugin: run resumes", "plugin", r.PluginID, "run_id", r.RunID, "thread_id", r.ThreadID)
 			continue

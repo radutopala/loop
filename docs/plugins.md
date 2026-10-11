@@ -226,7 +226,8 @@ ends Loop calls `POST /runs/{run_id}/done` on the plugin.
 
 Loop keeps each run in its database until it ends, so a restart of Loop doesn't lose it: a run still
 waiting in the thread's queue runs once Loop is back, and one that was going on fails, with
-`/runs/{run_id}/done` sent as `failed`.
+`/runs/{run_id}/done` sent as `failed`. One that ended well while Loop was stopping is sent as
+`done` once Loop is back.
 
 ## Go SDK
 

@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestPluginRuns stores, lists and deletes plugin runs against a real
-// SQLite, listing each with whether its message still waits to run.
+// TestPluginRuns stores, marks, lists and deletes plugin runs against a
+// real SQLite, listing each with whether its message still waits to run.
 func (s *IntegrationSuite) TestPluginRuns() {
 	store, err := NewSQLiteStore(filepath.Join(s.T().TempDir(), "loop.db"))
 	require.NoError(s.T(), err)
@@ -35,6 +35,8 @@ func (s *IntegrationSuite) TestPluginRuns() {
 	now = now.Add(time.Minute)
 	require.NoError(s.T(), store.InsertPluginRun(ctx, &PluginRun{RunID: "dropped", PluginID: "cogtest", Agent: "grader", Prompt: "grade", Tools: "[]", ThreadID: "p1", ChannelID: "c1"}))
 	require.Error(s.T(), store.InsertPluginRun(ctx, queued), "a run id is stored once")
+	require.NoError(s.T(), store.MarkPluginRunDone(ctx, "ran"))
+	require.NoError(s.T(), store.MarkPluginRunDone(ctx, "missing"))
 
 	runs, err = store.ListPluginRuns(ctx)
 	require.NoError(s.T(), err)
@@ -43,8 +45,10 @@ func (s *IntegrationSuite) TestPluginRuns() {
 	require.Equal(s.T(), queued, runs[0])
 	require.Equal(s.T(), "ran", runs[1].RunID)
 	require.False(s.T(), runs[1].Queued, "its message ran")
+	require.True(s.T(), runs[1].Done)
 	require.Equal(s.T(), "dropped", runs[2].RunID)
 	require.False(s.T(), runs[2].Queued, "its message is gone")
+	require.False(s.T(), runs[2].Done)
 
 	require.NoError(s.T(), store.DeletePluginRun(ctx, "ran"))
 	require.NoError(s.T(), store.DeletePluginRun(ctx, "missing"))
@@ -56,7 +60,7 @@ func (s *IntegrationSuite) TestPluginRuns() {
 func (s *StoreSuite) TestPluginRunsErrors() {
 	ctx := context.Background()
 	boom := errors.New("boom")
-	cols := []string{"run_id", "plugin_id", "agent", "read_only", "prompt", "model", "effort", "tools", "thread_id", "channel_id", "created_at", "queued"}
+	cols := []string{"run_id", "plugin_id", "agent", "read_only", "prompt", "model", "effort", "tools", "thread_id", "channel_id", "created_at", "done", "queued"}
 
 	// A scan error is the driver's, not boom.
 	tests := []struct {
@@ -72,6 +76,10 @@ func (s *StoreSuite) TestPluginRunsErrors() {
 			s.mock.ExpectExec(`DELETE FROM plugin_runs`).WithArgs("r1").WillReturnError(boom)
 			return s.store.DeletePluginRun(ctx, "r1")
 		}},
+		{"mark done", false, func() error {
+			s.mock.ExpectExec(`UPDATE plugin_runs SET done`).WithArgs("r1").WillReturnError(boom)
+			return s.store.MarkPluginRunDone(ctx, "r1")
+		}},
 		{"list query", false, func() error {
 			s.mock.ExpectQuery(`FROM plugin_runs`).WillReturnError(boom)
 			_, err := s.store.ListPluginRuns(ctx)
@@ -79,13 +87,13 @@ func (s *StoreSuite) TestPluginRunsErrors() {
 		}},
 		{"list scan", true, func() error {
 			s.mock.ExpectQuery(`FROM plugin_runs`).
-				WillReturnRows(sqlmock.NewRows(cols).AddRow("r1", "p", "a", false, "", "", "", "[]", "t", "c", "not a time", true))
+				WillReturnRows(sqlmock.NewRows(cols).AddRow("r1", "p", "a", false, "", "", "", "[]", "t", "c", "not a time", false, true))
 			_, err := s.store.ListPluginRuns(ctx)
 			return err
 		}},
 		{"list rows", false, func() error {
 			s.mock.ExpectQuery(`FROM plugin_runs`).
-				WillReturnRows(sqlmock.NewRows(cols).AddRow("r1", "p", "a", false, "", "", "", "[]", "t", "c", time.Now(), true).RowError(0, boom))
+				WillReturnRows(sqlmock.NewRows(cols).AddRow("r1", "p", "a", false, "", "", "", "[]", "t", "c", time.Now(), false, true).RowError(0, boom))
 			_, err := s.store.ListPluginRuns(ctx)
 			return err
 		}},

@@ -230,7 +230,7 @@ type mockPluginRunNotifier struct {
 }
 
 func (m *mockPluginRunNotifier) RunDone(ctx context.Context, pluginID string, ch runtime.Channel, runID string, req proxy.RunDoneRequest) error {
-	defer close(m.called)
+	defer func() { m.called <- struct{}{} }()
 	return m.Called(ctx, pluginID, ch, runID, req).Error(0)
 }
 
@@ -286,6 +286,10 @@ func (m *mockPluginRunStore) DeletePluginRun(ctx context.Context, runID string) 
 	return m.Called(ctx, runID).Error(0)
 }
 
+func (m *mockPluginRunStore) MarkPluginRunDone(ctx context.Context, runID string) error {
+	return m.Called(ctx, runID).Error(0)
+}
+
 func (m *mockPluginRunStore) ListPluginRuns(ctx context.Context) ([]*db.PluginRun, error) {
 	args := m.Called(ctx)
 	runs, _ := args.Get(0).([]*db.PluginRun)
@@ -312,26 +316,49 @@ func (s *OrchestratorSuite) TestPluginRunDoneDropsTheStoredRun() {
 }
 
 // TestPluginRunCutShortByShutdown covers a run that ends once Stop has
-// begun: it stays stored, for the next start to fail and tell the plugin.
+// begun: it stays stored for the next start to tell the plugin, marked
+// when it ended well.
 func (s *OrchestratorSuite) TestPluginRunCutShortByShutdown() {
-	rs := new(mockPluginRunStore)
-	s.orch.SetPluginRunStore(rs)
-	n := &mockPluginRunNotifier{called: make(chan struct{})}
-	s.orch.SetPluginRunNotifier(n)
-	s.orch.pluginRuns.Store("run-1", &PluginRun{PluginID: "echo", threadID: "plugin-1", parent: &db.Channel{ChannelID: "ch1"}})
-	s.orch.delayStopOnce.Do(func() { close(s.orch.delayStop) })
+	tests := []struct {
+		name    string
+		runErr  error
+		store   bool
+		markErr error
+	}{
+		{name: "killed", runErr: errors.New("killed"), store: true},
+		{name: "ended well", store: true},
+		{name: "ended well, marking fails", store: true, markErr: errors.New("db down")},
+		{name: "ended well, no store"},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			rs := new(mockPluginRunStore)
+			if tc.store {
+				s.orch.SetPluginRunStore(rs)
+			}
+			if tc.store && tc.runErr == nil {
+				rs.On("MarkPluginRunDone", mock.Anything, "run-1").Return(tc.markErr).Once()
+			}
+			n := &mockPluginRunNotifier{called: make(chan struct{})}
+			s.orch.SetPluginRunNotifier(n)
+			s.orch.pluginRuns.Store("run-1", &PluginRun{PluginID: "echo", threadID: "plugin-1", parent: &db.Channel{ChannelID: "ch1"}})
+			s.orch.delayStopOnce.Do(func() { close(s.orch.delayStop) })
 
-	s.orch.pluginRunDone(s.ctx, &bot.IncomingMessage{ChannelID: "plugin-1", MessageID: "run-1", AuthorID: pluginAuthorID}, errors.New("killed"))
+			s.orch.pluginRunDone(s.ctx, &bot.IncomingMessage{ChannelID: "plugin-1", MessageID: "run-1", AuthorID: pluginAuthorID}, tc.runErr)
 
-	_, ok := s.orch.pluginRuns.Load("run-1")
-	require.False(s.T(), ok)
-	rs.AssertNotCalled(s.T(), "DeletePluginRun", mock.Anything, mock.Anything)
-	n.AssertNotCalled(s.T(), "RunDone", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+			_, ok := s.orch.pluginRuns.Load("run-1")
+			require.False(s.T(), ok)
+			rs.AssertExpectations(s.T())
+			rs.AssertNotCalled(s.T(), "DeletePluginRun", mock.Anything, mock.Anything)
+			n.AssertNotCalled(s.T(), "RunDone", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+		})
+	}
 }
 
 // TestRecoverPluginRuns covers startup picking up the runs the prior
-// daemon run left: those still queued resume, the rest fail and their
-// plugin is told.
+// daemon run left: those that ended well end, those still queued resume,
+// the rest fail; their plugin is told.
 func (s *OrchestratorSuite) TestRecoverPluginRuns() {
 	parent := &db.Channel{ChannelID: "ch1", DirPath: "/project"}
 	stored := func(runID string, queued bool, channelID string) *db.PluginRun {
@@ -355,19 +382,25 @@ func (s *OrchestratorSuite) TestRecoverPluginRuns() {
 	})
 	s.Run("recovers", func() {
 		s.SetupTest()
+		done := stored("done", false, "ch1")
+		done.Done = true
 		rs := new(mockPluginRunStore)
 		rs.On("ListPluginRuns", s.ctx).Return([]*db.PluginRun{
 			stored("queued", true, "ch1"),
 			stored("lookup-fails", true, "ch2"),
 			stored("channel-gone", true, "ch3"),
 			stored("interrupted", false, "ch1"),
+			done,
 		}, nil).Once()
 		rs.On("DeletePluginRun", s.ctx, "channel-gone").Return(nil).Once()
 		rs.On("DeletePluginRun", s.ctx, "interrupted").Return(nil).Once()
+		rs.On("DeletePluginRun", s.ctx, "done").Return(nil).Once()
 		s.orch.SetPluginRunStore(rs)
-		n := &mockPluginRunNotifier{called: make(chan struct{})}
+		n := &mockPluginRunNotifier{called: make(chan struct{}, 2)}
 		n.On("RunDone", mock.Anything, "echo", runtime.Channel{ID: "ch1", DirPath: "/project"}, "interrupted",
 			proxy.RunDoneRequest{Status: proxy.RunStatusFailed, Error: "loop stopped before the run ended"}).Return(nil).Once()
+		n.On("RunDone", mock.Anything, "echo", runtime.Channel{ID: "ch1", DirPath: "/project"}, "done",
+			proxy.RunDoneRequest{Status: proxy.RunStatusDone}).Return(nil).Once()
 		s.orch.SetPluginRunNotifier(n)
 		s.store.On("GetChannel", s.ctx, "ch1").Return(parent, nil)
 		s.store.On("GetChannel", s.ctx, "ch2").Return(nil, errors.New("db down"))
@@ -375,6 +408,7 @@ func (s *OrchestratorSuite) TestRecoverPluginRuns() {
 
 		s.orch.RecoverPluginRuns(s.ctx)
 
+		<-n.called
 		<-n.called
 		n.AssertExpectations(s.T())
 		rs.AssertExpectations(s.T())
@@ -386,7 +420,7 @@ func (s *OrchestratorSuite) TestRecoverPluginRuns() {
 			tools: `[{"name":"echo","description":"","input_schema":null}]`, threadID: "plugin-1", parent: parent,
 		}, v)
 		require.NoError(s.T(), s.orch.admitPluginRun("plugin-1", &bot.IncomingMessage{MessageID: "queued", AuthorID: pluginAuthorID}))
-		for _, id := range []string{"lookup-fails", "channel-gone", "interrupted"} {
+		for _, id := range []string{"lookup-fails", "channel-gone", "interrupted", "done"} {
 			_, ok := s.orch.pluginRuns.Load(id)
 			require.False(s.T(), ok, id)
 		}
