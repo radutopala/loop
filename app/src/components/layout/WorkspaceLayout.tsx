@@ -409,6 +409,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   const learnMs = prefersReducedMotion() ? 0 : LEARN_SPLIT_MS;
   const learnSplit = usePresence(learnOpen, learnMs);
   const learnSplitRef = useRef<HTMLDivElement>(null);
+  // Where views over the layout open: a plugin's agent view.
+  const [overlayHost, setOverlayHost] = useState<HTMLDivElement | null>(null);
   // On a canvas the Learn view docks to the chat's tile instead of covering
   // the layout. Set on opening, so a view closing over a layout switch goes
   // the way it came.
@@ -1313,6 +1315,12 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               containerChannelId={channel.parent_id || channelId}
               channelName={channel.name}
               dirPath={dirPath}
+              leafId={leaf.id}
+              roots={editorState.roots}
+              subscribeChannelEvents={subscribeChannelEvents}
+              getChatState={getChatState}
+              onChatStateUnmount={onChatStateUnmount}
+              overlayHost={overlayHost}
             />
           );
         case "review":
@@ -1361,6 +1369,10 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       explainShown,
       chatHost,
       placeChatHost,
+      subscribeChannelEvents,
+      getChatState,
+      onChatStateUnmount,
+      overlayHost,
     ],
   );
 
@@ -1780,7 +1792,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
           terminals') fetch again when a learn proposal adds a shortcut. */}
       <ShortcutsVersionContext.Provider value={learn.shortcutsVersion}>
         <PluginPanelsProvider value={pluginPanels}>
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, position: "relative" }}>
+          <div ref={setOverlayHost} style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, position: "relative" }}>
             {/* The layout stays put under the Learn view while it's open. */}
             <div
               style={{

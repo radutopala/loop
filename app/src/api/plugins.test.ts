@@ -1,6 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { fetchPluginList, fetchPlugins, inspectPlugin, installPlugin, PLUGINS_CHANGED, pluginXRequest, removePlugin, setPluginEnabled, stopPluginContainer, withPluginEnabled } from "./plugins";
+import {
+  fetchPluginAgent,
+  fetchPluginList,
+  fetchPlugins,
+  inspectPlugin,
+  installPlugin,
+  PLUGINS_CHANGED,
+  pluginXRequest,
+  removePlugin,
+  setPluginEnabled,
+  stopPluginContainer,
+  withPluginEnabled,
+} from "./plugins";
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -193,5 +205,18 @@ describe("setPluginEnabled", () => {
     fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
     await setPluginEnabled("echo", false);
     expect(JSON.parse(JSON.parse(fetchMock.mock.calls[1]![1].body).content)).toEqual({ plugins: { echo: { enabled: false } } });
+  });
+});
+
+describe("fetchPluginAgent", () => {
+  it("looks up the plugin's agent in a channel", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ thread_id: "plugin:echo-abc123", running: true })));
+    await expect(fetchPluginAgent("cog test", "ch/1")).resolves.toEqual({ thread_id: "plugin:echo-abc123", running: true });
+    expect(fetchMock.mock.calls[0]![0]).toBe("http://localhost:8222/api/plugins/cog%20test/agent?channel_id=ch%2F1");
+  });
+
+  it("explains a failure", async () => {
+    fetchMock.mockResolvedValue(new Response("", { status: 404, statusText: "Not Found" }));
+    await expect(fetchPluginAgent("echo", "ch")).rejects.toThrow("Failed to look up the plugin's agent: Not Found");
   });
 });

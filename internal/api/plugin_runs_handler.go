@@ -90,7 +90,47 @@ func (s *Server) handleStartPluginRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	if s.eventsHub != nil {
+		s.eventsHub.Broadcast(Event{Type: EventPluginRunStarted, ChannelID: ch.ChannelID, Data: map[string]string{
+			"plugin_id": p.PluginID, "run_id": runID, "thread_id": threadID,
+		}})
+	}
 	writeHTTPJSON(w, http.StatusAccepted, map[string]string{"run_id": runID, "thread_id": threadID}, s.logger)
+}
+
+// pluginAgentResponse is a plugin's hidden thread in a channel, where its
+// agent runs run, and whether one is running there.
+type pluginAgentResponse struct {
+	ThreadID string `json:"thread_id,omitempty"`
+	Running  bool   `json:"running"`
+}
+
+// handleGetPluginAgent returns the hidden thread a plugin's agent runs run
+// in, for the channel_id query parameter's channel (a thread answers for
+// its channel), so its panel can show their chat.
+func (s *Server) handleGetPluginAgent(w http.ResponseWriter, r *http.Request) {
+	channelID := r.URL.Query().Get("channel_id")
+	if channelID == "" {
+		http.Error(w, "channel_id is required", http.StatusBadRequest)
+		return
+	}
+	ch, ok := s.pluginChannel(w, r, channelID)
+	if !ok {
+		return
+	}
+	h, err := s.store.GetHiddenThread(r.Context(), ch.ChannelID, db.PluginKind(r.PathValue("plugin")))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	var resp pluginAgentResponse
+	if h != nil {
+		resp.ThreadID = h.ChannelID
+		if s.pluginRunner != nil {
+			_, resp.Running = s.pluginRunner.ActivePluginRun(h.ChannelID)
+		}
+	}
+	writeHTTPJSON(w, http.StatusOK, resp, s.logger)
 }
 
 type pluginToolCallRequest struct {

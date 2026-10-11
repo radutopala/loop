@@ -42,6 +42,7 @@ func (s *ServerSuite) pluginRunRoutes() (*MockPluginManager, *MockPluginRunner) 
 	s.srv.SetPluginRunner(pr)
 	s.mux.HandleFunc("POST /api/plugin/v1/runs", s.srv.handleStartPluginRun)
 	s.mux.HandleFunc("POST /api/plugins/{plugin}/tools/{tool}", s.srv.handleCallPluginTool)
+	s.mux.HandleFunc("GET /api/plugins/{plugin}/agent", s.srv.handleGetPluginAgent)
 	s.T().Cleanup(func() { pr.AssertExpectations(s.T()) })
 	return pm, pr
 }
@@ -208,6 +209,78 @@ func (s *ServerSuite) TestCallPluginTool() {
 				path = "/api/plugins/echo/tools/echo"
 			}
 			rec := s.requestAs(tt.as, "POST", path, tt.body)
+			require.Equal(s.T(), tt.wantCode, rec.Code, rec.Body.String())
+			require.Contains(s.T(), rec.Body.String(), tt.wantBody)
+		})
+	}
+}
+
+func (s *ServerSuite) TestStartPluginRunBroadcasts() {
+	pm, pr := s.pluginRunRoutes()
+	hub := NewEventsHub(testLogger())
+	var sent []Event
+	hub.captureHook = func(e Event) {
+		e.Timestamp = 0
+		sent = append(sent, e)
+	}
+	s.srv.SetEventsHub(hub)
+	ch := &db.Channel{ChannelID: "ch-1"}
+	pm.On("AgentRun", mock.Anything, "echo", "say").Return(&install.AgentRun{Agent: plugin.Agent{ID: "say"}}, nil).Once()
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(ch, nil).Once()
+	pr.On("StartPluginRun", mock.Anything, ch, mock.Anything).Return("ask-1", "th-1", nil).Once()
+
+	rec := s.requestAs(apiauth.Principal{Kind: apiauth.KindPlugin, PluginID: "echo", ChannelID: "ch-1"}, "POST", "/api/plugin/v1/runs", `{"agent":"say","prompt":"hi"}`)
+	require.Equal(s.T(), http.StatusAccepted, rec.Code, rec.Body.String())
+	require.Equal(s.T(), []Event{{Type: EventPluginRunStarted, ChannelID: "ch-1", Data: map[string]string{
+		"plugin_id": "echo", "run_id": "ask-1", "thread_id": "th-1",
+	}}}, sent)
+}
+
+func (s *ServerSuite) TestGetPluginAgent() {
+	thread := &db.Channel{ChannelID: "plugin:echo-abc123", ParentID: "ch-1", Kind: db.PluginKind("echo")}
+	tests := []struct {
+		name     string
+		query    string
+		noRunner bool
+		setup    func(pr *MockPluginRunner)
+		wantCode int
+		wantBody string
+	}{
+		{name: "running", query: "?channel_id=th-1", setup: func(pr *MockPluginRunner) {
+			s.store.On("GetChannel", mock.Anything, "th-1").Return(&db.Channel{ChannelID: "th-1", ParentID: "ch-1"}, nil).Once()
+			s.store.On("GetHiddenThread", mock.Anything, "ch-1", db.PluginKind("echo")).Return(thread, nil).Once()
+			pr.On("ActivePluginRun", "plugin:echo-abc123").Return(orchestrator.ActivePluginRun{ID: "ask-1"}, true).Once()
+		}, wantCode: http.StatusOK, wantBody: `{"thread_id":"plugin:echo-abc123","running":true}`},
+		{name: "idle", query: "?channel_id=ch-1", setup: func(pr *MockPluginRunner) {
+			s.store.On("GetHiddenThread", mock.Anything, "ch-1", db.PluginKind("echo")).Return(thread, nil).Once()
+			pr.On("ActivePluginRun", "plugin:echo-abc123").Return(orchestrator.ActivePluginRun{}, false).Once()
+		}, wantCode: http.StatusOK, wantBody: `{"thread_id":"plugin:echo-abc123","running":false}`},
+		{name: "no runner", query: "?channel_id=ch-1", noRunner: true, setup: func(*MockPluginRunner) {
+			s.store.On("GetHiddenThread", mock.Anything, "ch-1", db.PluginKind("echo")).Return(thread, nil).Once()
+		}, wantCode: http.StatusOK, wantBody: `{"thread_id":"plugin:echo-abc123","running":false}`},
+		{name: "no runs yet", query: "?channel_id=ch-1", setup: func(*MockPluginRunner) {
+			s.store.On("GetHiddenThread", mock.Anything, "ch-1", db.PluginKind("echo")).Return(nil, nil).Once()
+		}, wantCode: http.StatusOK, wantBody: `{"running":false}`},
+		{name: "no channel id", wantCode: http.StatusBadRequest, wantBody: "channel_id is required"},
+		{name: "unknown channel", query: "?channel_id=ghost", setup: func(*MockPluginRunner) {
+			s.store.On("GetChannel", mock.Anything, "ghost").Return(nil, nil).Once()
+		}, wantCode: http.StatusNotFound, wantBody: "channel not found"},
+		{name: "lookup fails", query: "?channel_id=ch-1", setup: func(*MockPluginRunner) {
+			s.store.On("GetHiddenThread", mock.Anything, "ch-1", db.PluginKind("echo")).Return(nil, errors.New("db down")).Once()
+		}, wantCode: http.StatusInternalServerError, wantBody: "db down"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			_, pr := s.pluginRunRoutes()
+			if tt.noRunner {
+				s.srv.SetPluginRunner(nil)
+			}
+			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1"}, nil).Maybe()
+			if tt.setup != nil {
+				tt.setup(pr)
+			}
+			rec := s.testRequest("GET", "/api/plugins/echo/agent"+tt.query, "")
 			require.Equal(s.T(), tt.wantCode, rec.Code, rec.Body.String())
 			require.Contains(s.T(), rec.Body.String(), tt.wantBody)
 		})

@@ -1021,6 +1021,36 @@ Emitted on every review session status transition (`idle → loading → ready �
 
 ---
 
+### `plugins.changed`
+
+A plugin was installed, upgraded or removed, or one of its containers stopped. Clients refetch `GET /api/plugins`.
+
+**Payload schema:** none.
+
+**Scope:** Global.
+
+---
+
+### `plugin.run_started`
+
+A [plugin](plugins.md) started an agent run with `POST /api/plugin/v1/runs`. `channel_id` is the project channel whose container asked for it. A plugin pane in that channel subscribes to the hidden thread to follow the run's `agent.status` and messages in its agent chat.
+
+**Payload schema:**
+
+```json
+{ "plugin_id": "cogtest", "run_id": "ask-…", "thread_id": "plugin:cogtest-a1b2c3" }
+```
+
+| Field       | Type   | Description |
+|-------------|--------|-------------|
+| `plugin_id` | string | The plugin that started the run |
+| `run_id`    | string | The run's id |
+| `thread_id` | string | The channel's hidden `plugin:<id>` thread, where the run goes |
+
+**Scope:** Channel.
+
+---
+
 ## Broadcast Flow
 
 1. **Event source** calls a typed broadcast method (e.g., `BroadcastMessageCreated`).

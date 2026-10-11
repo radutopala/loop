@@ -122,6 +122,21 @@ export async function stopPluginContainer(id: string, channelId: string): Promis
   if (!res.ok) throw await failure(res, "stop the plugin");
 }
 
+/** A plugin's hidden thread in a channel, where its agent runs run. */
+export interface PluginAgent {
+  /** Unset until the plugin starts its first run there. */
+  thread_id?: string;
+  running: boolean;
+}
+
+/** The thread plugin id's agent runs run in, for channelId (a thread answers
+ *  for its channel). */
+export async function fetchPluginAgent(id: string, channelId: string): Promise<PluginAgent> {
+  const res = await apiFetch(`${getApiUrl()}/api/plugins/${encodeURIComponent(id)}/agent?channel_id=${encodeURIComponent(channelId)}`);
+  if (!res.ok) throw await failure(res, "look up the plugin's agent");
+  return res.json();
+}
+
 /** The window event telling plugin views their list changed. */
 export const PLUGINS_CHANGED = "loop:plugins-changed";
 

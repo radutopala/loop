@@ -147,7 +147,8 @@ export function moveLeaf(tree: PaneNode, dragId: string, dropId: string, positio
   const insertLeafAt = (node: PaneNode): PaneNode => {
     if (node.type === "leaf") {
       if (node.id !== dropId) return node;
-      const children = insertBefore ? [makeLeaf(dragId, dragLeaf.panel), { ...node, flex: 1 }] : [{ ...node, flex: 1 }, makeLeaf(dragId, dragLeaf.panel)];
+      const moved: LeafNode = { ...dragLeaf, flex: 1 };
+      const children = insertBefore ? [moved, { ...node, flex: 1 }] : [{ ...node, flex: 1 }, moved];
       return { type: "split" as const, direction, children, flex: node.flex };
     }
     return { ...node, children: node.children.map((c) => insertLeafAt(c)) };

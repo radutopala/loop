@@ -77,6 +77,7 @@ const (
 	EventReviewCommentRemoved      = "review.comment_removed"
 	EventReviewCommentUpdated      = "review.comment_updated"
 	EventPluginsChanged            = "plugins.changed"
+	EventPluginRunStarted          = "plugin.run_started"
 )
 
 // Event represents a server-sent event to WebSocket clients.

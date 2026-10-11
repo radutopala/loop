@@ -94,9 +94,11 @@ interface ChatViewProps {
   onReviewTrust?: () => void;
   /** Opens a thread; chat bubbles offer +fork only when it's set. */
   onSelectThread?: (threadId: string) => void;
+  /** Nobody writes in this chat: the note shows in place of the composer. */
+  readOnlyNote?: string;
 }
 
-export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScrollComplete, noAutoFocus, trustPending, onReviewTrust, onSelectThread }: ChatViewProps) {
+export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScrollComplete, noAutoFocus, trustPending, onReviewTrust, onSelectThread, readOnlyNote }: ChatViewProps) {
   const { colors, fontSizes } = useTheme();
   const styles = buildStyles(colors);
   const { items, liveTail, messages, loading, isRunning } = chatState;
@@ -225,33 +227,39 @@ export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScr
           </div>
         </>
       )}
-      <div style={styles.inputBar}>
-        <ChatInput
-          channelId={channelId}
-          noAutoFocus={noAutoFocus}
-          messages={messages}
-          roots={roots}
-          isRunning={isEmpty ? undefined : isRunning}
-          // Removing the only message mid-edit lands in the empty state; the
-          // edit is gone but the notice still explains where it went.
-          editingQueued={isEmpty ? undefined : queuedEdit.editing}
-          onSaveEdit={isEmpty ? undefined : queuedEdit.save}
-          onCancelEdit={isEmpty ? undefined : queuedEdit.cancel}
-          editNotice={queuedEdit.notice}
-          onDismissEditNotice={queuedEdit.dismissNotice}
-          mode={chatState.mode}
-          setMode={chatState.setMode}
-          onDismissGate={dismissGate}
-          onSent={scrollToBottom}
-          quotedMessage={quotedMessage}
-          onClearQuote={clearQuote}
-          pendingGateReqId={chatState.gateApprovals["chat"]?.req_id ?? null}
-          hasPendingExitPlan={!!chatState.exitPlanRequest}
-          hasPendingAskUser={!!chatState.askUserQuestions}
-          trustPending={trustPending}
-          onReviewTrust={onReviewTrust}
-        />
-      </div>
+      {readOnlyNote !== undefined ? (
+        <div data-testid="chat-read-only" style={{ ...styles.isolationLabel, padding: "8px 12px" }}>
+          {readOnlyNote}
+        </div>
+      ) : (
+        <div style={styles.inputBar}>
+          <ChatInput
+            channelId={channelId}
+            noAutoFocus={noAutoFocus}
+            messages={messages}
+            roots={roots}
+            isRunning={isEmpty ? undefined : isRunning}
+            // Removing the only message mid-edit lands in the empty state; the
+            // edit is gone but the notice still explains where it went.
+            editingQueued={isEmpty ? undefined : queuedEdit.editing}
+            onSaveEdit={isEmpty ? undefined : queuedEdit.save}
+            onCancelEdit={isEmpty ? undefined : queuedEdit.cancel}
+            editNotice={queuedEdit.notice}
+            onDismissEditNotice={queuedEdit.dismissNotice}
+            mode={chatState.mode}
+            setMode={chatState.setMode}
+            onDismissGate={dismissGate}
+            onSent={scrollToBottom}
+            quotedMessage={quotedMessage}
+            onClearQuote={clearQuote}
+            pendingGateReqId={chatState.gateApprovals["chat"]?.req_id ?? null}
+            hasPendingExitPlan={!!chatState.exitPlanRequest}
+            hasPendingAskUser={!!chatState.askUserQuestions}
+            trustPending={trustPending}
+            onReviewTrust={onReviewTrust}
+          />
+        </div>
+      )}
       <div style={styles.isolationLabel}>
         <LoopInfinityIcon color={isRunning && !isEmpty ? undefined : colors.textDim} animated={isRunning && !isEmpty} isDark={colors.isDark} />
         Running non-interactively in an isolated Docker container

@@ -667,6 +667,7 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/plugins", s.handleInstallPlugin)
 	mux.HandleFunc("DELETE /api/plugins/{id}", s.handleRemovePlugin)
 	mux.HandleFunc("POST /api/plugins/{plugin}/channels/{channel}/stop", s.handleStopPluginContainer)
+	mux.HandleFunc("GET /api/plugins/{plugin}/agent", s.handleGetPluginAgent)
 	mux.HandleFunc("POST /api/plugins/{plugin}/actions/{action}", s.handleRunPluginAction)
 	mux.HandleFunc("POST /api/plugins/{plugin}/tools/{tool}", s.handleCallPluginTool)
 	mux.HandleFunc("/api/plugins/{plugin}/x/{path...}", s.handlePluginX)

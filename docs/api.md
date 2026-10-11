@@ -3060,7 +3060,7 @@ Install, or upgrade to, an image. Upgrading stops the plugin's containers; they 
 
 ### `DELETE /api/plugins/{id}`
 
-Remove a plugin: its containers in every channel, its extracted files and its record. `?purge=true` also removes its data volumes.
+Remove a plugin: its containers in every channel, its extracted files and its record. `?purge=true` also removes its data dirs and gate audit logs.
 
 **Response:** `204 No Content`
 
@@ -3104,7 +3104,23 @@ Called by a plugin, with the token in its `LOOP_PLUGIN_TOKEN_FILE`, to start a r
 {"run_id": "ask-…", "thread_id": "…"}
 ```
 
+Loop then sends [`plugin.run_started`](events.md#pluginrun_started) to the channel.
+
 **Errors:** `400` without `agent` or `prompt`; `403` for any caller but a plugin, or without the capability; `404` if the agent or the channel doesn't exist; `409` if the plugin isn't runnable.
+
+### `GET /api/plugins/{plugin}/agent?channel_id=`
+
+The plugin's agent runs in the channel's project, for the agent chat beside its panels. A thread answers for its parent channel.
+
+**Response:** `200 OK`
+
+```json
+{"thread_id": "plugin:cogtest-a1b2c3", "running": true}
+```
+
+`thread_id` is the hidden thread the plugin's runs go in, omitted until the plugin starts one there. `running` is whether one runs now.
+
+**Errors:** `400` without `channel_id`; `404` if the channel doesn't exist.
 
 ### `POST /api/plugins/{plugin}/tools/{tool}`
 

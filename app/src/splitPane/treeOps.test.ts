@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addBeside, flexPercents, makeLeaf } from "./treeOps";
+import { addBeside, findLeafById, flexPercents, makeLeaf, moveLeaf } from "./treeOps";
 import type { PaneNode } from "./types";
 
 describe("flexPercents", () => {
@@ -45,5 +45,21 @@ describe("addBeside", () => {
 
   it("leaves a tree without the anchor as it is", () => {
     expect(addBeside(row, "zz", "horizontal", n, false)).toEqual(row);
+  });
+});
+
+describe("moveLeaf", () => {
+  it("keeps the moved pane's plugin and open mode", () => {
+    const plugin = { id: "cogtest", panel: "quiz", label: "Cognitive test" };
+    const tree: PaneNode = {
+      type: "split",
+      direction: "horizontal",
+      flex: 1,
+      children: [makeLeaf("a", "chat"), makeLeaf("b", "plugin", 2, undefined, plugin), makeLeaf("c", "docker-agent", 1, "fork")],
+    };
+    let moved = moveLeaf(tree, "b", "a", "left");
+    expect(findLeafById(moved, "b")).toEqual({ type: "leaf", id: "b", panel: "plugin", flex: 1, plugin });
+    moved = moveLeaf(moved, "c", "a", "bottom");
+    expect(findLeafById(moved, "c")).toEqual({ type: "leaf", id: "c", panel: "docker-agent", flex: 1, openMode: "fork" });
   });
 });

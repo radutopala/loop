@@ -28,6 +28,12 @@ interface LearnSplitProps {
   chat: React.ReactNode;
   learnPane: React.ReactNode;
   ref?: React.Ref<HTMLDivElement>;
+  /** Names the view for tests and screen readers instead of view's. */
+  testId?: string;
+  label?: string;
+  /** Leaves the seam's logo out, for a caller that draws it over a layer
+   *  lying on the view. */
+  noLogo?: boolean;
 }
 
 /**
@@ -38,7 +44,7 @@ interface LearnSplitProps {
  * doesn't animate: the chat moves into it as the view mounts and back out as
  * it unmounts. The Learn half and the logo fade in and out over the layout.
  */
-export function LearnSplit({ shown, ms, view = "learn", running, chatHeader, chat, learnPane, ref }: LearnSplitProps) {
+export function LearnSplit({ shown, ms, view = "learn", running, chatHeader, chat, learnPane, ref, testId = "learn-split", label, noLogo }: LearnSplitProps) {
   const { colors } = useTheme();
   const gap = colors.islandGap || 4;
   const pane: React.CSSProperties = {
@@ -55,10 +61,10 @@ export function LearnSplit({ shown, ms, view = "learn", running, chatHeader, cha
   return (
     <div
       ref={ref}
-      data-testid="learn-split"
+      data-testid={testId}
       data-view={view}
       role="region"
-      aria-label={SIDE_VIEW_LABEL[view]}
+      aria-label={label ?? SIDE_VIEW_LABEL[view]}
       style={{ position: "absolute", inset: 0, zIndex: 20, overflow: "hidden", display: "flex" }}
     >
       {/* The chat's half, with the divider, doesn't fade: nothing under the
@@ -66,7 +72,7 @@ export function LearnSplit({ shown, ms, view = "learn", running, chatHeader, cha
           a layer of its own, painted afresh, and it flickers. Its background
           covers the layout around the chat card at once. */}
       <div style={{ width: `calc(50% + ${gap / 2}px)`, flexShrink: 0, display: "flex", backgroundColor: colors.bg }}>
-        <div data-testid="learn-split-chat" style={pane}>
+        <div data-testid={`${testId}-chat`} style={pane}>
           {chatHeader}
           <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, position: "relative" }}>{chat}</div>
         </div>
@@ -77,29 +83,41 @@ export function LearnSplit({ shown, ms, view = "learn", running, chatHeader, cha
         <div style={pane}>{learnPane}</div>
       </div>
       {/* The logo joining the two panes, on their seam. */}
-      <div
-        data-testid="learn-split-logo"
-        style={{
-          position: "absolute",
-          left: "50%",
-          top: "50%",
-          width: 40,
-          height: 40,
-          transform: "translate(-50%, -50%)",
-          ...fade,
-          borderRadius: "50%",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          backgroundColor: colors.sidebar,
-          border: `1px solid ${colors.border}`,
-          boxShadow: "0 2px 12px rgba(0, 0, 0, 0.35)",
-          pointerEvents: "none",
-        }}
-      >
-        <div style={{ zoom: 1.5, display: "flex" }}>
-          <LoopInfinityIcon color={running ? undefined : colors.textDim} animated={running} isDark={colors.isDark} />
-        </div>
+      {!noLogo && <SplitSeamLogo testId={`${testId}-logo`} running={running} style={fade} />}
+    </div>
+  );
+}
+
+/**
+ * The Loop logo on the seam of two panes split half and half, over their
+ * parent's middle; it animates while running. testId names it; style adds
+ * to its own (a fade).
+ */
+export function SplitSeamLogo({ testId, running, style }: { testId: string; running: boolean; style?: React.CSSProperties }) {
+  const { colors } = useTheme();
+  return (
+    <div
+      data-testid={testId}
+      style={{
+        position: "absolute",
+        left: "50%",
+        top: "50%",
+        width: 40,
+        height: 40,
+        transform: "translate(-50%, -50%)",
+        ...style,
+        borderRadius: "50%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: colors.sidebar,
+        border: `1px solid ${colors.border}`,
+        boxShadow: "0 2px 12px rgba(0, 0, 0, 0.35)",
+        pointerEvents: "none",
+      }}
+    >
+      <div style={{ zoom: 1.5, display: "flex" }}>
+        <LoopInfinityIcon color={running ? undefined : colors.textDim} animated={running} isDark={colors.isDark} />
       </div>
     </div>
   );
