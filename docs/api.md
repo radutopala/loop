@@ -3156,8 +3156,8 @@ Called by a plugin's container with the token in its `LOOP_PLUGIN_TOKEN_FILE`; t
 | Route | Capability | Answer |
 |---|---|---|
 | `GET /api/plugin/v1/channel` | | `{"id", "name", "dir_path", "platform", "model", "effort"}` |
-| `GET /api/plugin/v1/channel/files?path=&start=&end=` | `files.read` | `{"path", "content", "start", "end", "total_lines"}`; lines 1-based and inclusive, both optional; `.git/` refused; `404` if missing, `400` for a directory or a range past the end, `413` over the size limit |
-| `GET /api/plugin/v1/channel/tree?glob=` | `files.read` | `{"files", "truncated"?}`: the files git tracks, or every file outside `.git/` without git; the glob matches the path or its base name; at most 50,000 |
+| `GET /api/plugin/v1/channel/files?path=&start=&end=` | `files.read` | `{"path", "content", "start", "end", "total_lines"}`; lines 1-based and inclusive, both optional; `.git/` refused, and files agentgate denies the channel's agents (`403`); `404` if missing, `400` for a directory or a range past the end, `413` over the size limit |
+| `GET /api/plugin/v1/channel/tree?glob=` | `files.read` | `{"files", "truncated"?}`: the files git tracks, or every file outside `.git/` without git, less those agentgate denies the channel's agents; the glob matches the path or its base name; at most 50,000 |
 | `GET /api/plugin/v1/channel/git/recent?days=` | `git.read` | `{"commits": [{"sha", "subject", "author", "time"}], "files": [{"path", "commits"}]}`; `days` defaults to 14, at most 365; the last 500 non-merge commits; `409` without git |
 | `GET /api/plugin/v1/channel/quality/hotspots?limit=` | `quality.read` | as `GET /api/channels/{id}/quality/complexity`; `503` before the first scan |
 | `POST /api/plugin/v1/events` | | body `{"type", "data"}` (up to 64 KB) → `204`; broadcast as a `plugin.event` event with `{"plugin_id", "type", "data"}` for the channel |

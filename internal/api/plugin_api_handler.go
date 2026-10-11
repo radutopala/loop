@@ -13,11 +13,14 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/radutopala/loop/internal/agentgate"
 	"github.com/radutopala/loop/internal/apiauth"
+	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/gitutil"
 	"github.com/radutopala/loop/internal/plugin"
 	"github.com/radutopala/loop/internal/plugin/install"
+	"github.com/radutopala/loop/internal/types"
 )
 
 const (
@@ -67,6 +70,27 @@ func (s *Server) pluginCaller(w http.ResponseWriter, r *http.Request, c plugin.C
 		return p, nil, false
 	}
 	return p, ch, true
+}
+
+// pluginReadable returns whether the channel's agents may read a file of
+// its dir, by its path relative to the dir: a plugin reads no more than
+// they do. With the gate off, every file is readable.
+func (s *Server) pluginReadable(r *http.Request, ch *db.Channel) (func(rel string) bool, error) {
+	parent := worktreeRootDirPath(r.Context(), s.store, ch)
+	cfg := s.configs.merged(ch.DirPath, parent)
+	if cfg == nil {
+		return nil, errors.New("loading the config failed")
+	}
+	if !cfg.Gates.Agentgate.Enabled {
+		return func(string) bool { return true }, nil
+	}
+	policy, err := agentgate.CompilePolicy(cfg.Gates.Agentgate.DefaultDecision, nil, nil, container.GateFileRules(cfg, ch.DirPath, parent))
+	if err != nil {
+		return nil, fmt.Errorf("compiling the gate policy: %w", err)
+	}
+	return func(rel string) bool {
+		return policy.MatchFile("read", filepath.Join(ch.DirPath, filepath.FromSlash(rel))).Decision == types.DecisionAllow
+	}, nil
 }
 
 type pluginChannelResponse struct {
@@ -124,6 +148,15 @@ func (s *Server) handlePluginFile(w http.ResponseWriter, r *http.Request) {
 	abs, err := s.validateFilePath(ch.DirPath, rel)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	readable, err := s.pluginReadable(r, ch)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !readable(rel) {
+		http.Error(w, "the gate denies reading this path", http.StatusForbidden)
 		return
 	}
 	info, err := s.sys.Stat(abs)
@@ -194,6 +227,11 @@ func (s *Server) handlePluginTree(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid glob", http.StatusBadRequest)
 		return
 	}
+	readable, err := s.pluginReadable(r, ch)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	files, err := s.trackedFiles(r, ch.DirPath)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -201,7 +239,7 @@ func (s *Server) handlePluginTree(w http.ResponseWriter, r *http.Request) {
 	}
 	out := pluginTreeResponse{Files: []string{}}
 	for _, f := range files {
-		if glob != "" && !matchesGlob(glob, f) {
+		if glob != "" && !matchesGlob(glob, f) || !readable(f) {
 			continue
 		}
 		if len(out.Files) == pluginTreeMax {

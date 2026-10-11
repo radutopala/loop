@@ -984,7 +984,7 @@ func (r *DockerRunner) writeGatePolicyFile(cfg *config.Config, channelID, workDi
 		DefaultDecision: cfg.Gates.Agentgate.DefaultDecision,
 		PathRules:       cfg.Gates.Agentgate.PathRules,
 		CommandRules:    injectWorkspaceRmRfRule(cfg.Gates.Agentgate.CommandRules, workDir, parentDirPath),
-		FileRules:       injectPolicySelfDenyRule(injectProjectConfigRule(injectWorkspaceRule(cfg.Gates.Agentgate.FileRules, workDir, parentDirPath), workDir, parentDirPath)),
+		FileRules:       GateFileRules(cfg, workDir, parentDirPath),
 		GitGuardRoots:   gitGuardRoots(binds),
 	}
 	raw, _ := json.Marshal(payload)
@@ -993,6 +993,13 @@ func (r *DockerRunner) writeGatePolicyFile(cfg *config.Config, channelID, workDi
 		return "", fmt.Errorf("writing gate policy: %w", err)
 	}
 	return path, nil
+}
+
+// GateFileRules returns the agentgate file rules an agent container working
+// in workDir runs under: cfg's, with the workspace allow and the project
+// config and policy self-denies in place.
+func GateFileRules(cfg *config.Config, workDir, parentDirPath string) []types.FileRule {
+	return injectPolicySelfDenyRule(injectProjectConfigRule(injectWorkspaceRule(cfg.Gates.Agentgate.FileRules, workDir, parentDirPath), workDir, parentDirPath))
 }
 
 // policyChannelKey returns the sanitized channel-directory name used as the

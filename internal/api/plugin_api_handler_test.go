@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/radutopala/loop/internal/apiauth"
+	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/osutil"
 	"github.com/radutopala/loop/internal/plugin"
@@ -171,6 +172,53 @@ func (s *ServerSuite) TestPluginFileUnreadable() {
 	s.srv.sys = unreadableSystem{}
 	rec := s.requestAs(echoPlugin, "GET", "/api/plugin/v1/channel/files?path=a.go", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+}
+
+func (s *ServerSuite) TestPluginFilesFollowTheGate() {
+	dir := s.T().TempDir()
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(dir, ".ssh"), 0o755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, ".ssh", "id"), []byte("key"), 0o644))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "a.go"), []byte("x"), 0o644))
+	gate := func(enabled bool, rules ...types.FileRule) func() (*config.Config, error) {
+		return func() (*config.Config, error) {
+			cfg := &config.Config{}
+			cfg.Gates.Agentgate.Enabled = enabled
+			cfg.Gates.Agentgate.DefaultDecision = types.DecisionDeny
+			cfg.Gates.Agentgate.FileRules = rules
+			return cfg, nil
+		}
+	}
+	denySSH := types.FileRule{Paths: []string{"**/.ssh/**"}, Operations: []string{"read"}, Decision: types.DecisionDeny}
+	tests := []struct {
+		name     string
+		load     func() (*config.Config, error)
+		path     string
+		wantCode int
+		wantTree []string
+	}{
+		{name: "denied", load: gate(true, denySSH), path: ".ssh/id", wantCode: http.StatusForbidden, wantTree: []string{"a.go"}},
+		{name: "the workspace is allowed", load: gate(true, denySSH), path: "a.go", wantCode: http.StatusOK, wantTree: []string{"a.go"}},
+		{name: "gate off", load: gate(false, denySSH), path: ".ssh/id", wantCode: http.StatusOK, wantTree: []string{".ssh/id", "a.go"}},
+		{name: "bad rule", load: gate(true, types.FileRule{Paths: []string{"/x"}, Operations: []string{"fly"}, Decision: types.DecisionDeny}), path: "a.go", wantCode: http.StatusInternalServerError},
+		{name: "no config", load: func() (*config.Config, error) { return nil, errors.New("broken") }, path: "a.go", wantCode: http.StatusInternalServerError},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			s.pluginAPIRoutes(plugin.CapFilesRead, dir)
+			s.srv.configs.load = tt.load
+			rec := s.requestAs(echoPlugin, "GET", "/api/plugin/v1/channel/files?path="+tt.path, "")
+			require.Equal(s.T(), tt.wantCode, rec.Code, rec.Body.String())
+			rec = s.requestAs(echoPlugin, "GET", "/api/plugin/v1/channel/tree", "")
+			if tt.wantTree == nil {
+				require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+				return
+			}
+			var out pluginTreeResponse
+			require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &out))
+			require.Equal(s.T(), tt.wantTree, out.Files)
+		})
+	}
 }
 
 func TestLineRange(t *testing.T) {
