@@ -4,7 +4,7 @@ import { contentCapBase } from "../api/api";
 import { checkFilesExist, type RootEntry } from "../api/files";
 import { pluginXRequest, setPluginEnabled } from "../api/plugins";
 import type { FileLinkOpenDetail } from "../components/chat/FileLink";
-import { LearnSplit, SplitSeamLogo } from "../components/layout/LearnSplit";
+import { clampSplit, LearnSplit, SplitSeamLogo } from "../components/layout/LearnSplit";
 import type { ActiveChatState } from "../hooks/useChatStateStore";
 import { useContentCapsEpoch } from "../hooks/useContentCapsEpoch";
 import { useEventStream } from "../hooks/useEventStream";
@@ -125,6 +125,17 @@ export function PluginPanel({ plugin: ref, channelId, channelName, dirPath, leaf
   const agent = usePluginAgent(pluginId, channelId, subscribeChannelEvents);
   const [agentOpen, setAgentOpen] = usePluginAgentOpen(agentOpenKey(pluginId, channelId, leafId), leafId, overlayHost);
   const agentThread = agentOpen && overlayHost ? agent.threadId : null;
+  // Where the agent's view splits the panel from the agent's chat, as the
+  // divider was last dragged for the plugin.
+  const splitKey = `plugin-agent-split:${pluginId}`;
+  const [split, setSplit] = useState(() => clampSplit(Number(storageGetJSON(splitKey)) || 0.5));
+  const changeSplit = useCallback(
+    (next: number) => {
+      setSplit(next);
+      storageSetJSON(splitKey, next);
+    },
+    [splitKey],
+  );
   const [frameSlot, setFrameSlot] = useState<HTMLDivElement | null>(null);
   const frameBoxRef = useRef<HTMLDivElement>(null);
   const [framePlace, setFramePlace] = useState<React.CSSProperties | null>(null);
@@ -255,6 +266,8 @@ export function PluginPanel({ plugin: ref, channelId, channelName, dirPath, leaf
               shown
               ms={0}
               running={agent.running}
+              split={split}
+              onSplitChange={changeSplit}
               chatHeader={<PaneLeafHeader leafId={viewLeafId} panel="plugin" plugin={ref} usedSingletons={NO_SINGLETONS} />}
               chat={
                 <>
@@ -277,7 +290,7 @@ export function PluginPanel({ plugin: ref, channelId, channelName, dirPath, leaf
             {/* The frame lies over the view (z-index 21), so the logo on the
               seam goes over both. */}
             <div style={{ position: "absolute", inset: 0, zIndex: 22, pointerEvents: "none" }}>
-              <SplitSeamLogo testId="plugin-agent-split-logo" running={agent.running} />
+              <SplitSeamLogo testId="plugin-agent-split-logo" running={agent.running} split={split} />
             </div>
           </>,
           overlayHost,
