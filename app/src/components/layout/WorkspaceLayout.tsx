@@ -1169,7 +1169,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     if (layoutType !== "canvas") return shownPluginPanes(tree);
     return shownPluginTiles(canvasState?.tiles ?? []);
   }, [layoutType, tree, canvasState]);
-  const pluginPanels = usePluginPanelsValue(installedPlugins, shownPlugins);
+  const pluginPanels = usePluginPanelsValue(installedPlugins, shownPlugins, { id: channelId, name: channel.name, dirPath });
   const pluginPanelsRef = useRef(pluginPanels);
   pluginPanelsRef.current = pluginPanels;
 

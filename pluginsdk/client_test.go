@@ -161,6 +161,13 @@ func (s *ClientSuite) TestWrites() {
 
 	require.NoError(s.T(), s.client.ClearBadge(ctx))
 	s.requireCall(http.MethodDelete, "/badge", "")
+
+	s.answer(http.StatusCreated, `{"msg_id":"card-1"}`)
+	msgID, err := s.client.PostCard(ctx, "score", "Quiz", map[string]int{"score": 3})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "card-1", msgID)
+	s.requireCall(http.MethodPost, "/cards", "")
+	require.JSONEq(s.T(), `{"card":"score","title":"Quiz","data":{"score":3}}`, s.body)
 }
 
 // deadlineDoer records how long the request had to run.
@@ -278,6 +285,13 @@ func (s *ClientSuite) TestErrors() {
 			setup:   func() { s.answer(http.StatusBadRequest, "text is required") },
 			call:    func() error { return s.client.SetBadge(ctx, "", "") },
 			wantErr: "PUT /badge: Loop answered 400: text is required",
+			status:  http.StatusBadRequest,
+		},
+		{
+			name:    "card refused",
+			setup:   func() { s.answer(http.StatusBadRequest, "no card") },
+			call:    func() error { _, err := s.client.PostCard(ctx, "x", "", nil); return err },
+			wantErr: "POST /cards: Loop answered 400: no card",
 			status:  http.StatusBadRequest,
 		},
 		{

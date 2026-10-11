@@ -65,6 +65,14 @@ type Badge struct {
 	Title string
 }
 
+// Card is a card the plugin posted to the channel's chat.
+type Card struct {
+	MsgID string
+	Card  string
+	Title string
+	Data  json.RawMessage
+}
+
 // StartedRun is an agent run the plugin started.
 type StartedRun struct {
 	pluginsdk.RunRequest
@@ -89,6 +97,7 @@ type FakeLoop struct {
 	memory        map[string]string
 	uiCommands    []pluginsdk.UICommand
 	badge         *Badge
+	cards         []Card
 }
 
 // NewFakeLoop starts a FakeLoop serving cfg, stopped when t ends.
@@ -113,6 +122,7 @@ func NewFakeLoop(t testing.TB, cfg Config) *FakeLoop {
 	mux.HandleFunc("POST /api/plugin/v1/ui/commands", f.allow(pluginsdk.CapUIRun, f.runUI))
 	mux.HandleFunc("PUT /api/plugin/v1/badge", f.allow(pluginsdk.CapUIBadge, f.setBadge))
 	mux.HandleFunc("DELETE /api/plugin/v1/badge", f.allow(pluginsdk.CapUIBadge, f.clearBadge))
+	mux.HandleFunc("POST /api/plugin/v1/cards", f.allow(pluginsdk.CapUICard, f.postCard))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+f.token {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -168,6 +178,13 @@ func (f *FakeLoop) Badge() *Badge {
 	}
 	b := *f.badge
 	return &b
+}
+
+// Cards returns the cards the plugin posted, oldest first.
+func (f *FakeLoop) Cards() []Card {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.cards)
 }
 
 // Memory returns the plugin's memory files by name.
@@ -415,6 +432,38 @@ func (f *FakeLoop) clearBadge(w http.ResponseWriter, _ *http.Request) {
 	f.badge = nil
 	f.mu.Unlock()
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// postCard checks a card is the manifest's, when there is one, and keeps
+// it.
+func (f *FakeLoop) postCard(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Card  string          `json:"card"`
+		Title string          `json:"title"`
+		Data  json.RawMessage `json:"data"`
+	}
+	if !pluginsdk.DecodeJSON(w, r, &req) {
+		return
+	}
+	if !f.declaresCard(req.Card) {
+		http.Error(w, fmt.Sprintf("the plugin declares no card %q", req.Card), http.StatusBadRequest)
+		return
+	}
+	f.mu.Lock()
+	c := Card{MsgID: fmt.Sprintf("card-%d", len(f.cards)+1), Card: req.Card, Title: req.Title, Data: req.Data}
+	f.cards = append(f.cards, c)
+	f.mu.Unlock()
+	pluginsdk.WriteJSON(w, http.StatusCreated, map[string]string{"msg_id": c.MsgID})
+}
+
+// declaresCard reports whether the manifest declares card; without a
+// manifest, any named card.
+func (f *FakeLoop) declaresCard(card string) bool {
+	m := f.cfg.Manifest
+	if m == nil {
+		return card != ""
+	}
+	return m.UI != nil && slices.ContainsFunc(m.UI.Cards, func(c pluginsdk.Card) bool { return c.ID == card })
 }
 
 // runUI checks a UI command as Loop does and answers that the window ran

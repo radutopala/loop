@@ -63,13 +63,18 @@ export interface ApiResponse<T = unknown> {
   body: T;
 }
 
-/** Where the panel is shown. */
-export interface PanelContext {
+/** Where the panel or card is shown. */
+export interface PanelContext<T = unknown> {
   pluginId: string;
+  /** The panel's id; "" in a card. */
   panel: string;
   channelId: string;
+  /** "" in a card in a chat other than the workspace's own. */
   channelName: string;
   dirPath: string;
+  /** In a card in the chat: its id, and the data the plugin posted it with. */
+  card?: string;
+  data?: T;
 }
 
 /** Loop's theme as CSS custom properties: --bg, --surface, --fg, --muted,
@@ -102,7 +107,7 @@ export interface Bridge {
     delete<T = unknown>(path: string, body?: unknown): Promise<T>;
   };
   context: {
-    get(): Promise<PanelContext>;
+    get<T = unknown>(): Promise<PanelContext<T>>;
   };
   /** The plugin's settings in the channel's project. */
   settings: {
@@ -126,6 +131,9 @@ export interface Bridge {
     /** Opens a file of the channel in the editor, at line if given. Needs
      *  the ui.open_file capability. */
     openFile(path: string, line?: number): Promise<void>;
+    /** Sizes a card's frame to height pixels, within the chat's bounds
+     *  (80 to 900). A panel fills its pane and can't. */
+    resize(height: number): Promise<void>;
   };
   theme: {
     get(): Promise<Theme>;
@@ -275,6 +283,9 @@ export function connectPort(port: MessagePort, opts: BridgeOptions = {}): Bridge
       },
       openFile: async (path, line) => {
         await call("ui.open_file", line === undefined ? { path } : { path, line });
+      },
+      resize: async (height) => {
+        await call("ui.resize", { height });
       },
     },
     theme: { get: () => call("theme.get"), onChange: (cb) => on("theme", cb) },

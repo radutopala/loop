@@ -1,5 +1,5 @@
-// The bridge between a plugin's panel and the app: JSON-RPC 2.0 over the
-// MessagePort the host hands the panel's frame on load. The frame has an
+// The bridge between a plugin's panel or chat card and the app: JSON-RPC 2.0
+// over the MessagePort the host hands the frame on load. The frame has an
 // opaque origin, so this is its only way to reach Loop.
 
 import type { PluginXResponse } from "../api/plugins";
@@ -65,6 +65,10 @@ export interface BridgeHost {
   openFile: (path: string, line?: number) => Promise<void>;
   loadState: () => unknown;
   saveState: (value: unknown) => void;
+  /** Set for a card in the chat: its id and the data it was posted with. */
+  card?: { id: string; data: unknown };
+  /** Sizes a card's frame to height; panels fill their pane instead. */
+  resize?: (height: number) => void;
 }
 
 type Params = Record<string, unknown>;
@@ -85,8 +89,10 @@ export async function callBridge(host: BridgeHost, method: string, params: Param
   switch (method) {
     case "api.request":
       return host.request(str(params, "method"), str(params, "path"), params.body);
-    case "context.get":
-      return { pluginId: host.pluginId, panel: host.panel, channelId: host.channelId, channelName: host.channelName, dirPath: host.dirPath };
+    case "context.get": {
+      const ctx = { pluginId: host.pluginId, panel: host.panel, channelId: host.channelId, channelName: host.channelName, dirPath: host.dirPath };
+      return host.card ? { ...ctx, card: host.card.id, data: host.card.data } : ctx;
+    }
     case "state.get":
       return host.loadState() ?? null;
     case "state.set": {
@@ -108,6 +114,13 @@ export async function callBridge(host: BridgeHost, method: string, params: Param
       const line = params.line;
       if (line !== undefined && (typeof line !== "number" || !Number.isInteger(line) || line < 1)) throw new BridgeError(INVALID_PARAMS, "line must be a positive integer");
       await host.openFile(str(params, "path"), line);
+      return null;
+    }
+    case "ui.resize": {
+      if (!host.resize) throw new BridgeError(CALL_FAILED, "only a card sizes itself; a panel fills its pane");
+      const height = params.height;
+      if (typeof height !== "number" || !Number.isFinite(height) || height <= 0) throw new BridgeError(INVALID_PARAMS, "height must be a positive number");
+      host.resize(height);
       return null;
     }
     default:

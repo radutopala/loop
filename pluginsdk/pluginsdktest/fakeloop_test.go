@@ -2,6 +2,7 @@ package pluginsdktest
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -251,6 +252,31 @@ func (s *FakeLoopSuite) TestBadge() {
 
 	denied := NewFakeLoop(s.T(), Config{Manifest: &pluginsdk.Manifest{}})
 	err := denied.Client().SetBadge(s.ctx, "a", "")
+	require.True(s.T(), pluginsdk.HasStatus(err, http.StatusForbidden))
+}
+
+func (s *FakeLoopSuite) TestCards() {
+	m := &pluginsdk.Manifest{Capabilities: []string{pluginsdk.CapUICard}, UI: &pluginsdk.UI{Cards: []pluginsdk.Card{{ID: "score", Entry: "ui/score.html"}}}}
+	f := NewFakeLoop(s.T(), Config{Manifest: m})
+	c := f.Client()
+	id, err := c.PostCard(s.ctx, "score", "Quiz", map[string]int{"score": 3})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "card-1", id)
+	_, err = c.PostCard(s.ctx, "other", "", nil)
+	require.True(s.T(), pluginsdk.HasStatus(err, http.StatusBadRequest))
+	require.Equal(s.T(), http.StatusBadRequest, s.raw(f, http.MethodPost, "/cards", "{"))
+	require.Equal(s.T(), []Card{{MsgID: "card-1", Card: "score", Title: "Quiz", Data: json.RawMessage(`{"score":3}`)}}, f.Cards())
+
+	_, err = NewFakeLoop(s.T(), Config{Manifest: &pluginsdk.Manifest{Capabilities: []string{pluginsdk.CapUICard}}}).Client().PostCard(s.ctx, "score", "", nil)
+	require.True(s.T(), pluginsdk.HasStatus(err, http.StatusBadRequest), "a manifest without ui declares no cards")
+
+	open := NewFakeLoop(s.T(), Config{})
+	_, err = open.Client().PostCard(s.ctx, "any", "", nil)
+	require.NoError(s.T(), err)
+	_, err = open.Client().PostCard(s.ctx, "", "", nil)
+	require.True(s.T(), pluginsdk.HasStatus(err, http.StatusBadRequest))
+
+	_, err = NewFakeLoop(s.T(), Config{Manifest: &pluginsdk.Manifest{}}).Client().PostCard(s.ctx, "score", "", nil)
 	require.True(s.T(), pluginsdk.HasStatus(err, http.StatusForbidden))
 }
 

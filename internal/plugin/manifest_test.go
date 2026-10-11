@@ -181,6 +181,23 @@ func (s *ManifestSuite) TestValidate() {
 			`ui.panels[2]: entry "quiz/index.html" must be`,
 			`ui.panels[3]: entry "ui/app.js" must be`,
 		}},
+		{name: "cards", edit: func(m *Manifest) {
+			m.UI = &UI{Cards: []Card{
+				{ID: "score", Entry: "ui/score.html"},
+				{ID: "score", Entry: "ui/../score.html"},
+				{ID: "S", Entry: "ui/s.js"},
+			}}
+		}, wantErr: []string{
+			`ui.cards needs capability "ui.card"`,
+			`ui.cards[1]: card "score" is declared twice`,
+			`ui.cards[1]: entry "ui/../score.html" must be an .html file under ui/`,
+			`ui.cards[2]: id "S" must match`,
+			`ui.cards[2]: entry "ui/s.js" must be`,
+		}},
+		{name: "cards with the capability", edit: func(m *Manifest) {
+			m.Capabilities = []Capability{CapUICard}
+			m.UI = &UI{Cards: []Card{{ID: "score", Entry: "ui/score.html"}}}
+		}},
 		{name: "empty ui", edit: func(m *Manifest) { m.UI = &UI{} }},
 		{name: "events", edit: func(m *Manifest) { m.Events = []string{"message.created", "message.streaming", "message.created"} }, wantErr: []string{
 			`events needs capability "events.subscribe"`,
@@ -211,6 +228,17 @@ func (s *ManifestSuite) TestValidate() {
 			}
 		})
 	}
+}
+
+func (s *ManifestSuite) TestCard() {
+	m := &Manifest{UI: &UI{Cards: []Card{{ID: "score", Entry: "ui/score.html"}}}}
+	c, ok := m.Card("score")
+	require.True(s.T(), ok)
+	require.Equal(s.T(), "ui/score.html", c.Entry)
+	_, ok = m.Card("other")
+	require.False(s.T(), ok)
+	_, ok = (&Manifest{}).Card("score")
+	require.False(s.T(), ok)
 }
 
 func (s *ManifestSuite) TestToolValidateInput() {

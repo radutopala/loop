@@ -460,6 +460,47 @@ paths:
         "409": { $ref: "#/components/responses/NotRunnable" }
         "500": { $ref: "#/components/responses/InternalError" }
         "501": { $ref: "#/components/responses/PluginsDisabled" }
+  /cards:
+    post:
+      operationId: postCard
+      tags: [ui]
+      summary: Post a card to the channel's chat
+      description: |
+        Posts one of the cards the manifest declares under ui.cards to the
+        chat of the plugin's channel, or of the thread it serves, as a
+        message that starts no agent turn. The desktop app draws the card's
+        page in the message, in a sandboxed frame; the page reads data
+        with the bridge's context.get. Cards show in the desktop app only,
+        so a channel on another platform refuses them. The body is capped
+        at 64 KB.
+      x-loop-capabilities: [ui.card]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Card"
+      responses:
+        "201":
+          description: The card is posted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [msg_id]
+                properties:
+                  msg_id:
+                    type: string
+                    description: The chat message's id.
+        "400":
+          description: The body isn't JSON or is over 64 KB, the manifest declares no such card, or the channel isn't in the desktop app.
+          content: { text/plain: { schema: { type: string } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/ChannelNotFound" }
+        "409": { $ref: "#/components/responses/NotRunnable" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { $ref: "#/components/responses/PluginsDisabled" }
 components:
   securitySchemes:
     pluginToken:
@@ -691,3 +732,15 @@ components:
           type: string
           maxLength: 200
           description: The tooltip.
+    Card:
+      type: object
+      required: [card]
+      properties:
+        card:
+          type: string
+          description: The id of a card under the manifest's ui.cards.
+        title:
+          type: string
+          description: Shown above the card, on one line; whitespace runs collapse and it's cut at 120 characters.
+        data:
+          description: Any JSON, which the card's page gets; null when left out.

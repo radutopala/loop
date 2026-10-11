@@ -11,6 +11,13 @@ export interface PluginPanelInfo {
   singleton?: boolean;
 }
 
+/** A card a plugin posts in a channel's chat. */
+export interface PluginCardInfo {
+  id: string;
+  /** The card's HTML page, under ui/ of the plugin's bundle. */
+  entry: string;
+}
+
 /** A plugin's container in a channel. */
 export interface PluginContainerInfo {
   channel_id: string;
@@ -28,6 +35,7 @@ export interface PluginInfo {
   capabilities: string[];
   status: string;
   panels?: PluginPanelInfo[];
+  cards?: PluginCardInfo[];
   image?: string;
   digest?: string;
   api?: string;

@@ -315,6 +315,11 @@ func (in *Installer) validate(dir string) (*plugin.Manifest, error) {
 				return nil, fmt.Errorf("panel %q: entry %s is not in the image", p.ID, p.Entry)
 			}
 		}
+		for _, c := range m.UI.Cards {
+			if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(c.Entry))); err != nil {
+				return nil, fmt.Errorf("card %q: entry %s is not in the image", c.ID, c.Entry)
+			}
+		}
 	}
 	if m.Loop != "" {
 		v, err := semver.NewVersion(in.loopVersion)

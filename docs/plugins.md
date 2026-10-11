@@ -96,7 +96,11 @@ The image carries the label `dev.loop.plugin=1`, runs as a non-root `USER` (a nu
     { "id": "daily", "default_schedule": { "type": "cron", "schedule": "0 9 * * *", "enabled": true } },
   ],
   "settings": { "count": { "type": "integer", "title": "Count", "minimum": 1, "maximum": 10, "default": 3 } },
-  "ui": { "panels": [{ "id": "main", "label": "Echo", "entry": "ui/main/index.html", "singleton": true }] },
+  "ui": {
+    "panels": [{ "id": "main", "label": "Echo", "entry": "ui/main/index.html", "singleton": true }],
+    // needs "ui.card" in capabilities
+    "cards": [{ "id": "score", "entry": "ui/score.html" }],
+  },
   "resources": { "memory": "128m", "cpus": 0.5 },
 }
 ```
@@ -145,6 +149,7 @@ Capabilities are approved by the owner at install and checked on every call:
 | `events.subscribe` | the manifest's `events`, sent to `POST /events` |
 | `ui.run` | `POST /ui/commands`: drives an app window, in the plugin's channel and its threads |
 | `ui.badge` | `PUT /badge`, `DELETE /badge`: a short label on the channel's sidebar row |
+| `ui.card` | the manifest's `ui.cards`, `POST /cards`: pages in the channel's chat |
 
 ## Container environment
 
@@ -257,6 +262,7 @@ channel id. A route needing a capability the owner didn't approve answers `403`.
 | `POST /ui/commands` | `ui.run` | body `{"steps", "client_id"?, "timeout"?}` → `200 {"client_id", "results", "error"?}`; an app window runs the [UI bridge steps](api.md#post-apiuicommands) and Loop answers when it's done, up to `timeout` (a Go duration, `1m` by default, at most `10m`). The first step is `select_channel`, and each `select_channel` opens the plugin's channel or one of its threads (`403` otherwise); terminal steps work only on the agent and shell panes. `404` when no window is open, `502` when it goes away, `504` when it doesn't answer in time |
 | `PUT /badge` | `ui.badge` | body `{"text", "title"?}` → `204`; shows `text` (trimmed, 1 to 16 characters on one line) on the sidebar row of the plugin's channel, or of the thread its container serves, with `title` (at most 200 characters) as its tooltip. It replaces the plugin's badge there and stays until the plugin clears it or is removed |
 | `DELETE /badge` | `ui.badge` | `204`, also when there was no badge |
+| `POST /cards` | `ui.card` | body `{"card", "title"?, "data"?}` (up to 64 KB) → `201 {"msg_id"}`; posts one of the manifest's cards to the chat of the plugin's channel, or of the thread its container serves, with `data` for its page (see [Cards](#cards)). `400` for a card the manifest doesn't declare, and outside the desktop app |
 
 ### Agent runs
 
@@ -358,13 +364,14 @@ On load the host posts `{"type": "loop-plugin:init"}` to the frame with a `Messa
 | Method | Params | Result |
 |---|---|---|
 | `api.request` | `{"method", "path", "body"?}` | `{"status", "body"}`: the plugin's `/x/{path}` in the panel's channel, JSON bodies decoded |
-| `context.get` | | `{"pluginId", "panel", "channelId", "channelName", "dirPath"}` |
+| `context.get` | | `{"pluginId", "panel", "channelId", "channelName", "dirPath"}`; in a card `panel` is `""`, with `card` and `data` |
 | `state.get` | | the panel's saved UI state, or `null` |
 | `state.set` | `{"value"}` | `null`; up to 64 KB of JSON, kept per plugin, channel and panel |
 | `theme.get` | | `{"mode": "dark"\|"light", "vars": {"--bg": "…", …}}` |
 | `settings.get` | | the plugin's settings in the channel's project |
 | `ui.notify` | `{"title", "body"}` | `null`; needs `ui.notify` |
 | `ui.open_file` | `{"path", "line"?}` | `null`; opens a file of the channel in the editor; needs `ui.open_file` |
+| `ui.resize` | `{"height"}` | `null`; sets a card's height in pixels, kept within 80 to 900; a panel fills its pane and gets an error |
 
 The theme's `vars` are `--bg`, `--surface`, `--fg`, `--muted`, `--border`, `--accent`,
 `--success`, `--danger`, `--font` and `--mono`; a panel sets them on its root element.
@@ -376,3 +383,15 @@ Host notifications:
 | `event` | `{"type", "data"}`: an event the plugin's container sent with `POST /events` |
 | `theme` | as `theme.get`, when the theme changes |
 | `settings` | as `settings.get`, when a config write changes them |
+
+### Cards
+
+A plugin approved for `ui.card` declares pages in the manifest's `ui.cards` (`id` and `entry`,
+checked like a panel's) and posts one to its channel's chat with `POST /cards`. The chat shows
+it as a message from the plugin: a header with the `title` (by default the plugin's name and
+the card's id) over the page in a frame, under the same rules as a panel's. The page gets the
+same bridge as a panel, with three differences: `context.get` has the card's id as `card` and
+the posted `data`, `state` lasts as long as the frame, and the page sets its own height with
+`ui.resize`, 160 pixels until it does. `api.request` reaches the container of the chat's
+channel or thread. A card of a plugin that was removed, or no longer approved for `ui.card`,
+shows a note in its place.

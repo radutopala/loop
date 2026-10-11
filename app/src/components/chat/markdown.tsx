@@ -1,6 +1,7 @@
 import "katex/dist/katex.min.css";
 import "./math.css";
 import { useContext, useState } from "react";
+import { PluginCard } from "../../plugins/PluginCard";
 import { useTheme } from "../../ThemeContext";
 import { findCandidatePaths } from "../../utils/fileLinks";
 import { inAppHref } from "../../utils/messageLinks";
@@ -8,7 +9,7 @@ import { CopyButton } from "../shared/CopyButton";
 import { ChatComponent } from "./ChatComponent";
 import { buildMessageStyles, ChannelContext } from "./chatShared";
 import { codeToFence, codeToHTML } from "./codeBlock";
-import { parseComponentInfo, readFence } from "./componentFence";
+import { parseComponentInfo, parsePluginCard, readFence } from "./componentFence";
 import { FileLink } from "./FileLink";
 import { parseTableBlock, startsTable, type TableAlign, tableToHTML, tableToTSV } from "./markdownTable";
 import { findMathBlock, inlineMathPattern, inlineMathTeX, isInlineMath, renderMath } from "./math";
@@ -297,6 +298,11 @@ function parseMarkdown(text: string, s: Record<string, React.CSSProperties>, cha
       const component = fence.closed ? parseComponentInfo(fence.info) : null;
       if (component) {
         nodes.push(<ChatComponent key={nodes.length} template={component.template} title={component.title} doc={fence.body} />);
+        continue;
+      }
+      const card = fence.closed ? parsePluginCard(fence.info, fence.body) : null;
+      if (card) {
+        nodes.push(<PluginCard key={nodes.length} {...card} channelId={channelId} />);
         continue;
       }
       nodes.push(<CodeBlock key={nodes.length} body={fence.body} info={fence.info} s={s} />);

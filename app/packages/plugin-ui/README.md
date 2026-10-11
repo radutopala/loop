@@ -55,11 +55,12 @@ await bridge.ui.openFile("cmd/main.go", 12); // needs the ui.open_file capabilit
 |---|---|
 | `api.request(method, path, body?)` | `{status, body}` of `/x/{path}`; a body that isn't a string is sent as JSON |
 | `api.get/post/put/patch/delete` | the answer's body, or an `ApiError {status, body}` |
-| `context.get()` | where the panel is shown |
+| `context.get()` | where the panel is shown; in a card also its `card` and `data` |
 | `settings.get()`, `settings.onChange(cb)` | the plugin's settings in the channel's project |
 | `state.get()`, `state.set(value)` | small JSON UI state, kept per plugin, channel and panel |
 | `events.on(cb)` | `{type, data}` the plugin's container sent with `POST /events` |
 | `ui.notify(title, body?)`, `ui.openFile(path, line?)` | |
+| `ui.resize(height)` | a card's height in pixels, kept within 80 to 900 |
 | `theme.get()`, `theme.onChange(cb)` | `{mode, vars}` |
 | `call(method, params?, timeoutMs?)` | any bridge method by name |
 | `close()` | fails the calls in flight and closes the port |
@@ -102,6 +103,19 @@ const useStore = create(persist(() => ({ tab: "today" }), { name: "ui", storage:
 ```
 
 Durable data belongs in the plugin, behind its `/x` API.
+
+### Cards
+
+A card is a page the plugin posts to its channel's chat (`ui.card`). The same bridge drives it,
+with these differences: `context.get()` has `panel: ""`, the card's id as `card` and the data
+it was posted with as `data`; the state lasts only as long as the frame; and the card sizes
+itself with `ui.resize`, while a panel fills its pane:
+
+```ts
+const { data } = await bridge.context.get<{ score: number }>();
+render(data);
+new ResizeObserver(() => bridge.ui.resize(document.documentElement.scrollHeight)).observe(document.body);
+```
 
 ## Bundle rules
 

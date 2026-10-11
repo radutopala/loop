@@ -151,10 +151,14 @@ func (s *ServerSuite) TestListPlugins() {
 			{"channel_id":"ch-1","channel_name":"app","status":"running","updated_at":"2026-10-10T09:00:00Z"},
 			{"channel_id":"gone","status":"stopped","last_error":"unhealthy","updated_at":"2026-10-10T09:00:00Z"}]}]}`, rec.Body.String())
 
-	// A plugin that may run shows its name, and its panels when approved.
-	panels := &plugin.Manifest{Name: "Echo", UI: &plugin.UI{Panels: []plugin.Panel{{ID: "main", Label: "Echo", Entry: "ui/main/index.html", Singleton: true}}}}
+	// A plugin that may run shows its name, and its panels and cards when
+	// approved.
+	panels := &plugin.Manifest{Name: "Echo", UI: &plugin.UI{
+		Panels: []plugin.Panel{{ID: "main", Label: "Echo", Entry: "ui/main/index.html", Singleton: true}},
+		Cards:  []plugin.Card{{ID: "score", Entry: "ui/score.html"}},
+	}}
 	pm.On("List", mock.Anything).Return([]*db.PluginState{
-		{PluginID: "echo", ApprovedCaps: []string{"ui.panel"}, InstalledAt: at, UpdatedAt: at},
+		{PluginID: "echo", ApprovedCaps: []string{"ui.panel", "ui.card"}, InstalledAt: at, UpdatedAt: at},
 		{PluginID: "quiet", InstalledAt: at, UpdatedAt: at},
 		{PluginID: "bare", ApprovedCaps: []string{"ui.panel"}, InstalledAt: at, UpdatedAt: at},
 	}, nil).Once()
@@ -169,9 +173,12 @@ func (s *ServerSuite) TestListPlugins() {
 	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &list))
 	require.Equal(s.T(), "Echo", list.Plugins[0].Name)
 	require.Equal(s.T(), panels.UI.Panels, list.Plugins[0].Panels)
+	require.Equal(s.T(), panels.UI.Cards, list.Plugins[0].Cards)
 	require.Equal(s.T(), "Echo", list.Plugins[1].Name)
 	require.Empty(s.T(), list.Plugins[1].Panels)
+	require.Empty(s.T(), list.Plugins[1].Cards)
 	require.Empty(s.T(), list.Plugins[2].Panels)
+	require.Empty(s.T(), list.Plugins[2].Cards)
 
 	pm.On("List", mock.Anything).Return(nil, nil).Once()
 	rec = s.testRequest("GET", "/api/plugins", "")

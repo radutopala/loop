@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { componentHeight, componentOpenURL, parseComponentInfo, readFence } from "./componentFence";
+import { componentHeight, componentOpenURL, parseComponentInfo, parsePluginCard, readFence } from "./componentFence";
 
 describe("readFence", () => {
   const cases: { name: string; lines: string[]; want: ReturnType<typeof readFence> }[] = [
@@ -79,4 +79,17 @@ describe("componentOpenURL", () => {
       expect(componentOpenURL(c.data)).toBe(c.want);
     });
   }
+});
+
+describe("parsePluginCard", () => {
+  it.each([
+    { name: "card with title", info: "loop-plugin-card cogtest score Quiz results", body: '{"score":3}', want: { plugin: "cogtest", card: "score", title: "Quiz results", data: { score: 3 } } },
+    { name: "no title", info: "loop-plugin-card cogtest score", body: "null", want: { plugin: "cogtest", card: "score", title: "", data: null } },
+    { name: "data not JSON", info: "loop-plugin-card cogtest score", body: "{cut", want: { plugin: "cogtest", card: "score", title: "", data: null } },
+    { name: "no card", info: "loop-plugin-card cogtest", body: "null", want: null },
+    { name: "another fence", info: "loop-component math Sum", body: "", want: null },
+    { name: "bad plugin id", info: "loop-plugin-card Cog score", body: "null", want: null },
+  ])("$name", ({ info, body, want }) => {
+    expect(parsePluginCard(info, body)).toEqual(want);
+  });
 });

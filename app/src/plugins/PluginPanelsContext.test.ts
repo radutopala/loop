@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { PluginInfo } from "../api/plugins";
 import type { PaneNode } from "../types/panels";
-import { findPluginPanel, pluginPaneKey, pluginPaneOptions, shownPluginPanes } from "./PluginPanelsContext";
+import { findPluginCard, findPluginPanel, pluginPaneKey, pluginPaneOptions, shownPluginPanes } from "./PluginPanelsContext";
 
 const quiz = { id: "quiz", label: "Quiz", entry: "quiz/index.html", singleton: true };
+const score = { id: "score", entry: "ui/score.html" };
 const cogtest: PluginInfo = {
   id: "cogtest",
   name: "Cognitive tests",
@@ -11,6 +12,7 @@ const cogtest: PluginInfo = {
   capabilities: ["ui.panel"],
   status: "installed",
   panels: [quiz, { id: "log", label: "", entry: "log.html" }],
+  cards: [score],
 };
 const plugins: PluginInfo[] = [
   cogtest,
@@ -71,6 +73,18 @@ describe("findPluginPanel", () => {
     { name: "found", list: plugins, ref: { id: "cogtest", panel: "quiz", label: "" }, want: { plugin: cogtest, panel: quiz } },
   ])("$name", ({ list, ref, want }) => {
     expect(findPluginPanel(list, ref)).toEqual(want);
+  });
+});
+
+describe("findPluginCard", () => {
+  it.each([
+    { name: "loading", list: null, plugin: "cogtest", card: "score", want: null },
+    { name: "plugin gone", list: plugins, plugin: "gone", card: "score", want: null },
+    { name: "card gone", list: plugins, plugin: "cogtest", card: "gone", want: null },
+    { name: "no cards", list: plugins, plugin: "headless", card: "score", want: null },
+    { name: "found", list: plugins, plugin: "cogtest", card: "score", want: { plugin: cogtest, card: score } },
+  ])("$name", ({ list, plugin, card, want }) => {
+    expect(findPluginCard(list, plugin, card)).toEqual(want);
   });
 });
 

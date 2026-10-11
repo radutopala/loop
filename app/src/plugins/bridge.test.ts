@@ -58,6 +58,37 @@ describe("callBridge", () => {
     await expect(callBridge(host(), "context.get", {})).resolves.toEqual({ pluginId: "cogtest", panel: "quiz", channelId: "ch1", channelName: "proj", dirPath: "/src/proj" });
   });
 
+  it("context.get in a card", async () => {
+    const h = host({ panel: "", card: { id: "score", data: { score: 3 } } });
+    await expect(callBridge(h, "context.get", {})).resolves.toEqual({
+      pluginId: "cogtest",
+      panel: "",
+      channelId: "ch1",
+      channelName: "proj",
+      dirPath: "/src/proj",
+      card: "score",
+      data: { score: 3 },
+    });
+  });
+
+  it("ui.resize sizes a card", async () => {
+    const resize = vi.fn();
+    await expect(callBridge(host({ resize }), "ui.resize", { height: 240.5 })).resolves.toBeNull();
+    expect(resize).toHaveBeenCalledWith(240.5);
+  });
+
+  it.each([
+    { name: "a panel", params: { height: 100 }, resize: undefined, code: -32000, msg: "only a card sizes itself; a panel fills its pane" },
+    { name: "no height", params: {}, resize: vi.fn(), code: -32602, msg: "height must be a positive number" },
+    { name: "zero", params: { height: 0 }, resize: vi.fn(), code: -32602, msg: "height must be a positive number" },
+    { name: "a string", params: { height: "9" }, resize: vi.fn(), code: -32602, msg: "height must be a positive number" },
+    { name: "infinite", params: { height: Number.POSITIVE_INFINITY }, resize: vi.fn(), code: -32602, msg: "height must be a positive number" },
+  ])("ui.resize refuses $name", async ({ params, resize, code, msg }) => {
+    const err = await callBridge(host({ resize }), "ui.resize", params).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code, message: msg });
+    if (resize) expect(resize).not.toHaveBeenCalled();
+  });
+
   it.each([
     { name: "nothing saved", saved: undefined, want: null },
     { name: "saved", saved: { a: 1 }, want: { a: 1 } },

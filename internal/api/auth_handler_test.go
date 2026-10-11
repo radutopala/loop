@@ -210,7 +210,20 @@ func (s *AuthHandlerSuite) TestServePluginUI() {
 	s.Run("not approved", func() {
 		other := s.mint(`{"kind":"plugin","name":"other"}`)
 		pm.On("Allows", mock.Anything, "other", plugin.CapUIPanel).Return(install.ErrNotApproved).Once()
+		pm.On("Allows", mock.Anything, "other", plugin.CapUICard).Return(install.ErrNotApproved).Once()
 		require.Equal(s.T(), http.StatusForbidden, s.do("", "GET", other+"ui/main/index.html", "").Code)
+	})
+	s.Run("cards only", func() {
+		cards := s.mint(`{"kind":"plugin","name":"cards"}`)
+		pm.On("Allows", mock.Anything, "cards", plugin.CapUIPanel).Return(install.ErrNotApproved).Once()
+		pm.On("Allows", mock.Anything, "cards", plugin.CapUICard).Return(nil).Once()
+		pm.On("UI", mock.Anything, "cards").Return(dir, &plugin.Manifest{ID: "cards"}, nil).Once()
+		require.Equal(s.T(), http.StatusOK, s.do("", "GET", cards+"ui/main/index.html", "").Code)
+	})
+	s.Run("not installed", func() {
+		gone := s.mint(`{"kind":"plugin","name":"none"}`)
+		pm.On("Allows", mock.Anything, "none", plugin.CapUIPanel).Return(install.ErrNotInstalled).Once()
+		require.Equal(s.T(), http.StatusForbidden, s.do("", "GET", gone+"ui/main/index.html", "").Code)
 	})
 	s.Run("removed meanwhile", func() {
 		gone := s.mint(`{"kind":"plugin","name":"gone"}`)

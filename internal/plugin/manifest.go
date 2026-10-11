@@ -54,6 +54,7 @@ const (
 	CapEventsSub     Capability = "events.subscribe"
 	CapUIRun         Capability = "ui.run"
 	CapUIBadge       Capability = "ui.badge"
+	CapUICard        Capability = "ui.card"
 )
 
 // Capabilities lists every capability a manifest may ask for.
@@ -61,7 +62,7 @@ var Capabilities = []Capability{
 	CapFilesRead, CapGitRead, CapQualityRead,
 	CapAgentReadOnly, CapAgentWrite, CapSchedule,
 	CapUIPanel, CapUINotify, CapUIOpenFile, CapMemoryWrite, CapEventsSub,
-	CapUIRun, CapUIBadge,
+	CapUIRun, CapUIBadge, CapUICard,
 }
 
 // Events lists the Loop events a manifest may subscribe to, each one in a
@@ -154,6 +155,7 @@ type Schedule struct {
 // UI is what the plugin draws in Loop.
 type UI struct {
 	Panels []Panel `json:"panels,omitempty"`
+	Cards  []Card  `json:"cards,omitempty"`
 }
 
 // Panel is a workspace pane the plugin draws, from a static bundle in its
@@ -164,6 +166,14 @@ type Panel struct {
 	// Entry is the panel's HTML page, relative to /loop-plugin, under ui/.
 	Entry     string `json:"entry"`
 	Singleton bool   `json:"singleton,omitempty"`
+}
+
+// Card is what the plugin posts in a channel's chat: a page from its bundle,
+// drawn in the message with the data the plugin posted it with.
+type Card struct {
+	ID string `json:"id"`
+	// Entry is the card's HTML page, relative to /loop-plugin, under ui/.
+	Entry string `json:"entry"`
 }
 
 // Resources caps the plugin's container. Loop caps them again.
@@ -409,6 +419,34 @@ func (m *Manifest) validateUI(add func(string, ...any)) {
 			add("ui.panels[%d]: entry %q must be an .html file under ui/", i, p.Entry)
 		}
 	}
+	if len(m.UI.Cards) > 0 && !m.Has(CapUICard) {
+		add("ui.cards needs capability %q", CapUICard)
+	}
+	seen = map[string]bool{}
+	for i, c := range m.UI.Cards {
+		if !idRe.MatchString(c.ID) {
+			add("ui.cards[%d]: id %q must match %s", i, c.ID, idRe)
+		}
+		if seen[c.ID] {
+			add("ui.cards[%d]: card %q is declared twice", i, c.ID)
+		}
+		seen[c.ID] = true
+		if !validEntry(c.Entry) {
+			add("ui.cards[%d]: entry %q must be an .html file under ui/", i, c.Entry)
+		}
+	}
+}
+
+// Card returns the card id the manifest declares, if it does.
+func (m *Manifest) Card(id string) (Card, bool) {
+	if m.UI != nil {
+		for _, c := range m.UI.Cards {
+			if c.ID == id {
+				return c, true
+			}
+		}
+	}
+	return Card{}, false
 }
 
 // validEntry reports whether entry is a clean relative path to an HTML file

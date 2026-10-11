@@ -70,3 +70,29 @@ export function componentOpenURL(data: unknown): string | null {
     return null;
   }
 }
+
+// pluginCardTag is the info-string tag of a plugin's chat card, posted with
+// the Plugin API's POST /cards: ```loop-plugin-card <plugin> <card> <title>,
+// its body the card's data as one line of JSON.
+export const pluginCardTag = "loop-plugin-card";
+
+export interface PluginCardFence {
+  plugin: string;
+  card: string;
+  title: string;
+  data: unknown;
+}
+
+// parsePluginCard reads a plugin card's fence, or returns null when the
+// fence isn't one. Data that isn't JSON reads as null.
+export function parsePluginCard(info: string, body: string): PluginCardFence | null {
+  const m = new RegExp(`^${pluginCardTag}\\s+([a-z][a-z0-9-]*)\\s+([a-z][a-z0-9-]*)(?:\\s+(.*))?$`).exec(info);
+  if (!m) return null;
+  let data: unknown = null;
+  try {
+    data = JSON.parse(body);
+  } catch {
+    // A hand-edited or cut message; the card gets no data.
+  }
+  return { plugin: m[1] ?? "", card: m[2] ?? "", title: (m[3] ?? "").trim(), data };
+}

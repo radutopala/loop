@@ -26,6 +26,7 @@ const (
 	CapEventsSub     = "events.subscribe"
 	CapUIRun         = "ui.run"
 	CapUIBadge       = "ui.badge"
+	CapUICard        = "ui.card"
 )
 
 // Loop events a manifest may subscribe to.
@@ -129,6 +130,7 @@ type Schedule struct {
 // UI is what the plugin draws in Loop.
 type UI struct {
 	Panels []Panel `json:"panels,omitempty"`
+	Cards  []Card  `json:"cards,omitempty"`
 }
 
 // Panel is a pane the plugin draws from a static bundle in its image.
@@ -138,6 +140,14 @@ type Panel struct {
 	// Entry is the panel's HTML page, relative to /loop-plugin.
 	Entry     string `json:"entry"`
 	Singleton bool   `json:"singleton,omitempty"`
+}
+
+// Card is what the plugin posts in a channel's chat with PostCard: a page
+// from its bundle, drawn in the message with the data it was posted with.
+type Card struct {
+	ID string `json:"id"`
+	// Entry is the card's HTML page, relative to /loop-plugin.
+	Entry string `json:"entry"`
 }
 
 // Resources caps the plugin's container.

@@ -55,10 +55,12 @@ type pluginInfo struct {
 	Status       string    `json:"status"`
 	InstalledAt  time.Time `json:"installed_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
-	// Name, Panels and Actions come from the manifest of a plugin that may
-	// run; Panels only when the owner approved ui.panel.
+	// Name, Panels, Cards and Actions come from the manifest of a plugin
+	// that may run; Panels only when the owner approved ui.panel, Cards
+	// ui.card.
 	Name    string         `json:"name,omitempty"`
 	Panels  []plugin.Panel `json:"panels,omitempty"`
+	Cards   []plugin.Card  `json:"cards,omitempty"`
 	Actions []string       `json:"actions,omitempty"`
 	// EnabledByDefault is the global plugins.<id>.enabled, which every
 	// project without its own setting follows.
@@ -173,6 +175,9 @@ func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request) {
 			info.SettingsSchema = m.Settings
 			if m.UI != nil && slices.Contains(st.ApprovedCaps, string(plugin.CapUIPanel)) {
 				info.Panels = m.UI.Panels
+			}
+			if m.UI != nil && slices.Contains(st.ApprovedCaps, string(plugin.CapUICard)) {
+				info.Cards = m.UI.Cards
 			}
 			for _, a := range m.Actions {
 				info.Actions = append(info.Actions, a.ID)
@@ -401,12 +406,17 @@ func pluginPanelCSP(prefix string) string {
 }
 
 // servePluginUI serves a file of the UI bundle of plugin pluginID, rel
-// under its /loop-plugin dir, while the plugin may run and draw panels.
+// under its /loop-plugin dir, while the plugin may run and draw panels or
+// cards.
 func (s *Server) servePluginUI(w http.ResponseWriter, r *http.Request, tok, pluginID, rel string) {
 	if !requireConfigured(w, s.plugins, pluginsDisabled) {
 		return
 	}
-	if err := s.plugins.Allows(r.Context(), pluginID, plugin.CapUIPanel); err != nil {
+	err := s.plugins.Allows(r.Context(), pluginID, plugin.CapUIPanel)
+	if errors.Is(err, install.ErrNotApproved) {
+		err = s.plugins.Allows(r.Context(), pluginID, plugin.CapUICard)
+	}
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}

@@ -3006,18 +3006,19 @@ List the installed plugins.
       "digest": "sha256:…",
       "version": "1.0.0",
       "api": "1",
-      "capabilities": ["ui.panel"],
+      "capabilities": ["ui.panel", "ui.card"],
       "dev": false,
       "status": "installed",
       "installed_at": "2026-10-10T09:00:00Z",
       "updated_at": "2026-10-10T09:00:00Z",
-      "panels": [{"id": "main", "label": "Echo", "entry": "ui/main/index.html", "singleton": true}]
+      "panels": [{"id": "main", "label": "Echo", "entry": "ui/main/index.html", "singleton": true}],
+      "cards": [{"id": "score", "entry": "ui/score.html"}]
     }
   ]
 }
 ```
 
-`capabilities` are the ones the owner approved. `digest` is empty for a dev install. `name` and `panels` come from the manifest of a plugin that may run; `panels` only when the owner approved `ui.panel`. `settings_schema` is the manifest's settings, and `global_settings` the global config's `plugins.<id>.settings`. With `channel_id`, `project_settings` are that channel's project config's own values, `settings` what the plugin runs with there (each default, then the global, then the project values) and `settings_problems` the values left out for no such setting or a value the schema refuses.
+`capabilities` are the ones the owner approved. `digest` is empty for a dev install. `name`, `panels` and `cards` come from the manifest of a plugin that may run; `panels` only when the owner approved `ui.panel`, `cards` only for `ui.card`. `settings_schema` is the manifest's settings, and `global_settings` the global config's `plugins.<id>.settings`. With `channel_id`, `project_settings` are that channel's project config's own values, `settings` what the plugin runs with there (each default, then the global, then the project values) and `settings_problems` the values left out for no such setting or a value the schema refuses.
 
 ### `POST /api/plugins/inspect`
 
@@ -3169,6 +3170,7 @@ Called by a plugin's container with the token in its `LOOP_PLUGIN_TOKEN_FILE`; t
 | `DELETE /api/plugin/v1/memory/{name}` | `memory.write` | removes that file → `204`, also when it's already gone |
 | `PUT /api/plugin/v1/badge` | `ui.badge` | body `{"text", "title"?}` → `204`; keeps the plugin's badge on the channel's sidebar row (see `plugin_badges` in [`GET /api/channels`](#get-apichannels)) and broadcasts a `plugin.badge` event with `{"plugin_id", "text", "title"?}` to every window. `text` is trimmed and must be 1 to 16 characters on one line, `title` at most 200 (`400` otherwise) |
 | `DELETE /api/plugin/v1/badge` | `ui.badge` | removes the plugin's badge → `204`, also when there was none; broadcasts `plugin.badge` with an empty `text` |
+| `POST /api/plugin/v1/cards` | `ui.card` | body `{"card", "title"?, "data"?}` (up to 64 KB) → `201 {"msg_id"}`; inserts a bot message from the plugin whose content is a `loop-plugin-card <plugin> <card> <title>` fence holding `data` as one line of JSON, and broadcasts `message.created`. `400` for a card the manifest doesn't declare (`ui.cards`) and on Slack or Discord |
 | `POST /api/plugin/v1/ui/commands` | `ui.run` | as [`POST /api/ui/commands`](#post-apiuicommands), held to the channel: the first step is `select_channel`, and each `select_channel` names the channel or one of its threads that isn't hidden (`403` otherwise) |
 
 ---

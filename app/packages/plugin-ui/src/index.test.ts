@@ -137,6 +137,25 @@ describe("calls", () => {
     expect(host.openFile).toHaveBeenCalledWith(...want);
   });
 
+  it("context.get in a card", async () => {
+    const { bridge } = pair({ panel: "", card: { id: "score", data: { score: 3 } } });
+    await expect(bridge.context.get<{ score: number }>()).resolves.toMatchObject({ panel: "", card: "score", data: { score: 3 } });
+  });
+
+  it("ui.resize sizes a card", async () => {
+    const resize = vi.fn();
+    const { bridge } = pair({ card: { id: "score", data: null }, resize });
+    await expect(bridge.ui.resize(240)).resolves.toBeUndefined();
+    expect(resize).toHaveBeenCalledWith(240);
+  });
+
+  it.each([
+    { name: "a panel", over: {}, height: 240, code: ErrorCode.CALL_FAILED },
+    { name: "no height", over: { resize: vi.fn() }, height: 0, code: ErrorCode.INVALID_PARAMS },
+  ])("ui.resize refused: $name", async ({ over, height, code }) => {
+    await expect(pair(over).bridge.ui.resize(height)).rejects.toMatchObject({ code });
+  });
+
   it("call reaches any method by name", async () => {
     await expect(pair().bridge.call("context.get")).resolves.toMatchObject({ pluginId: "echo" });
   });
