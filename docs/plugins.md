@@ -220,6 +220,51 @@ thread, with a fresh session. The agent gets the tools the manifest gives it as 
 `plugin_<tool>`; a read-only agent runs read-only. The plugin sends the whole prompt. When the run
 ends Loop calls `POST /runs/{run_id}/done` on the plugin.
 
+## Go SDK
+
+`github.com/radutopala/loop/pluginsdk` implements both halves of the contract for a plugin
+written in Go:
+
+- `LoadEnv` reads the container environment; `Env.Secret`, `Env.Client` and `Env.Listen` give the
+  secret, a Plugin API client and the listener.
+- `Server` serves `/healthz`, `/actions`, `/tools`, `/runs/{run_id}/done` and your own `X` handler
+  under `/x`, behind the secret. An action answers `202` and runs its `ActionFunc` in the
+  background; a tool's error becomes a result with `is_error` set. `Server.Go` runs other
+  background work, which `Close` cancels.
+- `Client` (the `API` interface) calls the Plugin API; a non-2xx answer is a `StatusError`, which
+  `HasStatus` checks.
+- `ReadManifest` parses `plugin.json`, so `/healthz` can report its version.
+- `Serve` serves until the context ends, then waits for requests in flight.
+
+```go
+env := pluginsdk.LoadEnv(os.Getenv)
+secret, err := env.Secret()
+m, err := pluginsdk.ReadManifest(pluginsdk.ManifestPath)
+srv := &pluginsdk.Server{
+	Secret:  secret,
+	Version: m.Version,
+	Actions: map[string]pluginsdk.ActionFunc{"daily": daily(env.Client())},
+	X:       uiAPI,
+}
+defer srv.Close()
+ln, err := env.Listen()
+return pluginsdk.Serve(ctx, ln, srv.Handler())
+```
+
+Package `pluginsdktest` is for the plugin's tests. `NewFakeLoop` serves the Plugin API from
+memory, holding the plugin to its manifest's capabilities and agents, and records the events,
+notifications and runs it gets. `Check` drives a plugin through the Loop → plugin contract: its
+health and version, the secret, every action with both triggers, every tool, and the end of each
+run it started.
+
+```go
+loop := pluginsdktest.NewFakeLoop(t, pluginsdktest.Config{Manifest: m, Files: files})
+srv := newServer(loop.Client())
+ts := httptest.NewServer(srv.Handler())
+pluginsdktest.Check(t, &pluginsdktest.Plugin{URL: ts.URL, Secret: secret}, m,
+	pluginsdktest.CheckOptions{Loop: loop, Settle: srv.Wait})
+```
+
 ## Panels
 
 A panel is a static bundle under `/loop-plugin/ui/`, shown in a sandboxed iframe. Its files are
