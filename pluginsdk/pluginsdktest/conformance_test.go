@@ -70,8 +70,8 @@ func (s *ConformanceSuite) TestCheck() {
 	p := s.serve(srv.Handler())
 
 	Check(s.T(), p, m, CheckOptions{Loop: loop, Settle: srv.Wait})
-	require.Len(s.T(), loop.Runs(), 2, "the action ran for the manual and the scheduled trigger")
-	require.Equal(s.T(), map[string]string{"run-1": pluginsdk.RunStatusDone, "run-2": pluginsdk.RunStatusFailed}, ended)
+	require.Len(s.T(), loop.Runs(), 3, "the action ran for each trigger")
+	require.Equal(s.T(), map[string]string{"run-1": pluginsdk.RunStatusDone, "run-2": pluginsdk.RunStatusFailed, "run-3": pluginsdk.RunStatusDone}, ended)
 
 	// Without a FakeLoop or Settle the runs check is skipped.
 	Check(s.T(), p, m, CheckOptions{})

@@ -683,7 +683,7 @@ func (s *EngineSuite) TestApprovalNodeResumeStatusWriteError() {
 // an "unsupported body child" error after already running siblings.
 func (s *EngineSuite) TestRecoverPausedRunFailsOnInvalidPinnedDef() {
 	// Pinned def has a body child of type "loop" — disallowed by
-	// validateWorkflowDef (nested loops in body unsupported in v1).
+	// ValidateWorkflowDef (nested loops in body unsupported in v1).
 	pinnedDef := `{"name":"bad-pinned","nodes":[{"id":"outer","type":"loop","body":[{"id":"inner","type":"loop"}]}]}`
 
 	pausedRun := &db.WorkflowRun{

@@ -4143,7 +4143,7 @@ Add, update, or delete a workflow definition in the global or project config fil
 
 **Response:** `204 No Content`
 
-**Errors:** `400` invalid request, `404` workflow not found (update/delete), `409` duplicate name (add).
+**Errors:** `400` invalid request or workflow definition (for example a `plugin` node without exactly one of `action` and `tool`), `404` workflow not found (update/delete), `409` duplicate name (add).
 
 ### `POST /api/workflows/runs`
 

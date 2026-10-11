@@ -814,7 +814,11 @@ func (a *app) serve() error {
 		bashRunner = &workflow.LocalBashRunner{SafeDir: cfg.LoopDir, APIURL: localAPIURL(cfg.APIAddr)}
 		logger.Info("workflow bash nodes will execute locally (workflow_bash_local=true)")
 	}
-	wfEngine := workflow.NewEngine(store, runner, bashRunner, eventsHub, workflowsFromConfig(cfg, reloadConfig), cfg.LoopDir, cfg.WorkflowConcurrency, logger)
+	var wfOpts []workflow.Option
+	if plug != nil {
+		wfOpts = append(wfOpts, workflow.WithPlugins(workflowPlugins{svc: plug.service}))
+	}
+	wfEngine := workflow.NewEngine(store, runner, bashRunner, eventsHub, workflowsFromConfig(cfg, reloadConfig), cfg.LoopDir, cfg.WorkflowConcurrency, logger, wfOpts...)
 	if err := wfEngine.RecoverRuns(ctx); err != nil {
 		logger.Error("failed to recover workflow runs", "error", err)
 	}

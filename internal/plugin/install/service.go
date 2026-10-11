@@ -35,8 +35,9 @@ var (
 	// ErrUnknownAgent is returned for an agent the plugin's manifest
 	// doesn't declare.
 	ErrUnknownAgent = errors.New("the plugin has no such agent")
-	// ErrUnknownTool is returned for a tool the calling agent wasn't given.
-	ErrUnknownTool = errors.New("the agent has no such tool")
+	// ErrUnknownTool is returned for a tool the plugin's manifest doesn't
+	// declare, or the calling agent wasn't given.
+	ErrUnknownTool = errors.New("no such tool")
 	// ErrInvalidInput is returned for a tool call whose input doesn't match
 	// the tool's input schema.
 	ErrInvalidInput = errors.New("invalid tool input")
@@ -389,8 +390,28 @@ func (s *Service) CallTool(ctx context.Context, pluginID, tool string, ch runtim
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrUnknownAgent, req.Agent)
 	}
+	if !slices.Contains(a.Tools, tool) {
+		return nil, fmt.Errorf("%w: %s", ErrUnknownTool, tool)
+	}
+	return s.callTool(ctx, st, m, tool, ch, req)
+}
+
+// WorkflowTool forwards a workflow's call of tool, any tool the plugin's
+// manifest declares, to the plugin's container in ch, starting it if it
+// isn't running. The input must match the tool's schema.
+func (s *Service) WorkflowTool(ctx context.Context, pluginID, tool string, ch runtime.Channel, req proxy.ToolRequest) (*proxy.ToolResult, error) {
+	st, m, err := s.runnable(ctx, pluginID)
+	if err != nil {
+		return nil, err
+	}
+	return s.callTool(ctx, st, m, tool, ch, req)
+}
+
+// callTool checks the input of a call of tool against its schema, then
+// forwards the call to the plugin's container in ch.
+func (s *Service) callTool(ctx context.Context, st *db.PluginState, m *plugin.Manifest, tool string, ch runtime.Channel, req proxy.ToolRequest) (*proxy.ToolResult, error) {
 	i := slices.IndexFunc(m.Tools, func(t plugin.Tool) bool { return t.Name == tool })
-	if i < 0 || !slices.Contains(a.Tools, tool) {
+	if i < 0 {
 		return nil, fmt.Errorf("%w: %s", ErrUnknownTool, tool)
 	}
 	if err := m.Tools[i].ValidateInput(req.Input); err != nil {

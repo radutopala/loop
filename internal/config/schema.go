@@ -750,7 +750,7 @@ func buildSchema() *ConfigSchema {
 								Type: "object",
 								Properties: map[string]*SchemaProperty{
 									"id":             {Type: "string", Title: "ID"},
-									"type":           {Type: "string", Title: "Type", Enum: []any{"prompt", "bash", "loop", "approval"}},
+									"type":           {Type: "string", Title: "Type", Enum: []any{"prompt", "bash", "loop", "approval", "plugin"}},
 									"depends_on":     {Type: "array", Title: "Depends On", Items: &SchemaProperty{Type: "string"}},
 									"when":           {Type: "string", Title: "When Condition"},
 									"trigger_rule":   {Type: "string", Title: "Trigger Rule", Enum: []any{"all_success", "all_done", "one_success"}},
@@ -763,6 +763,9 @@ func buildSchema() *ConfigSchema {
 									"condition":      {Type: "string", Title: "Loop Condition"},
 									"message":        {Type: "string", Title: "Approval Message"},
 									"timeout":        {Type: "string", Title: "Timeout"},
+									"plugin":         {Type: "string", Title: "Plugin", Description: "Plugin id, for plugin nodes"},
+									"action":         {Type: "string", Title: "Plugin Action", Description: "Set this or Plugin Tool"},
+									"tool":           {Type: "string", Title: "Plugin Tool", Description: "Set this or Plugin Action; edit its input in the config file"},
 									"retry": {
 										Type:  "object",
 										Title: "Retry",

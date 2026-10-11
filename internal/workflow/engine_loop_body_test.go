@@ -247,7 +247,7 @@ func (s *EngineSuite) TestExecuteLoopBodyUnknownChildTypeFailsAtStartRun() {
 // TestExecuteLoopBodyUnknownChildTypeExecutorDefault drives the executor's
 // defensive `default` branch directly. The resume path
 // (executeDAGFromCheckpoint) replays a pinned workflow_def without re-running
-// validateWorkflowDef, so a stored definition with an unsupported body-child
+// ValidateWorkflowDef, so a stored definition with an unsupported body-child
 // type (manual DB edit, pre-validator install) can reach the executor — the
 // default branch must surface a real error rather than silently persisting
 // the child as Success with empty output.

@@ -50,6 +50,7 @@ const (
 	NodeTypeBash     NodeType = "bash"
 	NodeTypeLoop     NodeType = "loop"
 	NodeTypeApproval NodeType = "approval"
+	NodeTypePlugin   NodeType = "plugin"
 )
 
 // WorkflowInput defines a workflow input parameter.
@@ -68,22 +69,26 @@ type RetryConfig struct {
 
 // NodeDef defines a single node in a workflow DAG.
 type NodeDef struct {
-	ID            string       `json:"id" jsonschema:"required,Unique node identifier within the workflow"`
-	Type          NodeType     `json:"type" jsonschema:"required,Node type: 'prompt' (AI agent), 'bash' (shell script), 'loop' (prompt repeated until condition), or 'approval' (human decision)"`
-	DependsOn     []string     `json:"depends_on,omitempty" jsonschema:"IDs of nodes that must complete before this one starts"`
-	When          string       `json:"when,omitempty" jsonschema:"Go template expression; node is skipped when it renders 'false'"`
-	TriggerRule   string       `json:"trigger_rule,omitempty" jsonschema:"How dependencies gate this node: 'all_success' (default), 'all_done', or 'one_success'"`
-	Prompt        string       `json:"prompt,omitempty" jsonschema:"Inline prompt text for 'prompt'/'loop' nodes. Supports Go text/template. Mutually exclusive with prompt_path."`
-	PromptPath    string       `json:"prompt_path,omitempty" jsonschema:"Path to a prompt file, resolved as {loopDir}/workflows/{prompt_path}. Mutually exclusive with prompt."`
-	SystemPrompt  string       `json:"system_prompt,omitempty" jsonschema:"Optional system prompt for 'prompt' nodes; supports templates"`
-	Model         string       `json:"model,omitempty" jsonschema:"Optional Claude model override (e.g. 'claude-sonnet-4-6')"`
-	Script        string       `json:"script,omitempty" jsonschema:"Shell command(s) for 'bash' nodes, passed to /bin/sh -c. Any sh-compatible content works: a one-liner, a multi-line script, pipelines, heredocs. To execute a script file on disk, just invoke it (e.g. 'bash workflows/build.sh') — the bash container shares the same mounts as agent containers. Supports Go text/template rendering against workflow inputs and upstream node outputs."`
-	MaxIterations int          `json:"max_iterations,omitempty" jsonschema:"Maximum iterations for 'loop' nodes (default 10)"`
-	Condition     string       `json:"condition,omitempty" jsonschema:"Go template evaluated after each 'loop' iteration; stops when it renders 'true'"`
-	Body          []*NodeDef   `json:"body,omitempty" jsonschema:"Child nodes executed in order per iteration. For 'loop' nodes only. Empty body keeps the legacy self-prompt behavior."`
-	Message       string       `json:"message,omitempty" jsonschema:"Approval message shown to the human for 'approval' nodes; supports templates"`
-	Timeout       string       `json:"timeout,omitempty" jsonschema:"Per-node timeout as a Go time.Duration (e.g. '5m'). For 'approval' nodes: deadline for human response."`
-	Retry         *RetryConfig `json:"retry,omitempty" jsonschema:"Optional retry policy for transient failures"`
+	ID            string          `json:"id" jsonschema:"required,Unique node identifier within the workflow"`
+	Type          NodeType        `json:"type" jsonschema:"required,Node type: 'prompt' (AI agent), 'bash' (shell script), 'loop' (prompt repeated until condition), 'approval' (human decision), or 'plugin' (a plugin's action or tool)"`
+	DependsOn     []string        `json:"depends_on,omitempty" jsonschema:"IDs of nodes that must complete before this one starts"`
+	When          string          `json:"when,omitempty" jsonschema:"Go template expression; node is skipped when it renders 'false'"`
+	TriggerRule   string          `json:"trigger_rule,omitempty" jsonschema:"How dependencies gate this node: 'all_success' (default), 'all_done', or 'one_success'"`
+	Prompt        string          `json:"prompt,omitempty" jsonschema:"Inline prompt text for 'prompt'/'loop' nodes. Supports Go text/template. Mutually exclusive with prompt_path."`
+	PromptPath    string          `json:"prompt_path,omitempty" jsonschema:"Path to a prompt file, resolved as {loopDir}/workflows/{prompt_path}. Mutually exclusive with prompt."`
+	SystemPrompt  string          `json:"system_prompt,omitempty" jsonschema:"Optional system prompt for 'prompt' nodes; supports templates"`
+	Model         string          `json:"model,omitempty" jsonschema:"Optional Claude model override (e.g. 'claude-sonnet-4-6')"`
+	Script        string          `json:"script,omitempty" jsonschema:"Shell command(s) for 'bash' nodes, passed to /bin/sh -c. Any sh-compatible content works: a one-liner, a multi-line script, pipelines, heredocs. To execute a script file on disk, just invoke it (e.g. 'bash workflows/build.sh') — the bash container shares the same mounts as agent containers. Supports Go text/template rendering against workflow inputs and upstream node outputs."`
+	MaxIterations int             `json:"max_iterations,omitempty" jsonschema:"Maximum iterations for 'loop' nodes (default 10)"`
+	Condition     string          `json:"condition,omitempty" jsonschema:"Go template evaluated after each 'loop' iteration; stops when it renders 'true'"`
+	Body          []*NodeDef      `json:"body,omitempty" jsonschema:"Child nodes executed in order per iteration. For 'loop' nodes only. Empty body keeps the legacy self-prompt behavior."`
+	Message       string          `json:"message,omitempty" jsonschema:"Approval message shown to the human for 'approval' nodes; supports templates"`
+	Plugin        string          `json:"plugin,omitempty" jsonschema:"Installed plugin id for 'plugin' nodes"`
+	Action        string          `json:"action,omitempty" jsonschema:"Action id from the plugin's manifest for 'plugin' nodes. Mutually exclusive with tool."`
+	Tool          string          `json:"tool,omitempty" jsonschema:"Tool name from the plugin's manifest for 'plugin' nodes. Mutually exclusive with action."`
+	Input         json.RawMessage `json:"input,omitempty" jsonschema:"JSON object passed as a 'plugin' node's tool input; every string in it supports templates"`
+	Timeout       string          `json:"timeout,omitempty" jsonschema:"Per-node timeout as a Go time.Duration (e.g. '5m'). For 'approval' nodes: deadline for human response."`
+	Retry         *RetryConfig    `json:"retry,omitempty" jsonschema:"Optional retry policy for transient failures"`
 }
 
 // ResolvePrompt returns the prompt text for the node.

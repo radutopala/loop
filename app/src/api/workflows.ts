@@ -13,7 +13,7 @@ export interface WorkflowDef {
 
 export interface WorkflowNodeDef {
   id: string;
-  type: "prompt" | "bash" | "loop" | "approval";
+  type: "prompt" | "bash" | "loop" | "approval" | "plugin";
   depends_on?: string[];
   when?: string;
   trigger_rule?: "all_success" | "all_done" | "one_success";
@@ -27,6 +27,12 @@ export interface WorkflowNodeDef {
   max_iterations?: number;
   condition?: string;
   retry?: { max_retries: number; backoff_base?: string; backoff_max?: string };
+  /** Plugin nodes only: the plugin, and exactly one of its action or tool. */
+  plugin?: string;
+  action?: string;
+  tool?: string;
+  /** Plugin tool nodes only: the tool's input; every string in it is a template. */
+  input?: Record<string, unknown>;
   /** Loop nodes only: children executed sequentially per iteration. Empty
    *  preserves the legacy "self-prompt" behavior used by older workflows. */
   body?: WorkflowNodeDef[];

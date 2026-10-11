@@ -46,6 +46,7 @@ type Trigger string
 const (
 	TriggerManual   Trigger = "manual"
 	TriggerSchedule Trigger = "schedule"
+	TriggerWorkflow Trigger = "workflow"
 )
 
 // ActionRequest is the body of POST /actions/{action}.
@@ -55,7 +56,8 @@ type ActionRequest struct {
 }
 
 // ToolRequest is the body of POST /tools/{tool}: a call from agent, in the
-// run runID in the hidden thread threadID.
+// run runID in the hidden thread threadID. A workflow's call has no agent
+// or thread, and a run id of the form workflow:<run id>:<node id>.
 type ToolRequest struct {
 	RunID    string          `json:"run_id"`
 	Agent    string          `json:"agent"`

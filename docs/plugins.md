@@ -212,13 +212,19 @@ any other.
 | Method and path | Body | Answer |
 |---|---|---|
 | `GET /healthz` | | `200 {"api": "1", "version": "…"}` |
-| `POST /actions/{action}` | `{"trigger": "manual"\|"schedule", "task_id": 0}` | `202` quickly; do the work afterwards |
-| `POST /tools/{tool}` | `{"run_id", "agent", "thread_id", "input": {…}}` | `200 {"content": "…", "is_error": false}`; the agent sees `content`, and `is_error` lets it retry |
+| `POST /actions/{action}` | `{"trigger": "manual"\|"schedule"\|"workflow", "task_id": 0}` | `202` quickly; do the work afterwards |
+| `POST /tools/{tool}` | `{"run_id", "agent", "thread_id", "input": {…}}` | `200 {"content": "…", "is_error": false}`; the agent sees `content`, and `is_error` lets it retry; a workflow takes `content` as the node's output, and `is_error` fails the node |
 | `POST /runs/{run_id}/done` | `{"status": "done"\|"failed", "error": "…"}` | `204`; sent when an agent run the plugin started ends |
 | `POST /events` | `{"type", "channel_id", "thread_id", "data": {…}, "timestamp"}` | `204`; a Loop event the manifest subscribes to, with `data` as the app's events WebSocket carries it |
 | `ANY /x/{path}` | whatever the plugin's UI sends | the plugin's own API for its UI, proxied by Loop with method, query, body and `Content-Type` |
 
 Tool input is validated against the tool's `input_schema` before it reaches the plugin.
+
+A workflow's `plugin` node runs an action or calls a tool on the container of the run's channel,
+starting it if it isn't running, when the channel's project enables the plugin (see
+[Workflows: Plugin Node](workflows.md#plugin-node-type-plugin)). Its action gets `"trigger":
+"workflow"`. Its tool call may name any tool in the manifest, not only those given to an agent,
+and comes with `run_id` `workflow:<run id>:<node id>` and an empty `agent` and `thread_id`.
 
 ### When a plugin stops answering
 
@@ -303,7 +309,8 @@ Package `pluginsdktest` is for the plugin's tests. `NewFakeLoop` serves the Plug
 memory, holding the plugin to its manifest's capabilities and agents, and records the events,
 notifications, runs, memory and UI commands it gets; a UI command answers that every step ran.
 `Check` drives a plugin through the Loop → plugin contract: its health and version, the secret,
-every action with both triggers, every tool, and the end of each run it started.
+every action with each trigger, every tool as an agent's and as a workflow's call, and the end
+of each run it started.
 
 ```go
 loop := pluginsdktest.NewFakeLoop(t, pluginsdktest.Config{Manifest: m, Files: files})

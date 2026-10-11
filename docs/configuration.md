@@ -445,7 +445,7 @@ Layered global → project like `learn`, and resolved for a channel the same way
 | Field | Type | Description |
 |---|---|---|
 | `id` | `string` | Unique node identifier within the workflow. |
-| `type` | `string` | `"prompt"`, `"bash"`, `"loop"`, or `"approval"`. |
+| `type` | `string` | `"prompt"`, `"bash"`, `"loop"`, `"approval"`, or `"plugin"`. |
 | `depends_on` | `string[]` | IDs of nodes that must complete before this one starts. |
 | `prompt` | `string` | Prompt text for `prompt`/`loop` nodes. Supports Go `text/template`. Mutually exclusive with `prompt_path`. |
 | `prompt_path` | `string` | Path to a prompt file, resolved as `{loopDir}/workflows/{prompt_path}`. Mutually exclusive with `prompt`. |
@@ -453,9 +453,13 @@ Layered global → project like `learn`, and resolved for a channel the same way
 | `script` | `string` | Shell command(s) for `bash` nodes, passed to `/bin/sh -c`. Any sh-compatible content — one-liners, multi-line scripts, pipelines, heredocs. To run a script file on disk, just invoke it (e.g. `bash workflows/build.sh`); the bash container shares the same mounts as agent containers. Supports templates. |
 | `max_iterations` | `int` | Max iterations for `loop` nodes (default: 10). |
 | `condition` | `string` | Template for `loop` nodes; stops when it renders `"true"`. |
-| `body` | `NodeDef[]` | Optional child nodes for `loop` nodes. When set, each iteration runs the body sequentially instead of re-running the loop node's own prompt. Children may be `prompt` or `bash` only — nested `loop` and `approval` are rejected by the validator. Mutually exclusive with `prompt`/`prompt_path` on the loop node itself. |
+| `body` | `NodeDef[]` | Optional child nodes for `loop` nodes. When set, each iteration runs the body sequentially instead of re-running the loop node's own prompt. Children may be `prompt`, `bash` or `plugin` only — nested `loop` and `approval` are rejected by the validator. Mutually exclusive with `prompt`/`prompt_path` on the loop node itself. |
 | `message` | `string` | Approval message for `approval` nodes. Supports templates. |
-| `timeout` | `string` | Go duration (e.g. `"5m"`, `"1h"`). For `approval` nodes: deadline for human response. For `prompt`/`bash`/`loop` nodes: enforced execution deadline via context cancellation. |
+| `plugin` | `string` | Plugin id for `plugin` nodes. |
+| `action` | `string` | Action id from the plugin's manifest, for `plugin` nodes. Mutually exclusive with `tool`. |
+| `tool` | `string` | Tool name from the plugin's manifest, for `plugin` nodes. Mutually exclusive with `action`. |
+| `input` | `object` | The tool's input, for `plugin` nodes with a `tool`. Every string in it supports templates. |
+| `timeout` | `string` | Go duration (e.g. `"5m"`, `"1h"`). For `approval` nodes: deadline for human response. For `prompt`/`bash`/`loop`/`plugin` nodes: enforced execution deadline via context cancellation. |
 | `retry` | `RetryConfig` | Optional retry with `max_retries`, `backoff_base`, `backoff_max`. |
 | `when` | `string` | Template that must evaluate to `"true"` for the node to run. Skipped otherwise. |
 | `trigger_rule` | `string` | `"all_success"` (default), `"all_done"`, or `"one_success"`. Controls how dependency failures affect this node. |

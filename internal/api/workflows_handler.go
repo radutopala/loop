@@ -375,6 +375,15 @@ func (s *Server) handleModifyWorkflow(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "workflow.name is required", http.StatusBadRequest)
 			return
 		}
+		var def config.WorkflowDef
+		if err := json.Unmarshal(req.Workflow, &def); err != nil {
+			http.Error(w, "invalid workflow: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := workflow.ValidateWorkflowDef(&def); err != nil {
+			http.Error(w, "invalid workflow: "+err.Error(), http.StatusBadRequest)
+			return
+		}
 		wfName = name
 	} else {
 		// delete

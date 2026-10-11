@@ -124,8 +124,9 @@ type CheckOptions struct {
 }
 
 // Check drives the plugin p, described by m, through the Loop → plugin
-// contract: its health check and version, the secret, every action, every
-// tool, and the end of each agent run it started on opts.Loop. A plugin's
+// contract: its health check and version, the secret, every action with
+// each trigger, every tool as an agent and a workflow call it, and the end
+// of each agent run it started on opts.Loop. A plugin's
 // tests call it with the plugin serving against a FakeLoop.
 func Check(t *testing.T, p *Plugin, m *pluginsdk.Manifest, opts CheckOptions) {
 	t.Helper()
@@ -151,7 +152,7 @@ func Check(t *testing.T, p *Plugin, m *pluginsdk.Manifest, opts CheckOptions) {
 
 	t.Run("actions", func(t *testing.T) {
 		for _, a := range m.Actions {
-			for _, req := range []pluginsdk.ActionRequest{{Trigger: pluginsdk.TriggerManual}, {Trigger: pluginsdk.TriggerSchedule, TaskID: 1}} {
+			for _, req := range []pluginsdk.ActionRequest{{Trigger: pluginsdk.TriggerManual}, {Trigger: pluginsdk.TriggerSchedule, TaskID: 1}, {Trigger: pluginsdk.TriggerWorkflow}} {
 				resp, err := p.Action(ctx, a.ID, req)
 				require.NoError(t, err, "action %s answers within %s", a.ID, ActionTimeout)
 				require.Equal(t, http.StatusAccepted, resp.Status, "action %s answers 202: %s", a.ID, resp.Body)
@@ -160,12 +161,18 @@ func Check(t *testing.T, p *Plugin, m *pluginsdk.Manifest, opts CheckOptions) {
 	})
 
 	t.Run("tools", func(t *testing.T) {
+		calls := []pluginsdk.ToolRequest{
+			{RunID: "conformance", Agent: "conformance", ThreadID: "conformance", Input: json.RawMessage(`{}`)},
+			{RunID: "workflow:conformance:node", Input: json.RawMessage(`{}`)},
+		}
 		for _, tool := range m.Tools {
-			resp, err := p.Tool(ctx, tool.Name, pluginsdk.ToolRequest{RunID: "conformance", Agent: "conformance", ThreadID: "conformance", Input: json.RawMessage(`{}`)})
-			require.NoError(t, err, "tool %s answers within %s", tool.Name, ToolTimeout)
-			require.Equal(t, http.StatusOK, resp.Status, "tool %s answers 200, with is_error for a call it can't take: %s", tool.Name, resp.Body)
-			var res pluginsdk.ToolResult
-			require.NoError(t, json.Unmarshal(resp.Body, &res), "tool %s answers a tool result", tool.Name)
+			for _, req := range calls {
+				resp, err := p.Tool(ctx, tool.Name, req)
+				require.NoError(t, err, "tool %s answers within %s", tool.Name, ToolTimeout)
+				require.Equal(t, http.StatusOK, resp.Status, "tool %s answers 200, with is_error for a call it can't take: %s", tool.Name, resp.Body)
+				var res pluginsdk.ToolResult
+				require.NoError(t, json.Unmarshal(resp.Body, &res), "tool %s answers a tool result", tool.Name)
+			}
 		}
 	})
 

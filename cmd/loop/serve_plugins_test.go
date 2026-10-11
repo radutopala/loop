@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/plugin/install"
+	"github.com/radutopala/loop/internal/plugin/proxy"
 	"github.com/radutopala/loop/internal/plugin/runtime"
 	"github.com/radutopala/loop/internal/testutil"
 )
@@ -205,4 +207,59 @@ func (s *MainSuite) TestPluginActionRunner() {
 	run := pluginActionRunner(install.NewService(nil, nil, store, nil, nil))
 	err = run(context.Background(), "quiz", "daily", "ch1", "/src", 7)
 	require.ErrorIs(s.T(), err, install.ErrNotInstalled)
+}
+
+type mockWorkflowPluginService struct {
+	mock.Mock
+}
+
+func (m *mockWorkflowPluginService) RunAction(ctx context.Context, pluginID, action string, ch runtime.Channel, req proxy.ActionRequest) error {
+	return m.Called(ctx, pluginID, action, ch, req).Error(0)
+}
+
+func (m *mockWorkflowPluginService) WorkflowTool(ctx context.Context, pluginID, tool string, ch runtime.Channel, req proxy.ToolRequest) (*proxy.ToolResult, error) {
+	args := m.Called(ctx, pluginID, tool, ch, req)
+	res, _ := args.Get(0).(*proxy.ToolResult)
+	return res, args.Error(1)
+}
+
+func (s *MainSuite) TestWorkflowPlugins() {
+	ctx := context.Background()
+	ch := runtime.Channel{ID: "ch1", DirPath: "/src"}
+	req := proxy.ToolRequest{RunID: "workflow:r1:n1", Input: json.RawMessage(`{"a":1}`)}
+
+	s.Run("action", func() {
+		svc := new(mockWorkflowPluginService)
+		svc.On("RunAction", ctx, "quiz", "daily", ch, proxy.ActionRequest{Trigger: proxy.TriggerWorkflow}).Return(errors.New("boom")).Once()
+		err := workflowPlugins{svc: svc}.RunPluginAction(ctx, "quiz", "daily", "ch1", "/src")
+		require.EqualError(s.T(), err, "boom")
+		svc.AssertExpectations(s.T())
+	})
+
+	tests := []struct {
+		name    string
+		res     *proxy.ToolResult
+		err     error
+		content string
+		isError bool
+	}{
+		{name: "result", res: &proxy.ToolResult{Content: "hi"}, content: "hi"},
+		{name: "error result", res: &proxy.ToolResult{Content: "bad", IsError: true}, content: "bad", isError: true},
+		{name: "call fails", err: errors.New("down")},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			svc := new(mockWorkflowPluginService)
+			svc.On("WorkflowTool", ctx, "quiz", "ask", ch, req).Return(tt.res, tt.err).Once()
+			content, isError, err := workflowPlugins{svc: svc}.CallPluginTool(ctx, "quiz", "ask", "ch1", "/src", req.RunID, req.Input)
+			if tt.err != nil {
+				require.ErrorIs(s.T(), err, tt.err)
+			} else {
+				require.NoError(s.T(), err)
+			}
+			require.Equal(s.T(), tt.content, content)
+			require.Equal(s.T(), tt.isError, isError)
+			svc.AssertExpectations(s.T())
+		})
+	}
 }

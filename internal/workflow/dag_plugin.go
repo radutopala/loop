@@ -1,0 +1,86 @@
+package workflow
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"sync"
+
+	"github.com/radutopala/loop/internal/config"
+	"github.com/radutopala/loop/internal/db"
+)
+
+// errPluginsOff is the error of a plugin node while plugins are off.
+var errPluginsOff = errors.New("plugins are not enabled")
+
+// executePluginNode runs a plugin node on the plugin's container in the
+// run's channel. An action succeeds once the plugin accepts it; a tool's
+// content is the node's output, and a result the plugin marks as an error
+// fails the node.
+func (e *defaultEngine) executePluginNode(ctx context.Context, run *db.WorkflowRun, node *config.NodeDef, runCtx *RunContext, mu *sync.Mutex) (nodeExecResult, error) {
+	if e.plugins == nil {
+		return nodeExecResult{}, errPluginsOff
+	}
+	var res nodeExecResult
+	if node.Action != "" {
+		if err := e.plugins.RunPluginAction(ctx, node.Plugin, node.Action, run.ChannelID, run.DirPath); err != nil {
+			return res, fmt.Errorf("running %s's action %s: %w", node.Plugin, node.Action, err)
+		}
+		res.output = "accepted"
+	} else {
+		in, err := pluginInput(node.Input)
+		if err != nil {
+			return res, err
+		}
+		if in == nil {
+			in = map[string]any{}
+		}
+		mu.Lock()
+		rendered, err := renderInput(in, runCtx)
+		mu.Unlock()
+		if err != nil {
+			return res, fmt.Errorf("rendering input template: %w", err)
+		}
+		// The input is decoded JSON with rendered strings, which always
+		// encodes.
+		body, _ := json.Marshal(rendered)
+		res.input = string(body)
+		content, isError, err := e.plugins.CallPluginTool(ctx, node.Plugin, node.Tool, run.ChannelID, run.DirPath, "workflow:"+run.ID+":"+node.ID, body)
+		if err != nil {
+			return res, fmt.Errorf("calling %s's tool %s: %w", node.Plugin, node.Tool, err)
+		}
+		res.output = content
+		if isError {
+			return res, fmt.Errorf("%s's tool %s answered an error: %s", node.Plugin, node.Tool, content)
+		}
+	}
+
+	mu.Lock()
+	runCtx.NodeOutputs[node.ID] = res.output
+	mu.Unlock()
+	return res, nil
+}
+
+// renderInput renders every string in v, a decoded JSON value, as a
+// template, in place.
+func renderInput(v any, runCtx *RunContext) (any, error) {
+	var err error
+	switch v := v.(type) {
+	case string:
+		return renderTemplate(v, runCtx)
+	case map[string]any:
+		for k, x := range v {
+			if v[k], err = renderInput(x, runCtx); err != nil {
+				return nil, err
+			}
+		}
+	case []any:
+		for i, x := range v {
+			if v[i], err = renderInput(x, runCtx); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return v, nil
+}

@@ -329,6 +329,8 @@ func (e *defaultEngine) executeNode(ctx context.Context, s *dagScheduler, node *
 		case config.NodeTypeApproval:
 			out, err := e.executeApprovalNode(ctx, s.run, node, s.runCtx, &s.mu)
 			return nodeExecResult{output: out}, err
+		case config.NodeTypePlugin:
+			return e.executePluginNode(nodeCtx, s.run, node, s.runCtx, &s.mu)
 		default:
 			return nodeExecResult{}, fmt.Errorf("unsupported node type: %s", node.Type)
 		}

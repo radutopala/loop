@@ -27,6 +27,25 @@ type BashRunner interface {
 	RunBash(ctx context.Context, script, channelID, dirPath, parentDirPath string) (string, error)
 }
 
+// PluginCaller runs plugin nodes on the plugin's container in a channel,
+// starting it if the channel's project enables the plugin.
+type PluginCaller interface {
+	// RunPluginAction asks the plugin to run action; it returns once the
+	// plugin accepts it.
+	RunPluginAction(ctx context.Context, pluginID, action, channelID, dirPath string) error
+	// CallPluginTool calls tool with input, a JSON object, as the call
+	// callID, and returns the tool's content and whether it is an error.
+	CallPluginTool(ctx context.Context, pluginID, tool, channelID, dirPath, callID string, input json.RawMessage) (string, bool, error)
+}
+
+// Option configures an engine.
+type Option func(*defaultEngine)
+
+// WithPlugins lets plugin nodes run, through p.
+func WithPlugins(p PluginCaller) Option {
+	return func(e *defaultEngine) { e.plugins = p }
+}
+
 // EventBroadcaster sends workflow events to connected clients.
 type EventBroadcaster interface {
 	BroadcastWorkflowRunStarted(data events.WorkflowRunEventData)
@@ -62,6 +81,7 @@ type defaultEngine struct {
 	store       db.Store
 	runner      Runner
 	bashRunner  BashRunner
+	plugins     PluginCaller // nil while plugins are off
 	broadcaster EventBroadcaster
 	workflows   func(dirPath, parentDirPath string) []config.WorkflowDef // returns merged workflows from config
 	loopDir     string
@@ -81,7 +101,7 @@ type defaultEngine struct {
 
 // NewEngine creates a workflow engine. The concurrency config controls how many
 // workflow runs and node goroutines may execute in parallel (0 = unlimited).
-func NewEngine(store db.Store, runner Runner, bashRunner BashRunner, broadcaster EventBroadcaster, workflowsFunc func(dirPath, parentDirPath string) []config.WorkflowDef, loopDir string, concurrency config.WorkflowConcurrency, logger *slog.Logger) Engine {
+func NewEngine(store db.Store, runner Runner, bashRunner BashRunner, broadcaster EventBroadcaster, workflowsFunc func(dirPath, parentDirPath string) []config.WorkflowDef, loopDir string, concurrency config.WorkflowConcurrency, logger *slog.Logger, opts ...Option) Engine {
 	e := &defaultEngine{
 		store:             store,
 		runner:            runner,
@@ -100,6 +120,9 @@ func NewEngine(store db.Store, runner Runner, bashRunner BashRunner, broadcaster
 	if concurrency.MaxConcurrentNodes > 0 {
 		e.nodeSem = make(chan struct{}, concurrency.MaxConcurrentNodes)
 	}
+	for _, opt := range opts {
+		opt(e)
+	}
 	return e
 }
 
@@ -110,7 +133,7 @@ func (e *defaultEngine) StartRun(ctx context.Context, opts StartRunOptions) (str
 		return "", err
 	}
 
-	if err := validateWorkflowDef(wfDef); err != nil {
+	if err := ValidateWorkflowDef(wfDef); err != nil {
 		return "", err
 	}
 
@@ -465,7 +488,7 @@ func (e *defaultEngine) recoverPausedRun(ctx context.Context, run *db.WorkflowRu
 	// that was hand-edited in ~/.loop/config.json while paused; without
 	// this guard executeDAGFromCheckpoint trips half-way through with an
 	// "unsupported body child" error after already running siblings.
-	if err := validateWorkflowDef(wfDef); err != nil {
+	if err := ValidateWorkflowDef(wfDef); err != nil {
 		e.logger.Error("workflow: cannot recover paused run — definition fails validation", "run_id", run.ID, "workflow", run.WorkflowName, "error", err)
 		e.failStaleRun(ctx, run)
 		return
@@ -549,7 +572,7 @@ func (e *defaultEngine) recoverRunningRun(ctx context.Context, run *db.WorkflowR
 		return
 	}
 
-	if err := validateWorkflowDef(wfDef); err != nil {
+	if err := ValidateWorkflowDef(wfDef); err != nil {
 		e.logger.Error("workflow: cannot recover running run — definition fails validation", "run_id", run.ID, "workflow", run.WorkflowName, "error", err)
 		e.failStaleRun(ctx, run)
 		return

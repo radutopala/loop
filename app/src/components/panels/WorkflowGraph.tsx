@@ -57,6 +57,7 @@ const TYPE_BADGES: Record<string, string> = {
   bash: "B",
   loop: "L",
   approval: "A",
+  plugin: "X",
 };
 
 // ---------------------------------------------------------------------------

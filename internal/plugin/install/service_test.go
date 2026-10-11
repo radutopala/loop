@@ -631,6 +631,54 @@ func (s *ServiceSuite) TestCallTool() {
 	})
 }
 
+func (s *ServiceSuite) TestWorkflowTool() {
+	ch := runtime.Channel{ID: "ch1", DirPath: "/src"}
+	ep := runtime.Endpoint{URL: "http://127.0.0.1:1234", Secret: "s"}
+	call := func(input string) proxy.ToolRequest {
+		return proxy.ToolRequest{RunID: "workflow:r1:n1", Input: json.RawMessage(input)}
+	}
+	tests := []struct {
+		name   string
+		tool   string
+		req    proxy.ToolRequest
+		setup  func(req proxy.ToolRequest)
+		want   *proxy.ToolResult
+		wantIs error
+	}{
+		{name: "any declared tool", tool: "edit", req: call(`{}`), setup: func(req proxy.ToolRequest) {
+			s.runtime.On("Ensure", s.ctx, mock.Anything, ch).Return(ep, nil).Once()
+			s.caller.On("Tool", s.ctx, ep, "edit", req).Return(&proxy.ToolResult{Content: "done"}, nil).Once()
+		}, want: &proxy.ToolResult{Content: "done"}},
+		{name: "undeclared tool", tool: "nope", req: call(`{}`), wantIs: ErrUnknownTool},
+		{name: "invalid input", tool: "echo", req: call(`{"text":1}`), wantIs: ErrInvalidInput},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			defer s.TearDownTest()
+			s.store.On("GetPluginState", s.ctx, "echo").Return(s.installed(db.PluginStatusInstalled), nil).Once()
+			if tt.setup != nil {
+				tt.setup(tt.req)
+			}
+			res, err := s.svc.WorkflowTool(s.ctx, "echo", tt.tool, ch, tt.req)
+			if tt.wantIs != nil {
+				require.ErrorIs(s.T(), err, tt.wantIs)
+				return
+			}
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tt.want, res)
+		})
+	}
+
+	s.Run("not installed", func() {
+		s.SetupTest()
+		defer s.TearDownTest()
+		s.store.On("GetPluginState", s.ctx, "echo").Return(nil, nil).Once()
+		_, err := s.svc.WorkflowTool(s.ctx, "echo", "echo", ch, call(`{}`))
+		require.ErrorIs(s.T(), err, ErrNotInstalled)
+	})
+}
+
 func (s *ServiceSuite) TestAllows() {
 	tests := []struct {
 		name    string

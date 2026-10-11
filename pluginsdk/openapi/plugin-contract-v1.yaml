@@ -57,8 +57,8 @@ paths:
       tags: [actions]
       summary: Run an action
       description: |
-        Runs one of the manifest's actions, by hand or on a schedule.
-        Answer at once and do the work afterwards; report how it went
+        Runs one of the manifest's actions, by hand, on a schedule or from
+        a workflow's plugin node. Answer at once and do the work afterwards; report how it went
         through events. Loop takes any 2xx as accepted.
       parameters:
         - name: action
@@ -84,9 +84,11 @@ paths:
       tags: [tools]
       summary: Call a tool
       description: |
-        A call from one of the plugin's agents. Loop has checked `input`
-        against the tool's input_schema. The agent sees `content` as the
-        tool's result, and `is_error` lets it retry.
+        A call from one of the plugin's agents, or from a workflow's plugin
+        node. Loop has checked `input` against the tool's input_schema. The
+        agent sees `content` as the tool's result, and `is_error` lets it
+        retry. A workflow takes `content` as the node's output, and
+        `is_error` fails the node.
       parameters:
         - name: tool
           in: path
@@ -250,7 +252,7 @@ components:
       properties:
         trigger:
           type: string
-          enum: [manual, schedule]
+          enum: [manual, schedule, workflow]
         task_id:
           type: integer
           format: int64
@@ -259,13 +261,16 @@ components:
       type: object
       required: [run_id, agent, thread_id, input]
       properties:
-        run_id: { type: string }
+        run_id:
+          type: string
+          description: |
+            The agent run; for a workflow's call, workflow:<run id>:<node id>.
         agent:
           type: string
-          description: The agent id from the manifest.
+          description: The agent id from the manifest; empty for a workflow's call.
         thread_id:
           type: string
-          description: The hidden thread the run runs in.
+          description: The hidden thread the run runs in; empty for a workflow's call.
         input:
           description: The tool's input, valid against its input_schema.
     ToolResult:

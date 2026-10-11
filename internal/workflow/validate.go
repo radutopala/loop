@@ -1,13 +1,19 @@
 package workflow
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/radutopala/loop/internal/config"
 )
 
-// validateWorkflowDef checks workflow-level invariants that the executor
+// ValidateWorkflowDef checks workflow-level invariants that the executor
 // relies on but config loading does not enforce. Today it rejects:
+//   - plugin nodes, top-level or in a loop body, without a plugin, with
+//     both or neither of action and tool, or with an input that isn't a
+//     JSON object or comes with an action
 //   - loop body children of types the body executor doesn't handle
 //     (loop/approval)
 //   - body-child IDs that collide with a top-level node ID (which would
@@ -17,7 +23,7 @@ import (
 //     UNIQUE(run_id, node_id, iteration) AND cause WorkflowGraph's
 //     expandLoopBodies to inflate each loop's iteration count from
 //     the other's rows)
-func validateWorkflowDef(wfDef *config.WorkflowDef) error {
+func ValidateWorkflowDef(wfDef *config.WorkflowDef) error {
 	topLevelIDs := make(map[string]struct{}, len(wfDef.Nodes))
 	for i := range wfDef.Nodes {
 		topLevelIDs[wfDef.Nodes[i].ID] = struct{}{}
@@ -27,6 +33,11 @@ func validateWorkflowDef(wfDef *config.WorkflowDef) error {
 	bodyChildOwner := map[string]string{}
 	for i := range wfDef.Nodes {
 		n := &wfDef.Nodes[i]
+		if n.Type == config.NodeTypePlugin {
+			if err := validatePluginNode(n); err != nil {
+				return err
+			}
+		}
 		if n.Type != config.NodeTypeLoop {
 			continue
 		}
@@ -49,6 +60,10 @@ func validateWorkflowDef(wfDef *config.WorkflowDef) error {
 			switch child.Type {
 			case config.NodeTypePrompt, config.NodeTypeBash:
 				// ok
+			case config.NodeTypePlugin:
+				if err := validatePluginNode(child); err != nil {
+					return fmt.Errorf("loop %q: %w", n.ID, err)
+				}
 			case config.NodeTypeLoop:
 				return fmt.Errorf("loop %q: body child %q is a nested loop, which is not supported", n.ID, child.ID)
 			case config.NodeTypeApproval:
@@ -89,4 +104,50 @@ func validateWorkflowDef(wfDef *config.WorkflowDef) error {
 		}
 	}
 	return nil
+}
+
+// validatePluginNode checks a plugin node's fields: a plugin, exactly one
+// of action and tool, and an input, for a tool only, that is a JSON object.
+func validatePluginNode(n *config.NodeDef) error {
+	if n.Plugin == "" {
+		return fmt.Errorf("plugin node %q: plugin is required", n.ID)
+	}
+	if (n.Action == "") == (n.Tool == "") {
+		return fmt.Errorf("plugin node %q: set exactly one of action and tool", n.ID)
+	}
+	in, err := pluginInput(n.Input)
+	if err != nil {
+		return fmt.Errorf("plugin node %q: %w", n.ID, err)
+	}
+	if n.Action != "" && len(in) > 0 {
+		return fmt.Errorf("plugin node %q: input is only for a tool", n.ID)
+	}
+	return nil
+}
+
+// errInputNotObject is the error for a plugin node input that isn't a JSON
+// object.
+var errInputNotObject = errors.New("input must be a JSON object")
+
+// pluginInput decodes a plugin node's input, which must be a JSON object.
+// A missing or null input is nil. Numbers stay json.Number, so they pass
+// through to the plugin as written.
+func pluginInput(raw json.RawMessage) (map[string]any, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return nil, fmt.Errorf("%w: %w", errInputNotObject, err)
+	}
+	if v == nil {
+		return nil, nil
+	}
+	in, ok := v.(map[string]any)
+	if !ok {
+		return nil, errInputNotObject
+	}
+	return in, nil
 }

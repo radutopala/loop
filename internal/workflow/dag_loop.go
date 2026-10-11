@@ -250,8 +250,10 @@ func (e *defaultEngine) runBodyChild(ctx context.Context, run *db.WorkflowRun, c
 			return e.executePromptNode(attemptCtx, run, child, runCtx, mu)
 		case config.NodeTypeBash:
 			return e.executeBashNode(attemptCtx, run, child, runCtx, mu)
+		case config.NodeTypePlugin:
+			return e.executePluginNode(attemptCtx, run, child, runCtx, mu)
 		default:
-			// validateWorkflowDef rejects this at StartRun, but
+			// ValidateWorkflowDef rejects this at StartRun, but
 			// executeDAGFromCheckpoint resumes from the DB-pinned definition
 			// without re-validating — a stored workflow with an unsupported
 			// body-child type (manual DB edit, pre-validator definition)

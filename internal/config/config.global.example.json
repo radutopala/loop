@@ -356,7 +356,7 @@
   //  }
   //],
 
-  // Workflows — declarative DAG-based pipelines of prompt, bash, loop, and approval nodes.
+  // Workflows — declarative DAG-based pipelines of prompt, bash, loop, approval, and plugin nodes.
   // Each workflow is a sequence of nodes with dependencies. Nodes execute in parallel
   // when their dependencies allow. Use {{.Inputs.name}} and {{.NodeOutputs.node_id}}
   // for Go text/template interpolation.
@@ -367,6 +367,7 @@
   //   "bash"     — runs a shell script (script field)
   //   "loop"     — runs a prompt repeatedly (max_iterations, condition to stop)
   //   "approval" — pauses for human approval (message, timeout)
+  //   "plugin"   — runs a plugin's action or calls its tool (plugin, action or tool, input)
   //
   // Retry: any node can have "retry": { "max_retries": 3, "backoff_base": "1s", "backoff_max": "30s" }
   //

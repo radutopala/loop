@@ -11,7 +11,7 @@ Declarative DAG-based pipelines of prompt and bash nodes. Workflows provide repe
 
 ## Overview
 
-A workflow is a directed acyclic graph (DAG) of nodes. Each node can be a **prompt** (AI agent), **bash** (shell script), **loop** (iterative prompt), or **approval** (human gate). Nodes declare dependencies via `depends_on`; independent nodes execute in parallel.
+A workflow is a directed acyclic graph (DAG) of nodes. Each node can be a **prompt** (AI agent), **bash** (shell script), **loop** (iterative prompt), **approval** (human gate), or **plugin** (a plugin's action or tool). Nodes declare dependencies via `depends_on`; independent nodes execute in parallel.
 
 ```
                     ┌──────────┐
@@ -124,7 +124,7 @@ Runs either a single prompt repeatedly, or an ordered sequence of child nodes pe
 |---|---|
 | `prompt` | Template-rendered prompt sent to the agent each iteration. Mutually exclusive with `prompt_path` and `body`. |
 | `prompt_path` | Path to a prompt file, resolved as `{loopDir}/workflows/{prompt_path}`. Mutually exclusive with `prompt` and `body`. |
-| `body` | Ordered list of child node definitions executed sequentially per iteration. Each child can be a `prompt` or `bash` node; nested `loop` and `approval` types are rejected at load time. Children may declare `depends_on` against siblings for visual edges in the DAG graph; execution order is the array order regardless. Mutually exclusive with `prompt` / `prompt_path`. |
+| `body` | Ordered list of child node definitions executed sequentially per iteration. Each child can be a `prompt`, `bash` or `plugin` node; nested `loop` and `approval` types are rejected at load time. Children may declare `depends_on` against siblings for visual edges in the DAG graph; execution order is the array order regardless. Mutually exclusive with `prompt` / `prompt_path`. |
 | `max_iterations` | Maximum number of iterations (default: 10) |
 | `condition` | Go template evaluated after each iteration; stops when it renders `"true"` |
 
@@ -177,6 +177,29 @@ When paused, resume via `POST /api/workflows/runs/{id}/resume` with a JSON body 
   "depends_on": ["plan"],
   "message": "Review the implementation plan:\n\n{{.NodeOutputs.plan}}\n\nApprove to continue.",
   "timeout": "1h"
+}
+```
+
+### Plugin Node (`"type": "plugin"`)
+
+Runs an action of an installed [plugin](plugins.md), or calls one of its tools, on the plugin's container in the run's channel. Loop starts the container if it isn't running. The channel's project must enable the plugin, and Loop must run with plugins on; otherwise the node fails.
+
+| Field | Description |
+|---|---|
+| `plugin` | The plugin's id |
+| `action` | An action id from the plugin's manifest. Mutually exclusive with `tool`. |
+| `tool` | A tool name from the plugin's manifest. Mutually exclusive with `action`. |
+| `input` | For `tool` only: a JSON object passed as the tool's input. Every string in it, however deep, is rendered as a template; the result must match the tool's `input_schema`. Defaults to `{}`. |
+
+An action succeeds once the plugin accepts it, with `accepted` as the node's output; the plugin does the work afterwards. A tool's `content` becomes the node's output, and an answer marked `is_error` fails the node, so `retry` applies. A node without a plugin, with both or neither of `action` and `tool`, or with an `input` that isn't an object, is rejected by `save_workflow` and `POST /api/workflows`, and when a run starts.
+
+```jsonc
+{
+  "id": "quiz",
+  "type": "plugin",
+  "plugin": "quiz",
+  "tool": "ask",
+  "input": { "topic": "{{.Inputs.topic}}", "count": 3 }
 }
 ```
 
@@ -234,7 +257,7 @@ The `timeout` field on any node caps that individual node's execution time. If t
 { "id": "test", "type": "bash", "script": "make test", "timeout": "5m" }
 ```
 
-Node timeouts apply to **prompt**, **bash**, and **loop** nodes. Approval nodes are excluded because they handle timeout internally via their own pause/resume semantics (see [Approval Node](#approval-node-type-approval)).
+Node timeouts apply to **prompt**, **bash**, **loop**, and **plugin** nodes. Approval nodes are excluded because they handle timeout internally via their own pause/resume semantics (see [Approval Node](#approval-node-type-approval)).
 
 If a node has both a timeout and retry config, the timeout covers all retry attempts combined — the deadline does not reset between retries. A 5-minute timeout with 3 retries means total execution (including backoff delays) must complete within 5 minutes.
 
@@ -472,7 +495,7 @@ The detail view renders an interactive SVG DAG graph (`WorkflowGraph` component)
 
 **Node rendering:**
 - Color-coded by status: pending (dim), running (indigo, animated pulse), success (green), failed (red), skipped (gray), paused (amber)
-- Type badge: `P` (prompt), `B` (bash), `L` (loop), `A` (approval)
+- Type badge: `P` (prompt), `B` (bash), `L` (loop), `A` (approval), `X` (plugin)
 - Retry badge when `attempt > 1`
 - Elapsed time for running/completed nodes
 - Cubic bezier edges between dependent nodes with directional arrowhead markers
@@ -516,7 +539,7 @@ Workflow state is persisted in SQLite:
 | `node_id` | TEXT | Node identifier |
 | `iteration` | INTEGER | Loop iteration index (0 for nodes outside a loop body, 0..N for nodes inside one). Unique key is `(run_id, node_id, iteration)`. |
 | `status` | TEXT | `pending`, `running`, `success`, `failed`, `skipped` |
-| `input` | TEXT | Rendered node input: bash script / resolved prompt (empty for loop/approval) |
+| `input` | TEXT | Rendered node input: bash script / resolved prompt / plugin tool input (empty for loop/approval/plugin action) |
 | `session_id` | TEXT | Prompt node's Claude session id (resumable transcript); empty otherwise |
 | `output` | TEXT | Node output text |
 | `error_text` | TEXT | Error message on failure |
