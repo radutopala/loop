@@ -199,6 +199,12 @@ func (o *Orchestrator) drainChannel(ctx context.Context, channelID string, incom
 		if o.IsChannelPlanned(channelID) || o.IsChannelAsked(channelID) {
 			return
 		}
+		// Once Loop is stopping, a row claimed now would be cut short or never
+		// started, and the next start would reset it as run. Left queued, the
+		// next start resumes it instead.
+		if o.stopping() {
+			return
+		}
 
 		row, err := o.store.ClaimNextPending(ctx, channelID)
 		if err != nil {
