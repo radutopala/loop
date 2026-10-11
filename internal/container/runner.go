@@ -838,35 +838,29 @@ func (r *DockerRunner) createAndStartContainer(
 
 	cmd := buildCmd(cfg, mcpConfigPath)
 
-	// The seccomp gate needs two things Docker's default sandbox denies:
-	//   - seccomp=unconfined: the gate calls seccomp(2) with NEW_LISTENER,
-	//     which the default outer profile gates behind CAP_SYS_ADMIN. Drop
-	//     the outer profile so the install can run; the inner gate is the
-	//     real defense once it's up.
-	//   - CAP_SYS_PTRACE: the gate-server (root) reads the traced child's
-	//     memory via process_vm_readv to inspect argv / paths before making
-	//     a decision. Default caps lack SYS_PTRACE, and the child's dumpable
-	//     bit is cleared by the setuid drop, so without this cap every trap
-	//     fails closed with EPERM — which bubbles back out of execve.
-	var securityOpt, capAdd []string
+	// The gate-server (root) reads the traced child's memory via
+	// process_vm_readv to inspect argv / paths before making a decision.
+	// Default caps lack SYS_PTRACE, and the child's dumpable bit is cleared
+	// by the setuid drop, so without it every trap fails closed with EPERM,
+	// which bubbles back out of execve. Docker's seccomp profile stays: the
+	// gate's filter stacks on top of it.
+	var capAdd []string
 	if cfg.Gates.Agentgate.Enabled {
-		securityOpt = []string{"seccomp=unconfined"}
 		capAdd = []string{"SYS_PTRACE"}
 	}
 
 	containerCfg := &ContainerConfig{
-		Image:       cfg.ContainerImage,
-		MemoryMB:    cfg.ContainerMemoryMB,
-		CPUs:        cfg.ContainerCPUs,
-		Env:         env,
-		Cmd:         cmd,
-		Binds:       binds,
-		WorkingDir:  workDir,
-		Labels:      map[string]string{ChannelLabelKey: channelID, ContainerTypeKey: string(cType), InstanceLabelKey: r.instanceID},
-		SecurityOpt: securityOpt,
-		CapAdd:      capAdd,
-		Volumes:     volumes,
-		Masks:       masks,
+		Image:      cfg.ContainerImage,
+		MemoryMB:   cfg.ContainerMemoryMB,
+		CPUs:       cfg.ContainerCPUs,
+		Env:        env,
+		Cmd:        cmd,
+		Binds:      binds,
+		WorkingDir: workDir,
+		Labels:     map[string]string{ChannelLabelKey: channelID, ContainerTypeKey: string(cType), InstanceLabelKey: r.instanceID},
+		CapAdd:     capAdd,
+		Volumes:    volumes,
+		Masks:      masks,
 	}
 
 	containerID, err = r.client.ContainerCreate(ctx, containerCfg, containerName)
