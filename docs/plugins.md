@@ -311,6 +311,12 @@ the plugin starts runs in its thread, each in a new session of its own.
 
 ### Bridge
 
+The TypeScript package under `app/packages/plugin-ui` wraps the bridge: `connect()` waits for the
+port and returns typed `api`, `context`, `settings`, `state`, `events`, `ui` and `theme` calls,
+with `applyTheme`/`syncTheme` for the theme's CSS variables and `createStorage`, a `localStorage`
+stand-in kept in the panel's state. Its README covers installing and using it. The protocol below
+is all it speaks, so a panel can also do without it.
+
 On load the host posts `{"type": "loop-plugin:init"}` to the frame with a `MessagePort` in
 `event.ports[0]`. The port carries JSON-RPC 2.0: the frame sends
 `{"jsonrpc": "2.0", "id": 1, "method": "…", "params": {…}}` and gets back `result` or
