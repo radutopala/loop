@@ -30,6 +30,10 @@ type ExecveRequest struct {
 	Syscall   string // "execve" | "execveat"
 	Filename  string // argv[0] for execve; /proc-fd link target for execveat+AT_EMPTY_PATH
 	Argv      []string
+	// Path is the absolute, symlink-resolved file the kernel will run,
+	// checked against the policy's exec file rules. The dispatcher only
+	// resolves it when the policy has some; empty skips the check.
+	Path string
 }
 
 // ExecveHandler evaluates execve/execveat traps against the policy. Construct
@@ -77,6 +81,25 @@ func (h *ExecveHandler) Handle(ctx context.Context, req ExecveRequest) Outcome {
 			Latency:  h.Now().Sub(start),
 		})
 		return out
+	}
+
+	// A file rule that denies exec on the target's path refuses it whatever
+	// the command rules say; any other exec rule leaves it to them.
+	if req.Path != "" {
+		if match, ok := h.Policy.MatchExecFile(req.Path); ok && match.Decision == types.DecisionDeny {
+			out := Outcome{Decision: types.DecisionDeny, Reason: match.RuleID}
+			h.Auditor.Write(AuditEntry{
+				Ts:       h.Now(),
+				Channel:  req.ChannelID,
+				PID:      req.PID,
+				Kind:     "execve",
+				Target:   req.Path,
+				RuleID:   match.RuleID,
+				Decision: string(out.Decision),
+				Latency:  h.Now().Sub(start),
+			})
+			return out
+		}
 	}
 
 	argv := req.Argv

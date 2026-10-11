@@ -272,6 +272,50 @@ func (s *ServerSuite) TestDispatchExecveatWithFilenameUsesArgsLayout() {
 	s.Require().True(got.Allow)
 }
 
+func (s *ServerSuite) TestDispatchExecveExecFileRules() {
+	rules := []types.FileRule{{Paths: []string{"/data", "/data/**"}, Operations: []string{OpExec}, Decision: types.DecisionDeny}}
+	tests := []struct {
+		name     string
+		syscall  string
+		filename string
+		dirfd    uint64
+		flags    uint64
+		cwd      bool
+		allow    bool
+	}{
+		{name: "absolute path under the rule", syscall: "execve", filename: "/data/tool"},
+		{name: "path outside the rule", syscall: "execve", filename: "/bin/ls", allow: true},
+		{name: "relative to the cwd", syscall: "execve", filename: "tool", cwd: true},
+		{name: "symlink into the rule", syscall: "execve", filename: "/usr/local/bin/tool"},
+		{name: "execveat relative to its dirfd", syscall: "execveat", filename: "tool", dirfd: 7},
+		{name: "execveat of an fd", syscall: "execveat", filename: "", dirfd: 8, flags: uint64(AtEmptyPath)},
+		{name: "cwd unreadable", syscall: "execve", filename: "tool"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			tr := &FakeTracee{
+				Strings:      map[uintptr]string{0x100: tt.filename},
+				PointerLists: map[uintptr][]string{0x200: {"tool"}},
+				Dirfds:       map[int32]string{7: "/data", 8: "/data/tool"},
+				Symlinks:     map[string]string{"/usr/local/bin/tool": "/data/tool"},
+			}
+			if tt.cwd {
+				tr.Dirfds[AtFDCWD] = "/data"
+			}
+			srv := s.newServer(tr, NewExecveHandler(s.mustPolicy(types.DecisionAllow, nil, nil, rules), nil), nil, nil)
+			args := [6]uint64{0x100, 0x200}
+			if tt.syscall == "execveat" {
+				args = [6]uint64{tt.dirfd, 0x100, 0x200, 0, tt.flags}
+			}
+			got := srv.Dispatch(context.Background(), Trap{ID: 16, Syscall: tt.syscall, Args: args})
+			s.Require().Equal(tt.allow, got.Allow)
+			if !tt.allow {
+				s.Require().Equal(int32(syscall.EPERM), got.ErrorNum)
+			}
+		})
+	}
+}
+
 // --- Dispatch: connect ---
 
 func (s *ServerSuite) TestDispatchConnectNilHandlerDenies() {

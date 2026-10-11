@@ -161,14 +161,38 @@ func (s *Server) dispatchExecve(ctx context.Context, trap Trap, tracee Tracee) T
 		return denyResp(trap.ID, syscall.EPERM)
 	}
 
+	path := ""
+	if s.Execve.Policy.HasExecFileRules() {
+		path, err = execPath(trap.Syscall, filename, dirfd, tracee)
+		if err != nil {
+			return denyResp(trap.ID, syscall.EPERM)
+		}
+	}
+
 	out := s.Execve.Handle(ctx, ExecveRequest{
 		PID:       trap.PID,
 		ChannelID: s.ChannelID,
 		Syscall:   trap.Syscall,
 		Filename:  filename,
 		Argv:      argv,
+		Path:      path,
 	})
 	return decisionResp(trap.ID, out.Decision)
+}
+
+// execPath resolves the file an exec trap runs: filename, which for
+// execveat(AT_EMPTY_PATH) already holds the fd's target, against the dirfd
+// (the cwd for execve, which doesn't search $PATH), symlinks followed as
+// the kernel does.
+func execPath(syscallName, filename string, dirfd int32, tracee Tracee) (string, error) {
+	if syscallName != "execveat" {
+		dirfd = AtFDCWD
+	}
+	abs, err := absolutize(filename, dirfd, tracee)
+	if err != nil {
+		return "", err
+	}
+	return resolveSymlinks(abs, false, tracee), nil
 }
 
 func (s *Server) dispatchConnect(ctx context.Context, trap Trap, tracee Tracee) TrapResponse {

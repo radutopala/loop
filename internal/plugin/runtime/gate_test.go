@@ -57,7 +57,7 @@ func (s *ManagerSuite) TestEnsureUnderGate() {
 		"LOOP_HOST_USER=1000:1001", "LOOP_GATE_AUDIT_DIR=/var/log/loop-gate", "LOOP_GATE_AUDIT_RETENTION_DAYS=7",
 		"LOOP_GATE_AUDIT_VERBOSE=1", "LOOP_PLUGIN_ID=cogtest",
 	})
-	require.Equal(s.T(), []string{"no-new-privileges", "seccomp=unconfined"}, host.SecurityOpt)
+	require.Equal(s.T(), []string{"no-new-privileges"}, host.SecurityOpt)
 	require.Equal(s.T(), []string{"ALL"}, []string(host.CapDrop))
 	require.Equal(s.T(), []string{"SYS_PTRACE", "SETUID", "SETGID", "DAC_OVERRIDE"}, []string(host.CapAdd))
 	policy := filepath.Join(s.m.cfg.Root, "cogtest", "gate", "ch1", "gate-policy.json")
@@ -94,6 +94,23 @@ func (s *ManagerSuite) TestEnsureUnderGate() {
 	}
 	require.Equal(s.T(), types.DecisionAllow, p.MatchCommand("node", []string{"x.js"}).Decision)
 	require.Equal(s.T(), types.DecisionDeny, p.MatchPath("/var/run/docker.sock").Decision)
+	for _, path := range []string{"/data/bin/x", "/tmp/x", "/dev/shm/x"} {
+		r, ok := p.MatchExecFile(path)
+		require.True(s.T(), ok, path)
+		require.Equal(s.T(), types.DecisionDeny, r.Decision, path)
+	}
+	_, ok := p.MatchExecFile("/plugin")
+	require.False(s.T(), ok, "the image's own files run")
+}
+
+func (s *ManagerSuite) TestGatePolicyExecDenyComesFirst() {
+	g := &plugin.Gate{Files: []types.FileRule{{Paths: []string{"/data/**"}, Operations: []string{agentgate.OpExec}, Decision: types.DecisionAllow}}}
+	file := pluginGatePolicy(g)
+	p, err := agentgate.CompilePolicy(file.DefaultDecision, file.PathRules, file.CommandRules, file.FileRules)
+	require.NoError(s.T(), err)
+	r, ok := p.MatchExecFile("/data/x")
+	require.True(s.T(), ok)
+	require.Equal(s.T(), types.DecisionDeny, r.Decision, "a manifest can't allow running its data")
 }
 
 func (s *ManagerSuite) TestGatePolicyCommands() {

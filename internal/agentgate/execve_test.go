@@ -341,6 +341,45 @@ func (s *ExecveSuite) TestHandleUnknownDefaultDecisionFallsBackToAllow() {
 	s.Require().Equal(types.DecisionAllow, out.Decision)
 }
 
+func (s *ExecveSuite) TestHandleExecFileRules() {
+	policy, err := CompilePolicy(types.DecisionAllow, nil,
+		[]types.CommandRule{{Commands: []string{"tool"}, Decision: types.DecisionDeny}},
+		[]types.FileRule{
+			{Paths: []string{"/data/**"}, Operations: []string{OpExec}, Decision: types.DecisionDeny},
+			{Paths: []string{"/opt/**"}, Operations: []string{OpExec}, Decision: types.DecisionAllow},
+		})
+	require.NoError(s.T(), err)
+	tests := []struct {
+		name   string
+		path   string
+		argv0  string
+		want   types.Decision
+		reason string
+	}{
+		{"deny rule refuses", "/data/x", "x", types.DecisionDeny, "file[0]"},
+		{"allow rule leaves it to the command rules", "/opt/tool", "tool", types.DecisionDeny, "cmd[0]"},
+		{"allow rule then allowed command", "/opt/ok", "ok", types.DecisionAllow, "default"},
+		{"no rule matches", "/bin/x", "x", types.DecisionAllow, "default"},
+		{"no path skips the check", "", "x", types.DecisionAllow, "default"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			rec := &recordingAuditor{}
+			h := NewExecveHandler(policy, nil)
+			h.Auditor = rec
+			out := h.Handle(context.Background(), ExecveRequest{ChannelID: "c1", Filename: tt.argv0, Argv: []string{tt.argv0}, Path: tt.path})
+			s.Require().Equal(tt.want, out.Decision)
+			s.Require().Equal(tt.reason, out.Reason)
+			entries := rec.snapshot()
+			s.Require().Len(entries, 1)
+			s.Require().Equal(tt.reason, entries[0].RuleID)
+			if tt.reason == "file[0]" {
+				s.Require().Equal(tt.path, entries[0].Target)
+			}
+		})
+	}
+}
+
 // --- audit emission ---
 
 // stepClock returns a func() time.Time that advances 1ms per call.

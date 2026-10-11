@@ -158,12 +158,13 @@ worktree's branch.
 While `gates.agentgate.enabled` is on, a plugin container runs its image's entrypoint and command
 under `loop syscallwrap`, which starts as root, drops to the daemon's user and traps the
 plugin's file, exec and unix-socket syscalls. Nobody is there to answer a prompt, so whatever the
-policy doesn't allow is denied. The policy is the manifest's `gate` rules first, then Loop's
-baseline:
+policy doesn't allow is denied. The policy is a deny on running files from `/data`, `/tmp` and
+`/dev/shm`, the dirs a plugin can write, so it only runs what its image ships. Then come the
+manifest's `gate` rules, then Loop's baseline:
 
 - every file op under `/data` and `/tmp`, and on the usual `/dev` files
 - reads, stats and listings anywhere else
-- any exec
+- any exec of a file outside those dirs
 - no unix-socket connects
 
 ```jsonc
@@ -174,7 +175,9 @@ baseline:
 ```
 
 The manifest may only allow or deny; `approve` is refused at install. Decisions go to an audit
-log under `~/.loop/plugins/<id>/audit/<channel>/`, kept per `gates.audit`.
+log under `~/.loop/plugins/<id>/audit/<channel>/`, kept per `gates.audit`. Unlike an agent
+container, a plugin container keeps Docker's default seccomp profile; the gate's filter stacks
+on top of it.
 
 The gate needs a linux `loop` binary in the container, which plugin images don't have. Loop
 mounts the release matching the daemon's version, downloaded on first use, checked against the

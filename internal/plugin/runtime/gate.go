@@ -12,6 +12,7 @@ import (
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
 
+	"github.com/radutopala/loop/internal/agentgate"
 	"github.com/radutopala/loop/internal/plugin"
 	"github.com/radutopala/loop/internal/types"
 )
@@ -48,11 +49,18 @@ type gatePolicyFile struct {
 	FileRules       []types.FileRule    `json:"file_rules"`
 }
 
-// pluginGatePolicy is a plugin's gate policy: the rules its manifest asks
-// for, then Loop's baseline. Anything neither allows is denied, and with
-// nobody to ask, so is anything a rule sends for approval.
+// noExecPaths are the dirs a plugin can write. Running a file from them is
+// refused ahead of the manifest's rules, so a plugin only runs what its
+// image ships; /tmp and /dev/shm are noexec mounts too, but /data is a bind
+// mount Docker Desktop can't mark noexec.
+var noExecPaths = []string{dataDir, dataDir + "/**", "/tmp", "/tmp/**", "/dev/shm", "/dev/shm/**"}
+
+// pluginGatePolicy is a plugin's gate policy: the exec deny on the dirs it
+// can write, the rules its manifest asks for, then Loop's baseline.
+// Anything none allows is denied, and with nobody to ask, so is anything a
+// rule sends for approval.
 func pluginGatePolicy(gate *plugin.Gate) gatePolicyFile {
-	var files []types.FileRule
+	files := []types.FileRule{{Paths: noExecPaths, Operations: []string{agentgate.OpExec}, Decision: types.DecisionDeny, Message: "plugins run only what their image ships"}}
 	commands := []types.CommandRule{}
 	if gate != nil {
 		files = append(files, gate.Files...)
@@ -120,7 +128,8 @@ func (m *Manager) applyGate(ctx context.Context, p Plugin, ch Channel, cfg *cont
 	if m.cfg.Gate.AuditVerbose {
 		cfg.Env = append(cfg.Env, "LOOP_GATE_AUDIT_VERBOSE=1")
 	}
-	host.SecurityOpt = append(host.SecurityOpt, "seccomp=unconfined")
+	// Unlike an agent's, a plugin container keeps Docker's seccomp profile:
+	// it lets the gate install its filter, which stacks on top.
 	host.CapAdd = gateCaps
 	host.Mounts = append(host.Mounts,
 		mount.Mount{Type: mount.TypeBind, Source: bin, Target: gateBinary, ReadOnly: true},

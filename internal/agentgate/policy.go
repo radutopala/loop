@@ -167,7 +167,7 @@ func (p *Policy) MatchCommand(argv0 string, argvRest []string) MatchResult {
 
 // MatchFile evaluates file-op rules. Path must be cleaned + absolute + symlinks
 // resolved by the caller. op must be one of: read, write, create, delete, stat,
-// list, chmod, chown, link.
+// list, chmod, chown, link. Exec rules are matched by MatchExecFile.
 func (p *Policy) MatchFile(op, path string) MatchResult {
 	for i, r := range p.fileRules {
 		if len(r.ops) > 0 {
@@ -181,6 +181,31 @@ func (p *Policy) MatchFile(op, path string) MatchResult {
 		return MatchResult{Decision: r.decision, Message: r.message, RuleID: fmt.Sprintf("file[%d]", i)}
 	}
 	return p.defaultResult()
+}
+
+// MatchExecFile evaluates the file rules that list the exec operation
+// against the resolved path of a file about to be run. Rules that match any
+// operation don't apply: exec is opt-in, so a policy without exec rules runs
+// exactly as before. ok is false when no exec rule matches.
+func (p *Policy) MatchExecFile(path string) (MatchResult, bool) {
+	for i, r := range p.fileRules {
+		if _, exec := r.ops[OpExec]; !exec || !matchAnyDoublestar(path, r.paths) {
+			continue
+		}
+		return MatchResult{Decision: r.decision, Message: r.message, RuleID: fmt.Sprintf("file[%d]", i)}, true
+	}
+	return MatchResult{}, false
+}
+
+// HasExecFileRules reports whether any file rule lists the exec operation,
+// so the gate only resolves exec targets for policies that check them.
+func (p *Policy) HasExecFileRules() bool {
+	for _, r := range p.fileRules {
+		if _, exec := r.ops[OpExec]; exec {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *Policy) defaultResult() MatchResult {
@@ -254,6 +279,7 @@ var knownFileOps = map[string]struct{}{
 	"chmod":  {},
 	"chown":  {},
 	"link":   {},
+	"exec":   {},
 }
 
 func validFileOp(op string) bool {

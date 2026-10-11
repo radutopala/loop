@@ -194,6 +194,16 @@ Order matters: the pinned policy self-deny, then the pinned project-config appro
 
 Anything that doesn't match falls through to `gates.agentgate.default_decision` (`"allow"` by default).
 
+#### Exec file rules
+
+A file rule whose operations list `exec` also covers the file an `execve` / `execveat` runs, matched on its absolute, symlink-resolved path: a relative name resolves against the cwd, or the dirfd for `execveat`, since the kernel doesn't search `$PATH`. Only rules that list `exec` count. A rule with no operations doesn't, and neither does `default_decision`, so a policy without one runs as before. A `deny` refuses the exec whatever the command rules say; `allow` and `approve` leave it to them. None of the defaults use it; [plugin containers](plugins.md#agentgate) deny running files from the dirs they can write.
+
+```jsonc
+{"gates": {"agentgate": {"file_rules": [
+  {"paths": ["/tmp/**"], "operations": ["exec"], "decision": "deny"}
+]}}}
+```
+
 #### Approve rules show the diff of a rename
 
 Claude Code's Edit and Write tools, `sed -i` and most editors write a temp file next to the target (`config.json.tmp.<pid>.<hex>`) and rename it over the target. When an `approve` file rule covers a rename's target (rule 1a for `.loop/config.json` among them, and any `approve` rule of yours), the gate reads the new content and asks with a unified diff of the current file against it, plus the rename's source. On allow it writes the exact bytes it showed, as the agent's uid and gid, and removes the source while it still holds them, the way the [git guard](#git-guard) installs a config change; the agent's call returns as if its own rename succeeded. The source's check is part of that card, so a rename whose source an `approve` rule also covers asks once; a rule that denies the source still wins.
