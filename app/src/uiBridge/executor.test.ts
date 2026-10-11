@@ -26,6 +26,7 @@ class FakeWorkspace implements WorkspaceController {
     return { tab: this.tab, tabs: this.tabs, canvas: this.canvas, panes: this.panes };
   }
   maximize(id: string | null) {
+    if (this.fail) throw new Error(this.fail);
     this.calls.push(`maximize ${id ?? "-"}`);
     this.maximized = id;
   }
@@ -61,11 +62,12 @@ class FakeWorkspace implements WorkspaceController {
     this.panes = this.panes.filter((p) => p.id !== id);
     this.calls.push(`remove ${id}`);
   }
-  createTab(name?: string) {
-    const tab = name ?? `Layout ${this.tabs.length + 1}`;
+  createTab(name?: string, canvas?: boolean) {
+    const tab = name ?? `${canvas ? "Canvas" : "Layout"} ${this.tabs.length + 1}`;
     this.calls.push(`createTab ${tab}`);
     this.tabs = [...this.tabs, tab];
     this.tab = tab;
+    this.canvas = !!canvas;
     this.panes = [];
     return tab;
   }
@@ -252,9 +254,20 @@ describe("runSteps", () => {
     expect(await run([{ op: "add_pane", panel: "notes" }])).toEqual([{ op: "add_pane", ok: false, error: "no channel is open; select_channel first" }]);
   });
 
-  it("does pane steps only on a split tab", async () => {
-    ws.canvas = true;
-    expect(await run([{ op: "add_pane", panel: "notes" }])).toEqual([{ op: "add_pane", ok: false, error: "the open tab is a canvas; pane steps work on split tabs" }]);
+  it("does pane steps on a canvas tab's tiles", async () => {
+    const results = await run([
+      { op: "create_tab", canvas: true },
+      { op: "add_pane", panel: "notes" },
+      { op: "add_pane", panel: "docker-agent", next_to: "notes", direction: "vertical" },
+      { op: "maximize_pane", pane: "docker-agent" },
+      { op: "restore_pane" },
+      { op: "replace_pane", pane: "notes", panel: "git" },
+      { op: "remove_pane", pane: "git" },
+    ]);
+    expect(results.every((r) => r.ok)).toBe(true);
+    expect(results[0]).toEqual({ op: "create_tab", ok: true, tab: "Canvas 3" });
+    expect(ws.view()).toMatchObject({ canvas: true, panes: [{ id: "docker-agent-1", panel: "docker-agent" }] });
+    expect(ws.calls).toEqual(["createTab Canvas 3", "add notes - horizontal", "add docker-agent notes-0 vertical", "maximize docker-agent-1", "maximize -", "replace notes-0 git", "remove git-2"]);
   });
 
   it("leaves the open tab alone", async () => {
@@ -591,9 +604,9 @@ describe("more steps", () => {
     expect(await run([{ op: "add_pane", panel: "plugin", item: "quiz" }])).toEqual([{ op: "add_pane", ok: false, error: 'no plugin panel "quiz"; plugin panels: none' }]);
   });
 
-  it.each(["maximize_pane", "restore_pane", "open_file"])("does %s only on a split tab", async (op) => {
-    ws.canvas = true;
-    expect(await run([{ op, pane: "chat", path: "main.go" }])).toEqual([{ op, ok: false, error: "the open tab is a canvas; pane steps work on split tabs" }]);
+  it.each(["maximize_pane", "restore_pane"])("fails %s the tab refuses", async (op) => {
+    ws.fail = "the canvas isn't shown yet";
+    expect(await run([{ op, pane: "chat" }])).toEqual([{ op, ok: false, error: "the canvas isn't shown yet" }]);
   });
 });
 

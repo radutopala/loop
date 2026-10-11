@@ -166,8 +166,12 @@ export function collectPanelTypes(node: PaneNode): Set<PanelType> {
 }
 
 export function canAddPanel(tree: PaneNode | null, panel: PanelType): boolean {
-  if (!tree) return true;
-  const used = collectPanelTypes(tree);
+  return !tree || canAddPanelBeside(collectPanelTypes(tree), panel);
+}
+
+/** Whether a pane of panel can join panes of the used types: a singleton
+ *  shows once, and one of an exclusive group keeps the others out. */
+export function canAddPanelBeside(used: Set<PanelType>, panel: PanelType): boolean {
   if ((SINGLETON_PANELS as string[]).includes(panel) && used.has(panel)) {
     return false;
   }

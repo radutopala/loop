@@ -2772,7 +2772,7 @@ Runs steps in a window, in order, until one fails.
 |----|--------|------|
 | `select_channel` | `channel_id` | Opens the channel |
 | `set_tab` | `tab` | Switches the layout tab |
-| `create_tab` | `tab?` | Opens a new, empty split tab named `tab` (default the next `Layout N`); the result has its `tab` |
+| `create_tab` | `tab?`, `canvas?` | Opens a new, empty split tab named `tab` (default the next `Layout N`), or with `canvas` a canvas tab (default the next `Canvas N`); the result has its `tab` |
 | `rename_tab` | `tab`, `name` | Renames the tab; the result has its new `tab` |
 | `remove_tab` | `tab` | Removes the tab, closing its terminals if it's the open one; the last tab stays |
 | `replace_pane` | `pane`, `panel`, `open_mode?`, `item?`, `scope?` | Puts a new pane in the pane's place |
@@ -2784,6 +2784,8 @@ Runs steps in a window, in order, until one fails.
 | `send_input` | `pane`, `text`, `submit?` | Types into an agent terminal |
 | `read_output` | `pane`, `lines?` | The terminal's last `lines` (default 50, at most 2000) |
 | `wait_for` | `pane`, `match?`, `quiet_ms?`, `lines?` | Waits until the last `lines` match the regular expression `match` (multiline, [RE2 syntax](https://github.com/google/re2/wiki/Syntax), so no lookarounds or backreferences), or, without it, until the terminal is quiet for `quiet_ms` (default 2000). After a `send_input` to that pane in the same command, only output since counts. A session that ended counts as done |
+
+On a canvas tab the panes are its tiles, and `canvas` in the state is `true`. `add_pane` puts the tile beside `next_to`'s tile, or beside all the tiles, on the side `direction` and `side` give, nudged off the others; `replace_pane` keeps the tile's place and size; `maximize_pane` makes the tile fill the canvas's view.
 
 `open_mode` is for `docker-agent` panes. `item` names the playground of a `playground` pane, and `scope` (`global` or `project`) picks it when both scopes have one by that name. For a `plugin` pane, `item` names the plugin panel as `plugin/panel`, or as the plugin's id when it has one panel; it must be a panel of an installed plugin the project enables.
 

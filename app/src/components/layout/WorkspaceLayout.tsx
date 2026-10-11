@@ -1,9 +1,9 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { closeTerminalSessionById, killAgentContainer } from "../../api/loopApi";
-import { CanvasLayout } from "../../canvas/CanvasLayout";
-import { withPanelTile } from "../../canvas/tilePlacement";
-import type { CanvasNode } from "../../canvas/types";
+import { type CanvasControl, CanvasLayout } from "../../canvas/CanvasLayout";
+import { freshTileId, type NewTile, withPanelTile, withTileBeside, withTileReplaced } from "../../canvas/tilePlacement";
+import type { CanvasNode, CanvasTile } from "../../canvas/types";
 import { ShortcutsVersionContext } from "../../hooks/shortcutsVersion";
 import { useAgentRegistry } from "../../hooks/useAgentRegistry";
 import { useChatState } from "../../hooks/useChatState";
@@ -38,6 +38,7 @@ import { paneBoxStyle, SplitPaneLayout } from "../../splitPane/SplitPaneLayout";
 import {
   addBeside,
   canAddPanel,
+  canAddPanelBeside,
   collectLeaves,
   collectPanelTypes,
   findLeafById,
@@ -112,6 +113,14 @@ function initIdCounter(channelId: string, tree: PaneNode) {
   }
   // Only increase, never decrease (other layouts may have higher IDs)
   if (max + 1 > cur) idCounters.set(key, max + 1);
+}
+
+/** A canvas with no tiles yet. */
+const EMPTY_CANVAS: CanvasNode = { type: "canvas", viewport: { x: 0, y: 0, zoom: 1 }, tiles: [] };
+
+/** The plugin panels the tiles show, as plugin/panel. */
+function shownPluginTiles(tiles: CanvasTile[]): Set<string> {
+  return new Set(tiles.flatMap((t) => (t.panel === "plugin" && t.plugin ? [pluginPaneKey(t.plugin)] : [])));
 }
 
 /** Closes the session of a terminal pane that's going away. A pane on
@@ -377,6 +386,10 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     return lt === "canvas" ? ((ch.layouts[ch.active] as CanvasNode) ?? null) : null;
   });
   treeRef.current = tree;
+  // As the UI steps left it, like treeRef.
+  const canvasRef = useRef(canvasState);
+  canvasRef.current = canvasState;
+  const canvasControlRef = useRef<CanvasControl | null>(null);
 
   // Chat state — hoisted here so the WebSocket + messages survive layout switches.
   // initialChatState restores state from the app-level store on mount;
@@ -772,6 +785,21 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     [channelId, activeName, layoutNames],
   );
 
+  // A tile closed takes its terminal's session with it, as a pane removed does.
+  const handleCanvasChange = useCallback(
+    (c: CanvasNode) => {
+      const kept = new Set(c.tiles.map((t) => t.id));
+      for (const t of canvasRef.current?.tiles ?? []) {
+        if (kept.has(t.id)) continue;
+        closeTerminalSession(channelId, t);
+        statusMapRef.current.delete(t.id);
+      }
+      canvasRef.current = c;
+      setCanvasState(c);
+    },
+    [channelId],
+  );
+
   // --- UI commands (uiBridge) ---
   // Steps of a UI command run one after another before React renders, so the
   // pane ops update treeRef at once for the next step to see.
@@ -808,48 +836,94 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       if (!leaf) throw new Error(`no pane "${id}"`);
       return leaf;
     };
+    // On a canvas tab the panes are its tiles.
+    const onCanvas = () => layoutTypeRef.current === "canvas";
+    const canvasNow = () => canvasRef.current ?? EMPTY_CANVAS;
+    const setCanvasNow = (c: CanvasNode) => {
+      canvasRef.current = c;
+      setCanvasState(c);
+    };
+    // A tile maximized is put back first, so the next step's tile takes its
+    // place and size.
+    const unmaximized = (id: string) => {
+      const control = canvasControlRef.current;
+      return control?.maximized() === id ? control.maximize(canvasNow(), null) : canvasNow();
+    };
+    const tileOf = (id: string) => {
+      const tile = canvasNow().tiles.find((t) => t.id === id);
+      if (!tile) throw new Error(`no pane "${id}"`);
+      return tile;
+    };
+    const newTile = (c: CanvasNode, panel: PanelType, opts: PaneOptions = {}): NewTile => {
+      if (panel === "plugin" && !opts.plugin) throw new Error("a plugin pane needs the plugin panel it shows");
+      const tile: NewTile = { id: freshTileId(c, panel, Date.now()), panel };
+      if (panel === "docker-agent" && opts.openMode) tile.openMode = opts.openMode;
+      if (panel === "plugin") tile.plugin = opts.plugin;
+      if (panel === "playground" && opts.playground) storageSetJSON(`playground-active:${channelId}:${tile.id}`, opts.playground);
+      return tile;
+    };
+    const shownNow = () => {
+      if (onCanvas()) return canvasNow().tiles.map((t) => ({ id: t.id, panel: t.panel, openMode: t.openMode, plugin: t.plugin }));
+      return treeRef.current ? collectLeaves(treeRef.current) : [];
+    };
     const controller: WorkspaceController = {
       view: () => {
-        const canvas = layoutTypeRef.current === "canvas";
-        const t = treeRef.current;
+        const canvas = onCanvas();
+        const panes = shownNow().map((l) => {
+          const status = statusMapRef.current.get(l.id);
+          const busy = getTerminalInput(channelId, l.id)?.busy();
+          return {
+            id: l.id,
+            panel: l.panel,
+            ...(l.openMode ? { open_mode: l.openMode } : {}),
+            ...(l.plugin ? { plugin: pluginPaneKey(l.plugin) } : {}),
+            ...(status ? { status } : {}),
+            ...(busy !== undefined ? { busy } : {}),
+          };
+        });
+        const maximized = canvas ? canvasControlRef.current?.maximized() : maximizedLeafIdRef.current;
         return {
           tab: activeNameRef.current,
           tabs: layoutNamesRef.current,
           canvas,
-          panes:
-            canvas || !t
-              ? []
-              : collectLeaves(t).map((l) => {
-                  const status = statusMapRef.current.get(l.id);
-                  const busy = getTerminalInput(channelId, l.id)?.busy();
-                  return {
-                    id: l.id,
-                    panel: l.panel,
-                    ...(l.openMode ? { open_mode: l.openMode } : {}),
-                    ...(l.plugin ? { plugin: pluginPaneKey(l.plugin) } : {}),
-                    ...(status ? { status } : {}),
-                    ...(busy !== undefined ? { busy } : {}),
-                  };
-                }),
-          ...(!canvas && maximizedLeafIdRef.current ? { maximized: maximizedLeafIdRef.current } : {}),
+          panes,
+          ...(maximized && panes.some((p) => p.id === maximized) ? { maximized } : {}),
         };
       },
       maximize: (id) => {
+        if (onCanvas()) {
+          const control = canvasControlRef.current;
+          if (!control) throw new Error("the canvas isn't shown yet");
+          if (id) tileOf(id);
+          setCanvasNow(control.maximize(canvasNow(), id));
+          return;
+        }
         maximizedLeafIdRef.current = id;
         setMaximizedLeafId(id);
       },
       setTab: (name) => switchLayoutRef.current(name),
-      createTab: (name) => addLayoutRef.current("split", name),
+      createTab: (name, canvas) => addLayoutRef.current(canvas ? "canvas" : "split", name),
       renameTab: (name, newName) => handleRenameLayoutRef.current(name, newName),
       removeTab: (name) => handleDeleteLayoutRef.current(name),
       pluginPanes: (replacing) => {
         const { plugins } = pluginPanelsRef.current;
         if (plugins === null) return null;
-        // The tree as the steps left it, not as it last rendered.
+        // The tab as the steps left it, not as it last rendered.
+        if (onCanvas()) return pluginPaneOptions({ plugins, shown: shownPluginTiles(canvasNow().tiles.filter((t) => t.id !== replacing)) });
         const current = treeRef.current;
         return pluginPaneOptions({ plugins, shown: shownPluginPanes(current && replacing ? removeLeaf(current, replacing) : current) });
       },
       replacePane: (id, panel, opts) => {
+        if (onCanvas()) {
+          const old = tileOf(id);
+          const c = unmaximized(id);
+          if (!canAddPanelBeside(new Set(c.tiles.filter((t) => t.id !== id).map((t) => t.panel)), panel)) throw new Error(`the tab can't have another ${panel} pane`);
+          const tile = newTile(c, panel, opts);
+          closeTerminalSession(channelId, old);
+          statusMapRef.current.delete(id);
+          setCanvasNow(withTileReplaced(c, id, tile));
+          return tile.id;
+        }
         const current = treeRef.current;
         const old = leafOf(id);
         if (!canAddPanel(current ? removeLeaf(current, id) : null, panel)) throw new Error(`the tab can't have another ${panel} pane`);
@@ -863,6 +937,14 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         return leaf.id;
       },
       addPane: (panel, nextTo, direction, before, opts) => {
+        if (onCanvas()) {
+          const c = canvasNow();
+          if (nextTo) tileOf(nextTo);
+          if (!canAddPanelBeside(new Set(c.tiles.map((t) => t.panel)), panel)) throw new Error(`the tab can't have another ${panel} pane`);
+          const tile = newTile(c, panel, opts);
+          setCanvasNow(withTileBeside(c, tile, nextTo, direction, before, freshTileId(c, "file-tree", Date.now())));
+          return tile.id;
+        }
         const current = treeRef.current;
         if (!canAddPanel(current, panel)) throw new Error(`the tab can't have another ${panel} pane`);
         const leaf = newLeaf(panel, opts);
@@ -878,6 +960,14 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         return leaf.id;
       },
       removePane: (id) => {
+        if (onCanvas()) {
+          const tile = tileOf(id);
+          const c = unmaximized(id);
+          closeTerminalSession(channelId, tile);
+          statusMapRef.current.delete(id);
+          setCanvasNow({ ...c, tiles: c.tiles.filter((t) => t.id !== id) });
+          return;
+        }
         leafOf(id);
         const current = treeRef.current as PaneNode;
         handleRemoveLeafRef.current(id);
@@ -888,7 +978,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   }, [channelId]);
 
   // What the window reports changes with the tab and its panes.
-  useEffect(() => notifyUiChanged(), [tree, activeName, layoutNames, layoutType, maximizedLeafId]);
+  useEffect(() => notifyUiChanged(), [tree, canvasState, activeName, layoutNames, layoutType, maximizedLeafId]);
 
   // Listen for cross-component "open this panel" requests (e.g. the chat-bar
   // quality icon). The event carries the target channelId so other workspaces
@@ -973,7 +1063,13 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
 
       const current = treeRef.current;
       const hasEditor = current ? collectLeaves(current).some((l) => l.panel === "editor") : false;
-      if (!hasEditor && current && canAddPanel(current, "editor")) {
+      if (layoutTypeRef.current === "canvas") {
+        // On a canvas, an editor tile goes beside the chat's, unless there's one.
+        const c = canvasRef.current ?? EMPTY_CANVAS;
+        const next = withPanelTile(c, "editor", "chat", freshTileId(c, "editor", Date.now()));
+        canvasRef.current = next;
+        setCanvasState(next);
+      } else if (!hasEditor && current && canAddPanel(current, "editor")) {
         const leaves = collectLeaves(current);
         const anchorLeaf = leaves.find((l) => l.panel === "chat") ?? leaves[0];
         const editorId = leafIdForPanel(channelId, "editor");
@@ -1071,7 +1167,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   const installedPlugins = useInstalledPlugins(channelId);
   const shownPlugins = useMemo(() => {
     if (layoutType !== "canvas") return shownPluginPanes(tree);
-    return new Set((canvasState?.tiles ?? []).flatMap((t) => (t.panel === "plugin" && t.plugin ? [pluginPaneKey(t.plugin)] : [])));
+    return shownPluginTiles(canvasState?.tiles ?? []);
   }, [layoutType, tree, canvasState]);
   const pluginPanels = usePluginPanelsValue(installedPlugins, shownPlugins);
   const pluginPanelsRef = useRef(pluginPanels);
@@ -1852,9 +1948,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                   renderLeaf={renderLeaf}
                   agentInfoMap={agentInfoMap}
                   containerStats={containerStats}
-                  onCanvasChange={(c) => {
-                    setCanvasState(c);
-                  }}
+                  onCanvasChange={handleCanvasChange}
+                  controlRef={canvasControlRef}
                   hiddenPanels={hiddenPanels}
                   learnDock={learnDocked && learnSplit.mounted ? { shown: learnSplit.shown, ms: learnMs, view: sideView, running: sideRunning, pane: learnPane, ref: learnSplitRef } : undefined}
                 />

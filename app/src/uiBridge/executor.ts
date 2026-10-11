@@ -96,12 +96,6 @@ function workspaceOf(run: Run): { channelId: string; ws: WorkspaceController } {
   return { channelId, ws };
 }
 
-function splitWorkspace(run: Run): { channelId: string; ws: WorkspaceController } {
-  const w = workspaceOf(run);
-  if (w.ws.view().canvas) throw new StepError("the open tab is a canvas; pane steps work on split tabs");
-  return w;
-}
-
 /** A pane by id, else the first pane of that panel type. */
 function findPane(panes: PaneInfo[], pane: string | undefined): PaneInfo {
   if (!pane) throw new StepError("pane is required");
@@ -204,7 +198,7 @@ async function runStep(step: UiStep, run: Run): Promise<StepOutput> {
       const name = step.tab?.trim();
       if (step.tab !== undefined && !name) throw new StepError("tab can't be empty");
       if (name && ws.view().tabs.includes(name)) throw new StepError(`there's already a tab "${name}"`);
-      const tab = ws.createTab(name);
+      const tab = ws.createTab(name, step.canvas);
       await waitFor(run, `tab ${tab} to open`, () => ws.view().tab === tab);
       return { tab };
     }
@@ -234,7 +228,7 @@ async function runStep(step: UiStep, run: Run): Promise<StepOutput> {
       return {};
     }
     case "replace_pane": {
-      const { channelId, ws } = splitWorkspace(run);
+      const { channelId, ws } = workspaceOf(run);
       const pane = findPane(ws.view().panes, step.pane);
       const panel = panelOf(step.panel);
       const opts = await paneOptions(step, panel, channelId, run, ws, pane.id);
@@ -242,7 +236,7 @@ async function runStep(step: UiStep, run: Run): Promise<StepOutput> {
       return { pane: attempt(() => ws.replacePane(pane.id, panel, opts)) };
     }
     case "add_pane": {
-      const { channelId, ws } = splitWorkspace(run);
+      const { channelId, ws } = workspaceOf(run);
       const panel = panelOf(step.panel);
       const nextTo = step.next_to === undefined ? undefined : findPane(ws.view().panes, step.next_to).id;
       const direction = step.direction ?? "horizontal";
@@ -254,24 +248,24 @@ async function runStep(step: UiStep, run: Run): Promise<StepOutput> {
       return { pane: attempt(() => ws.addPane(panel, nextTo, direction, side === "before", opts)) };
     }
     case "remove_pane": {
-      const { ws } = splitWorkspace(run);
+      const { ws } = workspaceOf(run);
       const pane = findPane(ws.view().panes, step.pane);
       attempt(() => ws.removePane(pane.id));
       return {};
     }
     case "maximize_pane": {
-      const { ws } = splitWorkspace(run);
+      const { ws } = workspaceOf(run);
       const pane = findPane(ws.view().panes, step.pane);
-      ws.maximize(pane.id);
+      attempt(() => ws.maximize(pane.id));
       return { pane: pane.id };
     }
     case "restore_pane": {
-      const { ws } = splitWorkspace(run);
-      ws.maximize(null);
+      const { ws } = workspaceOf(run);
+      attempt(() => ws.maximize(null));
       return {};
     }
     case "open_file": {
-      const { channelId } = splitWorkspace(run);
+      const { channelId } = workspaceOf(run);
       if (!step.path) throw new StepError("path is required");
       if (step.line !== undefined && (!Number.isInteger(step.line) || step.line < 1)) throw new StepError("line must be a whole number from 1");
       await host.openFile(channelId, step.path, step.line).catch((err) => {

@@ -46,7 +46,7 @@ loop ui:run '[
 
 ## Steps
 
-There are steps for channels (`select_channel`), tabs (`set_tab`, `create_tab`, `rename_tab`, `remove_tab`), panes (`add_pane`, `replace_pane`, `remove_pane`, `maximize_pane`, `restore_pane`), the editor (`open_file`) and terminals (`send_input`, `read_output`, `wait_for`). The [API reference](api.md#post-apiuicommands) lists every field.
+There are steps for channels (`select_channel`), tabs (`set_tab`, `create_tab`, `rename_tab`, `remove_tab`), panes (`add_pane`, `replace_pane`, `remove_pane`, `maximize_pane`, `restore_pane`), the editor (`open_file`) and terminals (`send_input`, `read_output`, `wait_for`). Pane steps work on canvas tabs too, where the panes are the tiles. The [API reference](api.md#post-apiuicommands) lists every field.
 
 A `pane` is a pane id from the state, such as `docker-agent-1`, or a panel type, which means the first pane of that type.
 

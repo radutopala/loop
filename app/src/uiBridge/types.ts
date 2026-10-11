@@ -9,6 +9,8 @@ export interface UiStep {
   tab?: string;
   /** rename_tab: the tab's new name. */
   name?: string;
+  /** create_tab: a canvas tab instead of a split one. */
+  canvas?: boolean;
   pane?: string;
   panel?: string;
   open_mode?: string;
@@ -61,7 +63,7 @@ export interface PaneInfo {
 export interface WorkspaceView {
   tab: string;
   tabs: string[];
-  /** A canvas tab has tiles, not panes. */
+  /** A canvas tab's panes are its tiles. */
   canvas: boolean;
   panes: PaneInfo[];
   /** The pane that fills the tab, if one does. */
@@ -86,9 +88,9 @@ export interface PaneOptions {
 export interface WorkspaceController {
   view(): WorkspaceView;
   setTab(name: string): void;
-  /** Opens a new split tab, named name or the next "Layout N"; returns its
-   *  name. */
-  createTab(name?: string): string;
+  /** Opens a new split tab, or a canvas one with canvas set, named name or
+   *  the next "Layout N" ("Canvas N"); returns its name. */
+  createTab(name?: string, canvas?: boolean): string;
   renameTab(name: string, newName: string): void;
   /** Removes a tab, closing its terminals if it's the open one. */
   removeTab(name: string): void;
@@ -96,11 +98,13 @@ export interface WorkspaceController {
   replacePane(id: string, panel: PanelType, opts?: PaneOptions): string;
   /** Adds a pane of panel after nextTo (right of or below it), or before it
    *  with before set; without nextTo, at that edge of the tab. A pane that
-   *  sits in a row (or column) the pane joins gets a share of it. Returns its
-   *  id. */
+   *  sits in a row (or column) the pane joins gets a share of it. On a
+   *  canvas, the tile goes there beside nextTo's, or beside all the tiles.
+   *  Returns its id. */
   addPane(panel: PanelType, nextTo: string | undefined, direction: "horizontal" | "vertical", before: boolean, opts?: PaneOptions): string;
   removePane(id: string): void;
-  /** Makes the pane fill the tab, or, with null, puts it back. */
+  /** Makes the pane fill the tab (a tile, the canvas's view), or, with
+   *  null, puts it back. */
   maximize(id: string | null): void;
   /** The plugin panels a pane can show, as the add-pane menus offer them,
    *  with the pane replacing taken out; null until the plugins are listed. */
