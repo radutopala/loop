@@ -20,7 +20,7 @@ export type SubscribeChannelEvents = (channelId: string, listener: ChatEventList
 export interface PluginAgentView {
   threadId: string | null;
   running: boolean;
-  /** Feeds a plugin.run_started event of the container's channel. */
+  /** Feeds a plugin.run_started event of the pane's channel. */
   onEvent: (ev: WSEvent) => void;
 }
 
@@ -33,9 +33,9 @@ export function startedRunThread(ev: WSEvent, pluginId: string): string | null {
   return data.thread_id;
 }
 
-/** Tracks pluginId's agent runs for the pane in containerChannelId's
- *  project: looked up on mount, then followed through its events. */
-export function usePluginAgent(pluginId: string, containerChannelId: string, subscribeChannelEvents?: SubscribeChannelEvents): PluginAgentView {
+/** Tracks pluginId's agent runs for the pane in channelId: looked up on
+ *  mount, then followed through its events. */
+export function usePluginAgent(pluginId: string, channelId: string, subscribeChannelEvents?: SubscribeChannelEvents): PluginAgentView {
   const [threadId, setThreadId] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
 
@@ -44,7 +44,7 @@ export function usePluginAgent(pluginId: string, containerChannelId: string, sub
     setRunning(false);
     if (!pluginId) return;
     let cancelled = false;
-    fetchPluginAgent(pluginId, containerChannelId)
+    fetchPluginAgent(pluginId, channelId)
       .then((a) => {
         if (cancelled || !a.thread_id) return;
         // A run that started while this was in flight is newer.
@@ -55,7 +55,7 @@ export function usePluginAgent(pluginId: string, containerChannelId: string, sub
     return () => {
       cancelled = true;
     };
-  }, [pluginId, containerChannelId]);
+  }, [pluginId, channelId]);
 
   const onEvent = useCallback(
     (ev: WSEvent) => {

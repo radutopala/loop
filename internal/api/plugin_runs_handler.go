@@ -11,7 +11,6 @@ import (
 	"github.com/radutopala/loop/internal/orchestrator"
 	"github.com/radutopala/loop/internal/plugin/install"
 	"github.com/radutopala/loop/internal/plugin/proxy"
-	"github.com/radutopala/loop/internal/plugin/runtime"
 )
 
 // PluginRunner runs the agents plugins ask for, in each plugin's hidden
@@ -106,8 +105,8 @@ type pluginAgentResponse struct {
 }
 
 // handleGetPluginAgent returns the hidden thread a plugin's agent runs run
-// in, for the channel_id query parameter's channel (a thread answers for
-// its channel), so its panel can show their chat.
+// in, for the channel_id query parameter's channel, so its panel can show
+// their chat.
 func (s *Server) handleGetPluginAgent(w http.ResponseWriter, r *http.Request) {
 	channelID := r.URL.Query().Get("channel_id")
 	if channelID == "" {
@@ -173,7 +172,7 @@ func (s *Server) handleCallPluginTool(w http.ResponseWriter, r *http.Request) {
 	// Starting the container outlives an agent that hangs up, so a slow
 	// start isn't counted as a failed one.
 	res, err := s.plugins.CallTool(context.WithoutCancel(ctx), pluginID, tool,
-		runtime.Channel{ID: parent.ChannelID, DirPath: parent.DirPath},
+		pluginRuntimeChannel(parent),
 		proxy.ToolRequest{RunID: active.ID, Agent: active.Run.Agent, ThreadID: thread.ChannelID, Input: req.Input})
 	switch {
 	case errors.Is(err, install.ErrInvalidInput), errors.Is(err, install.ErrUnknownTool):

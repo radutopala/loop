@@ -11,10 +11,13 @@ import (
 	"github.com/docker/docker/api/types"
 	containertypes "github.com/docker/docker/api/types/container"
 	dockerclient "github.com/docker/docker/client"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"github.com/radutopala/loop/internal/config"
+	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/plugin/runtime"
+	"github.com/radutopala/loop/internal/testutil"
 )
 
 // listingDocker is a Docker client whose container list succeeds, with no
@@ -138,7 +141,9 @@ func (s *MainSuite) TestPluginEnabled() {
 	cfg := &config.Config{LoopDir: s.T().TempDir()}
 	global := &config.Config{Plugins: config.PluginsConfig{ByID: map[string]config.PluginConfig{"echo": {Enabled: &on}, "quiz": {Enabled: &off}}}}
 	reload := func() (*config.Config, error) { return global, nil }
-	enabled := pluginEnabled(cfg, reload)
+	store := new(testutil.MockStore)
+	store.On("GetChannel", mock.Anything, mock.Anything).Return(nil, nil)
+	enabled := pluginEnabled(cfg, reload, store)
 	ctx := context.Background()
 
 	// A channel without a dir reads the project config the API keeps for it.
@@ -163,4 +168,31 @@ func (s *MainSuite) TestPluginEnabled() {
 	got, err = enabled(ctx, "echo", runtime.Channel{ID: "ch2", DirPath: proj})
 	require.NoError(s.T(), err)
 	require.True(s.T(), got)
+}
+
+func (s *MainSuite) TestPluginEnabledWorktree() {
+	on := true
+	cfg := &config.Config{LoopDir: s.T().TempDir()}
+	global := &config.Config{Plugins: config.PluginsConfig{ByID: map[string]config.PluginConfig{"echo": {Enabled: &on}}}}
+	reload := func() (*config.Config, error) { return global, nil }
+	proj, wt := s.T().TempDir(), s.T().TempDir()
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(proj, ".loop"), 0o755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(proj, ".loop", "config.json"), []byte(`{"claude_model": "opus"}`), 0o644))
+	// The worktree's own config, which a read would fail on.
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(wt, ".loop"), 0o755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(wt, ".loop", "config.json"), []byte("{"), 0o644))
+	store := new(testutil.MockStore)
+	store.On("GetChannel", mock.Anything, "wt").Return(&db.Channel{ChannelID: "wt", DirPath: wt, ParentID: "proj", Worktree: true}, nil)
+	store.On("GetChannel", mock.Anything, "proj").Return(&db.Channel{ChannelID: "proj", DirPath: proj}, nil)
+	store.On("GetChannel", mock.Anything, "broken").Return(nil, errors.New("db down"))
+	enabled := pluginEnabled(cfg, reload, store)
+	ctx := context.Background()
+
+	// A worktree thread reads its checkout's project config, not its own.
+	got, err := enabled(ctx, "echo", runtime.Channel{ID: "wt", DirPath: wt})
+	require.NoError(s.T(), err)
+	require.True(s.T(), got)
+
+	_, err = enabled(ctx, "echo", runtime.Channel{ID: "broken", DirPath: wt})
+	require.ErrorContains(s.T(), err, "db down")
 }

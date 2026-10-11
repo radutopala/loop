@@ -1329,7 +1329,6 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               key={`layout-plugin-${channelId}-${leaf.id}`}
               plugin={leaf.plugin}
               channelId={channelId}
-              containerChannelId={channel.parent_id || channelId}
               channelName={channel.name}
               dirPath={dirPath}
               leafId={leaf.id}

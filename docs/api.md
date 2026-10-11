@@ -3069,7 +3069,7 @@ Remove a plugin: its containers in every channel, its extracted files and its re
 
 ### `POST /api/plugins/{plugin}/actions/{action}`
 
-Run a plugin action by hand in a channel. The plugin's container for the channel starts first if it isn't running; a thread runs the action in its parent channel. The plugin answers once it has taken the action, so the run itself goes on after the response.
+Run a plugin action by hand in a channel, thread or worktree thread. The plugin's container for it starts first if it isn't running. The plugin answers once it has taken the action, so the run itself goes on after the response.
 
 **Request body:**
 
@@ -3111,7 +3111,7 @@ Loop then sends [`plugin.run_started`](events.md#pluginrun_started) to the chann
 
 ### `GET /api/plugins/{plugin}/agent?channel_id=`
 
-The plugin's agent runs in the channel's project, for the agent chat beside its panels. A thread answers for its parent channel.
+The plugin's agent runs in the channel, thread or worktree thread, for the agent chat beside its panels.
 
 **Response:** `200 OK`
 
@@ -3145,7 +3145,7 @@ An unknown tool or an input the schema rejects comes back as `is_error: true`, s
 
 ### `ANY /api/plugins/{plugin}/x/{path...}?channel_id=`
 
-The plugin's own API for its panels. Loop sends the method, the query (without `channel_id`), the body (up to 8 MB) and its `Content-Type` to the plugin's `/x/{path}` in the channel's container, starting it if needed, and answers with the plugin's status, body and `Content-Type`. A thread uses its parent channel's container.
+The plugin's own API for its panels. Loop sends the method, the query (without `channel_id`), the body (up to 8 MB) and its `Content-Type` to the plugin's `/x/{path}` in the container of the channel, thread or worktree thread, starting it if needed, and answers with the plugin's status, body and `Content-Type`.
 
 **Errors:** `400` without `channel_id`; `404` if the channel or plugin doesn't exist; `409` if the plugin isn't runnable; `413` for a larger body; `502` if the container doesn't start or the call fails.
 

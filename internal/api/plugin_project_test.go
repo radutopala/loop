@@ -48,7 +48,7 @@ func (s *ServerSuite) listPluginsIn(channelID string) pluginList {
 
 func (s *ServerSuite) TestListPluginsInProject() {
 	pm := s.pluginRoutes()
-	s.pluginProjectSetup(`{"plugins": {"echo": {"enabled": true}, "quiz": {"enabled": false}}}`, "quiz", "other")
+	dir := s.pluginProjectSetup(`{"plugins": {"echo": {"enabled": true}, "quiz": {"enabled": false}}}`, "quiz", "other")
 	pm.On("List", mock.Anything).Return([]*db.PluginState{{PluginID: "echo"}, {PluginID: "quiz"}, {PluginID: "other"}}, nil)
 	pm.On("UI", mock.Anything, "echo").Return("/d", &plugin.Manifest{Name: "Echo", Actions: []plugin.Action{{ID: "ping"}, {ID: "pong"}}}, nil)
 	pm.On("UI", mock.Anything, mock.Anything).Return("", nil, install.ErrNotRunnable)
@@ -69,11 +69,12 @@ func (s *ServerSuite) TestListPluginsInProject() {
 	require.True(s.T(), *other.Enabled)
 	require.Nil(s.T(), other.ProjectEnabled)
 
-	// Trusted, they do; a thread answers for its channel's project.
+	// Trusted, they do; a thread, in its channel's dir, answers for its
+	// channel's project.
 	st := s.projectTrustStatus()
 	rec := s.testRequest("POST", "/api/config/project/trust?channel_id=ch-1", `{"hash":"`+st.Hash+`"}`)
 	require.Equal(s.T(), http.StatusNoContent, rec.Code, rec.Body.String())
-	s.store.On("GetChannel", mock.Anything, "th-1").Return(&db.Channel{ChannelID: "th-1", ParentID: "ch-1"}, nil)
+	s.store.On("GetChannel", mock.Anything, "th-1").Return(&db.Channel{ChannelID: "th-1", ParentID: "ch-1", DirPath: dir}, nil)
 	list = s.listPluginsIn("th-1")
 	require.True(s.T(), *list.ProjectTrusted)
 	require.True(s.T(), *list.Plugins[0].Enabled)

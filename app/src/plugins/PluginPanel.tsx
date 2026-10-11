@@ -19,10 +19,9 @@ import { findPluginPanel, usePluginPanels } from "./PluginPanelsContext";
 
 export interface PluginPanelProps {
   plugin: PluginPaneRef | undefined;
-  /** The channel or thread the pane is in. */
+  /** The channel or thread the pane is in, which the plugin serves with a
+   * container of its own. */
   channelId: string;
-  /** The channel whose plugin container serves the pane: a thread's parent. */
-  containerChannelId: string;
   channelName: string;
   dirPath: string;
   /** The pane's leaf: its header carries the agent label. */
@@ -44,19 +43,7 @@ const NO_SINGLETONS = new Set<never>();
  *  only through the bridge. Once the plugin has run an agent in the channel,
  *  the header's agent label opens the agent's chat beside the panel, over
  *  the layout, as the Learn view does. */
-export function PluginPanel({
-  plugin: ref,
-  channelId,
-  containerChannelId,
-  channelName,
-  dirPath,
-  leafId,
-  roots,
-  subscribeChannelEvents,
-  getChatState,
-  onChatStateUnmount,
-  overlayHost,
-}: PluginPanelProps) {
+export function PluginPanel({ plugin: ref, channelId, channelName, dirPath, leafId, roots, subscribeChannelEvents, getChatState, onChatStateUnmount, overlayHost }: PluginPanelProps) {
   const { colors } = useTheme();
   const { plugins } = usePluginPanels();
   const found = findPluginPanel(plugins, ref);
@@ -128,7 +115,7 @@ export function PluginPanel({
     bridgeRef.current?.notify("theme", pluginTheme(colors));
   }, [colors]);
 
-  const agent = usePluginAgent(pluginId, containerChannelId, subscribeChannelEvents);
+  const agent = usePluginAgent(pluginId, channelId, subscribeChannelEvents);
   const [agentOpen, setAgentOpen] = useState(false);
   const agentThread = agentOpen && overlayHost ? agent.threadId : null;
   const [frameSlot, setFrameSlot] = useState<HTMLDivElement | null>(null);
@@ -178,7 +165,7 @@ export function PluginPanel({
     },
     [pluginId, agentEvent],
   );
-  useEventStream({ channelId: pluginId ? containerChannelId : null, onEvent: handleEvent });
+  useEventStream({ channelId: pluginId ? channelId : null, onEvent: handleEvent });
 
   const [enabling, setEnabling] = useState(false);
   const [enableError, setEnableError] = useState<string | null>(null);

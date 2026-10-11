@@ -270,7 +270,7 @@ func (s *Server) handleRunPluginAction(w http.ResponseWriter, r *http.Request) {
 	// start isn't counted as a failed one.
 	ctx := context.WithoutCancel(r.Context())
 	err := s.plugins.RunAction(ctx, r.PathValue("plugin"), r.PathValue("action"),
-		runtime.Channel{ID: ch.ChannelID, DirPath: ch.DirPath}, proxy.ActionRequest{Trigger: proxy.TriggerManual})
+		pluginRuntimeChannel(ch), proxy.ActionRequest{Trigger: proxy.TriggerManual})
 	switch {
 	case errors.Is(err, install.ErrNotInstalled), errors.Is(err, install.ErrUnknownAction):
 		http.Error(w, err.Error(), http.StatusNotFound)
@@ -285,21 +285,11 @@ func (s *Server) handleRunPluginAction(w http.ResponseWriter, r *http.Request) {
 	writeHTTPJSON(w, http.StatusAccepted, map[string]string{"channel_id": ch.ChannelID}, s.logger)
 }
 
-// pluginChannelDepth bounds the walk from a thread up to its channel.
-const pluginChannelDepth = 16
-
-// pluginChannel returns the channel a plugin serves for channelID: the
-// channel, or the channel a thread or worktree thread is under, however
-// deep, since a plugin runs per channel. Otherwise it answers the request
-// and returns false.
+// pluginChannel returns channelID's channel, which a plugin serves with a
+// container of its own, whether it's a channel, a thread or a worktree
+// thread. Otherwise it answers the request and returns false.
 func (s *Server) pluginChannel(w http.ResponseWriter, r *http.Request, channelID string) (*db.Channel, bool) {
 	ch, err := s.store.GetChannel(r.Context(), channelID)
-	for range pluginChannelDepth {
-		if err != nil || ch == nil || ch.ParentID == "" {
-			break
-		}
-		ch, err = s.store.GetChannel(r.Context(), ch.ParentID)
-	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return nil, false
@@ -309,6 +299,11 @@ func (s *Server) pluginChannel(w http.ResponseWriter, r *http.Request, channelID
 		return nil, false
 	}
 	return ch, true
+}
+
+// pluginRuntimeChannel is ch as the plugin runtime takes it.
+func pluginRuntimeChannel(ch *db.Channel) runtime.Channel {
+	return runtime.Channel{ID: ch.ChannelID, DirPath: ch.DirPath}
 }
 
 // handlePluginX forwards a call of a plugin's panel to the plugin's own
@@ -337,7 +332,7 @@ func (s *Server) handlePluginX(w http.ResponseWriter, r *http.Request) {
 	// Starting the container outlives a client that hangs up, so a slow
 	// start isn't counted as a failed one.
 	res, err := s.plugins.X(context.WithoutCancel(r.Context()), r.PathValue("plugin"),
-		runtime.Channel{ID: ch.ChannelID, DirPath: ch.DirPath}, proxy.XRequest{
+		pluginRuntimeChannel(ch), proxy.XRequest{
 			Method: r.Method, Path: r.PathValue("path"), RawQuery: q.Encode(),
 			ContentType: r.Header.Get("Content-Type"), Body: body,
 		})

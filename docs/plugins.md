@@ -22,7 +22,9 @@ value overrides it. Like the rest of a project config, a project's value applies
 trusts that config; until then the last approved version's values do. Settings → Plugins sets
 both, keeping the file's comments.
 
-A project is a channel: its threads and worktree threads use the channel's container. In a
+A project is a channel, and its threads and worktree threads are part of it: they follow the
+channel's project config. Each channel, thread and worktree thread runs a container of its own,
+with its own data, and the plugin's agent runs go in a hidden thread of each. In a
 project that doesn't enable the plugin, its panels are left out of the add-pane menus, a pane
 already open says so, and every call to the plugin answers `409`. A container already running
 there stays up until it's idle or stopped.
@@ -105,8 +107,8 @@ root, in a container, names the user with `LOOP_HOST_UID` and `LOOP_HOST_GID`; p
 never run as root. Removing the plugin keeps the files; `--purge` deletes them.
 
 The channel's dir is the working tree of the channel's checkout, on whatever branch it has, with
-uncommitted changes. Threads use their channel's container, so worktree threads' branches aren't
-seen.
+uncommitted changes. A thread's is its channel's; a worktree thread's is its worktree, on the
+worktree's branch.
 
 ## Agentgate
 
@@ -189,9 +191,9 @@ So a bundle ships everything it needs, uses script files, and gets its data thro
 
 A plugin approved for `ui.panel` adds its panels to the workspace's add-pane menus, in split and
 canvas layouts, after the built-in panels. A `singleton` panel can be shown once per layout. A
-pane in a thread, however deeply nested, talks to the plugin's container of the thread's channel.
+pane talks to the plugin's container of the channel, thread or worktree thread it's in.
 
-Once the plugin has started an agent run in the project, its panes show an **agent** label at the
+Once the plugin has started an agent run in the pane's channel, its panes show an **agent** label at the
 right of their header. It opens the agent view over the layout, as the Learn view opens: the panel
 on the left half, the run's chat on the right, and the logo on their seam, which moves while a run
 runs. The label closes it again. The panel isn't reloaded on the way. The chat is read-only: only

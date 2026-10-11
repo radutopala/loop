@@ -129,8 +129,7 @@ export interface PluginAgent {
   running: boolean;
 }
 
-/** The thread plugin id's agent runs run in, for channelId (a thread answers
- *  for its channel). */
+/** The thread plugin id's agent runs run in, for channelId. */
 export async function fetchPluginAgent(id: string, channelId: string): Promise<PluginAgent> {
   const res = await apiFetch(`${getApiUrl()}/api/plugins/${encodeURIComponent(id)}/agent?channel_id=${encodeURIComponent(channelId)}`);
   if (!res.ok) throw await failure(res, "look up the plugin's agent");

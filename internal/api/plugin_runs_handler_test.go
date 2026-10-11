@@ -248,7 +248,7 @@ func (s *ServerSuite) TestGetPluginAgent() {
 	}{
 		{name: "running", query: "?channel_id=th-1", setup: func(pr *MockPluginRunner) {
 			s.store.On("GetChannel", mock.Anything, "th-1").Return(&db.Channel{ChannelID: "th-1", ParentID: "ch-1"}, nil).Once()
-			s.store.On("GetHiddenThread", mock.Anything, "ch-1", db.PluginKind("echo")).Return(thread, nil).Once()
+			s.store.On("GetHiddenThread", mock.Anything, "th-1", db.PluginKind("echo")).Return(thread, nil).Once()
 			pr.On("ActivePluginRun", "plugin:echo-abc123").Return(orchestrator.ActivePluginRun{ID: "ask-1"}, true).Once()
 		}, wantCode: http.StatusOK, wantBody: `{"thread_id":"plugin:echo-abc123","running":true}`},
 		{name: "idle", query: "?channel_id=ch-1", setup: func(pr *MockPluginRunner) {

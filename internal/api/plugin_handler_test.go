@@ -256,11 +256,10 @@ func (s *ServerSuite) TestRunPluginAction() {
 			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: "/src/app"}, nil).Once()
 			pm.On("RunAction", mock.Anything, "echo", "ping", ch, manual).Return(nil).Once()
 		}, wantCode: http.StatusAccepted, wantBody: `{"channel_id":"ch-1"}`},
-		{name: "thread runs in its channel", body: `{"channel_id":"th-1"}`, setup: func(pm *MockPluginManager) {
+		{name: "a thread runs in its own container", body: `{"channel_id":"th-1"}`, setup: func(pm *MockPluginManager) {
 			s.store.On("GetChannel", mock.Anything, "th-1").Return(&db.Channel{ChannelID: "th-1", ParentID: "ch-1", DirPath: "/src/app"}, nil).Once()
-			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: "/src/app"}, nil).Once()
-			pm.On("RunAction", mock.Anything, "echo", "ping", ch, manual).Return(nil).Once()
-		}, wantCode: http.StatusAccepted, wantBody: `{"channel_id":"ch-1"}`},
+			pm.On("RunAction", mock.Anything, "echo", "ping", runtime.Channel{ID: "th-1", DirPath: "/src/app"}, manual).Return(nil).Once()
+		}, wantCode: http.StatusAccepted, wantBody: `{"channel_id":"th-1"}`},
 		{name: "bad body", body: `{`, setup: func(*MockPluginManager) {}, wantCode: http.StatusBadRequest},
 		{name: "no channel", body: `{}`, setup: func(*MockPluginManager) {}, wantCode: http.StatusBadRequest, wantBody: "channel_id is required"},
 		{name: "channel lookup fails", body: `{"channel_id":"ch-1"}`, setup: func(*MockPluginManager) {
@@ -285,16 +284,10 @@ func (s *ServerSuite) TestRunPluginAction() {
 			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: "/src/app"}, nil).Once()
 			pm.On("RunAction", mock.Anything, "echo", "ping", ch, manual).Return(install.ErrNotEnabled).Once()
 		}, wantCode: http.StatusConflict, wantBody: "not enabled"},
-		{name: "nested thread runs in its channel", body: `{"channel_id":"th-2"}`, setup: func(pm *MockPluginManager) {
-			s.store.On("GetChannel", mock.Anything, "th-2").Return(&db.Channel{ChannelID: "th-2", ParentID: "wt-1", Worktree: true}, nil).Once()
-			s.store.On("GetChannel", mock.Anything, "wt-1").Return(&db.Channel{ChannelID: "wt-1", ParentID: "ch-1", Worktree: true}, nil).Once()
-			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: "/src/app"}, nil).Once()
-			pm.On("RunAction", mock.Anything, "echo", "ping", ch, manual).Return(nil).Once()
-		}, wantCode: http.StatusAccepted, wantBody: `{"channel_id":"ch-1"}`},
-		{name: "parent lookup fails", body: `{"channel_id":"th-1"}`, setup: func(*MockPluginManager) {
-			s.store.On("GetChannel", mock.Anything, "th-1").Return(&db.Channel{ChannelID: "th-1", ParentID: "ch-1"}, nil).Once()
-			s.store.On("GetChannel", mock.Anything, "ch-1").Return(nil, errors.New("boom")).Once()
-		}, wantCode: http.StatusInternalServerError, wantBody: "boom"},
+		{name: "a worktree thread runs in its worktree", body: `{"channel_id":"th-2"}`, setup: func(pm *MockPluginManager) {
+			s.store.On("GetChannel", mock.Anything, "th-2").Return(&db.Channel{ChannelID: "th-2", ParentID: "ch-1", DirPath: "/src/app/.worktrees/wt", Worktree: true}, nil).Once()
+			pm.On("RunAction", mock.Anything, "echo", "ping", runtime.Channel{ID: "th-2", DirPath: "/src/app/.worktrees/wt"}, manual).Return(nil).Once()
+		}, wantCode: http.StatusAccepted, wantBody: `{"channel_id":"th-2"}`},
 		{name: "plugin fails", body: `{"channel_id":"ch-1"}`, setup: func(pm *MockPluginManager) {
 			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: "/src/app"}, nil).Once()
 			pm.On("RunAction", mock.Anything, "echo", "ping", ch, manual).Return(errors.New("starting the plugin: unhealthy")).Once()
@@ -345,7 +338,7 @@ func (s *ServerSuite) TestPluginX() {
 		wantType string
 	}{
 		{name: "post", method: "POST", target: "/api/plugins/echo/x/quiz/answer?channel_id=th-1&q=1", body: `{"a":2}`, setup: func(pm *MockPluginManager) {
-			pm.On("X", mock.Anything, "echo", ch, proxy.XRequest{
+			pm.On("X", mock.Anything, "echo", runtime.Channel{ID: "th-1", DirPath: "/src/app"}, proxy.XRequest{
 				Method: "POST", Path: "quiz/answer", RawQuery: "q=1", ContentType: "application/json", Body: []byte(`{"a":2}`),
 			}).Return(&proxy.XResponse{Status: http.StatusCreated, ContentType: "application/json", Body: []byte(`{"ok":true}`)}, nil).Once()
 		}, wantCode: http.StatusCreated, wantBody: `{"ok":true}`, wantType: "application/json"},
@@ -375,7 +368,7 @@ func (s *ServerSuite) TestPluginX() {
 			pm := s.pluginRoutes()
 			s.mux.HandleFunc("/api/plugins/{plugin}/x/{path...}", s.srv.handlePluginX)
 			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: "/src/app"}, nil).Maybe()
-			s.store.On("GetChannel", mock.Anything, "th-1").Return(&db.Channel{ChannelID: "th-1", ParentID: "ch-1"}, nil).Maybe()
+			s.store.On("GetChannel", mock.Anything, "th-1").Return(&db.Channel{ChannelID: "th-1", ParentID: "ch-1", DirPath: "/src/app"}, nil).Maybe()
 			s.store.On("GetChannel", mock.Anything, "ghost").Return(nil, nil).Maybe()
 			if tt.setup != nil {
 				tt.setup(pm)
