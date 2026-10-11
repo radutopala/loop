@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   fetchPluginAgent,
+  fetchPluginAudit,
   fetchPluginList,
   fetchPlugins,
   inspectPlugin,
@@ -152,6 +153,20 @@ describe("plugin management", () => {
     await expect(call()).rejects.toThrow(/^pull failed$/);
     fetchMock.mockResolvedValueOnce(new Response("", { status: 400, statusText: "Bad Request" }));
     await expect(call()).rejects.toThrow(fallback);
+  });
+});
+
+describe("fetchPluginAudit", () => {
+  it("lists the gate's records", async () => {
+    const entry = { ts: "2026-10-10T09:00:00Z", kind: "exec", target: "/bin/sh", rule_id: "default", decision: "deny" };
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ entries: [entry] })));
+    await expect(fetchPluginAudit("echo", "ch/1", 50)).resolves.toEqual([entry]);
+    expect(fetchMock.mock.calls[0]![0]).toBe("http://localhost:8222/api/plugins/echo/channels/ch%2F1/audit?limit=50");
+  });
+
+  it("explains a failure", async () => {
+    fetchMock.mockResolvedValueOnce(new Response("", { status: 500, statusText: "Internal Server Error" }));
+    await expect(fetchPluginAudit("echo", "ch")).rejects.toThrow("Failed to read the plugin's gate audit: Internal Server Error");
   });
 });
 

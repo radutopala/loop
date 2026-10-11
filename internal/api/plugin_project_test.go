@@ -6,10 +6,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	"github.com/radutopala/loop/internal/agentgate"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/plugin"
@@ -185,6 +187,30 @@ func (s *ServerSuite) TestStopPluginContainer() {
 	rec = s.testRequest("POST", "/api/plugins/ghost/channels/ch-1/stop", "")
 	require.Equal(s.T(), http.StatusNotFound, rec.Code)
 	require.Contains(s.T(), rec.Body.String(), "plugin ghost is not installed")
+}
+
+func (s *ServerSuite) TestPluginAudit() {
+	pm := s.pluginRoutes()
+	pm.On("List", mock.Anything).Return([]*db.PluginState{{PluginID: "echo"}}, nil)
+	ts := time.Date(2026, 10, 10, 9, 0, 0, 0, time.UTC)
+	pm.On("Audit", "echo", "ch-1", 200).Return([]agentgate.AuditEntry{{Ts: ts, Kind: "exec", Target: "/bin/sh", RuleID: "default", Decision: "deny"}}, nil).Once()
+	rec := s.testRequest("GET", "/api/plugins/echo/channels/ch-1/audit", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	require.JSONEq(s.T(), `{"entries":[{"ts":"2026-10-10T09:00:00Z","kind":"exec","target":"/bin/sh","rule_id":"default","decision":"deny"}]}`, rec.Body.String())
+
+	pm.On("Audit", "echo", "ch-1", 20).Return(nil, errors.New("disk gone")).Once()
+	rec = s.testRequest("GET", "/api/plugins/echo/channels/ch-1/audit?limit=20", "")
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "disk gone")
+
+	rec = s.testRequest("GET", "/api/plugins/ghost/channels/ch-1/audit", "")
+	require.Equal(s.T(), http.StatusNotFound, rec.Code)
+}
+
+func (s *ServerSuite) TestPluginAuditDisabled() {
+	s.mux.HandleFunc("GET /api/plugins/{plugin}/channels/{channel}/audit", s.srv.handlePluginAudit)
+	rec := s.testRequest("GET", "/api/plugins/echo/channels/ch-1/audit", "")
+	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
 }
 
 func (s *ServerSuite) TestStopPluginContainerListFails() {

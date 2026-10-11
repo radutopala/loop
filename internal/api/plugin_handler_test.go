@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	"github.com/radutopala/loop/internal/agentgate"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/plugin"
@@ -72,6 +73,16 @@ func (m *MockPluginManager) Stop(ctx context.Context, pluginID, channelID string
 	m.Called(ctx, pluginID, channelID)
 }
 
+func (m *MockPluginManager) Audit(pluginID, channelID string, limit int) ([]agentgate.AuditEntry, error) {
+	args := m.Called(pluginID, channelID, limit)
+	v, _ := args.Get(0).([]agentgate.AuditEntry)
+	return v, args.Error(1)
+}
+
+func (m *MockPluginManager) StopChannel(ctx context.Context, channelID string) bool {
+	return m.Called(ctx, channelID).Bool(0)
+}
+
 func (m *MockPluginManager) StopDisabled(ctx context.Context) bool {
 	return m.Called(ctx).Bool(0)
 }
@@ -89,6 +100,7 @@ func (s *ServerSuite) pluginRoutes() *MockPluginManager {
 	s.mux.HandleFunc("DELETE /api/plugins/{id}", s.srv.handleRemovePlugin)
 	s.mux.HandleFunc("POST /api/plugins/{plugin}/actions/{action}", s.srv.handleRunPluginAction)
 	s.mux.HandleFunc("POST /api/plugins/{plugin}/channels/{channel}/stop", s.srv.handleStopPluginContainer)
+	s.mux.HandleFunc("GET /api/plugins/{plugin}/channels/{channel}/audit", s.srv.handlePluginAudit)
 	s.T().Cleanup(func() { pm.AssertExpectations(s.T()) })
 	return pm
 }

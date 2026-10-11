@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/radutopala/loop/internal/agentgate"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/plugin"
 	"github.com/radutopala/loop/internal/plugin/proxy"
@@ -69,6 +70,12 @@ func (m *mockRuntime) StopIdle(ctx context.Context) bool {
 
 func (m *mockRuntime) Running() []runtime.Running {
 	return m.Called().Get(0).([]runtime.Running)
+}
+
+func (m *mockRuntime) Audit(pluginID, channelID string, limit int) ([]agentgate.AuditEntry, error) {
+	args := m.Called(pluginID, channelID, limit)
+	v, _ := args.Get(0).([]agentgate.AuditEntry)
+	return v, args.Error(1)
 }
 
 func (m *mockRuntime) Remove(ctx context.Context, pluginID, channelID string, purge bool) error {
@@ -128,6 +135,28 @@ func (s *ServiceSuite) TestList() {
 	got, err := s.svc.List(s.ctx)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), states, got)
+}
+
+func (s *ServiceSuite) TestAudit() {
+	want := []agentgate.AuditEntry{{Kind: "exec", Target: "/bin/sh", Decision: "deny"}}
+	s.runtime.On("Audit", "echo", "ch1", 50).Return(want, nil).Once()
+	got, err := s.svc.Audit("echo", "ch1", 50)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), want, got)
+}
+
+func (s *ServiceSuite) TestStopChannel() {
+	s.runtime.On("Running").Return([]runtime.Running{
+		{PluginID: "echo", Channel: runtime.Channel{ID: "ch1"}},
+		{PluginID: "quiz", Channel: runtime.Channel{ID: "ch1"}},
+		{PluginID: "echo", Channel: runtime.Channel{ID: "ch2"}},
+	}).Once()
+	s.runtime.On("Stop", s.ctx, "echo", "ch1").Once()
+	s.runtime.On("Stop", s.ctx, "quiz", "ch1").Once()
+	require.True(s.T(), s.svc.StopChannel(s.ctx, "ch1"))
+
+	s.runtime.On("Running").Return([]runtime.Running{{PluginID: "echo", Channel: runtime.Channel{ID: "ch2"}}}).Once()
+	require.False(s.T(), s.svc.StopChannel(s.ctx, "ch1"))
 }
 
 func (s *ServiceSuite) TestStopDisabled() {

@@ -8,6 +8,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/radutopala/loop/internal/agentgate"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/plugin"
 	"github.com/radutopala/loop/internal/plugin/proxy"
@@ -56,6 +57,7 @@ type Runtime interface {
 	Remove(ctx context.Context, pluginID, channelID string, purge bool) error
 	StopIdle(ctx context.Context) bool
 	Running() []runtime.Running
+	Audit(pluginID, channelID string, limit int) ([]agentgate.AuditEntry, error)
 }
 
 // ServiceStore is the store the Service reads plugins and their containers
@@ -114,6 +116,25 @@ func (s *Service) Containers(ctx context.Context, pluginID string) ([]*db.Plugin
 // Stop stops the plugin's container in channelID, keeping its data.
 func (s *Service) Stop(ctx context.Context, pluginID, channelID string) {
 	s.runtime.Stop(ctx, pluginID, channelID)
+}
+
+// Audit returns up to limit of the gate's records for the plugin's
+// container in channelID, newest first.
+func (s *Service) Audit(pluginID, channelID string, limit int) ([]agentgate.AuditEntry, error) {
+	return s.runtime.Audit(pluginID, channelID, limit)
+}
+
+// StopChannel stops every plugin's container in channelID, keeping their
+// data, and reports whether it stopped any.
+func (s *Service) StopChannel(ctx context.Context, channelID string) bool {
+	stopped := false
+	for _, r := range s.runtime.Running() {
+		if r.Channel.ID == channelID {
+			s.runtime.Stop(ctx, r.PluginID, channelID)
+			stopped = true
+		}
+	}
+	return stopped
 }
 
 // StopDisabled stops the containers whose channel's project no longer

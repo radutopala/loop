@@ -110,6 +110,25 @@ func (s *Server) pluginInstalled(w http.ResponseWriter, r *http.Request, id stri
 	return false
 }
 
+// handlePluginAudit returns the gate's records for a plugin's container in
+// a channel, newest first: up to ?limit= of them, 200 by default.
+func (s *Server) handlePluginAudit(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.plugins, pluginsDisabled) {
+		return
+	}
+	id := r.PathValue("plugin")
+	if !s.pluginInstalled(w, r, id) {
+		return
+	}
+	_, limit := parsePaging(r, 0, 200)
+	entries, err := s.plugins.Audit(id, r.PathValue("channel"), limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeHTTPJSON(w, http.StatusOK, map[string]any{"entries": entries}, s.logger)
+}
+
 // handleStopPluginContainer stops a plugin's container in a channel,
 // keeping its data; the next call starts it again.
 func (s *Server) handleStopPluginContainer(w http.ResponseWriter, r *http.Request) {

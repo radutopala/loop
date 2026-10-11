@@ -327,6 +327,12 @@ func (s *ServerSuite) TestDeleteChannelCleansUpContainers() {
 	browserMgr.On("StopBrowser", mock.Anything, "t-1").Return("", nil)
 	browserMgr.On("RemoveProfile", mock.Anything, "t-1").Return(nil)
 
+	// The plugin runtime stops its own containers.
+	pm := new(MockPluginManager)
+	pm.On("StopChannel", mock.Anything, "ch-1").Return(true).Once()
+	pm.On("StopChannel", mock.Anything, "t-1").Return(false).Once()
+	s.srv.SetPluginManager(pm)
+
 	s.srv.containerRegistry = reg
 	s.srv.containerKeepAlive = 5 * time.Minute
 	s.srv.browser.setProviders(browserMgr, s.srv.browser.hostProvider)
@@ -338,6 +344,7 @@ func (s *ServerSuite) TestDeleteChannelCleansUpContainers() {
 	require.Equal(s.T(), http.StatusNoContent, w.Code)
 	reg.AssertExpectations(s.T())
 	browserMgr.AssertExpectations(s.T())
+	pm.AssertExpectations(s.T())
 }
 
 // TestDeleteThreadMarksContainers covers a deleted thread's containers:
@@ -358,11 +365,15 @@ func (s *ServerSuite) TestDeleteThreadMarksContainers() {
 	reg.On("ScheduleRemove", "agent-t1", time.Minute).Return()
 	s.srv.containerRegistry = reg
 	s.srv.containerKeepAlive = time.Minute
+	pm := new(MockPluginManager)
+	pm.On("StopChannel", mock.Anything, "thread-1").Return(true).Once()
+	s.srv.SetPluginManager(pm)
 
 	rec := s.testRequest("DELETE", "/api/threads/thread-1", "")
 
 	require.Equal(s.T(), http.StatusNoContent, rec.Code)
 	reg.AssertExpectations(s.T())
+	pm.AssertExpectations(s.T())
 }
 
 // TestDeleteThreadHiddenContainerRemoveError covers a hidden thread's

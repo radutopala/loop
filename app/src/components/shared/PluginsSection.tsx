@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  fetchPluginAudit,
   fetchPluginList,
   inspectPlugin,
   installPlugin,
   PLUGINS_CHANGED,
+  type PluginAuditEntry,
   type PluginCandidate,
   type PluginInfo,
   type PluginList,
@@ -208,31 +210,81 @@ function InstallFlow({ colors, initialImage, dev: initialDev, onDone, onCancel }
   );
 }
 
+/** The gate's records for a plugin's container in a channel: what it
+ *  denied, newest first. */
+function AuditList({ colors, pluginId, channelId }: { colors: ColorPalette; pluginId: string; channelId: string }) {
+  const [entries, setEntries] = useState<PluginAuditEntry[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const load = useCallback(() => {
+    setError(null);
+    fetchPluginAudit(pluginId, channelId)
+      .then(setEntries)
+      .catch((e) => setError(errText(e)));
+  }, [pluginId, channelId]);
+  useEffect(load, [load]);
+
+  if (error) return <div style={{ color: colors.error, margin: "4px 0 8px 12px" }}>{error}</div>;
+  if (!entries) return <div style={{ color: colors.textDim, margin: "4px 0 8px 12px" }}>Loading…</div>;
+  const denied = entries.filter((e) => e.decision !== "allow").length;
+  return (
+    <div data-testid="plugin-audit" style={{ margin: "4px 0 8px 12px", paddingLeft: 8, borderLeft: `2px solid ${colors.border}` }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, color: colors.textDim }}>
+        <span style={{ flex: 1 }}>{entries.length === 0 ? "The gate hasn't denied anything here." : `${entries.length} record${entries.length === 1 ? "" : "s"}, ${denied} denied`}</span>
+        <button onClick={load} style={buttonStyle(colors)}>
+          Refresh
+        </button>
+      </div>
+      {entries.length > 0 && (
+        <div style={{ maxHeight: 220, overflowY: "auto", marginTop: 4, fontFamily: fonts.mono, fontSize: 11 }}>
+          {entries.map((e, i) => (
+            <div key={`${e.ts}-${i}`} data-testid="plugin-audit-entry" style={{ display: "flex", gap: 8, whiteSpace: "nowrap" }}>
+              <span style={{ color: colors.textDim }}>{new Date(e.ts).toLocaleString()}</span>
+              <span style={{ color: e.decision === "allow" ? colors.active : colors.error }}>{e.decision}</span>
+              <span>{e.kind}</span>
+              <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis" }} title={e.target}>
+                {e.target}
+              </span>
+              {e.rule_id && <span style={{ color: colors.textDim }}>{e.rule_id}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ContainerRows({ colors, plugin, only, onError }: { colors: ColorPalette; plugin: PluginInfo; only?: string; onError: (e: string) => void }) {
+  const [audit, setAudit] = useState<string | null>(null);
   const rows = (plugin.containers ?? []).filter((c) => !only || c.channel_id === only);
   if (rows.length === 0) return <div style={{ color: colors.textDim }}>No containers yet; one starts in a channel when the plugin is first used there.</div>;
   return (
     <>
       {rows.map((c) => (
-        <div key={c.channel_id} data-testid="plugin-container" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.last_error || c.channel_id}>
-            {c.channel_name || c.channel_id}
-            {c.last_error && <span style={{ color: colors.error }}> · {c.last_error}</span>}
-          </span>
-          <span style={{ color: c.status === "running" ? colors.active : colors.textDim }}>{c.status}</span>
-          {c.status === "running" && (
-            <button
-              data-testid="plugin-container-stop"
-              onClick={() =>
-                stopPluginContainer(plugin.id, c.channel_id)
-                  .then(() => window.dispatchEvent(new Event(PLUGINS_CHANGED)))
-                  .catch((e) => onError(errText(e)))
-              }
-              style={buttonStyle(colors)}
-            >
-              Stop
+        <div key={c.channel_id}>
+          <div data-testid="plugin-container" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.last_error || c.channel_id}>
+              {c.channel_name || c.channel_id}
+              {c.last_error && <span style={{ color: colors.error }}> · {c.last_error}</span>}
+            </span>
+            <span style={{ color: c.status === "running" ? colors.active : colors.textDim }}>{c.status}</span>
+            {c.status === "running" && (
+              <button
+                data-testid="plugin-container-stop"
+                onClick={() =>
+                  stopPluginContainer(plugin.id, c.channel_id)
+                    .then(() => window.dispatchEvent(new Event(PLUGINS_CHANGED)))
+                    .catch((e) => onError(errText(e)))
+                }
+                style={buttonStyle(colors)}
+              >
+                Stop
+              </button>
+            )}
+            <button data-testid="plugin-container-audit" onClick={() => setAudit(audit === c.channel_id ? null : c.channel_id)} style={buttonStyle(colors)}>
+              {audit === c.channel_id ? "Hide gate audit" : "Gate audit"}
             </button>
-          )}
+          </div>
+          {audit === c.channel_id && <AuditList colors={colors} pluginId={plugin.id} channelId={c.channel_id} />}
         </div>
       ))}
     </>

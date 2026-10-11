@@ -190,6 +190,7 @@ type Manager struct {
 	getuid   func() int
 	getgid   func() int
 	chown    func(name string, uid, gid int) error
+	open     func(name string) (io.ReadCloser, error)
 	now      func() time.Time
 	readRand func([]byte) (int, error)
 	// healthy reports whether the container serving url answers its health
@@ -218,6 +219,7 @@ func NewManager(api DockerClient, store Store, tokens Tokens, cfg Config, logger
 		getuid:       os.Getuid,
 		getgid:       os.Getgid,
 		chown:        os.Chown,
+		open:         func(name string) (io.ReadCloser, error) { return os.Open(name) },
 		now:          time.Now,
 		readRand:     rand.Read,
 		healthy:      func(ctx context.Context, url, secret string) bool { return checkHealth(ctx, client, url, secret) },

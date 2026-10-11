@@ -131,6 +131,25 @@ export async function stopPluginContainer(id: string, channelId: string): Promis
   if (!res.ok) throw await failure(res, "stop the plugin");
 }
 
+/** A record of the gate a plugin's container runs under: a decision it
+ *  made, a deny unless the owner's policy says to log every one. */
+export interface PluginAuditEntry {
+  ts: string;
+  kind: string;
+  target: string;
+  rule_id: string;
+  decision: string;
+  event?: string;
+  prompted_who?: string;
+}
+
+/** The gate's records for a plugin's container in a channel, newest first. */
+export async function fetchPluginAudit(id: string, channelId: string, limit = 200): Promise<PluginAuditEntry[]> {
+  const res = await apiFetch(`${getApiUrl()}/api/plugins/${encodeURIComponent(id)}/channels/${encodeURIComponent(channelId)}/audit?limit=${limit}`);
+  if (!res.ok) throw await failure(res, "read the plugin's gate audit");
+  return (await res.json()).entries;
+}
+
 /** A plugin's hidden thread in a channel, where its agent runs run. */
 export interface PluginAgent {
   /** Unset until the plugin starts its first run there. */
