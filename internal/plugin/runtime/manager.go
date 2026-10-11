@@ -61,6 +61,18 @@ type Tokens interface {
 	Revoke(containerID string) error
 }
 
+// Registry lists plugin containers among Loop's other containers.
+type Registry interface {
+	Register(info *container.ContainerInfo) *container.ContainerInfo
+	Unregister(containerID string)
+}
+
+// noRegistry lists plugin containers nowhere.
+type noRegistry struct{}
+
+func (noRegistry) Register(info *container.ContainerInfo) *container.ContainerInfo { return info }
+func (noRegistry) Unregister(string)                                               {}
+
 // Plugin is an installed plugin: its manifest and the image it runs, pinned
 // to its digest.
 type Plugin struct {
@@ -168,6 +180,7 @@ type Manager struct {
 	store     Store
 	tokens    Tokens
 	imageGate container.ImageGate
+	registry  Registry
 	cfg       Config
 	logger    *slog.Logger
 
@@ -198,6 +211,7 @@ func NewManager(api DockerClient, store Store, tokens Tokens, cfg Config, logger
 		api:          api,
 		store:        store,
 		tokens:       tokens,
+		registry:     noRegistry{},
 		cfg:          cfg,
 		logger:       logger,
 		getenv:       os.Getenv,
@@ -212,6 +226,11 @@ func NewManager(api DockerClient, store Store, tokens Tokens, cfg Config, logger
 		running:      map[key]*instance{},
 		failures:     map[key]*failure{},
 	}
+}
+
+// SetRegistry lists the containers the Manager runs in registry.
+func (m *Manager) SetRegistry(registry Registry) {
+	m.registry = registry
 }
 
 // SetImageGate makes container creation wait out builds of a plugin's image.
@@ -269,6 +288,7 @@ func (m *Manager) Ensure(ctx context.Context, p Plugin, ch Channel) (Endpoint, e
 	m.running[k] = inst
 	delete(m.failures, k)
 	m.mu.Unlock()
+	m.registry.Register(&container.ContainerInfo{ContainerID: inst.containerID, ChannelID: ch.ID, Type: container.ContainerTypePlugin, ContainerName: ContainerName(id, ch.ID)})
 	m.upsert(ctx, &db.PluginContainer{PluginID: id, ChannelID: ch.ID, ContainerID: inst.containerID, HostPort: inst.hostPort, Status: db.PluginContainerRunning})
 	return inst.endpoint, nil
 }
@@ -636,6 +656,7 @@ func (m *Manager) discard(ctx context.Context, k key, containerID string) {
 	if err := m.api.ContainerRemove(ctx, containerID, containertypes.RemoveOptions{Force: true}); err != nil {
 		m.logger.Warn("removing plugin container", "container_id", containerID, "error", err)
 	}
+	m.registry.Unregister(containerID)
 	if err := m.tokens.Revoke(containerID); err != nil {
 		m.logger.Warn("revoking plugin token", "container_id", containerID, "error", err)
 	}

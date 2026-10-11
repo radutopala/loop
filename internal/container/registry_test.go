@@ -218,6 +218,16 @@ func (s *ContainerRegistrySuite) TestRunningChannelIDsExcludesPendingRemoval() {
 	require.Contains(s.T(), ids, "ch-2")
 }
 
+func (s *ContainerRegistrySuite) TestRunningChannelIDsExcludesPlugins() {
+	s.broadcaster.On("BroadcastContainerRegistered", mock.Anything).Times(2)
+
+	s.reg.Register(&ContainerInfo{ContainerID: "c1", ChannelID: "ch-1", Type: ContainerTypeAgent})
+	s.reg.Register(&ContainerInfo{ContainerID: "c2", ChannelID: "ch-2", Type: ContainerTypePlugin})
+
+	ids := s.reg.RunningChannelIDs(context.Background())
+	require.Equal(s.T(), map[string]struct{}{"ch-1": {}}, ids)
+}
+
 func (s *ContainerRegistrySuite) TestRunningChannelIDsEmpty() {
 	ids := s.reg.RunningChannelIDs(context.Background())
 	require.NotNil(s.T(), ids)
@@ -485,6 +495,16 @@ func (s *ContainerRegistrySuite) TestReconcileRemovesStaleEntries() {
 	require.NotNil(s.T(), s.reg.Get("c2"))
 	require.Nil(s.T(), s.reg.Get("c1"))
 	require.Nil(s.T(), s.reg.Get("c3"))
+}
+
+func (s *ContainerRegistrySuite) TestReconcileKeepsPlugins() {
+	s.broadcaster.On("BroadcastContainerRegistered", mock.Anything).Once()
+
+	s.reg.Register(&ContainerInfo{ContainerID: "p1", ChannelID: "ch-1", Type: ContainerTypePlugin})
+
+	removed := s.reg.Reconcile(map[string]struct{}{})
+	require.Empty(s.T(), removed)
+	require.NotNil(s.T(), s.reg.Get("p1"))
 }
 
 func (s *ContainerRegistrySuite) TestReconcileNoStaleEntries() {

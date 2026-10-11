@@ -311,6 +311,7 @@ func (s *ServerSuite) TestDeleteChannelCleansUpContainers() {
 			{ContainerID: "agent-c1", ChannelID: "ch-1", Type: container.ContainerTypeAgent},
 			{ContainerID: "shell-c2", ChannelID: "ch-1", Type: container.ContainerTypeShell},
 			{ContainerID: "chrome-c3", ChannelID: "ch-1", Type: container.ContainerTypeChrome},
+			{ContainerID: "plugin-c4", ChannelID: "ch-1", Type: container.ContainerTypePlugin},
 			{ContainerID: "done-c4", ChannelID: "ch-1", Type: container.ContainerTypeAgent, Status: container.ContainerStatusPendingRemoval},
 			{ContainerID: "shell-t1", ChannelID: "t-1", Type: container.ContainerTypeShell},
 		},
@@ -350,6 +351,7 @@ func (s *ServerSuite) TestDeleteThreadMarksContainers() {
 		{ContainerID: "shell-t1", ChannelID: "thread-1", Type: container.ContainerTypeShell},
 		{ContainerID: "agent-t1", ChannelID: "thread-1", Type: container.ContainerTypeAgent},
 		{ContainerID: "done-t1", ChannelID: "thread-1", Type: container.ContainerTypeAgent, Status: container.ContainerStatusPendingRemoval},
+		{ContainerID: "plugin-t1", ChannelID: "thread-1", Type: container.ContainerTypePlugin}, // the plugin runtime's
 		{ContainerID: "shell-other", ChannelID: "thread-2", Type: container.ContainerTypeShell},
 	}}
 	reg.On("ScheduleRemove", "shell-t1", time.Minute).Return()
@@ -488,6 +490,7 @@ func (s *ServerSuite) TestDeleteThreadStopsHiddenThreads() {
 	reg := &mockContainerManager{byChannel: []*container.ContainerInfo{
 		{ContainerID: "agent-l1", ChannelID: "learn-1", Type: container.ContainerTypeAgent},
 		{ContainerID: "chrome-l1", ChannelID: "learn-1", Type: container.ContainerTypeChrome}, // the BrowserProvider's
+		{ContainerID: "plugin-l1", ChannelID: "learn-1", Type: container.ContainerTypePlugin}, // the plugin runtime's
 		{ContainerID: "agent-e1", ChannelID: "explain-1", Type: container.ContainerTypeAgent},
 	}}
 	reg.On("RemoveContainer", mock.Anything, "agent-l1").Return(nil)

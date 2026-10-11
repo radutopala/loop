@@ -789,7 +789,7 @@ func (a *app) serve() error {
 		chromeProvider.SetImageGate(lifecycleMgr)
 	}
 
-	plug, err := a.newPlugins(ctx, cfg, reloadConfig, store, auth.agents, lifecycleMgr, logger)
+	plug, err := a.newPlugins(ctx, cfg, reloadConfig, store, auth.agents, lifecycleMgr, containerReg, logger)
 	if err != nil {
 		return err
 	}

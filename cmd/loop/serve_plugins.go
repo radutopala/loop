@@ -67,7 +67,7 @@ func (p *plugins) stop(ctx context.Context) {
 
 // newPlugins builds the plugin system, or returns nil when plugins are
 // disabled. It removes the plugin containers an earlier daemon left behind.
-func (a *app) newPlugins(ctx context.Context, cfg *config.Config, reload func() (*config.Config, error), store db.Store, tokens *apiauth.Registry, gate container.ImageGate, logger *slog.Logger) (*plugins, error) {
+func (a *app) newPlugins(ctx context.Context, cfg *config.Config, reload func() (*config.Config, error), store db.Store, tokens *apiauth.Registry, gate container.ImageGate, registry runtime.Registry, logger *slog.Logger) (*plugins, error) {
 	if !cfg.Plugins.Enabled {
 		return nil, nil
 	}
@@ -89,6 +89,7 @@ func (a *app) newPlugins(ctx context.Context, cfg *config.Config, reload func() 
 		Gate:        a.pluginGate(cfg, cli),
 	}, logger)
 	mgr.SetImageGate(gate)
+	mgr.SetRegistry(registry)
 	if err := mgr.RemoveLeftovers(ctx); err != nil {
 		logger.Warn("removing leftover plugin containers", "error", err)
 	}

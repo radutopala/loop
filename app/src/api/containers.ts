@@ -3,7 +3,7 @@ import { apiFetch, getApiUrl } from "./api";
 export interface ContainerInfo {
   container_id: string;
   channel_id: string;
-  type: "agent" | "shell" | "chrome";
+  type: "agent" | "shell" | "chrome" | "plugin";
   status: "running" | "stopped" | "pending-removal";
   container_name?: string;
   created_at: string;

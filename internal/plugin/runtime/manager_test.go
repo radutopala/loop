@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/plugin"
 )
@@ -489,6 +490,30 @@ func (s *ManagerSuite) expectStopped(ch, cid string) {
 func (s *ManagerSuite) expectDiscardErr(cid string, err error) {
 	s.docker.On("ContainerRemove", s.ctx, cid, containertypes.RemoveOptions{Force: true}).Return(err).Once()
 	s.tokens.On("Revoke", cid).Return(err).Once()
+}
+
+// TestRegistryListsContainers lists a started container among Loop's
+// containers, as a plugin one, until it's stopped.
+func (s *ManagerSuite) TestRegistryListsContainers() {
+	reg := container.NewRegistry(nil)
+	s.m.SetRegistry(reg)
+	s.expectStart("c1", "40001")
+	s.expectRow(db.PluginContainerRunning, "c1", 40001, "")
+	_, err := s.m.Ensure(s.ctx, s.plugin, s.channel)
+	require.NoError(s.T(), err)
+
+	list := reg.List()
+	require.Len(s.T(), list, 1)
+	require.Equal(s.T(), "c1", list[0].ContainerID)
+	require.Equal(s.T(), "ch1", list[0].ChannelID)
+	require.Equal(s.T(), container.ContainerTypePlugin, list[0].Type)
+	require.Equal(s.T(), container.ContainerStatusRunning, list[0].Status)
+	require.Equal(s.T(), name, list[0].ContainerName)
+
+	s.expectDiscard("c1")
+	s.expectRow(db.PluginContainerStopped, "", 0, "")
+	s.m.Stop(s.ctx, "cogtest", "ch1")
+	require.Empty(s.T(), reg.List())
 }
 
 func (s *ManagerSuite) TestStop() {

@@ -26,6 +26,7 @@ const TYPE_LABELS: Record<string, string> = {
   agent: "Agent",
   shell: "Shell",
   chrome: "Chrome",
+  plugin: "Plugin",
 };
 
 function statusColor(status: string, colors: ColorPalette): string {
