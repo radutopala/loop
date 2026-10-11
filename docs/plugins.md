@@ -188,6 +188,11 @@ build one with `make build-linux` and point `plugins.gate_binary` at it.
 
 ## Loop → plugin
 
+Both halves of the contract are published as OpenAPI 3.1 specs in the SDK module:
+[`plugin-contract-v1.yaml`](../pluginsdk/openapi/plugin-contract-v1.yaml) for what a plugin
+serves, and [`plugin-api-v1.yaml`](../pluginsdk/openapi/plugin-api-v1.yaml) for the Plugin API.
+Loop's and the SDK's tests check the routes, capabilities and success statuses against them.
+
 Every request carries `Authorization: Bearer <contents of LOOP_PLUGIN_SECRET_FILE>`; refuse
 any other.
 

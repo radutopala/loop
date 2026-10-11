@@ -1,0 +1,256 @@
+openapi: 3.1.0
+info:
+  title: Loop plugin contract
+  version: "1"
+  description: |
+    The API a plugin container serves to Loop: the Loop → plugin half of
+    the plugin contract. The other half, which Loop serves, is
+    plugin-api-v1.yaml.
+
+    Every request carries the secret Loop hands the container; refuse any
+    other. Each call has a time limit: 10 s for actions and run ends, 60 s
+    for tools, 30 s for /x. Loop reads at most 1 MB of a tool's answer and
+    8 MB of an /x answer.
+
+    A plugin may answer errors in any form; Loop keeps the start of the
+    body as the error's text.
+servers:
+  - url: "http://{container}:{port}"
+    description: The plugin's container, on LOOP_PLUGIN_PORT.
+    variables:
+      container:
+        default: localhost
+      port:
+        default: "8080"
+security:
+  - pluginSecret: []
+tags:
+  - name: lifecycle
+    description: Health and the end of agent runs.
+  - name: actions
+    description: The manifest's actions.
+  - name: tools
+    description: The tools the plugin's agents call.
+  - name: ui
+    description: The plugin's own API for its panels.
+paths:
+  /healthz:
+    get:
+      operationId: health
+      tags: [lifecycle]
+      summary: Readiness
+      description: |
+        Loop polls it after starting the container, until it answers 200.
+      responses:
+        "200":
+          description: The plugin is ready.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /actions/{action}:
+    post:
+      operationId: runAction
+      tags: [actions]
+      summary: Run an action
+      description: |
+        Runs one of the manifest's actions, by hand or on a schedule.
+        Answer at once and do the work afterwards; report how it went
+        through events. Loop takes any 2xx as accepted.
+      parameters:
+        - name: action
+          in: path
+          required: true
+          description: An action id from the manifest.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActionRequest"
+      responses:
+        "202":
+          description: The action was accepted.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: The plugin has no such action.
+  /tools/{tool}:
+    post:
+      operationId: callTool
+      tags: [tools]
+      summary: Call a tool
+      description: |
+        A call from one of the plugin's agents. Loop has checked `input`
+        against the tool's input_schema. The agent sees `content` as the
+        tool's result, and `is_error` lets it retry.
+      parameters:
+        - name: tool
+          in: path
+          required: true
+          description: A tool name from the manifest.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ToolRequest"
+      responses:
+        "200":
+          description: The tool's result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ToolResult"
+        "400":
+          description: The body isn't JSON.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: The plugin has no such tool.
+  /runs/{run_id}/done:
+    post:
+      operationId: runDone
+      tags: [lifecycle]
+      summary: An agent run ended
+      description: |
+        Sent when an agent run the plugin started through `POST /runs`
+        ends. A run going on while Loop stopped is sent as failed once Loop
+        is back. Loop takes any 2xx as received.
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          description: The run_id `POST /runs` answered.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RunDoneRequest"
+      responses:
+        "204":
+          description: Received.
+        "400":
+          description: The body isn't JSON.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500":
+          description: The plugin failed to take it.
+  /x/{path}:
+    description: |
+      The plugin's own API for its panels. Loop proxies calls from the
+      panel with their method, query, Content-Type and body, and passes
+      the answer back with its status, Content-Type and body. Any method
+      is proxied; the common ones are listed. `path` may span several
+      segments.
+    get:
+      operationId: xGet
+      tags: [ui]
+      parameters: [{ $ref: "#/components/parameters/XPath" }]
+      responses: { default: { $ref: "#/components/responses/XAnswer" } }
+    post:
+      operationId: xPost
+      tags: [ui]
+      parameters: [{ $ref: "#/components/parameters/XPath" }]
+      requestBody: { $ref: "#/components/requestBodies/XBody" }
+      responses: { default: { $ref: "#/components/responses/XAnswer" } }
+    put:
+      operationId: xPut
+      tags: [ui]
+      parameters: [{ $ref: "#/components/parameters/XPath" }]
+      requestBody: { $ref: "#/components/requestBodies/XBody" }
+      responses: { default: { $ref: "#/components/responses/XAnswer" } }
+    patch:
+      operationId: xPatch
+      tags: [ui]
+      parameters: [{ $ref: "#/components/parameters/XPath" }]
+      requestBody: { $ref: "#/components/requestBodies/XBody" }
+      responses: { default: { $ref: "#/components/responses/XAnswer" } }
+    delete:
+      operationId: xDelete
+      tags: [ui]
+      parameters: [{ $ref: "#/components/parameters/XPath" }]
+      responses: { default: { $ref: "#/components/responses/XAnswer" } }
+components:
+  securitySchemes:
+    pluginSecret:
+      type: http
+      scheme: bearer
+      description: |
+        The contents of LOOP_PLUGIN_SECRET_FILE. Loop makes a new one each
+        time it starts the container.
+  parameters:
+    XPath:
+      name: path
+      in: path
+      required: true
+      description: The rest of the path after /x/, cleaned so it can't leave /x.
+      schema: { type: string }
+  requestBodies:
+    XBody:
+      description: Whatever the panel sends, up to 8 MB.
+      content:
+        "*/*":
+          schema: {}
+  responses:
+    Unauthorized:
+      description: The request doesn't carry the secret.
+    XAnswer:
+      description: The plugin's answer, passed to the panel as is, up to 8 MB.
+      content:
+        "*/*":
+          schema: {}
+  schemas:
+    Health:
+      type: object
+      required: [api, version]
+      properties:
+        api:
+          type: string
+          description: The Plugin API major the plugin speaks.
+          const: "1"
+        version:
+          type: string
+          description: The plugin's version.
+    ActionRequest:
+      type: object
+      required: [trigger]
+      properties:
+        trigger:
+          type: string
+          enum: [manual, schedule]
+        task_id:
+          type: integer
+          format: int64
+          description: The scheduled task that ran the action; left out for a manual run.
+    ToolRequest:
+      type: object
+      required: [run_id, agent, thread_id, input]
+      properties:
+        run_id: { type: string }
+        agent:
+          type: string
+          description: The agent id from the manifest.
+        thread_id:
+          type: string
+          description: The hidden thread the run runs in.
+        input:
+          description: The tool's input, valid against its input_schema.
+    ToolResult:
+      type: object
+      required: [content, is_error]
+      properties:
+        content: { type: string }
+        is_error: { type: boolean }
+    RunDoneRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [done, failed]
+        error:
+          type: string
+          description: Why the run failed.

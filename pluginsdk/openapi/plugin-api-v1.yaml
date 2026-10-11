@@ -1,0 +1,492 @@
+openapi: 3.1.0
+info:
+  title: Loop Plugin API
+  version: "1"
+  description: |
+    The API Loop serves to plugin containers: the plugin → Loop half of the
+    plugin contract. The other half, which plugins serve, is
+    plugin-contract-v1.yaml.
+
+    A plugin's container serves one channel, and its token is held to it,
+    so no route takes a channel id. Within a major version, changes are
+    additive only.
+
+    Every route checks that the caller is a plugin whose state lets it run,
+    and that the owner approved the capability the route needs.
+    `x-loop-capabilities` lists the capabilities that grant a route; a route
+    without it needs none.
+
+    Errors answer with a plain-text message.
+servers:
+  - url: "{loop_api_url}/api/plugin/v1"
+    description: LOOP_API_URL, from the container environment.
+    variables:
+      loop_api_url:
+        default: http://host.docker.internal:8222
+security:
+  - pluginToken: []
+tags:
+  - name: channel
+    description: The channel the container serves.
+  - name: runs
+    description: Agent runs the plugin starts.
+  - name: ui
+    description: The plugin's panels and the desktop.
+paths:
+  /channel:
+    get:
+      operationId: getChannel
+      tags: [channel]
+      summary: The plugin's channel
+      description: |
+        The channel the container serves, with the plugin's settings in the
+        channel's project.
+      responses:
+        "200":
+          description: The channel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Channel"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/ChannelNotFound" }
+        "409": { $ref: "#/components/responses/NotRunnable" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { $ref: "#/components/responses/PluginsDisabled" }
+  /channel/files:
+    get:
+      operationId: getFile
+      tags: [channel]
+      summary: Read a file of the channel's dir
+      description: |
+        Reads a file of the channel's dir, or a range of its lines. Lines
+        are 1-based and inclusive, and both bounds are optional; without
+        them `content` is the whole file. Paths under `.git/` are refused,
+        and so is a file the channel's agents may not read under agentgate.
+      x-loop-capabilities: [files.read]
+      parameters:
+        - name: path
+          in: query
+          required: true
+          description: The file's path, relative to the channel's dir.
+          schema: { type: string }
+        - name: start
+          in: query
+          description: The first line; missing is the first line of the file.
+          schema: { type: integer, minimum: 1 }
+        - name: end
+          in: query
+          description: The last line; missing, or past the end, is the last line of the file.
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: The file, or the lines asked for.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/File"
+        "400":
+          description: |
+            A missing, absolute or escaping path, a path under `.git/`, a
+            directory, a bound that isn't a positive integer, or a range
+            past the end of the file.
+          content: { text/plain: { schema: { type: string } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: |
+            The caller isn't a plugin, files.read isn't approved, the
+            plugin isn't installed, or agentgate denies reading the path.
+          content: { text/plain: { schema: { type: string } } }
+        "404":
+          description: The file, or the channel, isn't there.
+          content: { text/plain: { schema: { type: string } } }
+        "409": { $ref: "#/components/responses/NotRunnable" }
+        "413":
+          description: The file is over 5 MB.
+          content: { text/plain: { schema: { type: string } } }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { $ref: "#/components/responses/PluginsDisabled" }
+  /channel/tree:
+    get:
+      operationId: getTree
+      tags: [channel]
+      summary: List the channel's files
+      description: |
+        The files git tracks in the channel's dir, or every file outside
+        `.git/` when it isn't a git repository. Files agentgate keeps from
+        the channel's agents are left out. At most 50,000 files.
+      x-loop-capabilities: [files.read]
+      parameters:
+        - name: glob
+          in: query
+          description: A glob matched against each path or its base name.
+          schema: { type: string }
+      responses:
+        "200":
+          description: The files.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tree"
+        "400":
+          description: The glob is invalid.
+          content: { text/plain: { schema: { type: string } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/ChannelNotFound" }
+        "409": { $ref: "#/components/responses/NotRunnable" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { $ref: "#/components/responses/PluginsDisabled" }
+  /channel/git/recent:
+    get:
+      operationId: getGitRecent
+      tags: [channel]
+      summary: Recent git history
+      description: |
+        The commits of the last days in the channel's repository, merges
+        left out, at most 500, newest first. Files are the ones those
+        commits changed, most-changed first.
+      x-loop-capabilities: [git.read]
+      parameters:
+        - name: days
+          in: query
+          description: How many days back to look. More than 365 counts as 365.
+          schema: { type: integer, minimum: 1, maximum: 365, default: 14 }
+      responses:
+        "200":
+          description: The history.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GitRecent"
+        "400":
+          description: days isn't a positive integer.
+          content: { text/plain: { schema: { type: string } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/ChannelNotFound" }
+        "409":
+          description: |
+            git log failed, for instance because the dir isn't a git
+            repository, or the plugin can't run.
+          content: { text/plain: { schema: { type: string } } }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { $ref: "#/components/responses/PluginsDisabled" }
+  /channel/quality/hotspots:
+    get:
+      operationId: getHotspots
+      tags: [channel]
+      summary: The most complex functions
+      description: |
+        The latest quality scan's functions, worst first, a page at a time.
+      x-loop-capabilities: [quality.read]
+      parameters:
+        - name: limit
+          in: query
+          description: How many functions to return. More than 100 counts as 100.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: offset
+          in: query
+          description: How many functions to skip.
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: A page of functions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Hotspots"
+        "400":
+          description: limit or offset is invalid.
+          content: { text/plain: { schema: { type: string } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/ChannelNotFound" }
+        "409": { $ref: "#/components/responses/NotRunnable" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501":
+          description: Plugins, or quality scans, are disabled.
+          content: { text/plain: { schema: { type: string } } }
+        "503":
+          description: The channel has no quality scan yet.
+          content: { text/plain: { schema: { type: string } } }
+  /runs:
+    post:
+      operationId: startRun
+      tags: [runs]
+      summary: Start an agent run
+      description: |
+        Starts a run of one of the plugin's agents in the channel's hidden
+        `plugin:<id>` thread, with a fresh session. The agent gets the
+        tools the manifest gives it. When the run ends, Loop calls the
+        plugin's `POST /runs/{run_id}/done`.
+
+        A read-only agent needs agent.readonly or agent.write; any other
+        agent needs agent.write. Each plugin starts at most
+        `plugins.daily_runs` runs in any 24 hours, across all channels.
+      x-loop-capabilities: [agent.readonly, agent.write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RunRequest"
+      responses:
+        "202":
+          description: The run is queued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Run"
+        "400":
+          description: The body isn't JSON, or agent or prompt is missing.
+          content: { text/plain: { schema: { type: string } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: The caller isn't a plugin, or the capability the agent needs isn't approved.
+          content: { text/plain: { schema: { type: string } } }
+        "404":
+          description: The manifest has no such agent, the plugin isn't installed, or the channel is gone.
+          content: { text/plain: { schema: { type: string } } }
+        "409": { $ref: "#/components/responses/NotRunnable" }
+        "429":
+          description: The plugin used up its daily runs.
+          content: { text/plain: { schema: { type: string } } }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { $ref: "#/components/responses/PluginsDisabled" }
+  /events:
+    post:
+      operationId: sendEvent
+      tags: [ui]
+      summary: Send an event to the plugin's panels
+      description: |
+        Sends an event to the plugin's panels in the channel, as `type`.
+        The body is capped at 64 KB.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Event"
+      responses:
+        "204":
+          description: The event was sent.
+        "400":
+          description: The body isn't JSON, is over 64 KB, or has no type.
+          content: { text/plain: { schema: { type: string } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/ChannelNotFound" }
+        "409": { $ref: "#/components/responses/NotRunnable" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { $ref: "#/components/responses/PluginsDisabled" }
+  /notify:
+    post:
+      operationId: notify
+      tags: [ui]
+      summary: Show a desktop notification
+      description: |
+        Asks the app to show a desktop notification from the plugin. Five a
+        minute per plugin. The body is capped at 64 KB.
+      x-loop-capabilities: [ui.notify]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Notification"
+      responses:
+        "204":
+          description: The notification was sent.
+        "400":
+          description: The body isn't JSON, is over 64 KB, or has no title.
+          content: { text/plain: { schema: { type: string } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/ChannelNotFound" }
+        "409": { $ref: "#/components/responses/NotRunnable" }
+        "429":
+          description: Too many notifications.
+          headers:
+            Retry-After:
+              description: Seconds until the next one is allowed.
+              schema: { type: integer }
+          content: { text/plain: { schema: { type: string } } }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { $ref: "#/components/responses/PluginsDisabled" }
+components:
+  securitySchemes:
+    pluginToken:
+      type: http
+      scheme: bearer
+      description: |
+        The contents of LOOP_PLUGIN_TOKEN_FILE. Loop replaces the token when
+        it restarts, so read the file on every call.
+  responses:
+    Unauthorized:
+      description: The token is missing or unknown.
+      content: { text/plain: { schema: { type: string } } }
+    Forbidden:
+      description: |
+        The caller isn't a plugin, the capability the route needs isn't
+        approved, or the plugin isn't installed.
+      content: { text/plain: { schema: { type: string } } }
+    ChannelNotFound:
+      description: The channel the token was issued for is gone.
+      content: { text/plain: { schema: { type: string } } }
+    NotRunnable:
+      description: The plugin is installed but can't run, for instance because it is disabled.
+      content: { text/plain: { schema: { type: string } } }
+    InternalError:
+      description: Loop failed to answer.
+      content: { text/plain: { schema: { type: string } } }
+    PluginsDisabled:
+      description: Plugins are disabled.
+      content: { text/plain: { schema: { type: string } } }
+  schemas:
+    Channel:
+      type: object
+      required: [id, name, dir_path, platform, model, effort, settings]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        dir_path:
+          type: string
+          description: The channel's dir on the host. It isn't mounted in the container.
+        platform: { type: string }
+        model:
+          type: string
+          description: The channel's model; empty when it uses the default.
+        effort:
+          type: string
+          description: The channel's effort; empty when it uses the default.
+        settings:
+          type: object
+          description: The plugin's settings in the channel's project.
+          additionalProperties: true
+    File:
+      type: object
+      required: [path, content, start, end, total_lines]
+      properties:
+        path: { type: string }
+        content: { type: string }
+        start:
+          type: integer
+          description: The first line returned; 0 for an empty file.
+        end:
+          type: integer
+          description: The last line returned.
+        total_lines: { type: integer }
+    Tree:
+      type: object
+      required: [files]
+      properties:
+        files:
+          type: array
+          items: { type: string }
+          description: Paths relative to the channel's dir, with forward slashes.
+        truncated:
+          type: boolean
+          description: Set when there were more files than Loop lists.
+    Commit:
+      type: object
+      required: [sha, subject, author, time]
+      properties:
+        sha: { type: string }
+        subject: { type: string }
+        author: { type: string }
+        time:
+          type: string
+          format: date-time
+          description: The author date.
+    FileChurn:
+      type: object
+      required: [path, commits]
+      properties:
+        path: { type: string }
+        commits:
+          type: integer
+          description: How many of the commits changed the file.
+    GitRecent:
+      type: object
+      required: [commits, files]
+      properties:
+        commits:
+          type: array
+          items: { $ref: "#/components/schemas/Commit" }
+        files:
+          type: array
+          items: { $ref: "#/components/schemas/FileChurn" }
+    Hotspot:
+      type: object
+      required: [path, name, start_line, cyclomatic, cognitive, max_nesting, param_count, loc, score]
+      properties:
+        path: { type: string }
+        name: { type: string }
+        start_line: { type: integer }
+        cyclomatic: { type: integer }
+        cognitive: { type: integer }
+        max_nesting: { type: integer }
+        param_count: { type: integer }
+        loc: { type: integer }
+        score: { type: number }
+    Hotspots:
+      type: object
+      required: [score, raw, total_functions, over_threshold, histogram, functions, offset, limit, returned]
+      properties:
+        score:
+          type: number
+          description: The complexity score of the whole scan.
+        raw: { type: number }
+        total_functions: { type: integer }
+        over_threshold: { type: integer }
+        histogram:
+          type: object
+          description: Per dimension, how many functions are ok, warn and crit.
+          additionalProperties:
+            type: object
+            additionalProperties: { type: integer }
+        functions:
+          type: array
+          items: { $ref: "#/components/schemas/Hotspot" }
+        offset: { type: integer }
+        limit: { type: integer }
+        returned: { type: integer }
+    RunRequest:
+      type: object
+      required: [agent, prompt]
+      properties:
+        agent:
+          type: string
+          description: An agent id from the manifest.
+        prompt:
+          type: string
+          description: The whole prompt.
+        model:
+          type: string
+          description: The model; missing is the channel's.
+        effort:
+          type: string
+          description: The effort; missing is the channel's.
+    Run:
+      type: object
+      required: [run_id, thread_id]
+      properties:
+        run_id: { type: string }
+        thread_id:
+          type: string
+          description: The hidden thread the run runs in.
+    Event:
+      type: object
+      required: [type]
+      properties:
+        type: { type: string, minLength: 1 }
+        data:
+          description: Any JSON, passed to the panels as is.
+    Notification:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string, minLength: 1 }
+        body: { type: string }
