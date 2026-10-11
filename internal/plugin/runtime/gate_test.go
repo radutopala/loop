@@ -54,7 +54,7 @@ func (s *ManagerSuite) TestEnsureUnderGate() {
 	require.Nil(s.T(), cfg.Cmd)
 	require.Subset(s.T(), cfg.Env, []string{
 		"LOOP_GATE_ENABLED=1", "LOOP_GATE_POLICY_FILE=/etc/loop/gate-policy.json", "LOOP_GATE_APPROVER=deny",
-		"LOOP_HOST_USER=1000:1000", "LOOP_GATE_AUDIT_DIR=/var/log/loop-gate", "LOOP_GATE_AUDIT_RETENTION_DAYS=7",
+		"LOOP_HOST_USER=1000:1001", "LOOP_GATE_AUDIT_DIR=/var/log/loop-gate", "LOOP_GATE_AUDIT_RETENTION_DAYS=7",
 		"LOOP_GATE_AUDIT_VERBOSE=1", "LOOP_PLUGIN_ID=cogtest",
 	})
 	require.Equal(s.T(), []string{"no-new-privileges", "seccomp=unconfined"}, host.SecurityOpt)
@@ -140,7 +140,11 @@ func (s *ManagerSuite) TestEnsureGateFailures() {
 		{name: "binary", binErr: boom, setup: func() {}, wantErr: "finding the plugin gate: boom"},
 		{name: "inspect", setup: inspect(image.InspectResponse{}, boom), wantErr: "inspecting the plugin image: boom"},
 		{name: "no config", setup: inspect(image.InspectResponse{}, nil), wantErr: "the plugin image has no USER to run as"},
-		{name: "no user", setup: inspect(imageInfo("", []string{"/plugin"}, nil), nil), wantErr: "the plugin image has no USER to run as"},
+		{name: "no user", setup: func() {
+			// Without a daemon uid, as on Windows, the image's USER is used.
+			s.m.getuid = func() int { return -1 }
+			inspect(imageInfo("", []string{"/plugin"}, nil), nil)()
+		}, wantErr: "the plugin image has no USER to run as"},
 		{name: "no command", setup: inspect(imageInfo("1000", nil, nil), nil), wantErr: "the plugin image has no command"},
 		{name: "gate dir", setup: blockRoot("gate"), wantErr: "creating the plugin gate dir"},
 		{name: "audit dir", setup: blockRoot("audit"), wantErr: "creating the plugin gate audit dir"},

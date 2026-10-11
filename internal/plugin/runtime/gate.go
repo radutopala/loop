@@ -68,7 +68,8 @@ func pluginGatePolicy(gate *plugin.Gate) gatePolicyFile {
 }
 
 // applyGate makes cfg run p's image command under agentgate: as root, in
-// loop syscallwrap, which drops to the image's user before running it.
+// loop syscallwrap, which drops to cfg's user, or the image's when cfg has
+// none, before running it.
 func (m *Manager) applyGate(ctx context.Context, p Plugin, ch Channel, cfg *containertypes.Config, host *containertypes.HostConfig) error {
 	bin, err := m.cfg.Gate.Binary(ctx)
 	if err != nil {
@@ -78,7 +79,11 @@ func (m *Manager) applyGate(ctx context.Context, p Plugin, ch Channel, cfg *cont
 	if err != nil {
 		return fmt.Errorf("inspecting the plugin image: %w", err)
 	}
-	if info.Config == nil || info.Config.User == "" {
+	user := cfg.User
+	if user == "" && info.Config != nil {
+		user = info.Config.User
+	}
+	if info.Config == nil || user == "" {
 		return errors.New("the plugin image has no USER to run as")
 	}
 	argv := append(append([]string{}, info.Config.Entrypoint...), info.Config.Cmd...)
@@ -108,7 +113,7 @@ func (m *Manager) applyGate(ctx context.Context, p Plugin, ch Channel, cfg *cont
 		"LOOP_GATE_ENABLED=1",
 		"LOOP_GATE_POLICY_FILE="+gatePolicy,
 		"LOOP_GATE_APPROVER=deny",
-		"LOOP_HOST_USER="+info.Config.User,
+		"LOOP_HOST_USER="+user,
 		"LOOP_GATE_AUDIT_DIR="+gateAuditDir,
 		"LOOP_GATE_AUDIT_RETENTION_DAYS="+strconv.Itoa(m.cfg.Gate.AuditRetentionDays),
 	)

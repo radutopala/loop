@@ -425,19 +425,44 @@ func (s *InstallerSuite) TestDiscard() {
 
 func (s *InstallerSuite) TestRemove() {
 	c := s.candidate("new")
+	dir := filepath.Join(s.root, "echo")
+	for _, d := range []string{"data/ch1", "audit/ch1", "run/ch1"} {
+		require.NoError(s.T(), os.MkdirAll(filepath.Join(dir, d), 0o755))
+	}
+
+	// Without purge, the plugin's data and audit log stay.
 	s.store.On("DeletePluginState", s.ctx, "echo").Return(nil).Once()
-	require.NoError(s.T(), s.in.Remove(s.ctx, "echo"))
+	require.NoError(s.T(), s.in.Remove(s.ctx, "echo", false))
 	require.NoDirExists(s.T(), c.Dir)
-	require.NoDirExists(s.T(), filepath.Join(s.root, "echo"))
+	require.NoDirExists(s.T(), filepath.Join(dir, "run"))
+	require.DirExists(s.T(), filepath.Join(dir, "data", "ch1"))
+	require.DirExists(s.T(), filepath.Join(dir, "audit", "ch1"))
+
+	// With purge, they go too.
+	s.store.On("DeletePluginState", s.ctx, "echo").Return(nil).Once()
+	require.NoError(s.T(), s.in.Remove(s.ctx, "echo", true))
+	require.NoDirExists(s.T(), dir)
+
+	// A plugin that never extracted anything has nothing to delete.
+	s.store.On("DeletePluginState", s.ctx, "echo").Return(nil).Once()
+	require.NoError(s.T(), s.in.Remove(s.ctx, "echo", false))
 
 	s.store.On("DeletePluginState", s.ctx, "echo").Return(errors.New("boom")).Once()
-	require.EqualError(s.T(), s.in.Remove(s.ctx, "echo"), "deleting the plugin: boom")
+	require.EqualError(s.T(), s.in.Remove(s.ctx, "echo", false), "deleting the plugin: boom")
+}
+
+func (s *InstallerSuite) TestRemoveFails() {
+	// An extracted file that can't be deleted stays.
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(s.root, "echo", "images"), 0o755))
+	s.in.removeAll = func(string) error { return errors.New("busy") }
+	s.store.On("DeletePluginState", s.ctx, "echo").Return(nil)
+	require.EqualError(s.T(), s.in.Remove(s.ctx, "echo", false), "deleting the extracted plugin: busy")
+	require.EqualError(s.T(), s.in.Remove(s.ctx, "echo", true), "deleting the plugin dir: busy")
 
 	// A file where the plugins root should be can't be descended into.
 	s.in.root = filepath.Join(s.T().TempDir(), "file")
 	require.NoError(s.T(), os.WriteFile(s.in.root, nil, 0o644))
-	s.store.On("DeletePluginState", s.ctx, "echo").Return(nil).Once()
-	require.ErrorContains(s.T(), s.in.Remove(s.ctx, "echo"), "deleting the extracted plugin")
+	require.ErrorContains(s.T(), s.in.Remove(s.ctx, "echo", false), "reading the plugin dir")
 }
 
 func (m *mockStore) ListPluginStates(ctx context.Context) ([]*db.PluginState, error) {

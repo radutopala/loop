@@ -10,11 +10,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
@@ -136,6 +138,8 @@ func (s *ManagerSuite) SetupTest() {
 	s.now = time.Date(2026, 10, 10, 9, 0, 0, 0, time.UTC)
 	s.m.now = func() time.Time { return s.now }
 	s.m.getenv = func(string) string { return "" }
+	s.m.getuid = func() int { return 1000 }
+	s.m.getgid = func() int { return 1001 }
 	s.m.readRand = func(b []byte) (int, error) { return len(b), nil }
 	s.healthy = true
 	s.m.healthy = func(context.Context, string, string) bool { return s.healthy }
@@ -215,7 +219,7 @@ func (s *ManagerSuite) TestEnsureStartsThenReuses() {
 	cfg := call.Arguments.Get(1).(*containertypes.Config)
 	host := call.Arguments.Get(2).(*containertypes.HostConfig)
 	require.Equal(s.T(), s.plugin.Image, cfg.Image)
-	require.Equal(s.T(), map[string]string{LabelKey: "cogtest", channelLabelKey: "ch1"}, cfg.Labels)
+	require.Equal(s.T(), map[string]string{LabelKey: "cogtest", channelLabelKey: "ch1", rootLabelKey: s.m.rootLabel()}, cfg.Labels)
 	require.Subset(s.T(), cfg.Env, []string{
 		"LOOP_PLUGIN_ID=cogtest", "LOOP_CHANNEL_ID=ch1", "LOOP_CHANNEL_DIR=/work", "LOOP_PLUGIN_PORT=8080",
 		"LOOP_API_URL=http://host.docker.internal:8222", "LOOP_PLUGIN_TOKEN_FILE=/run/loop/plugin-token",
@@ -227,11 +231,14 @@ func (s *ManagerSuite) TestEnsureStartsThenReuses() {
 	require.Equal(s.T(), int64(512<<20), host.Memory)
 	require.Equal(s.T(), int64(cpuPeriod), host.CPUQuota)
 	require.Equal(s.T(), int64(pidsLimit), *host.PidsLimit)
+	require.Equal(s.T(), "1000:1001", cfg.User)
 	run := filepath.Join(s.m.cfg.Root, "cogtest", "run", "ch1")
-	require.Equal(s.T(), name, host.Mounts[0].Source)
-	require.Equal(s.T(), "/data", host.Mounts[0].Target)
-	require.Equal(s.T(), run, host.Mounts[1].Source)
-	require.True(s.T(), host.Mounts[1].ReadOnly)
+	data := filepath.Join(s.m.cfg.Root, "cogtest", "data", "ch1")
+	require.DirExists(s.T(), data)
+	require.Equal(s.T(), []mount.Mount{
+		{Type: mount.TypeBind, Source: data, Target: "/data"},
+		{Type: mount.TypeBind, Source: run, Target: "/run/loop", ReadOnly: true},
+	}, host.Mounts)
 
 	tok, err := os.ReadFile(filepath.Join(run, tokenFile))
 	require.NoError(s.T(), err)
@@ -307,6 +314,21 @@ func (s *ManagerSuite) TestEnsureFailures() {
 			s.expectNoLeftover()
 			require.NoError(s.T(), os.WriteFile(filepath.Join(s.m.cfg.Root, "cogtest"), nil, 0o644))
 		}, wantErr: "creating the plugin run dir"},
+		{name: "root daemon", setup: func() {
+			s.expectNoLeftover()
+			s.m.getuid = func() int { return 0 }
+		}, wantErr: "the Loop daemon's user, which must not be root"},
+		{name: "data dir owner", setup: func() {
+			s.expectNoLeftover()
+			s.m.getuid = func() int { return 0 }
+			s.m.getenv = envOf(map[string]string{"LOOP_HOST_UID": "1000", "LOOP_HOST_GID": "1000"})
+			s.m.chown = func(string, int, int) error { return boom }
+		}, wantErr: "handing the plugin data dir to uid 1000: boom"},
+		{name: "data dir", setup: func() {
+			s.expectNoLeftover()
+			require.NoError(s.T(), os.MkdirAll(filepath.Join(s.m.cfg.Root, "cogtest"), 0o755))
+			require.NoError(s.T(), os.WriteFile(filepath.Join(s.m.cfg.Root, "cogtest", "data"), nil, 0o644))
+		}, wantErr: "creating the plugin data dir"},
 		{name: "secret", setup: func() {
 			s.expectNoLeftover()
 			s.m.readRand = func([]byte) (int, error) { return 0, boom }
@@ -499,22 +521,106 @@ func (s *ManagerSuite) TestRunIdleLoop() {
 	require.Empty(s.T(), s.m.running)
 }
 
+// envOf is a getenv over vars.
+func envOf(vars map[string]string) func(string) string {
+	return func(k string) string { return vars[k] }
+}
+
+func (s *ManagerSuite) TestEnsureUser() {
+	tests := []struct {
+		name      string
+		uid       int
+		env       map[string]string
+		wantUser  string
+		wantChown bool
+	}{
+		{name: "daemon's", uid: 1000, wantUser: "1000:1001"},
+		{name: "LOOP_HOST_UID", uid: 1000, env: map[string]string{"LOOP_HOST_UID": "2000", "LOOP_HOST_GID": "2001"}, wantUser: "2000:2001"},
+		{name: "half set", uid: 1000, env: map[string]string{"LOOP_HOST_UID": "2000"}, wantUser: "1000:1001"},
+		{name: "root daemon", uid: 0, env: map[string]string{"LOOP_HOST_UID": "2000", "LOOP_HOST_GID": "2001"}, wantUser: "2000:2001", wantChown: true},
+		{name: "windows", uid: -1},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			s.m.getuid = func() int { return tt.uid }
+			s.m.getenv = envOf(tt.env)
+			var chowned []any
+			s.m.chown = func(name string, uid, gid int) error {
+				chowned = []any{name, uid, gid}
+				return nil
+			}
+			s.expectStart("c1", "40001")
+			s.expectRow(db.PluginContainerRunning, "c1", 40001, "")
+			_, err := s.m.Ensure(s.ctx, s.plugin, s.channel)
+			require.NoError(s.T(), err)
+			cfg := s.docker.Calls[1].Arguments.Get(1).(*containertypes.Config)
+			require.Equal(s.T(), tt.wantUser, cfg.User)
+			if tt.wantChown {
+				require.Equal(s.T(), []any{filepath.Join(s.m.cfg.Root, "cogtest", "data", "ch1"), 2000, 2001}, chowned)
+			} else {
+				require.Nil(s.T(), chowned)
+			}
+			s.TearDownTest()
+		})
+	}
+}
+
+func (s *ManagerSuite) TestEnsureMountsTheChannelDir() {
+	tests := []struct {
+		name      string
+		readFiles bool
+		dirPath   string
+		want      bool
+	}{
+		{name: "files.read", readFiles: true, dirPath: "/work", want: true},
+		{name: "not approved", dirPath: "/work"},
+		{name: "no dir", readFiles: true},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			s.plugin.ReadFiles = tt.readFiles
+			s.channel.DirPath = tt.dirPath
+			s.expectNoLeftover()
+			s.docker.On("ContainerCreate", s.ctx, mock.Anything, mock.Anything, (*network.NetworkingConfig)(nil), (*ocispec.Platform)(nil), name).
+				Return(containertypes.CreateResponse{ID: "c1"}, nil).Once()
+			s.tokens.On("IssuePlugin", "c1", "ch1", tt.dirPath, "cogtest").Return("tok", nil).Once()
+			s.docker.On("ContainerStart", s.ctx, "c1", containertypes.StartOptions{}).Return(nil).Once()
+			s.docker.On("ContainerInspect", s.ctx, "c1").Return(running(true, "40001"), nil).Once()
+			s.expectRow(db.PluginContainerRunning, "c1", 40001, "")
+			_, err := s.m.Ensure(s.ctx, s.plugin, s.channel)
+			require.NoError(s.T(), err)
+			host := s.docker.Calls[1].Arguments.Get(2).(*containertypes.HostConfig)
+			channelDir := mount.Mount{Type: mount.TypeBind, Source: "/work", Target: "/work", ReadOnly: true}
+			if tt.want {
+				require.Contains(s.T(), host.Mounts, channelDir)
+			} else {
+				require.Len(s.T(), host.Mounts, 2)
+			}
+			s.TearDownTest()
+		})
+	}
+}
+
 func (s *ManagerSuite) TestRemove() {
 	run := filepath.Join(s.m.cfg.Root, "cogtest", "run", "ch1")
 	gate := filepath.Join(s.m.cfg.Root, "cogtest", "gate", "ch1")
 	audit := filepath.Join(s.m.cfg.Root, "cogtest", "audit", "ch1")
+	data := filepath.Join(s.m.cfg.Root, "cogtest", "data", "ch1")
 	require.NoError(s.T(), os.MkdirAll(gate, 0o755))
 	require.NoError(s.T(), os.MkdirAll(audit, 0o755))
 	s.startOne("ch1", "c1")
+	require.NoError(s.T(), os.WriteFile(filepath.Join(data, "plugin.db"), nil, 0o644))
 	s.m.failures[key{"cogtest", "ch1"}] = &failure{count: 1}
 	s.expectStopped("ch1", "c1")
 	s.expectNoLeftover()
 	s.store.On("DeletePluginContainer", s.ctx, "cogtest", "ch1").Return(nil).Once()
-	s.docker.On("VolumeRemove", s.ctx, name, true).Return(nil).Once()
 	require.NoError(s.T(), s.m.Remove(s.ctx, "cogtest", "ch1", true))
 	require.NoDirExists(s.T(), run)
 	require.NoDirExists(s.T(), gate)
 	require.NoDirExists(s.T(), audit)
+	require.NoDirExists(s.T(), data)
 	require.Empty(s.T(), s.m.failures)
 }
 
@@ -525,23 +631,35 @@ func (s *ManagerSuite) TestRemoveErrors() {
 	require.NoError(s.T(), os.WriteFile(filepath.Join(s.m.cfg.Root, "cogtest"), nil, 0o644))
 	s.docker.On("ContainerList", s.ctx, mock.Anything).Return(nil, boom).Once()
 	s.store.On("DeletePluginContainer", s.ctx, "cogtest", "ch1").Return(boom).Once()
-	s.docker.On("VolumeRemove", s.ctx, name, true).Return(boom).Once()
 	err := s.m.Remove(s.ctx, "cogtest", "ch1", true)
 	require.ErrorContains(s.T(), err, "removing the plugin run dir")
 	require.ErrorContains(s.T(), err, "removing the plugin gate dir")
 	require.ErrorContains(s.T(), err, "removing the plugin gate audit dir")
 	require.ErrorContains(s.T(), err, "deleting the plugin container row: boom")
-	require.ErrorContains(s.T(), err, "removing the plugin data volume: boom")
+	require.ErrorContains(s.T(), err, "removing the plugin data dir")
 }
 
-func (s *ManagerSuite) TestRemoveKeepsVolume() {
+func (s *ManagerSuite) TestRemoveKeepsData() {
+	data := filepath.Join(s.m.cfg.Root, "cogtest", "data", "ch1")
+	require.NoError(s.T(), os.MkdirAll(data, 0o700))
 	s.expectNoLeftover()
 	s.store.On("DeletePluginContainer", s.ctx, "cogtest", "ch1").Return(nil).Once()
 	require.NoError(s.T(), s.m.Remove(s.ctx, "cogtest", "ch1", false))
+	require.DirExists(s.T(), data)
 }
 
 func (s *ManagerSuite) TestRemoveLeftovers() {
-	s.docker.On("ContainerList", s.ctx, mock.MatchedBy(func(o containertypes.ListOptions) bool { return o.Filters.Get("label")[0] == LabelKey })).
+	// Only this daemon's containers are listed: another daemon sharing the
+	// Docker engine has another plugins root.
+	other := NewManager(nil, nil, nil, Config{Root: s.T().TempDir()}, nil)
+	require.NotEqual(s.T(), s.m.rootLabel(), other.rootLabel())
+	require.Len(s.T(), s.m.rootLabel(), 16)
+	labels := []string{LabelKey, rootLabelKey + "=" + s.m.rootLabel()}
+	s.docker.On("ContainerList", s.ctx, mock.MatchedBy(func(o containertypes.ListOptions) bool {
+		got := o.Filters.Get("label")
+		slices.Sort(got)
+		return o.All && slices.Equal(labels, got)
+	})).
 		Return([]containertypes.Summary{{ID: "old", Labels: map[string]string{LabelKey: "cogtest", channelLabelKey: "ch1"}}}, nil).Once()
 	s.expectDiscard("old")
 	s.expectRow(db.PluginContainerStopped, "", 0, "")

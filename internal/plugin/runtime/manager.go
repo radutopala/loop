@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -44,7 +45,6 @@ type DockerClient interface {
 	ContainerInspect(ctx context.Context, containerID string) (containertypes.InspectResponse, error)
 	ContainerList(ctx context.Context, options containertypes.ListOptions) ([]containertypes.Summary, error)
 	ContainerLogs(ctx context.Context, container string, options containertypes.LogsOptions) (io.ReadCloser, error)
-	VolumeRemove(ctx context.Context, volumeID string, force bool) error
 	ImageInspect(ctx context.Context, imageID string, opts ...client.ImageInspectOption) (image.InspectResponse, error)
 }
 
@@ -66,6 +66,9 @@ type Tokens interface {
 type Plugin struct {
 	Manifest *plugin.Manifest
 	Image    string
+	// ReadFiles mounts the channel's dir read-only at its own path: the
+	// owner approved files.read.
+	ReadFiles bool
 }
 
 // Channel is the channel a plugin container runs for.
@@ -88,11 +91,15 @@ const (
 	LabelKey = "loop-plugin"
 	// channelLabelKey labels a plugin container with its channel.
 	channelLabelKey = "loop-plugin-channel"
+	// rootLabelKey labels a plugin container with the daemon that owns it,
+	// by a hash of its plugins root, so daemons sharing a Docker engine
+	// leave each other's containers alone.
+	rootLabelKey = "loop-plugin-root"
 
 	// runDir is where a container's run dir, holding its token and secret,
 	// is mounted.
 	runDir = "/run/loop"
-	// dataDir is where a container's volume is mounted.
+	// dataDir is where a container's host data dir is mounted.
 	dataDir = "/data"
 	// tokenFile and secretFile are the names of the plugin's API token and
 	// the secret Loop's requests carry, in the run dir.
@@ -117,8 +124,8 @@ const (
 	maxLogBytes = 8 << 10
 )
 
-// ContainerName is the name of a plugin's container, and of its data volume,
-// in a channel.
+// ContainerName is the name of a plugin's container in a channel. Its data
+// volume, before plugin data moved to the host, had the same name.
 func ContainerName(pluginID, channelID string) string {
 	return "loop-plugin-" + pluginID + "-" + channelID
 }
@@ -166,7 +173,12 @@ type Manager struct {
 	cfg       Config
 	logger    *slog.Logger
 
-	getenv   func(string) string
+	getenv func(string) string
+	// getuid and getgid are the daemon's user, which plugin containers run
+	// as so they own their host data dir.
+	getuid   func() int
+	getgid   func() int
+	chown    func(name string, uid, gid int) error
 	now      func() time.Time
 	readRand func([]byte) (int, error)
 	// healthy reports whether the container serving url answers its health
@@ -191,6 +203,9 @@ func NewManager(api DockerClient, store Store, tokens Tokens, cfg Config, logger
 		cfg:          cfg,
 		logger:       logger,
 		getenv:       os.Getenv,
+		getuid:       os.Getuid,
+		getgid:       os.Getgid,
+		chown:        os.Chown,
 		now:          time.Now,
 		readRand:     rand.Read,
 		healthy:      func(ctx context.Context, url, secret string) bool { return checkHealth(ctx, client, url, secret) },
@@ -285,6 +300,23 @@ func (m *Manager) start(ctx context.Context, p Plugin, ch Channel) (*instance, e
 	if err := os.MkdirAll(run, 0o755); err != nil {
 		return nil, fmt.Errorf("creating the plugin run dir: %w", err)
 	}
+	uid, gid, ok := m.ids()
+	if ok && uid == 0 {
+		return nil, errors.New("plugin containers run as the Loop daemon's user, which must not be root; set LOOP_HOST_UID and LOOP_HOST_GID")
+	}
+	data := m.dataDir(id, ch.ID)
+	if err := os.MkdirAll(data, 0o700); err != nil {
+		return nil, fmt.Errorf("creating the plugin data dir: %w", err)
+	}
+	if ok && m.getuid() == 0 {
+		if err := m.chown(data, uid, gid); err != nil {
+			return nil, fmt.Errorf("handing the plugin data dir to uid %d: %w", uid, err)
+		}
+	}
+	user := ""
+	if ok {
+		user = fmt.Sprintf("%d:%d", uid, gid)
+	}
 	secret, err := m.newSecret()
 	if err != nil {
 		return nil, err
@@ -292,7 +324,8 @@ func (m *Manager) start(ctx context.Context, p Plugin, ch Channel) (*instance, e
 	memory, cpus := resources(p.Manifest.Resources)
 	cfg := &containertypes.Config{
 		Image:        p.Image,
-		Labels:       map[string]string{LabelKey: id, channelLabelKey: ch.ID},
+		User:         user,
+		Labels:       map[string]string{LabelKey: id, channelLabelKey: ch.ID, rootLabelKey: m.rootLabel()},
 		ExposedPorts: nat.PortSet{portKey: struct{}{}},
 		Env: append([]string{
 			"LOOP_PLUGIN_ID=" + id,
@@ -319,9 +352,12 @@ func (m *Manager) start(ctx context.Context, p Plugin, ch Channel) (*instance, e
 		},
 		PortBindings: nat.PortMap{portKey: []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: "0"}}},
 		Mounts: []mount.Mount{
-			{Type: mount.TypeVolume, Source: name, Target: dataDir},
+			{Type: mount.TypeBind, Source: data, Target: dataDir},
 			{Type: mount.TypeBind, Source: run, Target: runDir, ReadOnly: true},
 		},
+	}
+	if p.ReadFiles && ch.DirPath != "" {
+		host.Mounts = append(host.Mounts, mount.Mount{Type: mount.TypeBind, Source: ch.DirPath, Target: ch.DirPath, ReadOnly: true})
 	}
 	if m.cfg.Gate != nil {
 		if err := m.applyGate(ctx, p, ch, cfg, host); err != nil {
@@ -467,7 +503,7 @@ func (m *Manager) Reset(pluginID, channelID string) {
 	m.mu.Unlock()
 }
 
-// Stop removes a plugin's container in a channel, keeping its data volume.
+// Stop removes a plugin's container in a channel, keeping its data dir.
 // The next use starts a new one.
 func (m *Manager) Stop(ctx context.Context, pluginID, channelID string) {
 	defer m.lock(key{pluginID, channelID})()
@@ -488,7 +524,7 @@ func (m *Manager) stopLocked(ctx context.Context, pluginID, channelID string) {
 }
 
 // Remove removes a plugin's container in a channel, its run and gate dirs
-// and its row; purge also removes its data volume and gate audit log.
+// and its row; purge also removes its data dir and gate audit log.
 func (m *Manager) Remove(ctx context.Context, pluginID, channelID string, purge bool) error {
 	defer m.lock(key{pluginID, channelID})()
 	m.stopLocked(ctx, pluginID, channelID)
@@ -505,8 +541,8 @@ func (m *Manager) Remove(ctx context.Context, pluginID, channelID string, purge 
 		errs = append(errs, fmt.Errorf("deleting the plugin container row: %w", err))
 	}
 	if purge {
-		if err := m.api.VolumeRemove(ctx, ContainerName(pluginID, channelID), true); err != nil {
-			errs = append(errs, fmt.Errorf("removing the plugin data volume: %w", err))
+		if err := os.RemoveAll(m.dataDir(pluginID, channelID)); err != nil {
+			errs = append(errs, fmt.Errorf("removing the plugin data dir: %w", err))
 		}
 		if err := os.RemoveAll(m.auditDir(pluginID, channelID)); err != nil {
 			errs = append(errs, fmt.Errorf("removing the plugin gate audit dir: %w", err))
@@ -545,10 +581,14 @@ func (m *Manager) RunIdleLoop(ctx context.Context, interval time.Duration) {
 	}
 }
 
-// RemoveLeftovers removes the plugin containers an earlier daemon left
-// running. Their tokens died with it; each starts again on its next use.
+// RemoveLeftovers removes the plugin containers an earlier run of this
+// daemon left running. Their tokens died with it; each starts again on its
+// next use. Another daemon's containers are left alone.
 func (m *Manager) RemoveLeftovers(ctx context.Context) error {
-	list, err := m.api.ContainerList(ctx, containertypes.ListOptions{All: true, Filters: filters.NewArgs(filters.Arg("label", LabelKey))})
+	list, err := m.api.ContainerList(ctx, containertypes.ListOptions{All: true, Filters: filters.NewArgs(
+		filters.Arg("label", LabelKey),
+		filters.Arg("label", rootLabelKey+"="+m.rootLabel()),
+	)})
 	if err != nil {
 		return fmt.Errorf("listing plugin containers: %w", err)
 	}
@@ -558,6 +598,12 @@ func (m *Manager) RemoveLeftovers(ctx context.Context) error {
 		m.upsert(ctx, &db.PluginContainer{PluginID: c.Labels[LabelKey], ChannelID: c.Labels[channelLabelKey], Status: db.PluginContainerStopped})
 	}
 	return nil
+}
+
+// rootLabel is this daemon's rootLabelKey value.
+func (m *Manager) rootLabel() string {
+	sum := sha256.Sum256([]byte(m.cfg.Root))
+	return hex.EncodeToString(sum[:8])
 }
 
 // StopAll stops every running container, at shutdown.
@@ -629,6 +675,26 @@ func (m *Manager) upsert(ctx context.Context, c *db.PluginContainer) {
 	if err := m.store.UpsertPluginContainer(ctx, c); err != nil {
 		m.logger.Warn("recording plugin container", "plugin_id", c.PluginID, "channel_id", c.ChannelID, "error", err)
 	}
+}
+
+// dataDir is the host dir mounted at a plugin container's /data.
+func (m *Manager) dataDir(pluginID, channelID string) string {
+	return filepath.Join(m.cfg.Root, pluginID, "data", channelID)
+}
+
+// ids are the uid and gid plugin containers run as, so they own their host
+// data dir and can read the channel's dir: LOOP_HOST_UID and LOOP_HOST_GID
+// when both are set, as for the agent containers of a daemon running as
+// root, else the daemon's own. ok is false on Windows, which has neither;
+// Docker Desktop maps file permissions there, so the image's USER is used.
+func (m *Manager) ids() (uid, gid int, ok bool) {
+	u, uerr := strconv.Atoi(m.getenv("LOOP_HOST_UID"))
+	g, gerr := strconv.Atoi(m.getenv("LOOP_HOST_GID"))
+	if uerr == nil && gerr == nil && u >= 0 && g >= 0 {
+		return u, g, true
+	}
+	uid, gid = m.getuid(), m.getgid()
+	return uid, gid, uid >= 0
 }
 
 func (m *Manager) runDir(pluginID, channelID string) string {

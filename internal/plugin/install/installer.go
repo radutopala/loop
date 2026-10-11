@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -92,11 +93,13 @@ type Installer struct {
 	// loopVersion is this Loop's release, checked against a manifest's loop
 	// constraint; a dev build that isn't a version skips the check.
 	loopVersion string
+	// removeAll deletes a plugin's files on Remove.
+	removeAll func(path string) error
 }
 
 // NewInstaller returns an Installer keeping extracted plugins under root.
 func NewInstaller(docker DockerClient, store Store, root, loopVersion string) *Installer {
-	return &Installer{docker: docker, store: store, root: root, loopVersion: loopVersion}
+	return &Installer{docker: docker, store: store, root: root, loopVersion: loopVersion, removeAll: os.RemoveAll}
 }
 
 // Inspect pulls ref (unless dev, which uses a local image as is), extracts
@@ -205,8 +208,8 @@ func imageUID(user string) (int, error) {
 	return uid, nil
 }
 
-// checkData checks the image has a /data dir owned by uid, so the plugin
-// can write to the volume mounted there.
+// checkData checks the image has a /data dir owned by uid, where the
+// plugin's host data dir is mounted.
 func (in *Installer) checkData(ctx context.Context, containerID string, uid int) error {
 	body, _, err := in.docker.CopyFromContainer(ctx, containerID, dataDir)
 	if err != nil {
@@ -399,14 +402,31 @@ func (in *Installer) Discard(c *Candidate) {
 	}
 }
 
-// Remove forgets an installed plugin and deletes its dir. Its containers and
-// volumes are the runtime's to remove, first.
-func (in *Installer) Remove(ctx context.Context, pluginID string) error {
+// Remove forgets an installed plugin and deletes its dir, keeping its data
+// and gate audit dirs unless purge is set. Its containers are the runtime's
+// to remove, first.
+func (in *Installer) Remove(ctx context.Context, pluginID string, purge bool) error {
 	if err := in.store.DeletePluginState(ctx, pluginID); err != nil {
 		return fmt.Errorf("deleting the plugin: %w", err)
 	}
-	if err := os.RemoveAll(filepath.Join(in.root, pluginID)); err != nil {
-		return fmt.Errorf("deleting the extracted plugin: %w", err)
+	dir := filepath.Join(in.root, pluginID)
+	if purge {
+		if err := in.removeAll(dir); err != nil {
+			return fmt.Errorf("deleting the plugin dir: %w", err)
+		}
+		return nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("reading the plugin dir: %w", err)
+	}
+	for _, e := range entries {
+		if e.Name() == "data" || e.Name() == "audit" {
+			continue
+		}
+		if err := in.removeAll(filepath.Join(dir, e.Name())); err != nil {
+			return fmt.Errorf("deleting the extracted plugin: %w", err)
+		}
 	}
 	return nil
 }

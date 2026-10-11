@@ -78,7 +78,7 @@ Capabilities are approved by the owner at install and checked on every call:
 
 | Capability | Grants |
 |---|---|
-| `files.read` | `GET /channel/files`, `GET /channel/tree` |
+| `files.read` | `GET /channel/files`, `GET /channel/tree`, and the channel's dir mounted read-only |
 | `git.read` | `GET /channel/git/recent` |
 | `quality.read` | `GET /channel/quality/hotspots` |
 | `agent.readonly` | runs of read-only agents |
@@ -92,19 +92,26 @@ Capabilities are approved by the owner at install and checked on every call:
 | Variable | Value |
 |---|---|
 | `LOOP_PLUGIN_ID` | the plugin's id |
-| `LOOP_CHANNEL_ID`, `LOOP_CHANNEL_DIR` | the channel the container serves and its dir on the host (not mounted) |
+| `LOOP_CHANNEL_ID`, `LOOP_CHANNEL_DIR` | the channel the container serves and its dir on the host, mounted read-only at the same path once `files.read` is approved |
 | `LOOP_PLUGIN_PORT` | the port to serve on |
 | `LOOP_API_URL` | Loop's API, for the Plugin API |
 | `LOOP_PLUGIN_TOKEN_FILE` | the plugin token for the Plugin API |
 | `LOOP_PLUGIN_SECRET_FILE` | the secret Loop sends to the plugin |
-| `LOOP_DATA_DIR` | `/data`, a volume per channel that outlives the container |
+| `LOOP_DATA_DIR` | `/data`, the host dir `~/.loop/plugins/<id>/data/<channel>/`, which outlives the container |
 
-The container is started when first needed and stopped when idle; keep state in `/data`.
+The container is started when first needed and stopped when idle; keep state in `/data`. It runs
+as the daemon's user, so the files it writes there belong to you on the host. A daemon running as
+root, in a container, names the user with `LOOP_HOST_UID` and `LOOP_HOST_GID`; plugin containers
+never run as root. Removing the plugin keeps the files; `--purge` deletes them.
+
+The channel's dir is the working tree of the channel's checkout, on whatever branch it has, with
+uncommitted changes. Threads use their channel's container, so worktree threads' branches aren't
+seen.
 
 ## Agentgate
 
 While `gates.agentgate.enabled` is on, a plugin container runs its image's entrypoint and command
-under `loop syscallwrap`, which starts as root, drops to the image's `USER` and traps the
+under `loop syscallwrap`, which starts as root, drops to the daemon's user and traps the
 plugin's file, exec and unix-socket syscalls. Nobody is there to answer a prompt, so whatever the
 policy doesn't allow is denied. The policy is the manifest's `gate` rules first, then Loop's
 baseline:
@@ -183,6 +190,12 @@ So a bundle ships everything it needs, uses script files, and gets its data thro
 A plugin approved for `ui.panel` adds its panels to the workspace's add-pane menus, in split and
 canvas layouts, after the built-in panels. A `singleton` panel can be shown once per layout. A
 pane in a thread, however deeply nested, talks to the plugin's container of the thread's channel.
+
+Once the plugin has started an agent run in the project, its panes show an **agent** label at the
+right of their header. It opens the agent view over the layout, as the Learn view opens: the panel
+on the left half, the run's chat on the right, and the logo on their seam, which moves while a run
+runs. The label closes it again. The panel isn't reloaded on the way. The chat is read-only: only
+the plugin starts runs in its thread, each in a new session of its own.
 
 ### Bridge
 

@@ -141,7 +141,7 @@ func (s *Service) Install(ctx context.Context, ref string, dev bool, digest stri
 }
 
 // Remove removes a plugin's containers in every channel, then the plugin;
-// purge also removes its data volumes.
+// purge also removes its data dirs and gate audit logs.
 func (s *Service) Remove(ctx context.Context, pluginID string, purge bool) error {
 	st, err := s.store.GetPluginState(ctx, pluginID)
 	if err != nil {
@@ -158,7 +158,7 @@ func (s *Service) Remove(ctx context.Context, pluginID string, purge bool) error
 	for _, c := range containers {
 		errs = append(errs, s.runtime.Remove(ctx, pluginID, c.ChannelID, purge))
 	}
-	errs = append(errs, s.installer.Remove(ctx, pluginID))
+	errs = append(errs, s.installer.Remove(ctx, pluginID, purge))
 	return errors.Join(errs...)
 }
 
@@ -293,7 +293,7 @@ func (s *Service) start(ctx context.Context, st *db.PluginState, m *plugin.Manif
 	if !on {
 		return runtime.Endpoint{}, ErrNotEnabled
 	}
-	ep, err := s.runtime.Ensure(ctx, runtime.Plugin{Manifest: m, Image: st.Image}, ch)
+	ep, err := s.runtime.Ensure(ctx, runtime.Plugin{Manifest: m, Image: st.Image, ReadFiles: slices.Contains(st.ApprovedCaps, string(plugin.CapFilesRead))}, ch)
 	if err != nil {
 		return runtime.Endpoint{}, fmt.Errorf("starting the plugin: %w", err)
 	}
