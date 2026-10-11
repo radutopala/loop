@@ -182,6 +182,10 @@ func (s *ServerSuite) TestCallPluginTool() {
 			channels()
 			pm.On("CallTool", mock.Anything, "echo", "echo", rch, call).Return(nil, install.ErrUnknownTool).Once()
 		}, wantCode: http.StatusOK, wantBody: `"is_error":true`},
+		{name: "not enabled", as: agentInThread, active: &active, body: body, setup: func(pm *MockPluginManager) {
+			channels()
+			pm.On("CallTool", mock.Anything, "echo", "echo", rch, call).Return(nil, install.ErrNotEnabled).Once()
+		}, wantCode: http.StatusConflict, wantBody: "not enabled"},
 		{name: "plugin fails", as: agentInThread, active: &active, body: body, setup: func(pm *MockPluginManager) {
 			channels()
 			pm.On("CallTool", mock.Anything, "echo", "echo", rch, call).Return(nil, errors.New("starting the plugin: unhealthy")).Once()

@@ -1051,7 +1051,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   }, [channel.review_enabled]);
 
   // The installed plugins' panels, for the add-pane menus and plugin panes.
-  const installedPlugins = useInstalledPlugins();
+  const installedPlugins = useInstalledPlugins(channelId);
   const shownPlugins = useMemo(() => {
     if (layoutType !== "canvas") return shownPluginPanes(tree);
     return new Set((canvasState?.tiles ?? []).flatMap((t) => (t.panel === "plugin" && t.plugin ? [pluginPaneKey(t.plugin)] : [])));

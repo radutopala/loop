@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { contentCapBase } from "../api/api";
 import { checkFilesExist } from "../api/files";
-import { pluginXRequest } from "../api/plugins";
+import { pluginXRequest, setPluginEnabled } from "../api/plugins";
 import type { FileLinkOpenDetail } from "../components/chat/FileLink";
 import { useContentCapsEpoch } from "../hooks/useContentCapsEpoch";
 import { useEventStream } from "../hooks/useEventStream";
@@ -105,6 +105,47 @@ export function PluginPanel({ plugin: ref, channelId, containerChannelId, channe
     [pluginId],
   );
   useEventStream({ channelId: pluginId ? containerChannelId : null, onEvent: handleEvent });
+
+  const [enabling, setEnabling] = useState(false);
+  const [enableError, setEnableError] = useState<string | null>(null);
+  const enable = useCallback(() => {
+    setEnabling(true);
+    setEnableError(null);
+    setPluginEnabled(pluginId, true, channelId)
+      .catch((err) => setEnableError(String(err instanceof Error ? err.message : err)))
+      .finally(() => setEnabling(false));
+  }, [pluginId, channelId]);
+
+  if (found?.plugin.enabled === false) {
+    const name = found.plugin.name || pluginId;
+    return (
+      <div
+        data-testid="plugin-panel-disabled"
+        style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, padding: 16, color: colors.textDim, fontSize: 12, textAlign: "center" }}
+      >
+        <div>The {name} plugin isn't enabled in this project.</div>
+        <button
+          data-testid="plugin-panel-enable"
+          onClick={enable}
+          disabled={enabling}
+          style={{
+            padding: "6px 14px",
+            backgroundColor: colors.bg,
+            border: `1px solid ${colors.border}`,
+            borderRadius: 6,
+            color: colors.text,
+            fontSize: 12,
+            cursor: enabling ? "default" : "pointer",
+            fontFamily: "inherit",
+          }}
+        >
+          {enabling ? "Enabling…" : "Enable in this project"}
+        </button>
+        <div style={{ fontSize: 11 }}>Sets plugins.{pluginId}.enabled in the project's .loop/config.json.</div>
+        {enableError && <div style={{ color: colors.error }}>{enableError}</div>}
+      </div>
+    );
+  }
 
   const message = plugins === null ? null : !found ? `The ${ref?.label || "plugin"} panel isn't available: its plugin may have been removed or not approved for panels.` : error;
   if (message !== null || !src) {

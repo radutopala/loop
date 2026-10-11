@@ -61,7 +61,7 @@ func (p *plugins) stop(ctx context.Context) {
 
 // newPlugins builds the plugin system, or returns nil when plugins are
 // disabled. It removes the plugin containers an earlier daemon left behind.
-func (a *app) newPlugins(ctx context.Context, cfg *config.Config, store db.Store, tokens *apiauth.Registry, gate container.ImageGate, logger *slog.Logger) (*plugins, error) {
+func (a *app) newPlugins(ctx context.Context, cfg *config.Config, reload func() (*config.Config, error), store db.Store, tokens *apiauth.Registry, gate container.ImageGate, logger *slog.Logger) (*plugins, error) {
 	if !cfg.Plugins.Enabled {
 		return nil, nil
 	}
@@ -87,7 +87,24 @@ func (a *app) newPlugins(ctx context.Context, cfg *config.Config, store db.Store
 		logger.Warn("removing leftover plugin containers", "error", err)
 	}
 	installer := install.NewInstaller(cli, ps, root, a.version)
-	return &plugins{docker: cli, runtime: mgr, service: install.NewService(installer, mgr, ps, proxy.NewClient(&http.Client{}))}, nil
+	return &plugins{docker: cli, runtime: mgr, service: install.NewService(installer, mgr, ps, proxy.NewClient(&http.Client{}), pluginEnabled(cfg, reload))}, nil
+}
+
+// pluginEnabled reports whether a plugin is enabled in a channel's project:
+// the project config's plugins.<id>.enabled, else the global one. A channel
+// without a dir has its project config where the API keeps it.
+func pluginEnabled(cfg *config.Config, reload func() (*config.Config, error)) install.Enabled {
+	return func(_ context.Context, pluginID string, ch runtime.Channel) (bool, error) {
+		dir := ch.DirPath
+		if dir == "" {
+			dir = filepath.Join(cfg.LoopDir, ch.ID, "work")
+		}
+		merged, err := mergedProjectConfig(cfg, reload, dir, "")
+		if err != nil {
+			return false, err
+		}
+		return merged.Plugins.EnabledFor(pluginID), nil
+	}
 }
 
 // pluginGate is how plugin containers run under agentgate, or nil when

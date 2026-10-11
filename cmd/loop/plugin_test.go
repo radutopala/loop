@@ -60,8 +60,9 @@ func (s *MainSuite) runPlugin(stdin io.Reader, args ...string) (string, error) {
 }
 
 const (
-	echoInstalled = `{"plugins":[{"id":"echo","image":"ghcr.io/acme/echo@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","version":"1.0.0","dev":false,"status":"installed"}]}`
-	echoFresh     = `{"id":"echo","name":"Echo","version":"1.0.0","image":"ghcr.io/acme/echo@sha256:aa","digest":"sha256:aa",
+	echoEnableHint = "It runs only where enabled: set plugins.echo.enabled to true in a project's .loop/config.json, or in the global config for every project.\n"
+	echoInstalled  = `{"plugins":[{"id":"echo","image":"ghcr.io/acme/echo@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","version":"1.0.0","dev":false,"status":"installed"}]}`
+	echoFresh      = `{"id":"echo","name":"Echo","version":"1.0.0","image":"ghcr.io/acme/echo@sha256:aa","digest":"sha256:aa",
 		"capabilities":["ui.panel","files.read"],"new_capabilities":["ui.panel","files.read"]}`
 	echoUpgrade = `{"id":"echo","name":"Echo","version":"1.1.0","image":"ghcr.io/acme/echo@sha256:bb","digest":"sha256:bb",
 		"capabilities":["ui.panel","files.read"],"new_capabilities":["files.read"],"previous_version":"1.0.0"}`
@@ -130,7 +131,7 @@ func (s *MainSuite) TestPluginInstall() {
 			inspect: pluginReply{http.StatusOK, echoFresh},
 			install: pluginReply{http.StatusOK, echoFresh},
 			wantOut: []string{"Echo 1.0.0 (echo)\nImage: ghcr.io/acme/echo@sha256:aa\nCapabilities:\n  ui.panel\n  files.read\n",
-				"Its containers can reach the network.\nInstall? [y/N] Installed echo 1.0.0\n"},
+				"Its containers can reach the network.\nInstall? [y/N] Installed echo 1.0.0\n" + echoEnableHint},
 			wantCalls: []pluginCall{
 				{"POST", "/api/plugins/inspect", `{"dev":false,"image":"ghcr.io/acme/echo:1.0.0"}`},
 				{"POST", "/api/plugins", `{"approve":["ui.panel","files.read"],"digest":"sha256:aa","dev":false,"image":"ghcr.io/acme/echo:1.0.0"}`},
@@ -340,7 +341,7 @@ func (s *MainSuite) TestPluginDev() {
 				{http.MethodPost, "/api/plugins/inspect", `{"dev":true,"image":"` + tag + `"}`},
 				{http.MethodPost, "/api/plugins", `{"approve":[],"dev":true,"digest":"","image":"` + tag + `"}`},
 			},
-			wantOut: "building\nEcho 0.1.0 (echo)\nImage: sha256:cc\nCapabilities: none\nIts containers can reach the network.\nInstalled echo 0.1.0\n",
+			wantOut: "building\nEcho 0.1.0 (echo)\nImage: sha256:cc\nCapabilities: none\nIts containers can reach the network.\nInstalled echo 0.1.0\n" + echoEnableHint,
 		},
 		{
 			name:     "build fails",

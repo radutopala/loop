@@ -3,6 +3,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -540,6 +541,63 @@ type PluginsConfig struct {
 	// agentgate from. Unset, the release matching the daemon's version is
 	// downloaded; a dev build has none, so it needs this set.
 	GateBinary string `json:"gate_binary"`
+	// ByID configures each installed plugin, keyed by its id: every key of
+	// the plugins block but the two above.
+	ByID map[string]PluginConfig `json:"-"`
+}
+
+// PluginConfig configures one plugin.
+type PluginConfig struct {
+	// Enabled turns the plugin on. The global value is every project's
+	// default; a project's own value overrides it.
+	Enabled *bool `json:"enabled,omitempty"`
+}
+
+// pluginsReserved are the plugins block's own keys, which no plugin id
+// can be.
+var pluginsReserved = []string{"enabled", "gate_binary"}
+
+// PluginIDReserved reports whether id is one of the plugins block's own
+// keys, so a plugin can't be configured by it.
+func PluginIDReserved(id string) bool {
+	return slices.Contains(pluginsReserved, id)
+}
+
+// EnabledFor reports whether the plugin id is enabled.
+func (p PluginsConfig) EnabledFor(id string) bool {
+	e := p.ByID[id].Enabled
+	return e != nil && *e
+}
+
+// UnmarshalJSON reads the plugins block: its own keys, and each plugin's
+// config under the plugin's id.
+func (p *PluginsConfig) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	var own struct {
+		Enabled    bool   `json:"enabled"`
+		GateBinary string `json:"gate_binary"`
+	}
+	if err := json.Unmarshal(data, &own); err != nil {
+		return err
+	}
+	p.Enabled, p.GateBinary, p.ByID = own.Enabled, own.GateBinary, nil
+	for id, v := range raw {
+		if PluginIDReserved(id) {
+			continue
+		}
+		var c PluginConfig
+		if err := json.Unmarshal(v, &c); err != nil {
+			return fmt.Errorf("plugins.%s: %w", id, err)
+		}
+		if p.ByID == nil {
+			p.ByID = map[string]PluginConfig{}
+		}
+		p.ByID[id] = c
+	}
+	return nil
 }
 
 // GitHubConfig holds GitHub integration settings. GHUser names a `gh` CLI

@@ -8,6 +8,41 @@ web bundle.
 Plugins are off unless `plugins.enabled` is set in the global config. While
 `gates.agentgate.enabled` is on, plugin containers run under agentgate (see [Agentgate](#agentgate)).
 
+## Enabling a plugin
+
+An installed plugin runs only in projects that enable it:
+
+```jsonc
+// <project>/.loop/config.json
+{ "plugins": { "cogtest": { "enabled": true } } }
+```
+
+`plugins.<id>.enabled` in the global config sets the default for every project; a project's own
+value overrides it. Like the rest of a project config, a project's value applies once the owner
+trusts that config; until then the last approved version's values do. Settings → Plugins sets
+both, keeping the file's comments.
+
+A project is a channel: its threads and worktree threads use the channel's container. In a
+project that doesn't enable the plugin, its panels are left out of the add-pane menus, a pane
+already open says so, and every call to the plugin answers `409`. A container already running
+there stays up until it's idle or stopped.
+
+## Managing plugins
+
+Settings → Plugins installs (after showing the capabilities the image asks for), upgrades and
+removes plugins, and lists each one's containers with a Stop button. `loop plugin` does the same
+from the shell. The API behind both:
+
+| Route | |
+|---|---|
+| `GET /api/plugins?channel_id=` | the installed plugins with their `actions`, `enabled_by_default` and `containers` (`channel_id`, `channel_name`, `status`, `last_error`, `updated_at`); with `channel_id`, also `enabled` and `project_enabled` (the project file's own value) for that channel's project, and a top-level `project_trusted` |
+| `POST /api/plugins/inspect` | body `{"image", "dev"}`: pulls and checks an image, installing nothing |
+| `POST /api/plugins` | body `{"image", "dev", "digest", "approve": […]}`: installs or upgrades |
+| `DELETE /api/plugins/{id}?purge=` | removes a plugin; `purge` also deletes its data in every channel |
+| `POST /api/plugins/{id}/channels/{channel}/stop` | stops the plugin's container in a channel, keeping its data |
+
+Installing, removing and stopping send a `plugins.changed` event to every client.
+
 ## Image layout
 
 ```
@@ -147,7 +182,7 @@ So a bundle ships everything it needs, uses script files, and gets its data thro
 
 A plugin approved for `ui.panel` adds its panels to the workspace's add-pane menus, in split and
 canvas layouts, after the built-in panels. A `singleton` panel can be shown once per layout. A
-pane in a thread talks to the plugin's container of the thread's parent channel.
+pane in a thread, however deeply nested, talks to the plugin's container of the thread's channel.
 
 ### Bridge
 

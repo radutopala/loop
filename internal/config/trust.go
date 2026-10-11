@@ -40,6 +40,9 @@ type trustedFields struct {
 	Memory        *trustedMemory         `json:"memory,omitempty"`
 	// AnthropicBaseURL is where the global credentials are sent.
 	AnthropicBaseURL string `json:"anthropic_base_url,omitempty"`
+	// Plugins is which plugins the project turns on or off: a plugin runs
+	// with the capabilities the owner approved, against the project.
+	Plugins map[string]bool `json:"plugins,omitempty"`
 }
 
 // trustedBrowser is the part of the browser block that reaches the host:
@@ -77,6 +80,16 @@ func trustedFieldsOf(pc *projectConfig) trustedFields {
 	if m := pc.Memory; m != nil && len(m.Paths) > 0 {
 		t.Memory = &trustedMemory{Paths: m.Paths}
 	}
+	if pc.Plugins != nil {
+		for id, c := range pc.Plugins.ByID {
+			if c.Enabled != nil {
+				if t.Plugins == nil {
+					t.Plugins = map[string]bool{}
+				}
+				t.Plugins[id] = *c.Enabled
+			}
+		}
+	}
 	return t
 }
 
@@ -109,6 +122,22 @@ func (t trustedFields) apply(pc *projectConfig) {
 		if t.Memory != nil {
 			pc.Memory.Paths = t.Memory.Paths
 		}
+	}
+	if pc.Plugins != nil || t.Plugins != nil {
+		if pc.Plugins == nil {
+			pc.Plugins = &PluginsConfig{}
+		}
+		byID := map[string]PluginConfig{}
+		for id, c := range pc.Plugins.ByID {
+			c.Enabled = nil
+			byID[id] = c
+		}
+		for id, on := range t.Plugins {
+			c := byID[id]
+			c.Enabled = &on
+			byID[id] = c
+		}
+		pc.Plugins.ByID = byID
 	}
 }
 
@@ -444,4 +473,14 @@ func parseProjectConfig(data []byte) (*projectConfig, error) {
 		return nil, fmt.Errorf("parsing project config file: %w", err)
 	}
 	return &pc, nil
+}
+
+// ProjectPlugins returns the plugins settings of project config content as
+// the file has them, whether or not the owner trusts them.
+func ProjectPlugins(data []byte) (PluginsConfig, error) {
+	pc, err := parseProjectConfig(data)
+	if err != nil || pc.Plugins == nil {
+		return PluginsConfig{}, err
+	}
+	return *pc.Plugins, nil
 }

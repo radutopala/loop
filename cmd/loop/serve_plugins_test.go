@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/radutopala/loop/internal/config"
+	"github.com/radutopala/loop/internal/plugin/runtime"
 )
 
 // listingDocker is a Docker client whose container list succeeds, with no
@@ -130,4 +131,36 @@ func (s *MainSuite) TestPluginGate() {
 	s.app.version = "2026.10.3"
 	_, err = s.app.pluginGate(cfg, cli).Binary(context.Background())
 	require.ErrorContains(s.T(), err, "architecture: no daemon")
+}
+
+func (s *MainSuite) TestPluginEnabled() {
+	on, off := true, false
+	cfg := &config.Config{LoopDir: s.T().TempDir()}
+	global := &config.Config{Plugins: config.PluginsConfig{ByID: map[string]config.PluginConfig{"echo": {Enabled: &on}, "quiz": {Enabled: &off}}}}
+	reload := func() (*config.Config, error) { return global, nil }
+	enabled := pluginEnabled(cfg, reload)
+	ctx := context.Background()
+
+	// A channel without a dir reads the project config the API keeps for it.
+	got, err := enabled(ctx, "echo", runtime.Channel{ID: "ch1"})
+	require.NoError(s.T(), err)
+	require.True(s.T(), got)
+	got, err = enabled(ctx, "quiz", runtime.Channel{ID: "ch1"})
+	require.NoError(s.T(), err)
+	require.False(s.T(), got)
+
+	// A broken project config is an error.
+	dir := filepath.Join(cfg.LoopDir, "ch1", "work", ".loop")
+	require.NoError(s.T(), os.MkdirAll(dir, 0o755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "config.json"), []byte("{"), 0o644))
+	_, err = enabled(ctx, "echo", runtime.Channel{ID: "ch1"})
+	require.ErrorContains(s.T(), err, "parsing project config file")
+
+	// A project with a config that doesn't touch plugins keeps the global value.
+	proj := s.T().TempDir()
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(proj, ".loop"), 0o755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(proj, ".loop", "config.json"), []byte(`{"claude_model": "opus"}`), 0o644))
+	got, err = enabled(ctx, "echo", runtime.Channel{ID: "ch2", DirPath: proj})
+	require.NoError(s.T(), err)
+	require.True(s.T(), got)
 }

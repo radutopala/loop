@@ -35,12 +35,20 @@ var (
 	// ErrInvalidInput is returned for a tool call whose input doesn't match
 	// the tool's input schema.
 	ErrInvalidInput = errors.New("invalid tool input")
+	// ErrNotEnabled is returned for a plugin the channel's project doesn't
+	// enable, whose container therefore doesn't start there.
+	ErrNotEnabled = errors.New("the plugin is not enabled in this project")
 )
+
+// Enabled reports whether the plugin pluginID is enabled in the project of
+// the channel ch.
+type Enabled func(ctx context.Context, pluginID string, ch runtime.Channel) (bool, error)
 
 // Runtime runs installed plugins' containers.
 type Runtime interface {
 	Ensure(ctx context.Context, p runtime.Plugin, ch runtime.Channel) (runtime.Endpoint, error)
 	StopPlugin(ctx context.Context, pluginID string)
+	Stop(ctx context.Context, pluginID, channelID string)
 	Remove(ctx context.Context, pluginID, channelID string, purge bool) error
 }
 
@@ -74,16 +82,28 @@ type Service struct {
 	runtime   Runtime
 	store     ServiceStore
 	caller    Caller
+	enabled   Enabled
 }
 
-// NewService returns a Service.
-func NewService(installer *Installer, runtime Runtime, store ServiceStore, caller Caller) *Service {
-	return &Service{installer: installer, runtime: runtime, store: store, caller: caller}
+// NewService returns a Service that starts a plugin's container only in
+// the channels whose project enables it.
+func NewService(installer *Installer, runtime Runtime, store ServiceStore, caller Caller, enabled Enabled) *Service {
+	return &Service{installer: installer, runtime: runtime, store: store, caller: caller, enabled: enabled}
 }
 
 // List returns the installed plugins.
 func (s *Service) List(ctx context.Context) ([]*db.PluginState, error) {
 	return s.store.ListPluginStates(ctx)
+}
+
+// Containers returns the plugin's containers, one per channel it ran in.
+func (s *Service) Containers(ctx context.Context, pluginID string) ([]*db.PluginContainer, error) {
+	return s.store.ListPluginContainers(ctx, pluginID)
+}
+
+// Stop stops the plugin's container in channelID, keeping its data.
+func (s *Service) Stop(ctx context.Context, pluginID, channelID string) {
+	s.runtime.Stop(ctx, pluginID, channelID)
 }
 
 // Inspect pulls and validates an image so the owner can review what it
@@ -264,8 +284,15 @@ func (s *Service) ensure(ctx context.Context, pluginID string, ch runtime.Channe
 }
 
 // start starts the container of the plugin st runs in ch, if it isn't
-// running.
+// running and ch's project enables it.
 func (s *Service) start(ctx context.Context, st *db.PluginState, m *plugin.Manifest, ch runtime.Channel) (runtime.Endpoint, error) {
+	on, err := s.enabled(ctx, m.ID, ch)
+	if err != nil {
+		return runtime.Endpoint{}, fmt.Errorf("reading the plugin's config: %w", err)
+	}
+	if !on {
+		return runtime.Endpoint{}, ErrNotEnabled
+	}
 	ep, err := s.runtime.Ensure(ctx, runtime.Plugin{Manifest: m, Image: st.Image}, ch)
 	if err != nil {
 		return runtime.Endpoint{}, fmt.Errorf("starting the plugin: %w", err)

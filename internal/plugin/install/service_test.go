@@ -27,6 +27,10 @@ func (m *mockRuntime) StopPlugin(ctx context.Context, pluginID string) {
 	m.Called(ctx, pluginID)
 }
 
+func (m *mockRuntime) Stop(ctx context.Context, pluginID, channelID string) {
+	m.Called(ctx, pluginID, channelID)
+}
+
 func (m *mockRuntime) Ensure(ctx context.Context, p runtime.Plugin, ch runtime.Channel) (runtime.Endpoint, error) {
 	args := m.Called(ctx, p, ch)
 	return args.Get(0).(runtime.Endpoint), args.Error(1)
@@ -65,6 +69,9 @@ type ServiceSuite struct {
 	runtime *mockRuntime
 	caller  *mockCaller
 	svc     *Service
+	// enabled and enabledErr are what the Service's Enabled answers.
+	enabled    bool
+	enabledErr error
 }
 
 func TestServiceSuite(t *testing.T) {
@@ -75,7 +82,11 @@ func (s *ServiceSuite) SetupTest() {
 	s.base.SetupTest()
 	s.runtime = new(mockRuntime)
 	s.caller = new(mockCaller)
-	s.svc = NewService(s.in, s.runtime, s.store, s.caller)
+	s.enabled, s.enabledErr = true, nil
+	s.svc = NewService(s.in, s.runtime, s.store, s.caller, func(_ context.Context, pluginID string, ch runtime.Channel) (bool, error) {
+		s.Require().Equal("echo", pluginID)
+		return s.enabled, s.enabledErr
+	})
 }
 
 func (s *ServiceSuite) TearDownTest() {
@@ -106,6 +117,17 @@ func (s *ServiceSuite) TestList() {
 	got, err := s.svc.List(s.ctx)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), states, got)
+}
+
+func (s *ServiceSuite) TestContainersAndStop() {
+	cs := []*db.PluginContainer{{PluginID: "echo", ChannelID: "ch1", Status: db.PluginContainerRunning}}
+	s.store.On("ListPluginContainers", s.ctx, "echo").Return(cs, nil).Once()
+	got, err := s.svc.Containers(s.ctx, "echo")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), cs, got)
+
+	s.runtime.On("Stop", s.ctx, "echo", "ch1").Once()
+	s.svc.Stop(s.ctx, "echo", "ch1")
 }
 
 func (s *ServiceSuite) TestInspect() {
@@ -234,6 +256,14 @@ func (s *ServiceSuite) TestRunActionFailures() {
 		{name: "unknown action", action: "nope", setup: func() {
 			s.store.On("GetPluginState", s.ctx, "echo").Return(s.installed(db.PluginStatusInstalled), nil).Once()
 		}, wantErr: "the plugin has no such action: nope"},
+		{name: "not enabled", setup: func() {
+			s.store.On("GetPluginState", s.ctx, "echo").Return(s.installed(db.PluginStatusInstalled), nil).Once()
+			s.enabled = false
+		}, wantIs: ErrNotEnabled},
+		{name: "config", setup: func() {
+			s.store.On("GetPluginState", s.ctx, "echo").Return(s.installed(db.PluginStatusInstalled), nil).Once()
+			s.enabledErr = errors.New("bad hjson")
+		}, wantErr: "reading the plugin's config: bad hjson"},
 		{name: "start", setup: func() {
 			s.store.On("GetPluginState", s.ctx, "echo").Return(s.installed(db.PluginStatusInstalled), nil).Once()
 			s.runtime.On("Ensure", s.ctx, mock.Anything, ch).Return(runtime.Endpoint{}, errors.New("unhealthy")).Once()

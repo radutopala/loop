@@ -198,6 +198,8 @@ func (m *Manifest) Validate() error {
 
 	if !idRe.MatchString(m.ID) {
 		add("id %q must match %s", m.ID, idRe)
+	} else if config.PluginIDReserved(m.ID) {
+		add("id %q is reserved", m.ID)
 	}
 	if strings.TrimSpace(m.Name) == "" {
 		add("name is required")

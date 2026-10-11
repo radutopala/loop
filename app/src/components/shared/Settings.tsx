@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { type BuiltinKind, restoreBuiltins } from "../../api/builtins";
 import { type ConfigResponse, type ConfigSchema, fetchConfigSchema, fetchGlobalConfig, fetchProjectConfig, saveGlobalConfig, saveProjectConfig } from "../../api/configApi";
 import { getImageStatus, getReclaimable, reclaimDockerSpace } from "../../api/loopApi";
+import { PLUGINS_CHANGED } from "../../api/plugins";
 import { DEFAULT_FONT_SIZES, useTheme } from "../../ThemeContext";
 import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
@@ -10,6 +11,7 @@ import { logErr } from "../../utils/log";
 import { ChannelHeaderInfo } from "../layout/ChannelHeaderInfo";
 import { ConfigForm, type ConfigFormHandle, getSections } from "./ConfigForm";
 import { ConfigHistory } from "./ConfigHistory";
+import { GlobalPluginsSection, ProjectPluginsSection } from "./PluginsSection";
 import { ProjectTrustNotice } from "./ProjectTrustNotice";
 
 // formatBytes renders a byte count as a compact human-readable size.
@@ -452,6 +454,7 @@ export function Settings({
                 {projectSchemaSections.map((name) => (
                   <NavButton key={`proj_${name}`} name={name} active={activeSection === `__proj_${name}`} colors={colors} onClick={() => setActiveSection(`__proj_${name}`)} />
                 ))}
+                {channelId && <NavButton name="Plugins" active={activeSection === "__project_plugins__"} colors={colors} onClick={() => setActiveSection("__project_plugins__")} />}
                 <NavButton name="JSON" active={activeSection === "__project_json__"} colors={colors} onClick={() => setActiveSection("__project_json__")} />
                 <NavButton name="History" active={activeSection === "__project_history__"} colors={colors} onClick={() => setActiveSection("__project_history__")} />
               </>
@@ -515,11 +518,24 @@ export function Settings({
                     onDirtyChange={setGlobalDirty}
                     visibleSection={activeSection}
                   />
+                  {activeSection === "Plugins" && <GlobalPluginsSection colors={colors} onConfigChanged={() => fetchGlobalConfig().then(setGlobalConfig).catch(logErr("re-fetching global config"))} />}
                 </>
               )}
 
-              {(activeSection === "__project_json__" || activeSection.startsWith("__proj_")) && projectConfig && channelId && (
-                <ProjectTrustNotice channelId={channelId} colors={colors} refreshKey={projectConfig} onTrusted={onProjectTrusted} />
+              {(activeSection === "__project_json__" || activeSection === "__project_plugins__" || activeSection.startsWith("__proj_")) && projectConfig && channelId && (
+                <ProjectTrustNotice
+                  channelId={channelId}
+                  colors={colors}
+                  refreshKey={projectConfig}
+                  onTrusted={() => {
+                    onProjectTrusted?.();
+                    window.dispatchEvent(new Event(PLUGINS_CHANGED));
+                  }}
+                />
+              )}
+
+              {activeSection === "__project_plugins__" && channelId && (
+                <ProjectPluginsSection colors={colors} channelId={channelId} onConfigChanged={() => fetchProjectConfig(channelId).then(setProjectConfig).catch(logErr("re-fetching project config"))} />
               )}
 
               {activeSection === "__project_history__" && channelId && (

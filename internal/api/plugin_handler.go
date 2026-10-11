@@ -30,6 +30,8 @@ type PluginManager interface {
 	RunDone(ctx context.Context, pluginID string, ch runtime.Channel, runID string, req proxy.RunDoneRequest) error
 	X(ctx context.Context, pluginID string, ch runtime.Channel, req proxy.XRequest) (*proxy.XResponse, error)
 	UI(ctx context.Context, pluginID string) (string, *plugin.Manifest, error)
+	Containers(ctx context.Context, pluginID string) ([]*db.PluginContainer, error)
+	Stop(ctx context.Context, pluginID, channelID string)
 }
 
 const pluginsDisabled = "plugins are disabled; set plugins.enabled in the global config"
@@ -46,10 +48,30 @@ type pluginInfo struct {
 	Status       string    `json:"status"`
 	InstalledAt  time.Time `json:"installed_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
-	// Name and Panels come from the manifest of a plugin that may run;
-	// Panels only when the owner approved ui.panel.
-	Name   string         `json:"name,omitempty"`
-	Panels []plugin.Panel `json:"panels,omitempty"`
+	// Name, Panels and Actions come from the manifest of a plugin that may
+	// run; Panels only when the owner approved ui.panel.
+	Name    string         `json:"name,omitempty"`
+	Panels  []plugin.Panel `json:"panels,omitempty"`
+	Actions []string       `json:"actions,omitempty"`
+	// EnabledByDefault is the global plugins.<id>.enabled, which every
+	// project without its own setting follows.
+	EnabledByDefault bool `json:"enabled_by_default"`
+	// Enabled is whether the plugin runs in the channel_id's project, and
+	// ProjectEnabled the project config's own setting, unset when it has
+	// none. They differ while the owner hasn't trusted the project config.
+	Enabled        *bool `json:"enabled,omitempty"`
+	ProjectEnabled *bool `json:"project_enabled,omitempty"`
+	// Containers are the plugin's containers, one per channel it ran in.
+	Containers []pluginContainerInfo `json:"containers"`
+}
+
+// pluginContainerInfo is a plugin's container in a channel.
+type pluginContainerInfo struct {
+	ChannelID   string    `json:"channel_id"`
+	ChannelName string    `json:"channel_name,omitempty"`
+	Status      string    `json:"status"`
+	LastError   string    `json:"last_error,omitempty"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // pluginCandidate is a pulled plugin image for the owner to review: what it
@@ -93,31 +115,75 @@ type pluginInstallRequest struct {
 	Approve []plugin.Capability `json:"approve"`
 }
 
+// handleListPlugins lists the installed plugins. With channel_id, each
+// says whether it's enabled in that channel's project.
 func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request) {
 	if !requireConfigured(w, s.plugins, pluginsDisabled) {
 		return
 	}
-	states, err := s.plugins.List(r.Context())
+	ctx := r.Context()
+	var proj *pluginProject
+	if id := r.URL.Query().Get("channel_id"); id != "" {
+		ch, ok := s.pluginChannel(w, r, id)
+		if !ok {
+			return
+		}
+		p, err := s.pluginProject(ctx, ch)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		proj = &p
+	}
+	states, err := s.plugins.List(ctx)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	global := s.configs.merged("", "")
 	out := make([]pluginInfo, 0, len(states))
 	for _, st := range states {
 		info := pluginInfo{
 			ID: st.PluginID, Image: st.Image, Digest: st.Digest, Version: st.Version, API: st.API,
 			Capabilities: st.ApprovedCaps, Dev: st.Dev, Status: st.Status,
 			InstalledAt: st.InstalledAt, UpdatedAt: st.UpdatedAt,
+			Containers: []pluginContainerInfo{},
 		}
-		if _, m, err := s.plugins.UI(r.Context(), st.PluginID); err == nil {
+		if _, m, err := s.plugins.UI(ctx, st.PluginID); err == nil {
 			info.Name = m.Name
 			if m.UI != nil && slices.Contains(st.ApprovedCaps, string(plugin.CapUIPanel)) {
 				info.Panels = m.UI.Panels
 			}
+			for _, a := range m.Actions {
+				info.Actions = append(info.Actions, a.ID)
+			}
+		}
+		if global != nil {
+			info.EnabledByDefault = global.Plugins.EnabledFor(st.PluginID)
+		}
+		if proj != nil {
+			on := proj.merged.Plugins.EnabledFor(st.PluginID)
+			info.Enabled, info.ProjectEnabled = &on, proj.own.ByID[st.PluginID].Enabled
+		}
+		containers, err := s.plugins.Containers(ctx, st.PluginID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		for _, c := range containers {
+			ci := pluginContainerInfo{ChannelID: c.ChannelID, Status: c.Status, LastError: c.LastError, UpdatedAt: c.UpdatedAt}
+			if ch, err := s.store.GetChannel(ctx, c.ChannelID); err == nil && ch != nil {
+				ci.ChannelName = ch.Name
+			}
+			info.Containers = append(info.Containers, ci)
 		}
 		out = append(out, info)
 	}
-	writeHTTPJSON(w, http.StatusOK, map[string]any{"plugins": out}, s.logger)
+	resp := map[string]any{"plugins": out}
+	if proj != nil {
+		resp["project_trusted"] = proj.trusted
+	}
+	writeHTTPJSON(w, http.StatusOK, resp, s.logger)
 }
 
 func (s *Server) handleInspectPlugin(w http.ResponseWriter, r *http.Request) {
@@ -156,6 +222,7 @@ func (s *Server) handleInstallPlugin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
+	s.pluginsChanged()
 	writeHTTPJSON(w, http.StatusOK, newPluginCandidate(c), s.logger)
 }
 
@@ -172,6 +239,7 @@ func (s *Server) handleRemovePlugin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.pluginsChanged()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -207,7 +275,7 @@ func (s *Server) handleRunPluginAction(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, install.ErrNotInstalled), errors.Is(err, install.ErrUnknownAction):
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
-	case errors.Is(err, install.ErrNotRunnable):
+	case errors.Is(err, install.ErrNotRunnable), errors.Is(err, install.ErrNotEnabled):
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	case err != nil:
@@ -217,12 +285,19 @@ func (s *Server) handleRunPluginAction(w http.ResponseWriter, r *http.Request) {
 	writeHTTPJSON(w, http.StatusAccepted, map[string]string{"channel_id": ch.ChannelID}, s.logger)
 }
 
+// pluginChannelDepth bounds the walk from a thread up to its channel.
+const pluginChannelDepth = 16
+
 // pluginChannel returns the channel a plugin serves for channelID: the
-// channel, or a thread's parent, since a plugin runs per channel.
-// Otherwise it answers the request and returns false.
+// channel, or the channel a thread or worktree thread is under, however
+// deep, since a plugin runs per channel. Otherwise it answers the request
+// and returns false.
 func (s *Server) pluginChannel(w http.ResponseWriter, r *http.Request, channelID string) (*db.Channel, bool) {
 	ch, err := s.store.GetChannel(r.Context(), channelID)
-	if err == nil && ch != nil && ch.ParentID != "" {
+	for range pluginChannelDepth {
+		if err != nil || ch == nil || ch.ParentID == "" {
+			break
+		}
 		ch, err = s.store.GetChannel(r.Context(), ch.ParentID)
 	}
 	if err != nil {
@@ -270,7 +345,7 @@ func (s *Server) handlePluginX(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, install.ErrNotInstalled):
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
-	case errors.Is(err, install.ErrNotRunnable):
+	case errors.Is(err, install.ErrNotRunnable), errors.Is(err, install.ErrNotEnabled):
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	case err != nil:

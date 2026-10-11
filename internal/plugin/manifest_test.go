@@ -92,6 +92,7 @@ func (s *ManifestSuite) TestValidate() {
 			m.ID, m.Name, m.Version, m.API, m.Loop = "1x", " ", "one", "9", "~>>"
 		}, wantErr: []string{`id "1x" must match`, "name is required", `version "one" is not semver`, `api "9" is not served by this Loop (it serves 1)`, `loop "~>>" is not a version constraint`}},
 		{name: "id too short", edit: func(m *Manifest) { m.ID = "e" }, wantErr: []string{`id "e" must match`}},
+		{name: "reserved id", edit: func(m *Manifest) { m.ID = "enabled" }, wantErr: []string{`id "enabled" is reserved`}},
 		{name: "capabilities", edit: func(m *Manifest) {
 			m.Capabilities = []Capability{CapGitRead, "net.open", CapGitRead}
 		}, wantErr: []string{`unknown capability "net.open"`, `capability "git.read" is listed twice`}},

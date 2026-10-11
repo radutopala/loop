@@ -50,6 +50,12 @@ describe("pluginPaneOptions", () => {
     ]);
   });
 
+  it("leaves out plugins not enabled in the project", () => {
+    const off = { ...cogtest, enabled: false };
+    const on = { ...plugins[1]!, enabled: true };
+    expect(pluginPaneOptions({ plugins: [off, on], shown: new Set() }).map((o) => o.key)).toEqual(["bare/p"]);
+  });
+
   it("lists nothing while loading", () => {
     expect(pluginPaneOptions({ plugins: null, shown: new Set() })).toEqual([]);
   });

@@ -45,8 +45,8 @@ export default defineConfig({
     proxy: {
       // Content links (iframes, images, <base href>) the UI can't add a token to.
       "/c/": {
+        // Keep the page's Host: plugin panels get a CSP pinned to it.
         target: process.env.LOOP_API_URL || "http://localhost:8222",
-        changeOrigin: true,
       },
       "/api": {
         target: process.env.LOOP_API_URL || "http://localhost:8222",

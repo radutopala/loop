@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/plugin"
 	"github.com/radutopala/loop/internal/plugin/install"
@@ -61,6 +62,16 @@ func (m *MockPluginManager) CallTool(ctx context.Context, pluginID, tool string,
 	return v, args.Error(1)
 }
 
+func (m *MockPluginManager) Containers(ctx context.Context, pluginID string) ([]*db.PluginContainer, error) {
+	args := m.Called(ctx, pluginID)
+	v, _ := args.Get(0).([]*db.PluginContainer)
+	return v, args.Error(1)
+}
+
+func (m *MockPluginManager) Stop(ctx context.Context, pluginID, channelID string) {
+	m.Called(ctx, pluginID, channelID)
+}
+
 func (s *ServerSuite) pluginRoutes() *MockPluginManager {
 	pm := new(MockPluginManager)
 	s.srv.SetPluginManager(pm)
@@ -69,6 +80,7 @@ func (s *ServerSuite) pluginRoutes() *MockPluginManager {
 	s.mux.HandleFunc("POST /api/plugins", s.srv.handleInstallPlugin)
 	s.mux.HandleFunc("DELETE /api/plugins/{id}", s.srv.handleRemovePlugin)
 	s.mux.HandleFunc("POST /api/plugins/{plugin}/actions/{action}", s.srv.handleRunPluginAction)
+	s.mux.HandleFunc("POST /api/plugins/{plugin}/channels/{channel}/stop", s.srv.handleStopPluginContainer)
 	s.T().Cleanup(func() { pm.AssertExpectations(s.T()) })
 	return pm
 }
@@ -87,7 +99,8 @@ func (s *ServerSuite) TestPluginsDisabled() {
 	s.mux.HandleFunc("POST /api/plugins", s.srv.handleInstallPlugin)
 	s.mux.HandleFunc("DELETE /api/plugins/{id}", s.srv.handleRemovePlugin)
 	s.mux.HandleFunc("POST /api/plugins/{plugin}/actions/{action}", s.srv.handleRunPluginAction)
-	for _, req := range [][2]string{{"GET", "/api/plugins"}, {"POST", "/api/plugins/inspect"}, {"POST", "/api/plugins"}, {"DELETE", "/api/plugins/echo"}, {"POST", "/api/plugins/echo/actions/ping"}} {
+	s.mux.HandleFunc("POST /api/plugins/{plugin}/channels/{channel}/stop", s.srv.handleStopPluginContainer)
+	for _, req := range [][2]string{{"GET", "/api/plugins"}, {"POST", "/api/plugins/inspect"}, {"POST", "/api/plugins"}, {"DELETE", "/api/plugins/echo"}, {"POST", "/api/plugins/echo/actions/ping"}, {"POST", "/api/plugins/echo/channels/ch-1/stop"}} {
 		rec := s.testRequest(req[0], req[1], "")
 		require.Equal(s.T(), http.StatusNotImplemented, rec.Code, req[1])
 		require.Contains(s.T(), rec.Body.String(), "plugins.enabled")
@@ -102,10 +115,19 @@ func (s *ServerSuite) TestListPlugins() {
 		ApprovedCaps: []string{"ui.panel"}, Status: db.PluginStatusInstalled, InstalledAt: at, UpdatedAt: at,
 	}}, nil).Once()
 	pm.On("UI", mock.Anything, "echo").Return("", nil, install.ErrNotRunnable).Once()
+	pm.On("Containers", mock.Anything, "echo").Return([]*db.PluginContainer{
+		{PluginID: "echo", ChannelID: "ch-1", Status: db.PluginContainerRunning, UpdatedAt: at},
+		{PluginID: "echo", ChannelID: "gone", Status: db.PluginContainerStopped, LastError: "unhealthy", UpdatedAt: at},
+	}, nil).Once()
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", Name: "app"}, nil).Once()
+	s.store.On("GetChannel", mock.Anything, "gone").Return(nil, nil).Once()
 	rec := s.testRequest("GET", "/api/plugins", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 	require.JSONEq(s.T(), `{"plugins":[{"id":"echo","image":"ghcr.io/acme/echo@sha256:aa","digest":"sha256:aa","version":"1.0.0","api":"1",
-		"capabilities":["ui.panel"],"dev":false,"status":"installed","installed_at":"2026-10-10T09:00:00Z","updated_at":"2026-10-10T09:00:00Z"}]}`, rec.Body.String())
+		"capabilities":["ui.panel"],"dev":false,"status":"installed","installed_at":"2026-10-10T09:00:00Z","updated_at":"2026-10-10T09:00:00Z",
+		"enabled_by_default":false,"containers":[
+			{"channel_id":"ch-1","channel_name":"app","status":"running","updated_at":"2026-10-10T09:00:00Z"},
+			{"channel_id":"gone","status":"stopped","last_error":"unhealthy","updated_at":"2026-10-10T09:00:00Z"}]}]}`, rec.Body.String())
 
 	// A plugin that may run shows its name, and its panels when approved.
 	panels := &plugin.Manifest{Name: "Echo", UI: &plugin.UI{Panels: []plugin.Panel{{ID: "main", Label: "Echo", Entry: "ui/main/index.html", Singleton: true}}}}
@@ -117,6 +139,7 @@ func (s *ServerSuite) TestListPlugins() {
 	pm.On("UI", mock.Anything, "bare").Return("/d", &plugin.Manifest{Name: "Bare"}, nil).Once()
 	pm.On("UI", mock.Anything, "echo").Return("/d", panels, nil).Once()
 	pm.On("UI", mock.Anything, "quiet").Return("/d", panels, nil).Once()
+	pm.On("Containers", mock.Anything, mock.Anything).Return(nil, nil).Times(3)
 	rec = s.testRequest("GET", "/api/plugins", "")
 	var list struct {
 		Plugins []pluginInfo `json:"plugins"`
@@ -135,6 +158,22 @@ func (s *ServerSuite) TestListPlugins() {
 	pm.On("List", mock.Anything).Return(nil, errors.New("boom")).Once()
 	rec = s.testRequest("GET", "/api/plugins", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+
+	pm.On("List", mock.Anything).Return([]*db.PluginState{{PluginID: "echo"}}, nil).Once()
+	pm.On("UI", mock.Anything, "echo").Return("", nil, install.ErrNotRunnable).Once()
+	pm.On("Containers", mock.Anything, "echo").Return(nil, errors.New("db down")).Once()
+	rec = s.testRequest("GET", "/api/plugins", "")
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "db down")
+
+	// Without a global config, nothing is enabled by default.
+	s.srv.configs.load = func() (*config.Config, error) { return nil, errors.New("bad config") }
+	pm.On("List", mock.Anything).Return([]*db.PluginState{{PluginID: "echo"}}, nil).Once()
+	pm.On("UI", mock.Anything, "echo").Return("", nil, install.ErrNotRunnable).Once()
+	pm.On("Containers", mock.Anything, "echo").Return(nil, nil).Once()
+	rec = s.testRequest("GET", "/api/plugins", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), `"enabled_by_default":false`)
 }
 
 func (s *ServerSuite) TestInspectPlugin() {
@@ -242,6 +281,20 @@ func (s *ServerSuite) TestRunPluginAction() {
 			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: "/src/app"}, nil).Once()
 			pm.On("RunAction", mock.Anything, "echo", "ping", ch, manual).Return(install.ErrNotRunnable).Once()
 		}, wantCode: http.StatusConflict},
+		{name: "not enabled", body: `{"channel_id":"ch-1"}`, setup: func(pm *MockPluginManager) {
+			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: "/src/app"}, nil).Once()
+			pm.On("RunAction", mock.Anything, "echo", "ping", ch, manual).Return(install.ErrNotEnabled).Once()
+		}, wantCode: http.StatusConflict, wantBody: "not enabled"},
+		{name: "nested thread runs in its channel", body: `{"channel_id":"th-2"}`, setup: func(pm *MockPluginManager) {
+			s.store.On("GetChannel", mock.Anything, "th-2").Return(&db.Channel{ChannelID: "th-2", ParentID: "wt-1", Worktree: true}, nil).Once()
+			s.store.On("GetChannel", mock.Anything, "wt-1").Return(&db.Channel{ChannelID: "wt-1", ParentID: "ch-1", Worktree: true}, nil).Once()
+			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: "/src/app"}, nil).Once()
+			pm.On("RunAction", mock.Anything, "echo", "ping", ch, manual).Return(nil).Once()
+		}, wantCode: http.StatusAccepted, wantBody: `{"channel_id":"ch-1"}`},
+		{name: "parent lookup fails", body: `{"channel_id":"th-1"}`, setup: func(*MockPluginManager) {
+			s.store.On("GetChannel", mock.Anything, "th-1").Return(&db.Channel{ChannelID: "th-1", ParentID: "ch-1"}, nil).Once()
+			s.store.On("GetChannel", mock.Anything, "ch-1").Return(nil, errors.New("boom")).Once()
+		}, wantCode: http.StatusInternalServerError, wantBody: "boom"},
 		{name: "plugin fails", body: `{"channel_id":"ch-1"}`, setup: func(pm *MockPluginManager) {
 			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: "/src/app"}, nil).Once()
 			pm.On("RunAction", mock.Anything, "echo", "ping", ch, manual).Return(errors.New("starting the plugin: unhealthy")).Once()
@@ -309,6 +362,9 @@ func (s *ServerSuite) TestPluginX() {
 		{name: "disabled", method: "GET", target: "/api/plugins/echo/x/quiz?channel_id=ch-1", setup: func(pm *MockPluginManager) {
 			pm.On("X", mock.Anything, "echo", ch, mock.Anything).Return(nil, install.ErrNotRunnable).Once()
 		}, wantCode: http.StatusConflict},
+		{name: "not enabled", method: "GET", target: "/api/plugins/echo/x/quiz?channel_id=ch-1", setup: func(pm *MockPluginManager) {
+			pm.On("X", mock.Anything, "echo", ch, mock.Anything).Return(nil, install.ErrNotEnabled).Once()
+		}, wantCode: http.StatusConflict, wantBody: "not enabled"},
 		{name: "unreachable", method: "GET", target: "/api/plugins/echo/x/quiz?channel_id=ch-1", setup: func(pm *MockPluginManager) {
 			pm.On("X", mock.Anything, "echo", ch, mock.Anything).Return(nil, errors.New("calling the plugin: refused")).Once()
 		}, wantCode: http.StatusBadGateway, wantBody: "refused"},

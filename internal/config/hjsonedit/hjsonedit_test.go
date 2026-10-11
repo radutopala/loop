@@ -253,3 +253,61 @@ func (s *HJSONEditSuite) TestAppendedWritesNothing() {
 	require.Contains(s.T(), string(after), "/b:/b")
 	require.Equal(s.T(), written, s.read(), "the file is left as it was")
 }
+
+func (s *HJSONEditSuite) TestSetData() {
+	tests := []struct {
+		name    string
+		initial string
+		path    []string
+		value   any
+		want    string
+	}{
+		{"missing file", "", []string{"plugins", "echo", "enabled"}, true,
+			"{\n  \"plugins\": {\n    \"echo\": {\n      \"enabled\": true\n    }\n  }\n}\n"},
+		{"replaces in place, keeping comments", "{\n  // plugins\n  \"plugins\": {\n    \"echo\": { \"enabled\": true }, // on\n  },\n}\n", []string{"plugins", "echo", "enabled"}, false,
+			"{\n  // plugins\n  \"plugins\": {\n    \"echo\": { \"enabled\": false }, // on\n  },\n}\n"},
+		{"adds beside other keys", "{\n\t\"plugins\": {\n\t\t\"enabled\": true,\n\t},\n}\n", []string{"plugins", "echo", "enabled"}, true,
+			"{\n\t\"plugins\": {\n\t\t\"enabled\": true,\n\t\t\"echo\": {\n\t\t\t\"enabled\": true\n\t\t}\n\t},\n}\n"},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			if tc.initial != "" {
+				s.write(tc.initial)
+			}
+			before, after, err := SetData(osutil.RealSystem{}, s.path, tc.path, tc.value)
+			require.NoError(s.T(), err)
+			if tc.initial == "" {
+				require.Nil(s.T(), before)
+			} else {
+				require.Equal(s.T(), tc.initial, string(before))
+			}
+			require.Equal(s.T(), tc.want, string(after))
+			require.Equal(s.T(), tc.want, s.read())
+		})
+	}
+}
+
+func (s *HJSONEditSuite) TestSetDataErrors() {
+	boom := errors.New("boom")
+	tests := []struct {
+		name    string
+		initial string
+		fs      FS
+		path    []string
+		wantErr string
+	}{
+		{"empty path", "{}", osutil.RealSystem{}, nil, "empty path"},
+		{"parent not an object", `{"plugins": []}`, osutil.RealSystem{}, []string{"plugins", "echo"}, "plugins is not an object"},
+		{"write error", "{}", failFS{writeErr: boom}, []string{"plugins"}, "writing"},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			s.write(tc.initial)
+			_, _, err := SetData(tc.fs, s.path, tc.path, true)
+			require.ErrorContains(s.T(), err, tc.wantErr)
+			require.Equal(s.T(), tc.initial, s.read())
+		})
+	}
+}

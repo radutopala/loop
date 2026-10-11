@@ -138,6 +138,9 @@ func (s *Server) handleCallPluginTool(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case errors.Is(err, install.ErrInvalidInput), errors.Is(err, install.ErrUnknownTool):
 		res = &proxy.ToolResult{Content: err.Error(), IsError: true}
+	case errors.Is(err, install.ErrNotEnabled):
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
 	case err != nil:
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return

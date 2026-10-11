@@ -290,6 +290,9 @@ func (a *app) installPlugin(cmd *cobra.Command, image string, dev, yes bool) err
 		return err
 	}
 	_, _ = fmt.Fprintf(out, "Installed %s %s\n", c.ID, c.Version)
+	if c.PreviousVersion == "" {
+		_, _ = fmt.Fprintf(out, "It runs only where enabled: set plugins.%s.enabled to true in a project's .loop/config.json, or in the global config for every project.\n", c.ID)
+	}
 	return nil
 }
 

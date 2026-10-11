@@ -1,5 +1,7 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { fetchPlugins, type PluginInfo, type PluginPanelInfo } from "../api/plugins";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { fetchPlugins, PLUGINS_CHANGED, type PluginInfo, type PluginPanelInfo } from "../api/plugins";
+import { useEventStream } from "../hooks/useEventStream";
+import type { WSEvent } from "../types";
 import type { PaneNode, PluginPaneRef } from "../types/panels";
 import { logErr } from "../utils/log";
 
@@ -23,12 +25,15 @@ export function pluginPaneKey(ref: Pick<PluginPaneRef, "id" | "panel">): string 
   return `${ref.id}/${ref.panel}`;
 }
 
-/** The installed plugins, fetched once per mount; null until they are. */
-export function useInstalledPlugins(): PluginInfo[] | null {
+/** The installed plugins as channelId's project sees them, fetched again
+ *  when they or their enablement change; null until they're listed. */
+export function useInstalledPlugins(channelId: string | null): PluginInfo[] | null {
   const [plugins, setPlugins] = useState<PluginInfo[] | null>(null);
+  const [epoch, setEpoch] = useState(0);
+  const refetch = useCallback(() => setEpoch((n) => n + 1), []);
   useEffect(() => {
     let cancelled = false;
-    fetchPlugins()
+    fetchPlugins(channelId)
       .then((p) => {
         if (!cancelled) setPlugins(p);
       })
@@ -39,7 +44,18 @@ export function useInstalledPlugins(): PluginInfo[] | null {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [channelId, epoch]);
+  useEffect(() => {
+    window.addEventListener(PLUGINS_CHANGED, refetch);
+    return () => window.removeEventListener(PLUGINS_CHANGED, refetch);
+  }, [refetch]);
+  const onEvent = useCallback(
+    (ev: WSEvent) => {
+      if (ev.type === "plugins.changed") refetch();
+    },
+    [refetch],
+  );
+  useEventStream({ channelId, onEvent });
   return plugins;
 }
 
@@ -71,15 +87,18 @@ export interface PluginPaneOption {
   disabled: boolean;
 }
 
-/** The add-pane menu entries for the installed plugins' panels. */
+/** The add-pane menu entries for the panels of the installed plugins the
+ *  project enables. */
 export function pluginPaneOptions({ plugins, shown }: PluginPanelsValue): PluginPaneOption[] {
-  return (plugins ?? []).flatMap((p) =>
-    (p.panels ?? []).map((panel) => {
-      const ref: PluginPaneRef = { id: p.id, panel: panel.id, label: panel.label || p.name || p.id };
-      const key = pluginPaneKey(ref);
-      return { key, ref, description: `${p.name || p.id} plugin`, disabled: !!panel.singleton && shown.has(key) };
-    }),
-  );
+  return (plugins ?? [])
+    .filter((p) => p.enabled !== false)
+    .flatMap((p) =>
+      (p.panels ?? []).map((panel) => {
+        const ref: PluginPaneRef = { id: p.id, panel: panel.id, label: panel.label || p.name || p.id };
+        const key = pluginPaneKey(ref);
+        return { key, ref, description: `${p.name || p.id} plugin`, disabled: !!panel.singleton && shown.has(key) };
+      }),
+    );
 }
 
 /** The installed plugin and panel a plugin pane shows, if both still exist. */
