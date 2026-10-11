@@ -85,6 +85,9 @@ func (s *Server) handleStartPluginRun(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, db.ErrParentGone):
 		http.Error(w, "channel not found", http.StatusNotFound)
 		return
+	case errors.Is(err, orchestrator.ErrPluginRunBudget):
+		http.Error(w, err.Error(), http.StatusTooManyRequests)
+		return
 	case err != nil:
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

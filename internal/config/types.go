@@ -541,8 +541,11 @@ type PluginsConfig struct {
 	// agentgate from. Unset, the release matching the daemon's version is
 	// downloaded; a dev build has none, so it needs this set.
 	GateBinary string `json:"gate_binary"`
+	// DailyRuns caps the agent runs each plugin starts in 24 hours; 0 uses
+	// DefaultPluginDailyRuns.
+	DailyRuns int `json:"daily_runs"`
 	// ByID configures each installed plugin, keyed by its id: every key of
-	// the plugins block but the two above.
+	// the plugins block but the ones above.
 	ByID map[string]PluginConfig `json:"-"`
 }
 
@@ -558,7 +561,19 @@ type PluginConfig struct {
 
 // pluginsReserved are the plugins block's own keys, which no plugin id
 // can be.
-var pluginsReserved = []string{"enabled", "gate_binary"}
+var pluginsReserved = []string{"enabled", "gate_binary", "daily_runs"}
+
+// DefaultPluginDailyRuns is the agent runs each plugin starts in 24 hours
+// when plugins.daily_runs is unset.
+const DefaultPluginDailyRuns = 50
+
+// DailyRunsFor returns how many agent runs each plugin starts in 24 hours.
+func (p PluginsConfig) DailyRunsFor() int {
+	if p.DailyRuns > 0 {
+		return p.DailyRuns
+	}
+	return DefaultPluginDailyRuns
+}
 
 // PluginIDReserved reports whether id is one of the plugins block's own
 // keys, so a plugin can't be configured by it.
@@ -582,11 +597,12 @@ func (p *PluginsConfig) UnmarshalJSON(data []byte) error {
 	var own struct {
 		Enabled    bool   `json:"enabled"`
 		GateBinary string `json:"gate_binary"`
+		DailyRuns  int    `json:"daily_runs"`
 	}
 	if err := json.Unmarshal(data, &own); err != nil {
 		return err
 	}
-	p.Enabled, p.GateBinary, p.ByID = own.Enabled, own.GateBinary, nil
+	p.Enabled, p.GateBinary, p.DailyRuns, p.ByID = own.Enabled, own.GateBinary, own.DailyRuns, nil
 	for id, v := range raw {
 		if PluginIDReserved(id) {
 			continue

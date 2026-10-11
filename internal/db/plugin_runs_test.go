@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"time"
 
@@ -57,6 +58,38 @@ func (s *IntegrationSuite) TestPluginRuns() {
 	require.Len(s.T(), runs, 2)
 }
 
+// TestCountPluginRunsSince counts a plugin's run messages in its hidden
+// threads from a time on, leaving out its agent's replies, other plugins'
+// runs and other channels' messages.
+func (s *IntegrationSuite) TestCountPluginRunsSince() {
+	store, err := NewSQLiteStore(filepath.Join(s.T().TempDir(), "loop.db"))
+	require.NoError(s.T(), err)
+	defer store.Close()
+	ctx := context.Background()
+	t0 := time.Date(2026, 10, 11, 9, 0, 0, 0, time.UTC)
+	chatID := seedChannel(s.T(), store, "c1")
+	require.NoError(s.T(), store.InsertHiddenThread(ctx, &Channel{ChannelID: "p1", ParentID: "c1", Kind: PluginKind("cogtest")}))
+	require.NoError(s.T(), store.InsertHiddenThread(ctx, &Channel{ChannelID: "p2", ParentID: "c1", Kind: PluginKind("other")}))
+	for i, m := range []*Message{
+		{ChannelID: "p1", CreatedAt: t0.Add(-time.Minute)},
+		{ChannelID: "p1", CreatedAt: t0},
+		{ChannelID: "p1", CreatedAt: t0.Add(time.Hour)},
+		{ChannelID: "p1", CreatedAt: t0.Add(time.Hour), IsBot: true},
+		{ChannelID: "p2", CreatedAt: t0.Add(time.Hour)},
+		{ChannelID: "c1", CreatedAt: t0.Add(time.Hour)},
+	} {
+		m.ChatID, m.MsgID, m.Kind = chatID, fmt.Sprintf("m%d", i), MessageKindMessage
+		require.NoError(s.T(), store.InsertMessage(ctx, m))
+	}
+
+	n, err := store.CountPluginRunsSince(ctx, "cogtest", t0)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 2, n)
+	n, err = store.CountPluginRunsSince(ctx, "cogtest", t0.Add(2*time.Hour))
+	require.NoError(s.T(), err)
+	require.Zero(s.T(), n)
+}
+
 func (s *StoreSuite) TestPluginRunsErrors() {
 	ctx := context.Background()
 	boom := errors.New("boom")
@@ -79,6 +112,11 @@ func (s *StoreSuite) TestPluginRunsErrors() {
 		{"mark done", false, func() error {
 			s.mock.ExpectExec(`UPDATE plugin_runs SET done`).WithArgs("r1").WillReturnError(boom)
 			return s.store.MarkPluginRunDone(ctx, "r1")
+		}},
+		{"count", false, func() error {
+			s.mock.ExpectQuery(`SELECT COUNT\(\*\) FROM messages`).WillReturnError(boom)
+			_, err := s.store.CountPluginRunsSince(ctx, "p", time.Now())
+			return err
 		}},
 		{"list query", false, func() error {
 			s.mock.ExpectQuery(`FROM plugin_runs`).WillReturnError(boom)

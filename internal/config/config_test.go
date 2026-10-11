@@ -685,13 +685,15 @@ func (s *ConfigSuite) TestLoadPluginsByID() {
 			"platforms": ["discord"],
 			"discord_token": "t",
 			"discord_app_id": "a",
-			"plugins": { "enabled": true, "echo": { "enabled": true }, "quiz": {} }
+			"plugins": { "enabled": true, "daily_runs": 5, "echo": { "enabled": true }, "quiz": {} }
 		}`), nil
 	}
 
 	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.True(s.T(), cfg.Plugins.Enabled)
+	require.Equal(s.T(), 5, cfg.Plugins.DailyRunsFor())
+	require.Equal(s.T(), DefaultPluginDailyRuns, PluginsConfig{}.DailyRunsFor())
 	require.Len(s.T(), cfg.Plugins.ByID, 2)
 	require.True(s.T(), cfg.Plugins.EnabledFor("echo"))
 	require.False(s.T(), cfg.Plugins.EnabledFor("quiz"))

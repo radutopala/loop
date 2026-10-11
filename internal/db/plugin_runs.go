@@ -47,6 +47,19 @@ func (s *SQLiteStore) DeletePluginRun(ctx context.Context, runID string) error {
 	return err
 }
 
+// CountPluginRunsSince counts the agent runs plugin pluginID started since
+// since, in all its hidden threads: their messages not from the agent (a
+// plugin thread takes no other).
+func (s *SQLiteStore) CountPluginRunsSince(ctx context.Context, pluginID string, since time.Time) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM messages m JOIN channels c ON c.channel_id = m.channel_id
+		 WHERE c.kind = ? AND m.kind = 'message' AND m.is_bot = 0 AND m.created_at >= ?`,
+		PluginKind(pluginID), since.UTC(),
+	).Scan(&n)
+	return n, err
+}
+
 // MarkPluginRunDone marks the run runID as ended well.
 func (s *SQLiteStore) MarkPluginRunDone(ctx context.Context, runID string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE plugin_runs SET done = 1 WHERE run_id = ?`, runID)

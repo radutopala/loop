@@ -929,6 +929,13 @@ func buildSchema() *ConfigSchema {
 						XGlobalOnly: true,
 						Description: "A linux build of loop (make build-linux) that plugin containers run agentgate from. Empty downloads the release matching the daemon's version; a dev build needs this set.",
 					},
+					"daily_runs": {
+						Type:        "integer",
+						Title:       "Daily Agent Runs",
+						Description: "How many agent runs each plugin may start in 24 hours; past it, its run requests are refused.",
+						Default:     DefaultPluginDailyRuns,
+						XGlobalOnly: true,
+					},
 				},
 			},
 

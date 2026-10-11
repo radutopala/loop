@@ -119,6 +119,11 @@ func (s *ServerSuite) TestStartPluginRun() {
 			s.store.On("GetChannel", mock.Anything, "ch-1").Return(ch, nil).Once()
 			pr.On("StartPluginRun", mock.Anything, ch, mock.Anything).Return("", "", db.ErrParentGone).Once()
 		}, wantCode: http.StatusNotFound, wantBody: "channel not found"},
+		{name: "daily runs started", as: echo, body: body, setup: func(pm *MockPluginManager, pr *MockPluginRunner) {
+			pm.On("AgentRun", mock.Anything, "echo", "say").Return(sayRun, nil).Once()
+			s.store.On("GetChannel", mock.Anything, "ch-1").Return(ch, nil).Once()
+			pr.On("StartPluginRun", mock.Anything, ch, mock.Anything).Return("", "", orchestrator.ErrPluginRunBudget).Once()
+		}, wantCode: http.StatusTooManyRequests, wantBody: "plugins.daily_runs"},
 		{name: "queueing fails", as: echo, body: body, setup: func(pm *MockPluginManager, pr *MockPluginRunner) {
 			pm.On("AgentRun", mock.Anything, "echo", "say").Return(sayRun, nil).Once()
 			s.store.On("GetChannel", mock.Anything, "ch-1").Return(ch, nil).Once()

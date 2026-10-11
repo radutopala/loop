@@ -229,6 +229,9 @@ waiting in the thread's queue runs once Loop is back, and one that was going on 
 `/runs/{run_id}/done` sent as `failed`. One that ended well while Loop was stopping is sent as
 `done` once Loop is back.
 
+Each plugin starts at most `plugins.daily_runs` runs (50 by default) in any 24 hours, across all
+channels; past that, `POST /runs` answers `429`.
+
 ## Go SDK
 
 `github.com/radutopala/loop/pluginsdk` implements both halves of the contract for a plugin

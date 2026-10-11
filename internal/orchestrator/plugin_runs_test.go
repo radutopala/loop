@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/bot"
+	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/plugin"
 	"github.com/radutopala/loop/internal/plugin/proxy"
@@ -40,9 +42,42 @@ func (s *OrchestratorSuite) TestStartPluginRun() {
 		_, _, err := s.orch.StartPluginRun(s.ctx, parent, bad)
 		require.ErrorContains(s.T(), err, "encoding the plugin's tools: ")
 	})
+	s.Run("counting fails", func() {
+		s.SetupTest()
+		rs := new(mockPluginRunStore)
+		rs.On("CountPluginRunsSince", s.ctx, "echo", mock.Anything).Return(0, errors.New("db down"))
+		s.orch.SetPluginRunStore(rs)
+		_, _, err := s.orch.StartPluginRun(s.ctx, parent, run)
+		require.EqualError(s.T(), err, "counting the plugin's runs: db down")
+	})
+	budget := []struct {
+		name      string
+		dailyRuns int
+		started   int
+	}{
+		{"default daily runs started", 0, config.DefaultPluginDailyRuns},
+		{"configured daily runs started", 2, 2},
+	}
+	for _, tc := range budget {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			cfg := *s.orch.currentConfig()
+			cfg.Plugins.DailyRuns = tc.dailyRuns
+			s.orch.cfg.Store(&cfg)
+			now := time.Date(2026, 10, 11, 9, 0, 0, 0, time.UTC)
+			s.orch.timeNow = func() time.Time { return now }
+			rs := new(mockPluginRunStore)
+			rs.On("CountPluginRunsSince", s.ctx, "echo", now.Add(-24*time.Hour)).Return(tc.started, nil)
+			s.orch.SetPluginRunStore(rs)
+			_, _, err := s.orch.StartPluginRun(s.ctx, parent, run)
+			require.ErrorIs(s.T(), err, ErrPluginRunBudget)
+			s.store.AssertNotCalled(s.T(), "GetHiddenThread", mock.Anything, mock.Anything, mock.Anything)
+		})
+	}
 	s.Run("store fails", func() {
 		s.SetupTest()
 		rs := new(mockPluginRunStore)
+		rs.On("CountPluginRunsSince", s.ctx, "echo", mock.Anything).Return(0, nil)
 		rs.On("InsertPluginRun", s.ctx, mock.Anything).Return(errors.New("disk full"))
 		s.orch.SetPluginRunStore(rs)
 		s.store.On("GetHiddenThread", s.ctx, "ch1", db.PluginKind("echo")).Return(thread, nil)
@@ -56,6 +91,7 @@ func (s *OrchestratorSuite) TestStartPluginRun() {
 			rs := new(mockPluginRunStore)
 			var kept *db.PluginRun
 			if stored {
+				rs.On("CountPluginRunsSince", s.ctx, "echo", mock.Anything).Return(config.DefaultPluginDailyRuns-1, nil).Once()
 				rs.On("InsertPluginRun", s.ctx, mock.MatchedBy(func(r *db.PluginRun) bool {
 					kept = r
 					return true
@@ -288,6 +324,11 @@ func (m *mockPluginRunStore) DeletePluginRun(ctx context.Context, runID string) 
 
 func (m *mockPluginRunStore) MarkPluginRunDone(ctx context.Context, runID string) error {
 	return m.Called(ctx, runID).Error(0)
+}
+
+func (m *mockPluginRunStore) CountPluginRunsSince(ctx context.Context, pluginID string, since time.Time) (int, error) {
+	args := m.Called(ctx, pluginID, since)
+	return args.Int(0), args.Error(1)
 }
 
 func (m *mockPluginRunStore) ListPluginRuns(ctx context.Context) ([]*db.PluginRun, error) {

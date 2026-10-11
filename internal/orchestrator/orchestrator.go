@@ -106,6 +106,7 @@ type Orchestrator struct {
 	hiddenKinds       map[string]hiddenKind // runs of each kind of hidden thread (see shapeHiddenRun)
 	pluginRuns        sync.Map              // map[runID]*PluginRun — plugin runs queued or going on (see StartPluginRun)
 	activePluginRuns  sync.Map              // map[threadID]ActivePluginRun — the plugin run going on in each plugin thread
+	pluginBudgetMu    sync.Mutex            // makes counting a plugin's daily runs and queuing one a single step
 	pluginNotifier    PluginRunNotifier     // tells a plugin its run ended; nil skips it
 	pluginRunStore    PluginRunStore        // keeps plugin runs across restarts; nil keeps them in memory only
 

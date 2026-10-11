@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/bot"
@@ -55,10 +56,15 @@ type PluginRunStore interface {
 	DeletePluginRun(ctx context.Context, runID string) error
 	MarkPluginRunDone(ctx context.Context, runID string) error
 	ListPluginRuns(ctx context.Context) ([]*db.PluginRun, error)
+	CountPluginRunsSince(ctx context.Context, pluginID string, since time.Time) (int, error)
 }
 
+// ErrPluginRunBudget refuses a plugin run past the plugin's daily runs.
+var ErrPluginRunBudget = errors.New("the plugin has started its daily agent runs (plugins.daily_runs)")
+
 // SetPluginRunStore configures where plugin runs are kept; left unset,
-// they're kept in memory only and a restart loses them.
+// they're kept in memory only, a restart loses them and nothing caps a
+// plugin's daily runs.
 func (o *Orchestrator) SetPluginRunStore(s PluginRunStore) {
 	o.pluginRunStore = s
 }
@@ -84,8 +90,22 @@ type ActivePluginRun struct {
 
 // StartPluginRun queues run in parent's hidden thread for the plugin,
 // created on first use, and returns the run's id and the thread's. The
-// plugin's runs in parent take turns on that thread's queue.
+// plugin's runs in parent take turns on that thread's queue. Past the
+// plugin's daily runs it returns ErrPluginRunBudget.
 func (o *Orchestrator) StartPluginRun(ctx context.Context, parent *db.Channel, run PluginRun) (runID, threadID string, err error) {
+	// Counting and queuing are one step, so runs started at once can't
+	// all fit under the cap.
+	o.pluginBudgetMu.Lock()
+	defer o.pluginBudgetMu.Unlock()
+	if o.pluginRunStore != nil {
+		n, err := o.pluginRunStore.CountPluginRunsSince(ctx, run.PluginID, o.timeNow().Add(-24*time.Hour))
+		if err != nil {
+			return "", "", fmt.Errorf("counting the plugin's runs: %w", err)
+		}
+		if n >= o.currentConfig().Plugins.DailyRunsFor() {
+			return "", "", ErrPluginRunBudget
+		}
+	}
 	h, err := o.ensureHiddenThread(ctx, parent, db.PluginKind(run.PluginID))
 	if err != nil {
 		return "", "", err
