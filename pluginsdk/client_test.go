@@ -146,6 +146,13 @@ func (s *ClientSuite) TestWrites() {
 	require.NoError(s.T(), s.client.Notify(ctx, "Quiz", "ready"))
 	s.requireCall(http.MethodPost, "/notify", "")
 	require.JSONEq(s.T(), `{"title":"Quiz","body":"ready"}`, s.body)
+
+	require.NoError(s.T(), s.client.WriteMemory(ctx, "quiz-notes", "# Notes"))
+	s.requireCall(http.MethodPut, "/memory/quiz-notes", "")
+	require.JSONEq(s.T(), `{"content":"# Notes"}`, s.body)
+
+	require.NoError(s.T(), s.client.DeleteMemory(ctx, "quiz-notes"))
+	s.requireCall(http.MethodDelete, "/memory/quiz-notes", "")
 }
 
 func (s *ClientSuite) TestErrors() {

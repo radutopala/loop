@@ -12,6 +12,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -73,6 +74,7 @@ type FakeLoop struct {
 	events        []Event
 	notifications []Notification
 	runs          []StartedRun
+	memory        map[string]string
 }
 
 // NewFakeLoop starts a FakeLoop serving cfg, stopped when t ends.
@@ -81,7 +83,7 @@ func NewFakeLoop(t testing.TB, cfg Config) *FakeLoop {
 	if cfg.Channel.ID == "" {
 		cfg.Channel.ID = "ch1"
 	}
-	f := &FakeLoop{cfg: cfg, token: "plugin-token", TokenFile: filepath.Join(t.TempDir(), "plugin-token")}
+	f := &FakeLoop{cfg: cfg, memory: map[string]string{}, token: "plugin-token", TokenFile: filepath.Join(t.TempDir(), "plugin-token")}
 	require.NoError(t, os.WriteFile(f.TokenFile, []byte(f.token+"\n"), 0o600), "writing the plugin token")
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/plugin/v1/channel", f.channel)
@@ -92,6 +94,8 @@ func NewFakeLoop(t testing.TB, cfg Config) *FakeLoop {
 	mux.HandleFunc("POST /api/plugin/v1/runs", f.startRun)
 	mux.HandleFunc("POST /api/plugin/v1/events", f.event)
 	mux.HandleFunc("POST /api/plugin/v1/notify", f.allow(pluginsdk.CapUINotify, f.notify))
+	mux.HandleFunc("PUT /api/plugin/v1/memory/{name}", f.allow(pluginsdk.CapMemoryWrite, f.putMemory))
+	mux.HandleFunc("DELETE /api/plugin/v1/memory/{name}", f.allow(pluginsdk.CapMemoryWrite, f.deleteMemory))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+f.token {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -129,6 +133,13 @@ func (f *FakeLoop) Runs() []StartedRun {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.runs)
+}
+
+// Memory returns the plugin's memory files by name.
+func (f *FakeLoop) Memory() map[string]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return maps.Clone(f.memory)
 }
 
 // approved reports whether the plugin may use capability.
@@ -311,6 +322,34 @@ func (f *FakeLoop) notify(w http.ResponseWriter, r *http.Request) {
 	}
 	f.mu.Lock()
 	f.notifications = append(f.notifications, Notification(req))
+	f.mu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// memoryName is the name a plugin gives one of its memory files.
+var memoryName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
+
+func (f *FakeLoop) putMemory(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !memoryName.MatchString(name) {
+		http.Error(w, "name must be lowercase letters, digits and dashes, at most 64", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		Content string `json:"content"`
+	}
+	if !pluginsdk.DecodeJSON(w, r, &req) {
+		return
+	}
+	f.mu.Lock()
+	f.memory[name] = req.Content
+	f.mu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (f *FakeLoop) deleteMemory(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	delete(f.memory, r.PathValue("name"))
 	f.mu.Unlock()
 	w.WriteHeader(http.StatusNoContent)
 }

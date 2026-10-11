@@ -215,3 +215,20 @@ func (s *FakeLoopSuite) TestEventsAndNotifications() {
 	require.Equal(s.T(), []Event{{Type: "quiz.ready", Data: []byte(`{"id":1}`)}}, f.Events())
 	require.Equal(s.T(), []Notification{{Title: "Quiz", Body: "ready"}}, f.Notifications())
 }
+
+func (s *FakeLoopSuite) TestMemory() {
+	f := NewFakeLoop(s.T(), Config{Manifest: &pluginsdk.Manifest{Capabilities: []string{pluginsdk.CapMemoryWrite}}})
+	c := f.Client()
+	require.NoError(s.T(), c.WriteMemory(s.ctx, "quiz-notes", "# Notes"))
+	require.NoError(s.T(), c.WriteMemory(s.ctx, "old", "x"))
+	require.NoError(s.T(), c.DeleteMemory(s.ctx, "old"))
+	require.NoError(s.T(), c.DeleteMemory(s.ctx, "never-written"))
+	err := c.WriteMemory(s.ctx, "Bad Name", "x")
+	require.True(s.T(), pluginsdk.HasStatus(err, http.StatusBadRequest))
+	require.Equal(s.T(), http.StatusBadRequest, s.raw(f, http.MethodPut, "/memory/notes", "{"))
+	require.Equal(s.T(), map[string]string{"quiz-notes": "# Notes"}, f.Memory())
+
+	denied := NewFakeLoop(s.T(), Config{Manifest: &pluginsdk.Manifest{}})
+	err = denied.Client().WriteMemory(s.ctx, "notes", "x")
+	require.True(s.T(), pluginsdk.HasStatus(err, http.StatusForbidden))
+}

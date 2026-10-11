@@ -131,6 +131,7 @@ Capabilities are approved by the owner at install and checked on every call:
 | `ui.panel` | panels |
 | `ui.notify` | `POST /notify`, the bridge's `ui.notify` |
 | `ui.open_file` | the bridge's `ui.open_file` |
+| `memory.write` | `PUT /memory/{name}`, `DELETE /memory/{name}` |
 
 ## Container environment
 
@@ -226,6 +227,8 @@ channel id. A route needing a capability the owner didn't approve answers `403`.
 | `POST /runs` | `agent.readonly` / `agent.write` | body `{"agent", "prompt", "model"?, "effort"?}` → `202 {"run_id", "thread_id"}`; see below |
 | `POST /events` | | body `{"type", "data"}` → `204`; sent to the plugin's panels in the channel as `type` |
 | `POST /notify` | `ui.notify` | body `{"title", "body"}` → `204`; a desktop notification. Five a minute per plugin; past that `429` with `Retry-After` |
+| `PUT /memory/{name}` | `memory.write` | body `{"content"}` (up to 256 KB) → `204`; writes `plugin-<id>-<name>.md` into the auto-memory dir of the channel's dir, where the channel's agents find it with `search_memory` once memory is on. `name` is lowercase letters, digits and dashes, at most 64 (`400` otherwise); `409` when the channel has no dir |
+| `DELETE /memory/{name}` | `memory.write` | `204`, also when there was no such file |
 
 ### Agent runs
 

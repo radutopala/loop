@@ -22,6 +22,7 @@ const (
 	CapUIPanel       = "ui.panel"
 	CapUINotify      = "ui.notify"
 	CapUIOpenFile    = "ui.open_file"
+	CapMemoryWrite   = "memory.write"
 )
 
 // Manifest is a plugin's plugin.json. Loop checks it at install; reading it

@@ -50,13 +50,14 @@ const (
 	CapUIPanel       Capability = "ui.panel"
 	CapUINotify      Capability = "ui.notify"
 	CapUIOpenFile    Capability = "ui.open_file"
+	CapMemoryWrite   Capability = "memory.write"
 )
 
 // Capabilities lists every capability a manifest may ask for.
 var Capabilities = []Capability{
 	CapFilesRead, CapGitRead, CapQualityRead,
 	CapAgentReadOnly, CapAgentWrite, CapSchedule,
-	CapUIPanel, CapUINotify, CapUIOpenFile,
+	CapUIPanel, CapUINotify, CapUIOpenFile, CapMemoryWrite,
 }
 
 // Manifest is a plugin's plugin.json: who it is, what it may do and what it

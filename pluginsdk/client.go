@@ -295,3 +295,15 @@ func (c *Client) Event(ctx context.Context, typ string, data any) error {
 func (c *Client) Notify(ctx context.Context, title, body string) error {
 	return c.do(ctx, http.MethodPost, "/notify", nil, map[string]string{"title": title, "body": body}, nil)
 }
+
+// WriteMemory writes the plugin's memory file name (lowercase letters,
+// digits and dashes) into the channel's memory, where its agents find it
+// with search_memory. Needs memory.write.
+func (c *Client) WriteMemory(ctx context.Context, name, content string) error {
+	return c.do(ctx, http.MethodPut, "/memory/"+url.PathEscape(name), nil, map[string]string{"content": content}, nil)
+}
+
+// DeleteMemory removes the plugin's memory file name. Needs memory.write.
+func (c *Client) DeleteMemory(ctx context.Context, name string) error {
+	return c.do(ctx, http.MethodDelete, "/memory/"+url.PathEscape(name), nil, nil, nil)
+}
