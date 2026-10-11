@@ -68,6 +68,7 @@ type DockerClient interface {
 	ContainerWait(ctx context.Context, containerID string) (<-chan WaitResponse, <-chan error)
 	ContainerRemove(ctx context.Context, containerID string) error
 	ContainerStop(ctx context.Context, containerID string) error
+	ContainerRunning(ctx context.Context, containerID string) (bool, error)
 	ImageList(ctx context.Context, image string) ([]string, error)
 	ImagePull(ctx context.Context, image string) error
 	ImageBuild(ctx context.Context, contextDir, tag string) error
@@ -288,6 +289,12 @@ func (r *DockerRunner) ContainerRemove(ctx context.Context, containerID string) 
 		r.tokenIssuer.Revoke(containerID)
 	}
 	return r.client.ContainerRemove(ctx, containerID)
+}
+
+// ContainerRunning reports whether a container is running; one that no
+// longer exists isn't.
+func (r *DockerRunner) ContainerRunning(ctx context.Context, containerID string) (bool, error) {
+	return r.client.ContainerRunning(ctx, containerID)
 }
 
 // currentConfig returns a fresh config by calling configLoad, falling back

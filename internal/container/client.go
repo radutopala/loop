@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/build"
 	containertypes "github.com/docker/docker/api/types/container"
@@ -279,6 +280,19 @@ func digestStats(st *containertypes.StatsResponse) *ContainerStatsSummary {
 // ContainerInspect returns detailed container information.
 func (c *Client) ContainerInspect(ctx context.Context, containerID string) (containertypes.InspectResponse, error) {
 	return c.api.ContainerInspect(ctx, containerID)
+}
+
+// ContainerRunning reports whether a container is running; one that no
+// longer exists isn't.
+func (c *Client) ContainerRunning(ctx context.Context, containerID string) (bool, error) {
+	info, err := c.api.ContainerInspect(ctx, containerID)
+	if cerrdefs.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return info.State != nil && info.State.Running, nil
 }
 
 // NetworkEnsure creates a Docker bridge network if it doesn't already exist.

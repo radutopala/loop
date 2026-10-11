@@ -3,10 +3,12 @@ package container
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 
+	cerrdefs "github.com/containerd/errdefs"
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/stretchr/testify/require"
 )
@@ -81,4 +83,35 @@ func (s *ClientSuite) TestContainerInspectError() {
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "no such container")
 	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestContainerRunning() {
+	ctx := context.Background()
+	tests := []struct {
+		name    string
+		resp    containertypes.InspectResponse
+		err     error
+		running bool
+		wantErr string
+	}{
+		{name: "running", resp: containertypes.InspectResponse{ContainerJSONBase: &containertypes.ContainerJSONBase{State: &containertypes.State{Running: true}}}, running: true},
+		{name: "stopped", resp: containertypes.InspectResponse{ContainerJSONBase: &containertypes.ContainerJSONBase{State: &containertypes.State{}}}},
+		{name: "no state", resp: containertypes.InspectResponse{ContainerJSONBase: &containertypes.ContainerJSONBase{}}},
+		{name: "removed", err: fmt.Errorf("No such container: cid-1: %w", cerrdefs.ErrNotFound)},
+		{name: "docker down", err: errors.New("cannot connect"), wantErr: "cannot connect"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			s.api.On("ContainerInspect", ctx, "cid-1").Return(tt.resp, tt.err).Once()
+			running, err := s.client.ContainerRunning(ctx, "cid-1")
+			if tt.wantErr != "" {
+				require.EqualError(s.T(), err, tt.wantErr)
+			} else {
+				require.NoError(s.T(), err)
+			}
+			require.Equal(s.T(), tt.running, running)
+			s.api.AssertExpectations(s.T())
+		})
+	}
 }

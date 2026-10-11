@@ -746,3 +746,11 @@ func (s *ProxySuite) TestRunGateDisabledLeavesSandboxUntouched() {
 	require.Empty(s.T(), captured.SecurityOpt)
 	require.Empty(s.T(), captured.CapAdd)
 }
+
+func (s *RunnerSuite) TestContainerRunning() {
+	ctx := context.Background()
+	s.client.On("ContainerRunning", ctx, "cid-1").Return(true, nil).Once()
+	running, err := s.runner.ContainerRunning(ctx, "cid-1")
+	require.NoError(s.T(), err)
+	require.True(s.T(), running)
+}
