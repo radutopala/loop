@@ -58,12 +58,13 @@ await bridge.ui.copy("go test ./..."); // needs the ui.copy capability
 | `api.get/post/put/patch/delete` | the answer's body, or an `ApiError {status, body}` |
 | `context.get()` | where the panel is shown; in a card also its `card` and `data` |
 | `settings.get()`, `settings.onChange(cb)` | the plugin's settings in the channel's project |
-| `state.get()`, `state.set(value)` | small JSON UI state, kept per plugin, channel and panel |
+| `state.get()`, `state.set(value)`, `state.onChange(cb)` | small JSON UI state, kept per plugin, channel and panel; `onChange` hears what the same panel saves in another pane |
 | `events.on(cb)` | `{type, data}` the plugin's container sent with `POST /events` |
 | `ui.notification.notify(title, body?)` | keeps a notification in the channel's notification drawer |
 | `ui.openFile(path, line?)` | |
 | `ui.copy(text)` | puts text on the clipboard, at most 1 MB |
 | `ui.resize(height)` | a card's height in pixels, kept within 80 to 900 |
+| `ui.setTitle(title)` | names a panel's pane, at most 80 characters; `""` gives it back the panel's label |
 | `theme.get()`, `theme.onChange(cb)` | `{mode, vars}` |
 | `call(method, params?, timeoutMs?)` | any bridge method by name |
 | `close()` | fails the calls in flight and closes the port |
@@ -95,7 +96,8 @@ persist through one. It reads the panel's state once, works in memory, and saves
 `state.set` 50 ms after the last one (`debounceMs`; `flush()` saves now). Like the state, it's
 kept per plugin, channel and panel, and it takes the whole state, so don't also call
 `state.set`. A `setItem` that would take it over 64 KB throws a `QuotaExceededError`, as
-`localStorage` does.
+`localStorage` does. What the same panel saves in another pane replaces its items, unless
+changes of its own are still waiting to be saved.
 
 ```ts
 import { create } from "zustand";

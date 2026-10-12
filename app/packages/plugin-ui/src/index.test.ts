@@ -163,6 +163,14 @@ describe("calls", () => {
     await expect(pair(over).bridge.ui.resize(height)).rejects.toMatchObject({ code });
   });
 
+  it("ui.setTitle names a panel's pane", async () => {
+    const setTitle = vi.fn();
+    const { bridge } = pair({ setTitle });
+    await expect(bridge.ui.setTitle("Quiz · 3 due")).resolves.toBeUndefined();
+    expect(setTitle).toHaveBeenCalledWith("Quiz · 3 due");
+    await expect(pair().bridge.ui.setTitle("x")).rejects.toMatchObject({ code: ErrorCode.CALL_FAILED });
+  });
+
   it("call reaches any method by name", async () => {
     await expect(pair().bridge.call("context.get")).resolves.toMatchObject({ pluginId: "echo" });
   });
@@ -242,11 +250,14 @@ describe("notifications", () => {
     const themes = vi.fn();
     const settings = vi.fn();
     const events = vi.fn();
+    const states = vi.fn();
     const offTheme = bridge.theme.onChange(themes);
     bridge.settings.onChange(settings);
+    bridge.state.onChange(states);
     bridge.events.on(events);
     hostEnd.notify("theme", pluginTheme(lightColors));
     hostEnd.notify("settings", { count: 7 });
+    hostEnd.notify("state", { tab: "history" });
     hostEnd.notify("event", { type: "quiz_ready", data: { id: 1 } });
     hostEnd.notify("other", {});
     // The port delivers in order, so once the last listener has its call
@@ -254,6 +265,7 @@ describe("notifications", () => {
     await vi.waitFor(() => expect(events).toHaveBeenCalledWith({ type: "quiz_ready", data: { id: 1 } }));
     expect(themes).toHaveBeenCalledWith(pluginTheme(lightColors));
     expect(settings).toHaveBeenCalledWith({ count: 7 });
+    expect(states).toHaveBeenCalledWith({ tab: "history" });
     offTheme();
     hostEnd.notify("theme", pluginTheme(darkColors));
     hostEnd.notify("settings", { count: 8 });
@@ -317,6 +329,22 @@ describe("createStorage", () => {
   ])("starts empty when the state is $name", async ({ saved }) => {
     const s = await createStorage(pair({ loadState: () => saved }).bridge);
     expect(s.length).toBe(0);
+  });
+
+  it("takes the state another pane saved, unless changes here wait to be saved", async () => {
+    const { bridge, hostEnd } = pair({ loadState: () => ({ a: "1" }) });
+    const s = await createStorage(bridge, { debounceMs: 10_000 });
+    hostEnd.notify("state", { a: "2", b: "3" });
+    await vi.waitFor(() => expect(s.getItem("a")).toBe("2"));
+    expect(s.getItem("b")).toBe("3");
+    s.setItem("c", "4");
+    hostEnd.notify("state", { a: "9" });
+    hostEnd.notify("state", null);
+    await nextTick();
+    expect([s.getItem("a"), s.getItem("c")]).toEqual(["2", "4"]);
+    await s.flush();
+    hostEnd.notify("state", null);
+    await vi.waitFor(() => expect(s.length).toBe(0));
   });
 
   it("saves changes once, after the debounce", async () => {

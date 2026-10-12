@@ -120,6 +120,9 @@ export interface Bridge {
   state: {
     get<T = unknown>(): Promise<T | null>;
     set(value: unknown): Promise<void>;
+    /** Called with the state another frame of the same panel and channel,
+     *  in another pane, saved. */
+    onChange<T = unknown>(cb: (value: T | null) => void): Unsubscribe;
   };
   /** Events of the plugin's container in the panel's channel. */
   events: {
@@ -140,6 +143,9 @@ export interface Bridge {
     /** Sizes a card's frame to height pixels, kept within 80 to 900. A
      *  panel fills its pane and can't. */
     resize(height: number): Promise<void>;
+    /** Names the panel's pane, at most 80 characters; "" gives it back the
+     *  panel's label. A card can't. */
+    setTitle(title: string): Promise<void>;
   };
   theme: {
     get(): Promise<Theme>;
@@ -281,6 +287,7 @@ export function connectPort(port: MessagePort, opts: BridgeOptions = {}): Bridge
       set: async (value) => {
         await call("state.set", { value });
       },
+      onChange: (cb) => on("state", cb),
     },
     events: { on: (cb) => on("event", cb) },
     ui: {
@@ -297,6 +304,9 @@ export function connectPort(port: MessagePort, opts: BridgeOptions = {}): Bridge
       },
       resize: async (height) => {
         await call("ui.resize", { height });
+      },
+      setTitle: async (title) => {
+        await call("ui.set_title", { title });
       },
     },
     theme: { get: () => call("theme.get"), onChange: (cb) => on("theme", cb) },
@@ -375,18 +385,27 @@ function stateBytes(items: Map<string, string>): number {
  *  (zustand's persist, query persisters). It reads the panel's state once,
  *  then works in memory and saves changes in the background with state.set.
  *  Like the state, it's kept per plugin, channel and panel, and it owns the
- *  whole state: don't also call bridge.state.set. */
+ *  whole state: don't also call bridge.state.set. It takes what the same
+ *  panel saves in another pane, as localStorage takes another tab's. */
 export async function createStorage(bridge: Bridge, opts: StorageOptions = {}): Promise<BridgeStorage> {
   const debounceMs = opts.debounceMs ?? 50;
   const onError = opts.onError ?? ((err: unknown) => console.warn("plugin-ui: saving storage failed", err));
   const items = new Map<string, string>();
-  const saved = await bridge.state.get();
-  if (saved && typeof saved === "object" && !Array.isArray(saved)) {
-    for (const [k, v] of Object.entries(saved)) if (typeof v === "string") items.set(k, v);
-  }
+  const load = (saved: unknown) => {
+    items.clear();
+    if (saved && typeof saved === "object" && !Array.isArray(saved)) {
+      for (const [k, v] of Object.entries(saved)) if (typeof v === "string") items.set(k, v);
+    }
+  };
+  load(await bridge.state.get());
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   let dirty = false;
+  // What the same panel saved in another pane, unless there are changes
+  // here still to save, which win.
+  bridge.state.onChange((value) => {
+    if (!dirty) load(value);
+  });
   const save = (): Promise<void> => {
     clearTimeout(timer);
     timer = undefined;

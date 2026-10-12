@@ -17,6 +17,8 @@ import { storageGetJSON, storageSetJSON } from "../utils/storage";
 import { BRIDGE_INIT, type Bridge, type BridgeHost, connectBridge, pluginTheme } from "./bridge";
 import { agentOpenKey, PluginAgentBadge, PluginAgentThread, type SubscribeChannelEvents, usePluginAgent, usePluginAgentOpen } from "./PluginAgent";
 import { findPluginPanel, usePluginPanels } from "./PluginPanelsContext";
+import { clearPaneTitle, setPaneTitle } from "./paneTitles";
+import { emitPluginState, onPluginState } from "./pluginStateBus";
 
 export interface PluginPanelProps {
   plugin: PluginPaneRef | undefined;
@@ -71,6 +73,16 @@ export function PluginPanel({ plugin: ref, channelId, channelName, dirPath, leaf
     };
   }, [pluginId, entry, capsEpoch]);
 
+  // The panel's state, shared by the frames showing the same panel of the
+  // channel: each hears of what the others save.
+  const stateKey = `plugin-state:${pluginId}:${channelId}:${panelId}`;
+  const pushState = useCallback((value: unknown) => bridgeRef.current?.notify("state", value), []);
+  useEffect(() => onPluginState(stateKey, pushState), [stateKey, pushState]);
+
+  // The title the page gave the pane lasts as long as the page.
+  const [titleOwner] = useState(() => ({}));
+  useEffect(() => () => clearPaneTitle(leafId, titleOwner), [leafId, titleOwner]);
+
   // The bridge reads the host from a ref, so it outlives renders.
   const hostRef = useRef<BridgeHost | null>(null);
   hostRef.current = found
@@ -92,8 +104,12 @@ export function PluginPanel({ plugin: ref, channelId, channelName, dirPath, leaf
           window.dispatchEvent(new CustomEvent<FileLinkOpenDetail>("loop:open-file", { detail }));
         },
         copy: (text) => writeClipboard(text),
-        loadState: () => storageGetJSON(`plugin-state:${pluginId}:${channelId}:${panelId}`),
-        saveState: (value) => storageSetJSON(`plugin-state:${pluginId}:${channelId}:${panelId}`, value),
+        loadState: () => storageGetJSON(stateKey),
+        saveState: (value) => {
+          storageSetJSON(stateKey, value);
+          emitPluginState(stateKey, value, pushState);
+        },
+        setTitle: (title) => setPaneTitle(leafId, titleOwner, title),
       }
     : null;
 
@@ -102,6 +118,7 @@ export function PluginPanel({ plugin: ref, channelId, channelName, dirPath, leaf
   const handleLoad = useCallback(() => {
     bridgeRef.current?.close();
     bridgeRef.current = null;
+    clearPaneTitle(leafId, titleOwner);
     const frame = frameRef.current?.contentWindow;
     const host = hostRef.current;
     if (!frame || !host) return;
@@ -109,7 +126,7 @@ export function PluginPanel({ plugin: ref, channelId, channelName, dirPath, leaf
     bridgeRef.current = connectBridge(channel.port1, () => hostRef.current ?? host);
     // The frame's origin is opaque, so it can only be targeted with "*".
     frame.postMessage({ type: BRIDGE_INIT }, "*", [channel.port2]);
-  }, []);
+  }, [leafId, titleOwner]);
   useEffect(() => () => bridgeRef.current?.close(), []);
 
   useEffect(() => {

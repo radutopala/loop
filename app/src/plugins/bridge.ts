@@ -14,6 +14,9 @@ export const MAX_STATE_BYTES = 64 << 10;
 /** The most text one ui.copy may put on the clipboard. */
 export const MAX_COPY_BYTES = 1 << 20;
 
+/** The longest title ui.set_title takes, in characters. */
+export const MAX_TITLE_CHARS = 80;
+
 const METHOD_NOT_FOUND = -32601;
 const INVALID_PARAMS = -32602;
 const CALL_FAILED = -32000;
@@ -75,6 +78,9 @@ export interface BridgeHost {
   card?: { id: string; data: unknown };
   /** Sizes a card's frame to height; panels fill their pane instead. */
   resize?: (height: number) => void;
+  /** Names a panel's pane, or gives it back its label for ""; a card shows
+   *  the title it was posted with instead. */
+  setTitle?: (title: string) => void;
 }
 
 type Params = Record<string, unknown>;
@@ -134,6 +140,13 @@ export async function callBridge(host: BridgeHost, method: string, params: Param
       const height = params.height;
       if (typeof height !== "number" || !Number.isFinite(height) || height <= 0) throw new BridgeError(INVALID_PARAMS, "height must be a positive number");
       host.resize(height);
+      return null;
+    }
+    case "ui.set_title": {
+      if (!host.setTitle) throw new BridgeError(CALL_FAILED, "only a panel sets its title; a card shows the one it was posted with");
+      const title = str(params, "title", false).trim();
+      if ([...title].length > MAX_TITLE_CHARS) throw new BridgeError(INVALID_PARAMS, `title is over ${MAX_TITLE_CHARS} characters`);
+      host.setTitle(title);
       return null;
     }
     default:

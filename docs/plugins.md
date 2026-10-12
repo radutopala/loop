@@ -394,6 +394,7 @@ On load the host posts `{"type": "loop-plugin:init"}` to the frame with a `Messa
 | `ui.open_file` | `{"path", "line"?}` | `null`; opens a file of the channel in the editor; needs `ui.open_file` |
 | `ui.copy` | `{"text"}` | `null`; puts `text`, at most 1 MB, on the clipboard; needs `ui.copy` |
 | `ui.resize` | `{"height"}` | `null`; sets a card's height in pixels, kept within 80 to 900; a panel fills its pane and gets an error |
+| `ui.set_title` | `{"title"}` | `null`; names the panel's pane, at most 80 characters, until the page reloads; `""` gives it back the panel's label; a card gets an error |
 
 The theme's `vars` are `--bg`, `--surface`, `--fg`, `--muted`, `--border`, `--accent`,
 `--success`, `--danger`, `--font` and `--mono`; a panel sets them on its root element.
@@ -405,6 +406,7 @@ Host notifications:
 | `event` | `{"type", "data"}`: an event the plugin's container sent with `POST /events` |
 | `theme` | as `theme.get`, when the theme changes |
 | `settings` | as `settings.get`, when a config write changes them |
+| `state` | the state the same panel of the channel saved with `state.set` in another pane |
 
 ### Cards
 

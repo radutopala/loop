@@ -11,5 +11,6 @@ document.getElementById("stats").textContent = JSON.stringify(res.body);
 await bridge.call("state.set", { value: { seen: res.status } });
 await bridge.call("ui.notification.notify", { title: "Loaded" });
 await bridge.call("ui.copy", { text: "copied" });
+await bridge.call("ui.set_title", { title: `${settings.greeting} · ${res.status}` });
 const data = await (await fetch("data.json")).json();
 document.body.dataset.items = String(data.items.length);

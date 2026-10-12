@@ -89,6 +89,12 @@
         if (typeof height !== "number" || !Number.isFinite(height) || height <= 0) throw new BridgeError(INVALID_PARAMS, "height must be a positive number");
         return null;
       }
+      case "ui.set_title": {
+        if (page.kind !== "panel") throw new BridgeError(CALL_FAILED, "only a panel sets its title; a card shows the one it was posted with");
+        if (params.title !== undefined && typeof params.title !== "string") throw new BridgeError(INVALID_PARAMS, "title must be a string");
+        if ([...(params.title ?? "").trim()].length > 80) throw new BridgeError(INVALID_PARAMS, "title is over 80 characters");
+        return null;
+      }
       default:
         throw new BridgeError(METHOD_NOT_FOUND, `no method ${method}`);
     }

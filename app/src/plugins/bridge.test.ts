@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { darkColors, fonts, lightColors } from "../theme";
-import { BridgeError, type BridgeHost, callBridge, connectBridge, MAX_COPY_BYTES, MAX_STATE_BYTES, pluginTheme } from "./bridge";
+import { BridgeError, type BridgeHost, callBridge, connectBridge, MAX_COPY_BYTES, MAX_STATE_BYTES, MAX_TITLE_CHARS, pluginTheme } from "./bridge";
 
 function host(over: Partial<BridgeHost> = {}): BridgeHost {
   return {
@@ -88,6 +88,27 @@ describe("callBridge", () => {
     const err = await callBridge(host({ resize }), "ui.resize", params).catch((e: unknown) => e);
     expect(err).toMatchObject({ code, message: msg });
     if (resize) expect(resize).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { name: "a title", params: { title: "  Quiz · 3 due " }, want: "Quiz · 3 due" },
+    { name: "the longest", params: { title: "🦀".repeat(MAX_TITLE_CHARS) }, want: "🦀".repeat(MAX_TITLE_CHARS) },
+    { name: "an empty title", params: { title: "" }, want: "" },
+    { name: "no title", params: {}, want: "" },
+  ])("ui.set_title names the pane with $name", async ({ params, want }) => {
+    const setTitle = vi.fn();
+    await expect(callBridge(host({ setTitle }), "ui.set_title", params)).resolves.toBeNull();
+    expect(setTitle).toHaveBeenCalledWith(want);
+  });
+
+  it.each([
+    { name: "a card", params: { title: "x" }, setTitle: undefined, code: -32000, msg: "only a panel sets its title; a card shows the one it was posted with" },
+    { name: "a number", params: { title: 3 }, setTitle: vi.fn(), code: -32602, msg: "title must be a string" },
+    { name: "a long title", params: { title: "x".repeat(MAX_TITLE_CHARS + 1) }, setTitle: vi.fn(), code: -32602, msg: "title is over 80 characters" },
+  ])("ui.set_title refuses $name", async ({ params, setTitle, code, msg }) => {
+    const err = await callBridge(host({ setTitle }), "ui.set_title", params).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code, message: msg });
+    if (setTitle) expect(setTitle).not.toHaveBeenCalled();
   });
 
   it.each([

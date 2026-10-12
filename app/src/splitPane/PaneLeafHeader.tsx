@@ -4,6 +4,7 @@ import { paneHeaderSlotRef } from "../components/chat/LearnBadge";
 import type { AgentInfo } from "../hooks/useAgentRegistry";
 import { type ContainerStatsByType, fmtBytes, statsForPanel } from "../hooks/useContainerStats";
 import { usePluginPanels } from "../plugins/PluginPanelsContext";
+import { usePaneTitle } from "../plugins/paneTitles";
 import { useTheme } from "../ThemeContext";
 import type { ColorPalette } from "../theme";
 import { fonts } from "../theme";
@@ -86,7 +87,8 @@ export function PaneLeafHeader({
 }: PaneLeafHeaderProps) {
   const { colors } = useTheme();
   const isAgent = panel === "docker-agent";
-  const label = isAgent ? agentInfo?.name || leafId : paneLabel(panel, plugin);
+  const pluginTitle = usePaneTitle(leafId);
+  const label = isAgent ? agentInfo?.name || leafId : (panel === "plugin" && pluginTitle) || paneLabel(panel, plugin);
   const statsEntry = statsForPanel(panel, containerStats);
 
   const btnStyle = buildBtnStyle(colors);
