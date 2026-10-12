@@ -1428,7 +1428,7 @@ Create a new scheduled task.
 | `channel_id`       | string | yes      | Channel to run the task in |
 | `schedule`         | string | yes      | Cron expression, Go duration, or RFC3339 timestamp |
 | `type`             | string | yes      | `cron`, `interval`, or `once` |
-| `prompt`           | string | no       | Prompt text for the agent (required unless `workflow_name` is set) |
+| `prompt`           | string | no       | Prompt text for the agent (required unless `workflow_name` or `bash_script` is set; a task with none of them is a `400`) |
 | `template_name`    | string | no       | Template identifier for deduplication |
 | `auto_delete_sec`  | int    | no       | Auto-delete thread after N seconds |
 | `worktree`         | bool   | no       | Run the agent in an isolated git worktree |

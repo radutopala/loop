@@ -135,6 +135,16 @@ func (s *ServerSuite) TestCreateTaskInvalidScheduleReturns400() {
 	s.scheduler.AssertExpectations(s.T())
 }
 
+func (s *ServerSuite) TestCreateTaskNothingToRunReturns400() {
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, nil)
+	s.scheduler.On("AddTask", mock.Anything, mock.Anything).Return(int64(0), scheduler.ErrNothingToRun)
+
+	rec := s.testRequest("POST", "/api/tasks", `{"channel_id":"ch1","schedule":"1h","type":"interval","prompt":""}`)
+
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+	s.scheduler.AssertExpectations(s.T())
+}
+
 func (s *ServerSuite) TestCreateTaskSubThreadResolvesToParent() {
 	// sub-thread: its parent is also a thread (has parent_id)
 	s.store.On("GetChannel", mock.Anything, "sub-thread").

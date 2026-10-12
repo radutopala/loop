@@ -109,18 +109,38 @@ func (s *SchedulerSuite) TestAddTask() {
 		},
 		{
 			name:    "invalid cron",
-			task:    &db.ScheduledTask{ChannelID: "ch1", Schedule: "invalid cron", Type: db.TaskTypeCron},
+			task:    &db.ScheduledTask{ChannelID: "ch1", Schedule: "invalid cron", Type: db.TaskTypeCron, Prompt: "x"},
 			wantErr: "calculating next run",
 		},
 		{
 			name:    "invalid interval",
-			task:    &db.ScheduledTask{ChannelID: "ch1", Schedule: "not-a-duration", Type: db.TaskTypeInterval},
+			task:    &db.ScheduledTask{ChannelID: "ch1", Schedule: "not-a-duration", Type: db.TaskTypeInterval, Prompt: "x"},
 			wantErr: "calculating next run",
 		},
 		{
 			name:    "unknown type",
-			task:    &db.ScheduledTask{ChannelID: "ch1", Schedule: "", Type: db.TaskType("unknown")},
+			task:    &db.ScheduledTask{ChannelID: "ch1", Schedule: "", Type: db.TaskType("unknown"), Prompt: "x"},
 			wantErr: "calculating next run",
+		},
+		{
+			name:    "bash script",
+			task:    &db.ScheduledTask{ChannelID: "ch1", Schedule: "30m", Type: db.TaskTypeInterval, BashScript: "true"},
+			storeID: 4,
+		},
+		{
+			name:    "workflow",
+			task:    &db.ScheduledTask{ChannelID: "ch1", Schedule: "30m", Type: db.TaskTypeInterval, WorkflowName: "nightly"},
+			storeID: 5,
+		},
+		{
+			name:    "plugin action",
+			task:    &db.ScheduledTask{ChannelID: "ch1", Schedule: "30m", Type: db.TaskTypeInterval, PluginID: "p", PluginAction: "daily"},
+			storeID: 6,
+		},
+		{
+			name:    "nothing to run",
+			task:    &db.ScheduledTask{ChannelID: "ch1", Schedule: "30m", Type: db.TaskTypeInterval, Prompt: "  "},
+			wantErr: ErrNothingToRun.Error(),
 		},
 	}
 	for _, tc := range cases {
@@ -152,6 +172,7 @@ func (s *SchedulerSuite) TestAddTaskStoreError() {
 		ChannelID: "ch1",
 		Schedule:  "10m",
 		Type:      db.TaskTypeInterval,
+		Prompt:    "do stuff",
 	}
 
 	s.store.On("CreateScheduledTask", mock.Anything, mock.Anything).Return(int64(0), errors.New("db error"))

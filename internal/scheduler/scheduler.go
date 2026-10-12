@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +20,10 @@ import (
 // errors.Is to return a 400 rather than a 500 — these are user-input errors,
 // not server faults.
 var ErrInvalidSchedule = errors.New("invalid task schedule")
+
+// ErrNothingToRun is AddTask's error for a task with no prompt, script,
+// workflow or plugin action.
+var ErrNothingToRun = errors.New("a task needs a prompt, bash_script or workflow_name")
 
 // TaskExecutor executes a scheduled task and returns a response or error.
 type TaskExecutor interface {
@@ -97,8 +102,12 @@ func (s *TaskScheduler) Stop() error {
 	return nil
 }
 
-// AddTask calculates next_run_at, enables the task, and stores it.
+// AddTask calculates next_run_at, enables the task, and stores it. A task
+// with nothing to run is ErrNothingToRun.
 func (s *TaskScheduler) AddTask(ctx context.Context, task *db.ScheduledTask) (int64, error) {
+	if strings.TrimSpace(task.Prompt) == "" && strings.TrimSpace(task.BashScript) == "" && task.WorkflowName == "" && task.PluginAction == "" {
+		return 0, ErrNothingToRun
+	}
 	nextRun, err := calculateNextRun(task.Type, task.Schedule, time.Now().UTC())
 	if err != nil {
 		return 0, fmt.Errorf("calculating next run: %w", err)

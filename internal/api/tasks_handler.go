@@ -15,7 +15,7 @@ import (
 // taskMutationStatus maps an AddTask/EditTask error to an HTTP status: 400 for
 // an invalid user-supplied schedule or type, 500 for genuine server faults.
 func taskMutationStatus(err error) int {
-	if errors.Is(err, scheduler.ErrInvalidSchedule) {
+	if errors.Is(err, scheduler.ErrInvalidSchedule) || errors.Is(err, scheduler.ErrNothingToRun) {
 		return http.StatusBadRequest
 	}
 	return http.StatusInternalServerError
