@@ -13,7 +13,8 @@ import { DRAG_MIME, emitLayoutDragEnd, emitLayoutDragStart } from "./DropZoneOve
 import { type MenuPlacement, placeMenu } from "./menuPlacement";
 import type { DropPosition, SplitDirection } from "./types";
 
-function buildBtnStyle(colors: ColorPalette): React.CSSProperties {
+/** A pane header's icon button. */
+export function buildBtnStyle(colors: ColorPalette): React.CSSProperties {
   return {
     background: "none",
     border: "none",

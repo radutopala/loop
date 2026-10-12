@@ -2048,7 +2048,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                 learnPane={learnPane}
               />
             )}
-            {notificationsOpen && <NotificationDrawer channelId={channelId} channelName={channel.name} dirPath={dirPath} onClose={closeNotifications} />}
+            <NotificationDrawer open={notificationsOpen} channelId={channelId} channelName={channel.name} dirPath={dirPath} onClose={closeNotifications} />
           </div>
           {chatHostPlaced && portalLeafId && createPortal(renderChat(portalLeafId), chatHost)}
           {pluginLeaves.map((leaf) =>
