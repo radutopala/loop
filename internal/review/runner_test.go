@@ -147,7 +147,7 @@ func (s *RunnerSuite) TestRunForwardsReportFindings() {
 	}
 }
 
-// Each Read tool call reaches OnFileRead with its file_path; other tools,
+// Each Read tool call reaches OnFileRead with its file_path and range; other tools,
 // a pathless Read and malformed input are ignored, and a run that sets only
 // OnFileRead never decodes ReportFindings.
 func (s *RunnerSuite) TestRunForwardsFileReads() {
@@ -155,9 +155,10 @@ func (s *RunnerSuite) TestRunForwardsFileReads() {
 		name     string
 		toolName string
 		input    string
-		want     []string
+		want     []FileRead
 	}{
-		{name: "read", toolName: "Read", input: `{"file_path":"/wt/a.go","offset":10,"limit":40}`, want: []string{"/wt/a.go"}},
+		{name: "read", toolName: "Read", input: `{"file_path":"/wt/a.go","offset":10,"limit":40}`, want: []FileRead{{Path: "/wt/a.go", Offset: 10, Limit: 40}}},
+		{name: "whole file", toolName: "Read", input: `{"file_path":"/wt/a.go"}`, want: []FileRead{{Path: "/wt/a.go"}}},
 		{name: "no path", toolName: "Read", input: `{}`},
 		{name: "malformed", toolName: "Read", input: "not json"},
 		{name: "other tool", toolName: "Grep", input: `{"pattern":"x","path":"/wt/a.go"}`},
@@ -171,13 +172,36 @@ func (s *RunnerSuite) TestRunForwardsFileReads() {
 				req.OnToolUseRaw("tu-1", tc.toolName, tc.input)
 			}).Return(&agent.AgentResponse{}, nil)
 
-			var got []string
+			var got []FileRead
 			r := &Runner{Agent: a}
-			_, err := r.Run(context.Background(), RunRequest{ChannelID: "ch", DirPath: "/wt", OnFileRead: func(p string) {
+			_, err := r.Run(context.Background(), RunRequest{ChannelID: "ch", DirPath: "/wt", OnFileRead: func(p FileRead) {
 				got = append(got, p)
 			}})
 			require.NoError(s.T(), err)
 			require.Equal(s.T(), tc.want, got)
+		})
+	}
+}
+
+func (s *RunnerSuite) TestFileReadCovers() {
+	tests := []struct {
+		name string
+		read FileRead
+		line int
+		want bool
+	}{
+		{name: "whole file, top", read: FileRead{}, line: 1, want: true},
+		{name: "whole file, within the default limit", read: FileRead{}, line: 2000, want: true},
+		{name: "whole file, past the default limit", read: FileRead{}, line: 2002},
+		{name: "range start", read: FileRead{Offset: 10, Limit: 40}, line: 10, want: true},
+		{name: "range end", read: FileRead{Offset: 10, Limit: 40}, line: 50, want: true},
+		{name: "before the range", read: FileRead{Offset: 10, Limit: 40}, line: 9},
+		{name: "after the range", read: FileRead{Offset: 10, Limit: 40}, line: 51},
+		{name: "offset only", read: FileRead{Offset: 500}, line: 580, want: true},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			require.Equal(s.T(), tc.want, tc.read.Covers(tc.line))
 		})
 	}
 }

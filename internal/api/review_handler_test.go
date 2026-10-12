@@ -1555,7 +1555,7 @@ type mockReviewRunner struct {
 	findings []*review.Comment
 	// reads are handed to the run's OnFileRead callback the way the agent's
 	// Read tool_use calls would deliver them.
-	reads      []string
+	reads      []review.FileRead
 	done       chan struct{} // closed after the first Run returns
 	doneClosed bool
 }

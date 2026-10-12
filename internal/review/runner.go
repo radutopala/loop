@@ -63,10 +63,33 @@ type RunRequest struct {
 	// the built-in ReportFindings tool, in the order reported; it runs on the
 	// stream-reading goroutine, so it must not block for long.
 	OnComment func(*Comment)
-	// OnFileRead, when set, receives the file_path of each Read tool call the
-	// agent makes, so the caller can tell which files a pass actually opened;
-	// like OnComment it runs on the stream-reading goroutine.
-	OnFileRead func(path string)
+	// OnFileRead, when set, receives each Read tool call the agent makes, so
+	// the caller can tell which lines a pass actually saw; like OnComment it
+	// runs on the stream-reading goroutine.
+	OnFileRead func(FileRead)
+}
+
+// FileRead is one Read tool call: the file, and the lines it asked for.
+// Offset is the line to start from (0 means the top of the file), Limit the
+// number of lines (0 means the tool's default).
+type FileRead struct {
+	Path   string
+	Offset int
+	Limit  int
+}
+
+// readDefaultLimit is how many lines a Read without a limit shows.
+const readDefaultLimit = 2000
+
+// Covers reports whether the read showed line. Whether the tool counts
+// Offset from 0 or 1 doesn't matter here: the range takes one line of slack
+// at its end, so it holds either way.
+func (r FileRead) Covers(line int) bool {
+	start, limit := max(r.Offset, 1), r.Limit
+	if limit <= 0 {
+		limit = readDefaultLimit
+	}
+	return line >= start && line <= start+limit
 }
 
 // Run executes the review pass described by rr.
@@ -103,9 +126,11 @@ func (r *Runner) Run(ctx context.Context, rr RunRequest) (*agent.AgentResponse, 
 			case name == readTool && rr.OnFileRead != nil:
 				var in struct {
 					FilePath string `json:"file_path"`
+					Offset   int    `json:"offset"`
+					Limit    int    `json:"limit"`
 				}
 				if json.Unmarshal([]byte(rawInput), &in) == nil && in.FilePath != "" {
-					rr.OnFileRead(in.FilePath)
+					rr.OnFileRead(FileRead{Path: in.FilePath, Offset: in.Offset, Limit: in.Limit})
 				}
 			}
 		}

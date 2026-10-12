@@ -1145,21 +1145,23 @@ func (s *reviewService) runDedupPass(ctx context.Context, channelID, parentDirPa
 	}
 	res.Related = append(res.Related, plan.Related...)
 	// A line move or a verdict is a claim about the code, so it only counts
-	// when the pass actually opened the comment's file; otherwise it is a
-	// guess from the comment text, and is dropped.
-	paths := make(map[string]string, len(cands))
+	// when one of the pass's reads showed the comment's line (and, for a
+	// move, the line it moves to); otherwise it is a guess from the comment
+	// text, and is dropped.
+	byID := make(map[string]*review.Comment, len(cands))
 	for _, c := range cands {
-		paths[c.ID] = c.Path
+		byID[c.ID] = c
 	}
-	unread := func(id, what string) bool {
-		if reads.has(sess.WorktreePath, paths[id]) {
+	unread := func(id, what string, lines ...int) bool {
+		c := byID[id]
+		if reads.has(sess.WorktreePath, c, lines...) {
 			return false
 		}
-		s.deps.logger.Info("review dedup: comment file not read, dropping claim", "claim", what, "channel_id", channelID, "comment_id", id, "path", paths[id])
+		s.deps.logger.Info("review dedup: comment line not read, dropping claim", "claim", what, "channel_id", channelID, "comment_id", id, "path", c.Path, "line", c.Line)
 		return true
 	}
 	for _, mv := range plan.Moves {
-		if unread(mv.ID, "move") {
+		if unread(mv.ID, "move", mv.Line) {
 			continue
 		}
 		from := 0
@@ -1207,29 +1209,36 @@ func (s *reviewService) handleReviewStop(w http.ResponseWriter, r *http.Request)
 	writeHTTPJSON(w, http.StatusAccepted, map[string]string{"status": "stopping"}, s.deps.logger)
 }
 
-// fileReads records the file_path of each Read tool call a dedup pass makes.
-// add runs on the agent's stream goroutine; has runs once the pass is over.
+// fileReads records each Read tool call a dedup pass makes. add runs on the
+// agent's stream goroutine; has runs once the pass is over.
 type fileReads struct {
 	mu    sync.Mutex
-	paths []string
+	reads []review.FileRead
 }
 
-func (f *fileReads) add(path string) {
+func (f *fileReads) add(r review.FileRead) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.paths = append(f.paths, path)
+	f.reads = append(f.reads, r)
 }
 
-// has reports whether a Read opened rel, a repo-relative comment path, in
-// the worktree at root. Read takes absolute paths, and the container mounts
-// the worktree at its host path, next to the parent checkout: a read of the
-// same file there is another revision of it, and doesn't count.
-func (f *fileReads) has(root, rel string) bool {
+// has reports whether a Read of c's file in the worktree at root showed c's
+// line and each of lines. Read takes absolute paths, and the container
+// mounts the worktree at its host path, next to the parent checkout: a read
+// of the same file there is another revision of it, and doesn't count. A
+// LEFT-side comment's line is in the base revision, which the worktree
+// doesn't have, so for one any read of the file counts.
+func (f *fileReads) has(root string, c *review.Comment, lines ...int) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	want := filepath.Join(root, rel)
-	return rel != "" && slices.ContainsFunc(f.paths, func(p string) bool {
-		return filepath.Clean(p) == want
+	want := filepath.Join(root, c.Path)
+	if c.Side != "LEFT" {
+		lines = append([]int{c.Line}, lines...)
+	} else {
+		lines = nil
+	}
+	return slices.ContainsFunc(f.reads, func(r review.FileRead) bool {
+		return filepath.Clean(r.Path) == want && !slices.ContainsFunc(lines, func(l int) bool { return !r.Covers(l) })
 	})
 }
 

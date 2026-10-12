@@ -96,18 +96,23 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
    just one finding, that means the new findings plus the earlier ones
    still standing (judged `real`, or not judged yet), since the run may
    follow a fix: a fixed one becomes `already_fixed`, and a review-fix
-   loop stops handing it to the fix step. An earlier finding already
-   marked `false_positive` or `already_fixed` keeps that verdict: the
-   pass sees it with its verdict and reason, and when the run reports it
-   again, the earlier finding is kept and the new repeat is folded into
-   it, so a dismissed finding stays dismissed across rounds. A note the
-   fold appends to the kept finding keeps its verdict. A dedup pass
-   you start yourself checks everything again. The verdicts are `real`, `false_positive` (the code doesn't do what the comment
+   loop stops handing it to the fix step. The pass sees an earlier
+   finding already marked `false_positive` or `already_fixed` with its
+   verdict and reason, and when the run reports it again, the earlier
+   finding is kept and the new repeat is folded into it. A
+   `false_positive` keeps its verdict, and a new finding resting on the
+   claim it was dismissed for is folded in rather than verified, so a
+   false positive stays one across rounds. An `already_fixed` finding
+   reported again is read again, since the fix may have been undone. A
+   note the fold appends to the kept finding keeps its verdict. A dedup
+   pass you start yourself checks everything again. The verdicts are `real`, `false_positive` (the code doesn't do what the comment
    says, or the behaviour is intended, handled elsewhere or what the PR
    sets out to do) or `already_fixed`, with a one-sentence reason citing
    the line it read. Moves and verdicts are claims about the code, so
-   Loop keeps one only when the pass opened that comment's file in the PR
-   worktree with the Read tool; one made from the comment text alone is dropped (and
+   Loop keeps one only when a Read tool call of the pass showed that
+   comment's line (and, for a move, the line it moves to) in the PR
+   worktree; reads through Bash don't count, and one made from the comment
+   text alone is dropped (and
    logged). The diff card shows the
    verdict as a badge (verified, false positive, already fixed) with the
    reason on hover, and `get_review_comments` lists it. A verdict deletes

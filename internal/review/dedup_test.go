@@ -82,7 +82,7 @@ func (s *DedupSuite) TestBuildDedupPrompt() {
 	// Every kept agent comment is checked against the code; a verdict deletes nothing.
 	require.Contains(s.T(), got, `For every [agent] comment you don't drop, open its file with the Read tool around its line and decide whether the finding holds: "real"`)
 	require.Contains(s.T(), got, `or exactly what the pull request sets out to do`)
-	require.Contains(s.T(), got, `Verdicts and moves for a comment whose file you did not Read are discarded`)
+	require.Contains(s.T(), got, `Verdicts and moves for a comment whose line none of your Read calls showed are discarded, and reading through Bash (cat, sed, grep) doesn't count`)
 	require.Contains(s.T(), got, `"false_positive"`)
 	require.Contains(s.T(), got, `"already_fixed"`)
 	require.Contains(s.T(), got, "A verdict deletes nothing.")
@@ -127,7 +127,10 @@ func (s *DedupSuite) TestBuildDedupPromptMarksFresh() {
 	require.Contains(s.T(), got, `one this checkout no longer has is "already_fixed"`)
 	require.Contains(s.T(), got, "Do not change anything.\n- The comments marked [agent, new]")
 	require.Contains(s.T(), got, "The other older comments keep their verdicts.\n- The comments marked [agent, false_positive] or [agent, already_fixed] were already checked and dismissed")
-	require.Contains(s.T(), got, "keep the dismissed comment and drop the new one into it, so the new one isn't checked and reported again.\n\nReply with only")
+	require.Contains(s.T(), got, "keep the dismissed comment and drop the new one into it. A false_positive one keeps its verdict")
+	require.Contains(s.T(), got, "Before you judge a new comment, compare it with every [agent, false_positive] comment")
+	require.Contains(s.T(), got, `Mark it "real" only when it raises something the dismissed reason doesn't answer.`)
+	require.Contains(s.T(), got, "An already_fixed one reported again may be back: read it again and give it a verdict.\n\nReply with only")
 }
 
 func (s *DedupSuite) TestDedupFresh() {
@@ -469,10 +472,10 @@ func (s *DedupSuite) TestParseDedupReplySettledKeepsVerdict() {
 			clusters: []DedupCluster{{Keep: "fp", Drop: []string{"fixed", "new"}}},
 		},
 		{
-			name:     "a settled comment isn't judged again",
+			name:     "a settled false positive isn't judged again, an already fixed one is",
 			fresh:    fresh,
-			reply:    `{"verdicts":[{"id":"fp","verdict":"real"},{"id":"new","verdict":"real"}]}`,
-			verdicts: []DedupVerdict{{ID: "new", Verdict: VerdictReal}},
+			reply:    `{"verdicts":[{"id":"fp","verdict":"real"},{"id":"fixed","verdict":"real"},{"id":"new","verdict":"real"}]}`,
+			verdicts: []DedupVerdict{{ID: "fixed", Verdict: VerdictReal}, {ID: "new", Verdict: VerdictReal}},
 		},
 		{
 			name:     "a pass the user asks for judges and drops everything again",

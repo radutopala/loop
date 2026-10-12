@@ -2463,9 +2463,10 @@ rewritten to the ones no other comment covers; `covered_by` is the comment
 that reports the part cut out. Each is broadcast as `review.comment_updated`. `verdicts`
 lists the kept agent findings the model checked against the code: `real`,
 `false_positive` or `already_fixed`, with a one-sentence `reason`. A move or
-a verdict counts only when the pass opened that comment's file in the PR
-worktree with the Read tool (the parent checkout's copy doesn't count); the
-others are dropped. Each verdict is
+a verdict counts only when a Read tool call of the pass showed that
+comment's line, and for a move the line it moves to, in the PR worktree (the
+parent checkout's copy doesn't count; for a LEFT-side comment any read of
+the file does); the others are dropped. Each verdict is
 stored on the comment as `verdict` and `verdict_reason` (pushed findings
 included; nothing is deleted for a verdict) and broadcast as
 `review.comment_updated`. `checked` is the number of comments shown to the model
