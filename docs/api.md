@@ -540,11 +540,11 @@ Remove a waiting user message from a channel's queue before the orchestrator dis
 **Response:** `204 No Content`
 
 **Behavior notes:**
-- Only deletes rows where `is_bot = 0 AND is_processed = 0` — bot replies and already-processed history can never be removed through this endpoint.
+- Only deletes rows where `is_bot = 0 AND is_processed = 0 AND is_running = 0` — bot replies, already-processed history and a message an agent has already claimed can never be removed through this endpoint.
 - On success, broadcasts a [`message.deleted`](events.md#messagedeleted) WebSocket event so connected clients remove the message from their local state.
 - A queued row deleted while another run is in progress simply never gets claimed: `ClaimNextPending` only sees `is_processed=0 AND is_triggered=1 AND is_running=0` rows, so the atomic claim transaction can never hand the deleted row to an agent.
 
-**Errors:** `400` if `channel_id` is missing. `404` if no matching deletable row exists (message missing, already processed, or is a bot message). `500` on database error. `501` if message deletion is not configured.
+**Errors:** `400` if `channel_id` is missing. `404` if no matching deletable row exists (message missing, already processed or running, or is a bot message). `500` on database error. `501` if message deletion is not configured.
 
 ---
 

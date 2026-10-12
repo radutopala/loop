@@ -172,7 +172,7 @@ Partial bot response during streaming. The client should update the in-progress 
 
 ### `message.deleted`
 
-A queued user message was removed from the channel's message queue via `DELETE /api/messages/{id}`. Emitted only when the delete actually removed a row (the query is scoped to `is_bot = 0 AND is_processed = 0`, so bot replies and already-processed history can never trigger it).
+A queued user message was removed from the channel's message queue via `DELETE /api/messages/{id}`. Emitted only when the delete actually removed a row (the query is scoped to `is_bot = 0 AND is_processed = 0 AND is_running = 0`, so bot replies, already-processed history and a claimed message can never trigger it).
 
 **Payload schema:**
 

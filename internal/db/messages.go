@@ -229,12 +229,13 @@ func (s *SQLiteStore) ListPendingChannels(ctx context.Context) ([]string, error)
 	return ids, rows.Err()
 }
 
-// DeleteQueuedMessage removes a waiting (not-yet-processed, non-bot) user message
-// from the queue. Returns true when a row was deleted, false when no matching row
-// exists (already processed, wrong channel, bot message, or never existed).
+// DeleteQueuedMessage removes a waiting (not-yet-processed, not running,
+// non-bot) user message from the queue. Returns true when a row was deleted,
+// false when no matching row exists (already running or processed, wrong
+// channel, bot message, or never existed).
 func (s *SQLiteStore) DeleteQueuedMessage(ctx context.Context, channelID, msgID string) (bool, error) {
 	res, err := s.db.ExecContext(ctx,
-		`DELETE FROM messages WHERE channel_id = ? AND msg_id = ? AND is_bot = 0 AND is_processed = 0 AND kind = 'message'`,
+		`DELETE FROM messages WHERE channel_id = ? AND msg_id = ? AND is_bot = 0 AND is_processed = 0 AND is_running = 0 AND kind = 'message'`,
 		channelID, msgID,
 	)
 	if err != nil {
