@@ -336,14 +336,15 @@ func numericUser(name string) (uidStr, gidStr string, ok bool) {
 
 // parseUIDGID converts uid/gid strings, from os/user or a numeric
 // LOOP_HOST_USER, into ints. Only plain digits parse: no sign, no empty
-// part. Split out from defaultLookupUser so tests can exercise the error
-// paths without needing to mint a synthetic /etc/passwd entry.
+// part, and nothing over 2^31-1, so the ints fit on any platform. Split out
+// from defaultLookupUser so tests can exercise the error paths without
+// needing to mint a synthetic /etc/passwd entry.
 func parseUIDGID(uidStr, gidStr string) (int, int, error) {
-	uid, err := strconv.ParseUint(uidStr, 10, 32)
+	uid, err := strconv.ParseUint(uidStr, 10, 31)
 	if err != nil {
 		return 0, 0, fmt.Errorf("parse uid %q: %w", uidStr, err)
 	}
-	gid, err := strconv.ParseUint(gidStr, 10, 32)
+	gid, err := strconv.ParseUint(gidStr, 10, 31)
 	if err != nil {
 		return 0, 0, fmt.Errorf("parse gid %q: %w", gidStr, err)
 	}

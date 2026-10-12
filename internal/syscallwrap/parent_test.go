@@ -960,6 +960,8 @@ func (s *ParentSuite) TestParseUIDGIDRejectsSigns() {
 		{"+1", "0", "parse uid"},
 		{"0", "-1", "parse gid"},
 		{"", "0", "parse uid"},
+		{"2147483648", "0", "parse uid"},
+		{"0", "2147483648", "parse gid"},
 	} {
 		_, _, err := parseUIDGID(tc.uid, tc.gid)
 		s.Require().ErrorContains(err, tc.want, "%q:%q", tc.uid, tc.gid)

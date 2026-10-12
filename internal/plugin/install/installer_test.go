@@ -363,10 +363,12 @@ func (s *InstallerSuite) TestPinnedBadRef() {
 	require.ErrorContains(s.T(), err, `parsing image "Not A Ref"`)
 }
 
-func (s *InstallerSuite) TestUntarSkipsTraversal() {
+func (s *InstallerSuite) TestUntarRejectsTraversal() {
 	dir := s.T().TempDir()
-	require.NoError(s.T(), untar(tarOf(entry{name: "loop-plugin/../../evil", body: str("x")}), dir))
-	require.FileExists(s.T(), filepath.Join(dir, "evil"))
+	err := untar(tarOf(entry{name: "loop-plugin/../../evil", body: str("x")}), dir)
+	require.ErrorContains(s.T(), err, "loop-plugin/../../evil leaves")
+	require.NoFileExists(s.T(), filepath.Join(filepath.Dir(dir), "evil"))
+	require.NoFileExists(s.T(), filepath.Join(dir, "evil"))
 }
 
 func (s *InstallerSuite) TestValidateLoopVersion() {

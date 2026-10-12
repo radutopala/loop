@@ -263,6 +263,9 @@ func untar(r io.Reader, dir string) error {
 			return err
 		}
 		_, rel, _ := strings.Cut(hdr.Name, "/")
+		if strings.Contains(rel, "..") {
+			return fmt.Errorf("%s leaves %s", hdr.Name, pluginDir)
+		}
 		rel = path.Clean("/" + rel)[1:]
 		if rel == "" {
 			continue
