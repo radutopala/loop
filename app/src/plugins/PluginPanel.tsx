@@ -82,6 +82,11 @@ export function PluginPanel({ plugin: ref, channelId, channelName, dirPath, leaf
   // The title the page gave the pane lasts as long as the page.
   const [titleOwner] = useState(() => ({}));
   useEffect(() => () => clearPaneTitle(leafId, titleOwner), [leafId, titleOwner]);
+  // Nor does it outlast the frame, gone while the plugin is off or missing.
+  const framed = !!src && !!found && found.plugin.enabled !== false && !error;
+  useEffect(() => {
+    if (!framed) clearPaneTitle(leafId, titleOwner);
+  }, [framed, leafId, titleOwner]);
 
   // The bridge reads the host from a ref, so it outlives renders.
   const hostRef = useRef<BridgeHost | null>(null);
