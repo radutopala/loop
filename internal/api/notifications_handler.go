@@ -215,9 +215,9 @@ func (s *Server) dropChannelNotifications(ctx context.Context, channelID string)
 }
 
 // RecordNotifications stores, in the background, the notification an event
-// of Loop's makes, if any: a scheduled run that ended, a run or a scheduled
-// script or plugin action that failed, a workflow run in a channel that
-// ended or paused.
+// of Loop's makes, if any: a run the owner started that failed, or a
+// scheduled plugin action that failed. Loop's own scheduled tasks and
+// workflows make none; their threads and run history tell how they went.
 func (s *Server) RecordNotifications(evt Event) {
 	if s.notifications == nil {
 		return
@@ -240,72 +240,32 @@ func loopNotification(evt Event) *db.Notification {
 		return runNotification(evt.ChannelID, d)
 	case events.TaskRunEventData:
 		return taskRunNotification(d)
-	case events.WorkflowRunEventData:
-		switch {
-		case evt.Type == EventWorkflowRunPaused:
-		case evt.Type == EventWorkflowRunCompleted && (d.Status == "completed" || d.Status == "failed"):
-		default:
-			// Started, or cancelled or deleted by the owner.
-			return nil
-		}
-		if d.ChannelID == "" {
-			// No channel's drawer would list it.
-			return nil
-		}
-		n := &db.Notification{Kind: db.NotificationWorkflow, ChannelID: d.ChannelID, Body: d.Error}
-		if evt.Type == EventWorkflowRunPaused {
-			n.Title = fmt.Sprintf("Workflow %s is waiting for input", d.WorkflowName)
-		} else {
-			n.Title = fmt.Sprintf("Workflow %s %s", d.WorkflowName, d.Status)
-		}
-		return n
 	}
 	return nil
 }
 
-// runNotification is the notification of an agent run's status in
-// channelID: a scheduled run that ended, or any other run that failed,
-// except the hidden ones, a plugin's agent's, learn's and explain's. A
-// thread's run is told to its parent too, with the thread's id; that copy
-// makes none.
+// runNotification is the notification of an agent run that failed in
+// channelID, except a scheduled one and the hidden ones, a plugin's agent's,
+// learn's and explain's. A thread's run is told to its parent too, with the
+// thread's id; that copy makes none.
 func runNotification(channelID string, d events.AgentStatusEventData) *db.Notification {
 	if d.ThreadID != "" && d.ThreadID != channelID {
 		return nil
 	}
 	switch d.Trigger {
-	case "learn", "learn-reply", "explain", "plugin":
+	case "scheduled", "learn", "learn-reply", "explain", "plugin":
 		return nil
 	}
-	n := &db.Notification{Kind: db.NotificationRun, ChannelID: channelID}
-	scheduled := d.Trigger == "scheduled"
-	switch {
-	case d.Status == "error":
-		n.Title, n.Body = "Run failed", d.Error
-		if scheduled {
-			n.Title = taskName(d.TaskID) + " failed"
-		}
-	case d.Status == "completed" && scheduled && d.Parked:
-		n.Title = taskName(d.TaskID) + " is waiting for your answer"
-	case d.Status == "completed" && scheduled:
-		n.Title = taskName(d.TaskID) + " finished"
-		n.Body = "Took " + (time.Duration(d.DurationMs) * time.Millisecond).Round(time.Second).String()
-		switch {
-		case d.NumTurns == 1:
-			n.Body += " · 1 turn"
-		case d.NumTurns > 1:
-			n.Body += fmt.Sprintf(" · %d turns", d.NumTurns)
-		}
-	default:
+	if d.Status != "error" {
 		return nil
 	}
-	return n
+	return &db.Notification{Kind: db.NotificationRun, ChannelID: channelID, Title: "Run failed", Body: d.Error}
 }
 
-// taskRunNotification is the notification of a scheduled script or plugin
-// action that failed, in the task's thread if it has one. An agent's run
-// tells its own status, and a workflow's run its own end.
+// taskRunNotification is the notification of a scheduled plugin action that
+// failed, in the task's thread if it has one.
 func taskRunNotification(d events.TaskRunEventData) *db.Notification {
-	if d.Status != string(db.RunStatusFailed) || (d.Kind != events.TaskRunBash && d.Kind != events.TaskRunPlugin) {
+	if d.Status != string(db.RunStatusFailed) || d.Kind != events.TaskRunPlugin {
 		return nil
 	}
 	channelID := d.ChannelID

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { alertsOnRunEnd, bouncesOnRunEnd, shouldForwardToChatListeners, subscriptionChannels } from "./chatEventRouting";
+import { alertsOnRunEnd, bouncesOnRunEnd, notifiesOnRunEnd, shouldForwardToChatListeners, subscriptionChannels } from "./chatEventRouting";
 
 describe("shouldForwardToChatListeners", () => {
   const cases: { name: string; type: string; stateTarget: string; selectedId: string | null; want: boolean }[] = [
@@ -44,16 +44,17 @@ describe("subscriptionChannels", () => {
 
 describe("run-end alerts", () => {
   it.each([
-    [undefined, true, true],
-    ["", true, true],
-    ["scheduled", true, false],
-    ["bot", true, false],
-    ["learn", false, false],
-    ["learn-reply", false, false],
-    ["explain", false, false],
-    ["plugin", false, false],
-  ] as const)("trigger=%j → unread/notify %j, bounce %j", (trigger, alerts, bounces) => {
+    [undefined, true, true, true],
+    ["", true, true, true],
+    ["scheduled", true, false, false],
+    ["bot", true, true, false],
+    ["learn", false, false, false],
+    ["learn-reply", false, false, false],
+    ["explain", false, false, false],
+    ["plugin", false, false, false],
+  ] as const)("trigger=%j → unread %j, notify %j, bounce %j", (trigger, alerts, notifies, bounces) => {
     expect(alertsOnRunEnd(trigger)).toBe(alerts);
+    expect(notifiesOnRunEnd(trigger)).toBe(notifies);
     expect(bouncesOnRunEnd(trigger)).toBe(bounces);
   });
 });

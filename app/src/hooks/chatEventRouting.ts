@@ -47,14 +47,23 @@ function isHiddenTrigger(trigger: string | undefined): boolean {
 }
 
 /**
- * Whether a finished run should mark its channel unread and post a desktop
- * notification. The learn and explain threads are hidden: the user can't
- * open them from the sidebar, and a reply in the learn thread shows in the
- * open Learn view; a pass's proposals surface through the Learn badge, an
- * explanation in the Explain pane and on its turn's Explain action.
+ * Whether a finished run should mark its channel unread. The learn and
+ * explain threads are hidden: the user can't open them from the sidebar,
+ * and a reply in the learn thread shows in the open Learn view; a pass's
+ * proposals surface through the Learn badge, an explanation in the Explain
+ * pane and on its turn's Explain action.
  */
 export function alertsOnRunEnd(trigger: string | undefined): boolean {
   return !isHiddenTrigger(trigger);
+}
+
+/**
+ * Whether a finished run should post a desktop notification: one that
+ * marks its channel unread, except a scheduled task's, which fires too
+ * often to be worth one; its thread's unread mark is enough.
+ */
+export function notifiesOnRunEnd(trigger: string | undefined): boolean {
+  return alertsOnRunEnd(trigger) && trigger !== "scheduled";
 }
 
 /**

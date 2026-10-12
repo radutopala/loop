@@ -12,9 +12,11 @@ const NotificationsKept = 200
 
 // Notification kinds.
 const (
-	// NotificationRun is an agent run that ended unattended or failed.
+	// NotificationRun is a run that failed: one the owner started, or a
+	// scheduled plugin action.
 	NotificationRun = "run"
-	// NotificationWorkflow is a workflow run that ended or paused.
+	// NotificationWorkflow is a workflow run that ended or paused. Loop no
+	// longer makes one; rows from earlier versions keep the kind.
 	NotificationWorkflow = "workflow"
 	// NotificationNotify is a plugin's notification.
 	NotificationNotify = "notify"
