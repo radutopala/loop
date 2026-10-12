@@ -5,6 +5,7 @@
   const INVALID_PARAMS = -32602;
   const CALL_FAILED = -32000;
   const MAX_STATE_BYTES = 64 << 10;
+  const MAX_COPY_BYTES = 1 << 20;
   const THEME = {
     mode: "dark",
     vars: {
@@ -75,6 +76,11 @@
         const line = params.line;
         if (line !== undefined && (typeof line !== "number" || !Number.isInteger(line) || line < 1)) throw new BridgeError(INVALID_PARAMS, "line must be a positive integer");
         str(params, "path");
+        return null;
+      }
+      case "ui.copy": {
+        needs("ui.copy");
+        if (new TextEncoder().encode(str(params, "text")).length > MAX_COPY_BYTES) throw new BridgeError(INVALID_PARAMS, "text is over 1 MB");
         return null;
       }
       case "ui.resize": {

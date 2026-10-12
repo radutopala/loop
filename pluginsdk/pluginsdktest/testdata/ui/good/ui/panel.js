@@ -10,5 +10,6 @@ const res = await bridge.call("api.request", { method: "POST", path: "/stats?n=1
 document.getElementById("stats").textContent = JSON.stringify(res.body);
 await bridge.call("state.set", { value: { seen: res.status } });
 await bridge.call("ui.notify", { title: "Loaded" });
+await bridge.call("ui.copy", { text: "copied" });
 const data = await (await fetch("data.json")).json();
 document.body.dataset.items = String(data.items.length);
