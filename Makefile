@@ -384,14 +384,18 @@ app-icons: ## Regenerate app icons from SVG sources (requires rsvg-convert, icon
 # CodeQL's Go extractor caps at the language version in go.mod and forces
 # GOTOOLCHAIN=local, so these containers must run the Go release matching that
 # cap. Bundle and Go version move together: bumping one without the other hands
-# the extractor export data it cannot read.
-CODEQL_VERSION ?= v2.26.4
+# the extractor export data it cannot read. The scan targets refuse a cached
+# bundle that differs from CODEQL_VERSION, so a bump takes effect only after
+# `make codeql-download`, which replaces the volume's contents.
+CODEQL_VERSION ?= v2.27.2
 CODEQL_GO_VERSION ?= 1.27
 
-codeql-download: ## Download CodeQL bundle into Docker volume (one-time)
+codeql-download: ## Download CodeQL bundle into Docker volume (rerun after bumping CODEQL_VERSION)
 	@echo "==> Downloading CodeQL $(CODEQL_VERSION) (linux64)..."
 	@curl -fsSL "https://github.com/github/codeql-action/releases/download/codeql-bundle-$(CODEQL_VERSION)/codeql-bundle-linux64.tar.gz" \
-		| docker run --rm -i --platform linux/amd64 -v loop-codeql:/opt/codeql golang:$(CODEQL_GO_VERSION) tar xz -C /opt/codeql
+		| docker run --rm -i --platform linux/amd64 -v loop-codeql:/opt/codeql golang:$(CODEQL_GO_VERSION) \
+			sh -c 'set -e; rm -rf /opt/codeql/.new; mkdir /opt/codeql/.new; tar xz -C /opt/codeql/.new; \
+				rm -rf /opt/codeql/codeql; mv /opt/codeql/.new/codeql /opt/codeql/codeql; rmdir /opt/codeql/.new'
 	@echo "==> Cached in volume loop-codeql"
 
 codeql: ## Run CodeQL security analysis locally (via Docker)
@@ -406,6 +410,10 @@ codeql: ## Run CodeQL security analysis locally (via Docker)
 		set -e; \
 		if [ ! -x /opt/codeql/codeql/codeql ]; then \
 			echo "CodeQL not cached — run: make codeql-download" >&2; exit 1; \
+		fi; \
+		cached=$$(/opt/codeql/codeql/codeql version --format=terse); \
+		if [ "v$$cached" != "$(CODEQL_VERSION)" ]; then \
+			echo "Cached CodeQL v$$cached, want $(CODEQL_VERSION) — run: make codeql-download" >&2; exit 1; \
 		fi; \
 		echo "==> Creating database..."; \
 		/opt/codeql/codeql/codeql database create /db/loop --language=go --source-root=/src --overwrite \
@@ -433,6 +441,10 @@ codeql-js: ## Run CodeQL security analysis on the frontend (via Docker)
 		set -e; \
 		if [ ! -x /opt/codeql/codeql/codeql ]; then \
 			echo "CodeQL not cached — run: make codeql-download" >&2; exit 1; \
+		fi; \
+		cached=$$(/opt/codeql/codeql/codeql version --format=terse); \
+		if [ "v$$cached" != "$(CODEQL_VERSION)" ]; then \
+			echo "Cached CodeQL v$$cached, want $(CODEQL_VERSION) — run: make codeql-download" >&2; exit 1; \
 		fi; \
 		echo "==> Creating database..."; \
 		/opt/codeql/codeql/codeql database create /db/loop-js --language=javascript-typescript \
