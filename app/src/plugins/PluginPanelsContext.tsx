@@ -109,9 +109,10 @@ export function findPluginPanel(plugins: PluginInfo[] | null, ref: PluginPaneRef
   return plugin && panel ? { plugin, panel } : null;
 }
 
-/** The installed plugin and card a card shows, if both still exist. */
+/** The installed plugin and card a card shows, if both still exist and
+ *  the project enables the plugin. */
 export function findPluginCard(plugins: PluginInfo[] | null, pluginId: string, cardId: string): { plugin: PluginInfo; card: PluginCardInfo } | null {
-  const plugin = plugins?.find((p) => p.id === pluginId);
+  const plugin = plugins?.find((p) => p.id === pluginId && p.enabled !== false);
   const card = plugin?.cards?.find((c) => c.id === cardId);
   return plugin && card ? { plugin, card } : null;
 }

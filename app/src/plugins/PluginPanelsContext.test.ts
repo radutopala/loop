@@ -83,6 +83,7 @@ describe("findPluginCard", () => {
     { name: "card gone", list: plugins, plugin: "cogtest", card: "gone", want: null },
     { name: "no cards", list: plugins, plugin: "headless", card: "score", want: null },
     { name: "found", list: plugins, plugin: "cogtest", card: "score", want: { plugin: cogtest, card: score } },
+    { name: "disabled here", list: [{ ...cogtest, enabled: false }], plugin: "cogtest", card: "score", want: null },
   ])("$name", ({ list, plugin, card, want }) => {
     expect(findPluginCard(list, plugin, card)).toEqual(want);
   });
