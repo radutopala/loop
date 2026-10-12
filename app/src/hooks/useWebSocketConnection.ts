@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { clearContentCaps, getWsUrl, refreshApiToken, wsProtocols } from "../api/loopApi";
+import { clearContentCaps, getWsUrl, refreshApiToken, retryFailedContentCaps, wsProtocols } from "../api/loopApi";
 
 const DEFAULT_RECONNECT_DELAY_MS = 3_000;
 
@@ -38,6 +38,8 @@ export function useWebSocketConnection({ path, enabled, onOpen, onMessage, recon
 
     ws.onopen = () => {
       setConnected(true);
+      // Links asked for while the daemon was down failed; ask again.
+      retryFailedContentCaps();
       onOpenRef.current?.(ws);
     };
 

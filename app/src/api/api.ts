@@ -189,6 +189,9 @@ export async function contentCapBase(scope: ContentCapScope): Promise<string> {
   }
   const p = mintCap(scope);
   caps.set(key, p);
+  p.catch(() => {
+    capFailed = true;
+  });
   return (await p).base;
 }
 
@@ -201,6 +204,9 @@ export function forgetContentCap(scope: ContentCapScope): void {
 // Bumped by clearContentCaps so views holding a link (an iframe src, a
 // <base href>, an <img> src) can resolve it again.
 let capsEpoch = 0;
+// Set when a mint failed, e.g. while the daemon was down, so the views left
+// on an error can be told to resolve again once it is back.
+let capFailed = false;
 const capsListeners = new Set<() => void>();
 
 /** Counter bumped each time every content link is forgotten. */
@@ -221,8 +227,15 @@ export function subscribeContentCaps(listener: () => void): () => void {
  *  and tell the views holding one to resolve it again. */
 export function clearContentCaps(): void {
   caps.clear();
+  capFailed = false;
   capsEpoch++;
   for (const l of capsListeners) l();
+}
+
+/** clearContentCaps, if a mint failed since the last clear: the views that
+ *  showed the failure resolve again, e.g. once the daemon is back up. */
+export function retryFailedContentCaps(): void {
+  if (capFailed) clearContentCaps();
 }
 
 /** A URL path under a content link: each segment encoded, slashes kept. */

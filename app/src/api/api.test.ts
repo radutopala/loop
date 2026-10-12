@@ -244,6 +244,25 @@ describe("contentCapBase", () => {
     expect(listener).toHaveBeenCalledTimes(1);
   });
 
+  it("clears again on a retry only after a mint failed", async () => {
+    const { api, fetchMock } = await setup();
+    const listener = vi.fn();
+    const unsubscribe = api.subscribeContentCaps(listener);
+    const scope = { kind: "plugin", name: "demo" } as const;
+    await expect(api.contentCapBase(scope)).resolves.toBe("http://api/c/cap1/");
+    api.retryFailedContentCaps();
+    expect(listener).not.toHaveBeenCalled();
+    fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    api.clearContentCaps();
+    await expect(api.contentCapBase(scope)).rejects.toThrow("Failed to fetch");
+    api.retryFailedContentCaps();
+    expect(listener).toHaveBeenCalledTimes(2);
+    await expect(api.contentCapBase(scope)).resolves.toBe("http://api/c/cap2/");
+    api.retryFailedContentCaps();
+    expect(listener).toHaveBeenCalledTimes(2);
+    unsubscribe();
+  });
+
   it("fails, and tries again on the next ask", async () => {
     const { api, fetchMock } = await setup(500);
     const scope = { kind: "playground", name: "demo" } as const;
