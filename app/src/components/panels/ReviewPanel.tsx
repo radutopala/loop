@@ -13,6 +13,7 @@ import {
   type ReviewPR,
   type ReviewSession,
   type ReviewStatus,
+  type ReviewVerdict,
   setReviewAgent,
   setReviewFork,
   stopReview,
@@ -284,19 +285,35 @@ export function isActionable(c: ReviewComment): boolean {
   return !c.pushed && c.verdict !== "false_positive" && c.verdict !== "already_fixed";
 }
 
+// skippedNote names the unpushed comments Address all and Push all leave
+// out, in the verdict badges' words: " · skips 1 false positive, 2 already
+// fixed". It's empty when they leave none out.
+export function skippedNote(comments: ReviewComment[]): string {
+  const count = (v: ReviewVerdict) => comments.filter((c) => !c.pushed && c.verdict === v).length;
+  const parts: string[] = [];
+  const fp = count("false_positive");
+  const af = count("already_fixed");
+  if (fp > 0) parts.push(`${fp} false positive`);
+  if (af > 0) parts.push(`${af} already fixed`);
+  return parts.length > 0 ? ` · skips ${parts.join(", ")}` : "";
+}
+
 // allActionItems lists the header's "All" menu: the actions over every
 // comment of a kind, each with its count, and only those with something
-// to act on. A click while another action is busy does nothing, since the
-// menu can stay open while one starts.
-export function allActionItems(a: { newCount: number; pendingCount: number; busy: boolean; onCheckAll: () => void; onAddressAll: () => void; onPushAll: () => void }): MenuItem[] {
+// to act on. skipped is skippedNote's text, which Address all and Push all
+// carry so their count reads against Check all's. A click while another
+// action is busy does nothing, since the menu can stay open while one
+// starts.
+export function allActionItems(a: { newCount: number; pendingCount: number; skipped?: string; busy: boolean; onCheckAll: () => void; onAddressAll: () => void; onPushAll: () => void }): MenuItem[] {
   const guard = (fn: () => void) => () => {
     if (!a.busy) fn();
   };
   const items: MenuItem[] = [];
   if (a.newCount > 0) items.push({ label: `Check all (${a.newCount})`, onClick: guard(a.onCheckAll) });
   if (a.pendingCount > 0) {
-    items.push({ label: `Address all (${a.pendingCount})`, onClick: guard(a.onAddressAll) });
-    items.push({ label: `Push all to GitHub (${a.pendingCount})`, onClick: guard(a.onPushAll) });
+    const skipped = a.skipped ?? "";
+    items.push({ label: `Address all (${a.pendingCount})${skipped}`, onClick: guard(a.onAddressAll) });
+    items.push({ label: `Push all to GitHub (${a.pendingCount})${skipped}`, onClick: guard(a.onPushAll) });
   }
   return items;
 }
@@ -1096,6 +1113,7 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
   }, [channelId]);
 
   const pendingCount = useMemo(() => (session?.comments ?? []).filter(isActionable).length, [session]);
+  const skipped = useMemo(() => skippedNote(session?.comments ?? []), [session]);
 
   const btnStyle: React.CSSProperties = {
     background: "transparent",
@@ -1499,6 +1517,7 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
           items={allActionItems({
             newCount,
             pendingCount,
+            skipped,
             busy,
             onCheckAll: () => void onCheckAll(),
             onAddressAll: () => void onAddressAll(),

@@ -9,6 +9,7 @@ import {
   isActionable,
   reviewEffortOptions,
   reviewModelOptions,
+  skippedNote,
   WHY_QUESTION,
   withoutComment,
   withUpdatedComment,
@@ -254,6 +255,25 @@ describe("isActionable", () => {
   });
 });
 
+describe("skippedNote", () => {
+  it("names the unpushed dismissed comments by verdict", () => {
+    const cs = [
+      comment("a", { verdict: "false_positive" }),
+      comment("b", { verdict: "already_fixed" }),
+      comment("c", { verdict: "already_fixed" }),
+      comment("d", { verdict: "false_positive", pushed: true }),
+      comment("e", { verdict: "real" }),
+      comment("f"),
+    ];
+    expect(skippedNote(cs)).toBe(" · skips 1 false positive, 2 already fixed");
+    expect(skippedNote([comment("a", { verdict: "already_fixed" })])).toBe(" · skips 1 already fixed");
+  });
+
+  it("is empty when nothing is skipped", () => {
+    expect(skippedNote([comment("a", { verdict: "real" }), comment("b", { verdict: "false_positive", pushed: true })])).toBe("");
+  });
+});
+
 describe("allActionItems", () => {
   function items(newCount: number, pendingCount: number, busy = false) {
     const calls: string[] = [];
@@ -279,6 +299,11 @@ describe("allActionItems", () => {
     expect(items(0, 2).list.map((it) => it.label)).toEqual(["Address all (2)", "Push all to GitHub (2)"]);
     expect(items(1, 0).list.map((it) => it.label)).toEqual(["Check all (1)"]);
     expect(items(0, 0).list).toEqual([]);
+  });
+
+  it("says what Address all and Push all skip", () => {
+    const list = allActionItems({ newCount: 12, pendingCount: 11, skipped: " · skips 1 false positive", busy: false, onCheckAll: () => {}, onAddressAll: () => {}, onPushAll: () => {} });
+    expect(list.map((it) => it.label)).toEqual(["Check all (12)", "Address all (11) · skips 1 false positive", "Push all to GitHub (11) · skips 1 false positive"]);
   });
 
   it("does nothing while another action is busy", () => {
