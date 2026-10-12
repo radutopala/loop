@@ -124,6 +124,11 @@ jobs:
       packages: read
     container:
       image: ghcr.io/radutopala/loop/test-runner:latest
+      # Agent containers start on the host's Docker and bind-mount files the
+      # daemon writes under the BDD data dir, so that dir has to be at the
+      # same path on the host (see scripts/test-component.sh).
+      volumes:
+        - /tmp/loop-bdd-data:/tmp/loop-bdd-data
     steps:
       - uses: actions/checkout@v6
       - name: Run BDD component tests
