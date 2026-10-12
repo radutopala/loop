@@ -131,7 +131,7 @@ type API interface {
 	RunUI(ctx context.Context, cmd UICommand) (*UIReply, error)
 	SetBadge(ctx context.Context, text, title string) error
 	ClearBadge(ctx context.Context) error
-	PostCard(ctx context.Context, card, title string, data any) (string, error)
+	PostCard(ctx context.Context, card, title string, data any) (int64, error)
 }
 
 // StatusError is a non-2xx answer from Loop.
@@ -356,16 +356,17 @@ func (c *Client) ClearBadge(ctx context.Context) error {
 	return c.do(ctx, http.MethodDelete, "/badge", nil, nil, nil)
 }
 
-// PostCard posts the manifest's card to the channel's chat, under title,
-// and returns the message's id. The card's page gets data, at most 64 KB of
-// JSON, from the bridge's context.get. Cards show in the desktop app only.
-// Needs ui.card.
-func (c *Client) PostCard(ctx context.Context, card, title string, data any) (string, error) {
+// PostCard posts the manifest's card, under title, to the desktop app's
+// notification drawer, and returns the notification's id. The card's page
+// gets data, at most 64 KB of JSON, from the bridge's context.get. Cards
+// share Notify's rate limit and show in the desktop app only. Needs
+// ui.card.
+func (c *Client) PostCard(ctx context.Context, card, title string, data any) (int64, error) {
 	var out struct {
-		MsgID string `json:"msg_id"`
+		ID int64 `json:"id"`
 	}
 	err := c.do(ctx, http.MethodPost, "/cards", nil, map[string]any{"card": card, "title": title, "data": data}, &out)
-	return out.MsgID, err
+	return out.ID, err
 }
 
 // uiGrace is how much longer than a UI command's timeout RunUI waits, so

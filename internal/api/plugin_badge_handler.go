@@ -136,3 +136,64 @@ func (s *Server) pluginBadgesByChannel(ctx context.Context) map[string][]pluginB
 	}
 	return out
 }
+
+// pluginBadgesOf returns the plugin's badges; none when badges are off or
+// can't be read, which only leaves other windows showing them until they
+// reload.
+func (s *Server) pluginBadgesOf(ctx context.Context, pluginID string) []*db.PluginBadge {
+	if s.badges == nil {
+		return nil
+	}
+	badges, err := s.badges.ListPluginBadges(ctx)
+	if err != nil {
+		s.logger.Warn("plugin badges lookup failed", "error", err)
+		return nil
+	}
+	var out []*db.PluginBadge
+	for _, b := range badges {
+		if b.PluginID == pluginID {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// prunePluginBadges clears the badges no longer shown: those of a deleted
+// channel, and those of a plugin that may no longer show one in its
+// channel, being broken, no longer approved for ui.badge or no longer
+// enabled by the channel's project. A badge whose state can't be read is
+// kept.
+func (s *Server) prunePluginBadges(ctx context.Context) {
+	if s.plugins == nil || s.badges == nil {
+		return
+	}
+	badges, err := s.badges.ListPluginBadges(ctx)
+	if err != nil {
+		s.logger.Warn("plugin badges lookup failed", "error", err)
+		return
+	}
+	for _, b := range badges {
+		if s.pluginBadgeShown(ctx, b) {
+			continue
+		}
+		if err := s.badges.DeletePluginBadge(ctx, b.PluginID, b.ChannelID); err != nil {
+			s.logger.Warn("clearing a plugin badge", "plugin", b.PluginID, "channel_id", b.ChannelID, "error", err)
+			continue
+		}
+		s.broadcastPluginBadge(b.ChannelID, pluginBadge{PluginID: b.PluginID})
+	}
+}
+
+// pluginBadgeShown reports whether b still shows: its channel exists and
+// its plugin may show it there, or that can't be told.
+func (s *Server) pluginBadgeShown(ctx context.Context, b *db.PluginBadge) bool {
+	ch, err := s.store.GetChannel(ctx, b.ChannelID)
+	if err != nil {
+		return true
+	}
+	if ch == nil {
+		return false
+	}
+	shown, err := s.plugins.Shows(ctx, b.PluginID, plugin.CapUIBadge, pluginRuntimeChannel(ch))
+	return err != nil || shown
+}

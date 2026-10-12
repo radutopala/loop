@@ -1,4 +1,4 @@
-// How tall a plugin's chat card is: what its page asks for with ui.resize,
+// How tall a plugin's card is: what its page asks for with ui.resize,
 // within the bounds chat components keep to.
 import { componentMaxHeight, componentMinHeight } from "../components/chat/componentFence";
 

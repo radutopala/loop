@@ -69,10 +69,10 @@ export interface PanelContext<T = unknown> {
   /** The panel's id; "" in a card. */
   panel: string;
   channelId: string;
-  /** "" in a card in a chat other than the workspace's own. */
+  /** "" in a card about a channel that's gone. */
   channelName: string;
   dirPath: string;
-  /** In a card in the chat: its id, and the data the plugin posted it with. */
+  /** In a card: its id, and the data the plugin posted it with. */
   card?: string;
   data?: T;
 }
@@ -131,8 +131,8 @@ export interface Bridge {
     /** Opens a file of the channel in the editor, at line if given. Needs
      *  the ui.open_file capability. */
     openFile(path: string, line?: number): Promise<void>;
-    /** Sizes a card's frame to height pixels, within the chat's bounds
-     *  (80 to 900). A panel fills its pane and can't. */
+    /** Sizes a card's frame to height pixels, kept within 80 to 900. A
+     *  panel fills its pane and can't. */
     resize(height: number): Promise<void>;
   };
   theme: {

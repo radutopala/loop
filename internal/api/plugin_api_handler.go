@@ -424,7 +424,7 @@ type pluginNotifyRequest struct {
 }
 
 // handlePluginNotify asks the app to show a desktop notification from the
-// calling plugin.
+// calling plugin, which its notification drawer lists too.
 func (s *Server) handlePluginNotify(w http.ResponseWriter, r *http.Request) {
 	p, _, ok := s.pluginCaller(w, r, plugin.CapUINotify)
 	if !ok {
@@ -443,6 +443,12 @@ func (s *Server) handlePluginNotify(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(wait.Seconds()))))
 		http.Error(w, "too many notifications; try again later", http.StatusTooManyRequests)
 		return
+	}
+	if s.notifications != nil {
+		n := &db.Notification{PluginID: p.PluginID, Kind: db.NotificationNotify, ChannelID: p.ChannelID, Title: req.Title, Body: req.Body}
+		if err := s.notify(r.Context(), n); err != nil {
+			s.logger.Warn("recording a plugin's notification", "plugin", p.PluginID, "error", err)
+		}
 	}
 	if s.eventsHub != nil {
 		s.eventsHub.Broadcast(Event{Type: "plugin.notify", ChannelID: p.ChannelID, Data: map[string]any{

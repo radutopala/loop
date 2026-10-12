@@ -1,4 +1,4 @@
-// The bridge between a plugin's panel or chat card and the app: JSON-RPC 2.0
+// The bridge between a plugin's panel or card and the app: JSON-RPC 2.0
 // over the MessagePort the host hands the frame on load. The frame has an
 // opaque origin, so this is its only way to reach Loop.
 
@@ -65,7 +65,7 @@ export interface BridgeHost {
   openFile: (path: string, line?: number) => Promise<void>;
   loadState: () => unknown;
   saveState: (value: unknown) => void;
-  /** Set for a card in the chat: its id and the data it was posted with. */
+  /** Set for a card: its id and the data it was posted with. */
   card?: { id: string; data: unknown };
   /** Sizes a card's frame to height; panels fill their pane instead. */
   resize?: (height: number) => void;

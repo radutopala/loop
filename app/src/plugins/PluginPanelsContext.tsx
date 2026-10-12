@@ -11,14 +11,6 @@ export interface PluginPanelsValue {
   plugins: PluginInfo[] | null;
   /** pluginPaneKey of every plugin pane in the layout. */
   shown: Set<string>;
-  /** The workspace's channel, which chat cards in it are told of. */
-  channel?: PluginChannel;
-}
-
-export interface PluginChannel {
-  id: string;
-  name: string;
-  dirPath: string;
 }
 
 const PluginPanelsContext = createContext<PluginPanelsValue>({ plugins: [], shown: new Set() });
@@ -80,11 +72,10 @@ export function shownPluginPanes(tree: PaneNode | null | undefined): Set<string>
 }
 
 /** The value for PluginPanelsProvider. */
-export function usePluginPanelsValue(plugins: PluginInfo[] | null, shown: Set<string>, channel?: PluginChannel): PluginPanelsValue {
+export function usePluginPanelsValue(plugins: PluginInfo[] | null, shown: Set<string>): PluginPanelsValue {
   const key = [...shown].sort().join("\0");
-  const { id = "", name = "", dirPath = "" } = channel ?? {};
   // key stands for shown's contents, so a new Set with the same panes keeps the value.
-  return useMemo(() => ({ plugins, shown, channel: id ? { id, name, dirPath } : undefined }), [plugins, key, id, name, dirPath]);
+  return useMemo(() => ({ plugins, shown }), [plugins, key]);
 }
 
 /** An entry of an add-pane menu for a plugin panel. */
@@ -118,7 +109,7 @@ export function findPluginPanel(plugins: PluginInfo[] | null, ref: PluginPaneRef
   return plugin && panel ? { plugin, panel } : null;
 }
 
-/** The installed plugin and card a chat card shows, if both still exist. */
+/** The installed plugin and card a card shows, if both still exist. */
 export function findPluginCard(plugins: PluginInfo[] | null, pluginId: string, cardId: string): { plugin: PluginInfo; card: PluginCardInfo } | null {
   const plugin = plugins?.find((p) => p.id === pluginId);
   const card = plugin?.cards?.find((c) => c.id === cardId);

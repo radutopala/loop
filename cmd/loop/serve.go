@@ -745,6 +745,10 @@ func (a *app) serve() error {
 
 	eventsHub := api.NewEventsHub(logger)
 	apiSrv.SetEventsHub(eventsHub)
+	if ns, ok := store.(api.NotificationStore); ok {
+		apiSrv.SetNotifications(ns)
+		eventsHub.Observe(apiSrv.RecordNotifications)
+	}
 	branchPoller := api.NewBranchPoller(store, eventsHub, cfg.LoopDir, 0, logger)
 	apiSrv.SetBranchPoller(branchPoller)
 	branchPoller.SetOnDirChange(apiSrv.InvalidatePRCacheForDir)
@@ -797,7 +801,7 @@ func (a *app) serve() error {
 		apiSrv.SetPluginManager(plug.service)
 		apiSrv.SetPluginBadges(plug.store)
 		eventsHub.Observe(apiSrv.ForwardToPlugins)
-		go plug.service.Run(ctx, pluginIdleInterval, apiSrv.PluginsChanged, logger)
+		go plug.service.Run(ctx, pluginIdleInterval, apiSrv.PluginsStopped, logger)
 		executor.SetPluginActions(pluginActionRunner(plug.service))
 	}
 

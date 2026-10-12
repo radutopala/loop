@@ -142,8 +142,8 @@ type Panel struct {
 	Singleton bool   `json:"singleton,omitempty"`
 }
 
-// Card is what the plugin posts in a channel's chat with PostCard: a page
-// from its bundle, drawn in the message with the data it was posted with.
+// Card is what the plugin posts to the app's notification drawer with
+// PostCard: a page from its bundle, drawn with the data it was posted with.
 type Card struct {
 	ID string `json:"id"`
 	// Entry is the card's HTML page, relative to /loop-plugin.

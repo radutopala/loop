@@ -39,6 +39,7 @@ type PluginManager interface {
 	Audit(pluginID, channelID string, limit int) ([]agentgate.AuditEntry, error)
 	StopDisabled(ctx context.Context) bool
 	SyncSchedules(ctx context.Context) error
+	Shows(ctx context.Context, pluginID string, c plugin.Capability, ch runtime.Channel) (bool, error)
 }
 
 const pluginsDisabled = "plugins are disabled; set plugins.enabled in the global config"
@@ -253,6 +254,7 @@ func (s *Server) handleInstallPlugin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.syncPluginSchedules(r.Context())
+	s.prunePluginBadges(r.Context())
 	s.PluginsChanged()
 	writeHTTPJSON(w, http.StatusOK, newPluginCandidate(c), s.logger)
 }
@@ -261,7 +263,9 @@ func (s *Server) handleRemovePlugin(w http.ResponseWriter, r *http.Request) {
 	if !requireConfigured(w, s.plugins, pluginsDisabled) {
 		return
 	}
-	err := s.plugins.Remove(r.Context(), r.PathValue("id"), r.URL.Query().Get("purge") == "true")
+	id := r.PathValue("id")
+	badges := s.pluginBadgesOf(r.Context(), id)
+	err := s.plugins.Remove(r.Context(), id, r.URL.Query().Get("purge") == "true")
 	switch {
 	case errors.Is(err, install.ErrNotInstalled):
 		http.Error(w, err.Error(), http.StatusNotFound)
@@ -269,6 +273,13 @@ func (s *Server) handleRemovePlugin(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	// Removing the plugin dropped its badges and its notifications.
+	for _, b := range badges {
+		s.broadcastPluginBadge(b.ChannelID, pluginBadge{PluginID: id})
+	}
+	if s.notifications != nil {
+		s.notificationsChanged()
 	}
 	s.PluginsChanged()
 	w.WriteHeader(http.StatusNoContent)

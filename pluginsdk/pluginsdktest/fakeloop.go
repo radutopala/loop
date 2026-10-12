@@ -67,7 +67,7 @@ type Badge struct {
 
 // Card is a card the plugin posted to the channel's chat.
 type Card struct {
-	MsgID string
+	ID    int64
 	Card  string
 	Title string
 	Data  json.RawMessage
@@ -450,10 +450,10 @@ func (f *FakeLoop) postCard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f.mu.Lock()
-	c := Card{MsgID: fmt.Sprintf("card-%d", len(f.cards)+1), Card: req.Card, Title: req.Title, Data: req.Data}
+	c := Card{ID: int64(len(f.cards) + 1), Card: req.Card, Title: req.Title, Data: req.Data}
 	f.cards = append(f.cards, c)
 	f.mu.Unlock()
-	pluginsdk.WriteJSON(w, http.StatusCreated, map[string]string{"msg_id": c.MsgID})
+	pluginsdk.WriteJSON(w, http.StatusCreated, map[string]int64{"id": c.ID})
 }
 
 // declaresCard reports whether the manifest declares card; without a

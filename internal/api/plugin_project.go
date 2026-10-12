@@ -74,14 +74,23 @@ func (s *Server) PluginsChanged() {
 
 // pluginConfigChanged follows a config write: the panes learn of the
 // plugins' enablement anew, the containers of the projects that stopped
-// enabling their plugin are stopped, and the plugins' scheduled tasks
-// follow.
+// enabling their plugin are stopped, the plugins' scheduled tasks follow
+// and their badges there are cleared.
 func (s *Server) pluginConfigChanged(ctx context.Context) {
 	if s.plugins == nil {
 		return
 	}
 	s.plugins.StopDisabled(ctx)
 	s.syncPluginSchedules(ctx)
+	s.prunePluginBadges(ctx)
+	s.PluginsChanged()
+}
+
+// PluginsStopped follows the plugin service stopping containers, idle or
+// of projects that stopped enabling their plugin: the badges no longer
+// shown are cleared and the app learns of it.
+func (s *Server) PluginsStopped() {
+	s.prunePluginBadges(context.Background())
 	s.PluginsChanged()
 }
 

@@ -106,7 +106,7 @@ Durable data belongs in the plugin, behind its `/x` API.
 
 ### Cards
 
-A card is a page the plugin posts to its channel's chat (`ui.card`). The same bridge drives it,
+A card is a page the plugin posts to the app's notification drawer (`ui.card`). The same bridge drives it,
 with these differences: `context.get()` has `panel: ""`, the card's id as `card` and the data
 it was posted with as `data`; the state lasts only as long as the frame; and the card sizes
 itself with `ui.resize`, while a panel fills its pane:

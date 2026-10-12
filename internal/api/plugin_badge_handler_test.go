@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -22,15 +23,7 @@ import (
 // broadcast.
 func (s *ServerSuite) pluginBadgeRoutes() (*db.SQLiteStore, *[]Event) {
 	s.pluginAPIRoutes(plugin.CapUIBadge, "/src/app")
-	store, err := db.NewSQLiteStore(filepath.Join(s.T().TempDir(), "loop.db"))
-	require.NoError(s.T(), err)
-	s.T().Cleanup(func() { _ = store.Close() })
-	s.srv.SetPluginBadges(store)
-	hub := NewEventsHub(testLogger())
-	sent := &[]Event{}
-	hub.captureHook = func(e Event) { *sent = append(*sent, e) }
-	s.srv.SetEventsHub(hub)
-	return store, sent
+	return s.badgeStore()
 }
 
 func (s *ServerSuite) TestPutPluginBadge() {
@@ -186,4 +179,121 @@ func (s *ServerSuite) TestSearchChannelsPluginBadges() {
 			require.Equal(s.T(), tt.want, got)
 		})
 	}
+}
+
+// badgeDeleteFails is a badge store whose deletes fail.
+type badgeDeleteFails struct{ *db.SQLiteStore }
+
+func (badgeDeleteFails) DeletePluginBadge(context.Context, string, string) error {
+	return errors.New("boom")
+}
+
+// TestPrunePluginBadges clears the badges of a deleted channel and of a
+// plugin that may no longer show one; a badge whose state can't be read is
+// kept.
+func (s *ServerSuite) TestPrunePluginBadges() {
+	pm := s.pluginRoutes()
+	store, sent := s.badgeStore()
+	ctx := context.Background()
+	for _, b := range []*db.PluginBadge{
+		{PluginID: "echo", ChannelID: "ch-ok", Text: "1"},
+		{PluginID: "echo", ChannelID: "ch-err", Text: "2"},
+		{PluginID: "echo", ChannelID: "ch-gone", Text: "3"},
+		{PluginID: "off", ChannelID: "ch-ok", Text: "4"},
+		{PluginID: "unsure", ChannelID: "ch-ok", Text: "5"},
+	} {
+		require.NoError(s.T(), store.SetPluginBadge(ctx, b))
+	}
+	ok := &db.Channel{ChannelID: "ch-ok", DirPath: "/src/app"}
+	s.store.On("GetChannel", mock.Anything, "ch-ok").Return(ok, nil)
+	s.store.On("GetChannel", mock.Anything, "ch-err").Return(nil, errors.New("boom"))
+	s.store.On("GetChannel", mock.Anything, "ch-gone").Return(nil, nil)
+	rch := pluginRuntimeChannel(ok)
+	pm.On("Shows", mock.Anything, "echo", plugin.CapUIBadge, rch).Return(true, nil)
+	pm.On("Shows", mock.Anything, "off", plugin.CapUIBadge, rch).Return(false, nil)
+	pm.On("Shows", mock.Anything, "unsure", plugin.CapUIBadge, rch).Return(false, errors.New("boom"))
+
+	s.srv.prunePluginBadges(ctx)
+
+	badges, err := store.ListPluginBadges(ctx)
+	require.NoError(s.T(), err)
+	var left []string
+	for _, b := range badges {
+		left = append(left, b.PluginID+"@"+b.ChannelID)
+	}
+	require.ElementsMatch(s.T(), []string{"echo@ch-ok", "echo@ch-err", "unsure@ch-ok"}, left)
+	var cleared []string
+	for _, e := range *sent {
+		cleared = append(cleared, e.Data.(pluginBadge).PluginID+"@"+e.ChannelID)
+	}
+	require.ElementsMatch(s.T(), []string{"echo@ch-gone", "off@ch-ok"}, cleared)
+
+	// A failed clear is only logged and told to no one.
+	*sent = nil
+	require.NoError(s.T(), store.SetPluginBadge(ctx, &db.PluginBadge{PluginID: "echo", ChannelID: "ch-gone", Text: "3"}))
+	s.srv.SetPluginBadges(badgeDeleteFails{store})
+	s.srv.prunePluginBadges(ctx)
+	require.Empty(s.T(), *sent)
+
+	// Nor can a failed lookup clear anything.
+	require.NoError(s.T(), store.Close())
+	s.srv.prunePluginBadges(ctx)
+	require.Empty(s.T(), *sent)
+	require.Empty(s.T(), s.srv.pluginBadgesOf(ctx, "echo"))
+}
+
+func (s *ServerSuite) TestPrunePluginBadgesOff() {
+	s.srv.prunePluginBadges(context.Background())
+	require.Empty(s.T(), s.srv.pluginBadgesOf(context.Background(), "echo"))
+}
+
+// badgeStore keeps badges in a real SQLite and returns it with the events
+// the server broadcasts.
+func (s *ServerSuite) badgeStore() (*db.SQLiteStore, *[]Event) {
+	store, err := db.NewSQLiteStore(filepath.Join(s.T().TempDir(), "loop.db"))
+	require.NoError(s.T(), err)
+	s.T().Cleanup(func() { _ = store.Close() })
+	s.srv.SetPluginBadges(store)
+	hub := NewEventsHub(testLogger())
+	sent := &[]Event{}
+	hub.captureHook = func(e Event) { *sent = append(*sent, e) }
+	s.srv.SetEventsHub(hub)
+	return store, sent
+}
+
+// TestRemovePluginClearsItsBadges: removing a plugin tells every window its
+// badges and notifications are gone.
+func (s *ServerSuite) TestRemovePluginClearsItsBadges() {
+	pm := s.pluginRoutes()
+	store, sent := s.badgeStore()
+	s.srv.SetNotifications(store)
+	ctx := context.Background()
+	require.NoError(s.T(), store.SetPluginBadge(ctx, &db.PluginBadge{PluginID: "echo", ChannelID: "ch-1", Text: "1"}))
+	require.NoError(s.T(), store.SetPluginBadge(ctx, &db.PluginBadge{PluginID: "other", ChannelID: "ch-1", Text: "2"}))
+	pm.On("Remove", mock.Anything, "echo", false).Return(nil).Once()
+
+	require.Equal(s.T(), http.StatusNoContent, s.testRequest("DELETE", "/api/plugins/echo", "").Code)
+
+	require.Len(s.T(), *sent, 3)
+	require.Equal(s.T(), "plugin.badge", (*sent)[0].Type)
+	require.Equal(s.T(), pluginBadge{PluginID: "echo"}, (*sent)[0].Data)
+	require.Equal(s.T(), EventNotificationsChanged, (*sent)[1].Type)
+	require.Equal(s.T(), EventPluginsChanged, (*sent)[2].Type)
+}
+
+// TestPluginsStopped prunes the badges no longer shown and tells the app.
+func (s *ServerSuite) TestPluginsStopped() {
+	pm := s.pluginRoutes()
+	store, sent := s.badgeStore()
+	ctx := context.Background()
+	require.NoError(s.T(), store.SetPluginBadge(ctx, &db.PluginBadge{PluginID: "echo", ChannelID: "ch-1", Text: "1"}))
+	ch := &db.Channel{ChannelID: "ch-1"}
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(ch, nil).Once()
+	pm.On("Shows", mock.Anything, "echo", plugin.CapUIBadge, pluginRuntimeChannel(ch)).Return(false, nil).Once()
+
+	s.srv.PluginsStopped()
+
+	require.Len(s.T(), *sent, 2)
+	require.Equal(s.T(), "plugin.badge", (*sent)[0].Type)
+	require.Equal(s.T(), EventPluginsChanged, (*sent)[1].Type)
 }

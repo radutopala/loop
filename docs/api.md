@@ -3165,15 +3165,49 @@ Called by a plugin's container with the token in its `LOOP_PLUGIN_TOKEN_FILE`; t
 | `GET /api/plugin/v1/channel/git/recent?days=` | `git.read` | `{"commits": [{"sha", "subject", "author", "time"}], "files": [{"path", "commits"}]}`; `days` defaults to 14, at most 365; the last 500 non-merge commits; `409` without git |
 | `GET /api/plugin/v1/channel/quality/hotspots?limit=` | `quality.read` | as `GET /api/channels/{id}/quality/complexity`; `503` before the first scan |
 | `POST /api/plugin/v1/events` | | body `{"type", "data"}` (up to 64 KB) → `204`; broadcast as a `plugin.event` event with `{"plugin_id", "type", "data"}` for the channel |
-| `POST /api/plugin/v1/notify` | `ui.notify` | body `{"title", "body"}` → `204`; broadcast as a `plugin.notify` event with `{"plugin_id", "title", "body"}`. At most five a minute per plugin: past that `429` with `Retry-After` in seconds |
+| `POST /api/plugin/v1/notify` | `ui.notify` | body `{"title", "body"}` → `204`; kept as a `notify` [notification](#notifications) and broadcast as a `plugin.notify` event with `{"plugin_id", "title", "body"}`. At most five a minute per plugin, cards included: past that `429` with `Retry-After` in seconds |
 | `PUT /api/plugin/v1/memory/{name}` | `memory.write` | body `{"content"}` (up to 256 KB) → `204`; writes `plugin-<plugin>-<name>.md` in `~/.claude/projects/<encoded dir>/memory/` for the channel's dir, which `search_memory` indexes. `name` matches `^[a-z0-9][a-z0-9-]{0,63}$` (`400` otherwise); `409` when the channel has no dir |
 | `DELETE /api/plugin/v1/memory/{name}` | `memory.write` | removes that file → `204`, also when it's already gone |
 | `PUT /api/plugin/v1/badge` | `ui.badge` | body `{"text", "title"?}` → `204`; keeps the plugin's badge on the channel's sidebar row (see `plugin_badges` in [`GET /api/channels`](#get-apichannels)) and broadcasts a `plugin.badge` event with `{"plugin_id", "text", "title"?}` to every window. `text` is trimmed and must be 1 to 16 characters on one line, `title` at most 200 (`400` otherwise) |
 | `DELETE /api/plugin/v1/badge` | `ui.badge` | removes the plugin's badge → `204`, also when there was none; broadcasts `plugin.badge` with an empty `text` |
-| `POST /api/plugin/v1/cards` | `ui.card` | body `{"card", "title"?, "data"?}` (up to 64 KB) → `201 {"msg_id"}`; inserts a bot message from the plugin whose content is a `loop-plugin-card <plugin> <card> <title>` fence holding `data` as one line of JSON, and broadcasts `message.created`. `400` for a card the manifest doesn't declare (`ui.cards`) and on Slack or Discord |
+| `POST /api/plugin/v1/cards` | `ui.card` | body `{"card", "title"?, "data"?}` (up to 64 KB) → `201 {"id"}`; keeps a `card` [notification](#notifications) for the channel with `data` and broadcasts `notifications.changed`. `title` is cut to one line of 120 characters. Shares notify's limit (`429`). `400` for a card the manifest doesn't declare (`ui.cards`) and on Slack or Discord |
 | `POST /api/plugin/v1/ui/commands` | `ui.run` | as [`POST /api/ui/commands`](#post-apiuicommands), held to the channel: the first step is `select_channel`, and each `select_channel` names the channel or one of its threads that isn't hidden (`403` otherwise) |
 
 ---
+
+## Notifications
+
+What Loop and the plugins tell the owner, listed in the desktop app's notification drawer. Owner only; every route answers `501` when the store isn't configured. Each change broadcasts a global `notifications.changed` event with no data; the app refetches the list.
+
+Loop keeps a notification for a scheduled run that finished or failed, any other run that failed (except learn, explain and a plugin's agent), and a workflow run that ended or paused for input. A plugin adds one with [`POST /api/plugin/v1/notify`](#plugin-api-v1) or [`POST /api/plugin/v1/cards`](#plugin-api-v1). Loop's own and each plugin's are capped at the newest 200. Deleting a channel drops its notifications; removing a plugin drops the plugin's.
+
+### `GET /api/notifications`
+
+The newest 200, newest first, and how many of them are unread.
+
+```json
+{
+  "notifications": [
+    {"id": 12, "plugin_id": "quiz", "kind": "card", "channel_id": "4bc8…", "title": "Quiz results", "card": "score", "data": {"score": 3}, "read": false, "created_at": "2026-10-12T09:00:00Z"},
+    {"id": 11, "kind": "run", "channel_id": "4bc8…", "title": "Scheduled run finished", "body": "in 42s", "read": true, "created_at": "2026-10-12T08:00:00Z"}
+  ],
+  "unread": 1
+}
+```
+
+`kind` is `run`, `workflow`, `notify` or `card`. `plugin_id` is omitted for Loop's own, `channel_id` when it's about no channel; `card` and `data` come with a card only.
+
+### `POST /api/notifications/read`
+
+Body `{"up_to": 12}`: marks the notifications up to that id read → `204`.
+
+### `DELETE /api/notifications/{id}`
+
+Dismisses one → `204`; `404` if there's no such notification, `400` for an id that isn't a number.
+
+### `DELETE /api/notifications`
+
+Dismisses them all → `204`.
 
 ## Agent Registry
 

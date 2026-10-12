@@ -717,6 +717,49 @@ func (s *ServiceSuite) TestAllows() {
 	}
 }
 
+func (s *ServiceSuite) TestShows() {
+	ch := runtime.Channel{ID: "ch1", DirPath: "/src"}
+	tests := []struct {
+		name       string
+		state      func() *db.PluginState
+		readErr    error
+		enabled    bool
+		enabledErr error
+		want       bool
+		wantErr    string
+	}{
+		{name: "shown", state: func() *db.PluginState { return s.installedWith("ui.badge") }, enabled: true, want: true},
+		{name: "not enabled", state: func() *db.PluginState { return s.installedWith("ui.badge") }},
+		{name: "config unreadable", state: func() *db.PluginState { return s.installedWith("ui.badge") }, enabledErr: errors.New("bad config"), wantErr: "bad config"},
+		{name: "not approved", state: func() *db.PluginState { return s.installedWith("ui.card") }, enabled: true},
+		{name: "not installed", state: func() *db.PluginState { return nil }, enabled: true},
+		{name: "disabled", state: func() *db.PluginState { return s.installed(db.PluginStatusDisabled) }, enabled: true},
+		{name: "store fails", state: func() *db.PluginState { return nil }, readErr: errors.New("db down"), wantErr: "reading the plugin: db down"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			defer s.TearDownTest()
+			s.enabled, s.enabledErr = tt.enabled, tt.enabledErr
+			s.store.On("GetPluginState", s.ctx, "echo").Return(tt.state(), tt.readErr).Once()
+			got, err := s.svc.Shows(s.ctx, "echo", plugin.CapUIBadge, ch)
+			if tt.wantErr != "" {
+				require.EqualError(s.T(), err, tt.wantErr)
+				return
+			}
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tt.want, got)
+		})
+	}
+}
+
+// installedWith is an installed plugin with caps approved.
+func (s *ServiceSuite) installedWith(caps ...string) *db.PluginState {
+	st := s.installed(db.PluginStatusInstalled)
+	st.ApprovedCaps = caps
+	return st
+}
+
 func (s *ServiceSuite) TestRunDoneAndX() {
 	ch := runtime.Channel{ID: "ch1", DirPath: "/src"}
 	ep := runtime.Endpoint{URL: "http://127.0.0.1:1234", Secret: "s"}

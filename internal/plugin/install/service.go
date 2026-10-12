@@ -437,6 +437,20 @@ func (s *Service) Allows(ctx context.Context, pluginID string, c plugin.Capabili
 	return nil
 }
 
+// Shows reports whether the plugin pluginID may still show in ch what
+// capability c lets it: it's installed, may run, has c approved and ch's
+// project enables it.
+func (s *Service) Shows(ctx context.Context, pluginID string, c plugin.Capability, ch runtime.Channel) (bool, error) {
+	err := s.Allows(ctx, pluginID, c)
+	switch {
+	case errors.Is(err, ErrNotInstalled), errors.Is(err, ErrNotRunnable), errors.Is(err, ErrNotApproved):
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+	return s.enabled(ctx, pluginID, ch)
+}
+
 // RunDone tells the plugin's container in ch, starting it if it isn't
 // running, that its agent run runID ended.
 func (s *Service) RunDone(ctx context.Context, pluginID string, ch runtime.Channel, runID string, req proxy.RunDoneRequest) error {

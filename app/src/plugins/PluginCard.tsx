@@ -1,27 +1,37 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { contentCapBase } from "../api/api";
 import { checkFilesExist } from "../api/files";
+import type { PluginInfo } from "../api/plugins";
 import { pluginXRequest } from "../api/plugins";
-import type { PluginCardFence } from "../components/chat/componentFence";
 import type { FileLinkOpenDetail } from "../components/chat/FileLink";
 import { useContentCapsEpoch } from "../hooks/useContentCapsEpoch";
 import { useTheme } from "../ThemeContext";
 import { BRIDGE_INIT, type Bridge, type BridgeHost, connectBridge, pluginTheme } from "./bridge";
 import { cardHeight, cardInitialHeight } from "./cardHeight";
-import { findPluginCard, usePluginPanels } from "./PluginPanelsContext";
+import { findPluginCard } from "./PluginPanelsContext";
 
-export interface PluginCardProps extends PluginCardFence {
-  /** The channel or thread whose chat the card is in. */
+export interface PluginCardProps {
+  pluginId: string;
+  cardId: string;
+  /** Names the frame. */
+  label: string;
+  /** What the plugin posted the card with. */
+  data: unknown;
+  /** The channel or thread the card is about, its name and dir. */
   channelId: string;
+  channelName: string;
+  dirPath: string;
+  /** The installed plugins as the channel's project sees them; null until
+   *  they're listed. */
+  plugins: PluginInfo[] | null;
 }
 
-/** A plugin's card in the chat: its page from the plugin's bundle in a
- *  sandboxed frame, as a panel is, told through the bridge the data the
- *  plugin posted it with. It sizes itself with ui.resize. Its state lives as
- *  long as the frame does. */
-export function PluginCard({ plugin: pluginId, card: cardId, title, data, channelId }: PluginCardProps) {
+/** A plugin's card in the notification drawer: its page from the plugin's
+ *  bundle in a sandboxed frame, as a panel is, told through the bridge the
+ *  data the plugin posted it with. It sizes itself with ui.resize. Its state
+ *  lives as long as the frame does. */
+export function PluginCard({ pluginId, cardId, label, data, channelId, channelName, dirPath, plugins }: PluginCardProps) {
   const { colors } = useTheme();
-  const { plugins, channel } = usePluginPanels();
   const found = findPluginCard(plugins, pluginId, cardId);
   const entry = found?.card.entry ?? "";
 
@@ -47,15 +57,14 @@ export function PluginCard({ plugin: pluginId, card: cardId, title, data, channe
   const [height, setHeight] = useState(cardInitialHeight);
   const state = useRef<unknown>(null);
   const hostRef = useRef<BridgeHost | null>(null);
-  const here = channel?.id === channelId ? channel : undefined;
   hostRef.current = found
     ? {
         pluginId,
         panel: "",
         card: { id: cardId, data },
         channelId,
-        channelName: here?.name ?? "",
-        dirPath: here?.dirPath ?? "",
+        channelName,
+        dirPath,
         capabilities: found.plugin.capabilities,
         request: (method, path, body) => pluginXRequest(pluginId, channelId, method, path, body),
         theme: () => pluginTheme(colors),
@@ -95,20 +104,17 @@ export function PluginCard({ plugin: pluginId, card: cardId, title, data, channe
     bridgeRef.current?.notify("theme", pluginTheme(colors));
   }, [colors]);
 
-  const label = title || `${found?.plugin.name || pluginId} · ${cardId}`;
-  const message = plugins === null ? null : !found ? `This ${pluginId} card isn't available: the plugin may have been removed or not approved for cards.` : error;
+  const message = plugins === null ? null : !found ? `This ${pluginId} card isn't available: the plugin may have been removed, not approved for cards or not enabled here.` : error;
+  if (message === null && !src) return null;
   return (
     <div
       data-testid="plugin-card"
       data-plugin={pluginId}
       data-card={cardId}
-      style={{ margin: "8px 0", border: `1px solid ${colors.border}`, borderRadius: 8, overflow: "hidden", backgroundColor: colors.surface }}
+      style={{ marginTop: 8, border: `1px solid ${colors.border}`, borderRadius: 6, overflow: "hidden", backgroundColor: colors.surface }}
     >
-      <div style={{ padding: "4px 12px", borderBottom: `1px solid ${colors.border}`, fontSize: 12, color: colors.textDim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-        {label}
-      </div>
-      {message !== null || !src ? (
-        <div data-testid="plugin-card-message" style={{ padding: 12, fontSize: 12, color: colors.textDim }}>
+      {message !== null ? (
+        <div data-testid="plugin-card-message" style={{ padding: 10, fontSize: 12, color: colors.textDim }}>
           {message}
         </div>
       ) : (

@@ -89,6 +89,11 @@ func (m *MockPluginManager) StopDisabled(ctx context.Context) bool {
 	return m.Called(ctx).Bool(0)
 }
 
+func (m *MockPluginManager) Shows(ctx context.Context, pluginID string, c plugin.Capability, ch runtime.Channel) (bool, error) {
+	args := m.Called(ctx, pluginID, c, ch)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *MockPluginManager) SyncSchedules(ctx context.Context) error {
 	return m.Called(ctx).Error(0)
 }

@@ -36,6 +36,8 @@ import { trustPillIds } from "./components/sidebar/pills";
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { useAppPanelState } from "./hooks/useAppPanelState";
 import { type ActiveChatState, useChatStateStore } from "./hooks/useChatStateStore";
+import { NotificationButton, NotificationDrawer } from "./notifications/NotificationDrawer";
+import { useNotifications } from "./notifications/useNotifications";
 import { DEFAULT_FONT_SIZES, ThemeProvider, useTheme } from "./ThemeContext";
 import { fonts } from "./theme";
 import type { Channel, ChannelAgentConfigData, ChannelUpdatedData, ImageBuildStatusData, ImageUpdateAvailableData, PluginBadge, UpdateStatus, WSEvent } from "./types";
@@ -162,6 +164,11 @@ function AppInner() {
   }, [refreshShareCount]);
 
   const layoutRef = useRef<WorkspaceLayoutRef>(null);
+
+  // The notification drawer: what Loop and the plugins told the owner.
+  const notifications = useNotifications(ready);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [pluginsEpoch, setPluginsEpoch] = useState(0);
 
   // Fetch diff stats for the selected channel and keep them updated via events.
   const loadDiffStats = useCallback(async () => {
@@ -323,6 +330,14 @@ function AppInner() {
         patchChannel(event.channel_id, (c) => applyReviewStatus(c, d.status, event.timestamp));
         return;
       }
+      if (event.type === "notifications.changed") {
+        notifications.refetch();
+        return;
+      }
+      if (event.type === "plugins.changed") {
+        setPluginsEpoch((n) => n + 1);
+        return;
+      }
       if (event.type === "plugin.badge") {
         const d = event.data as PluginBadge;
         patchChannel(event.channel_id, (c) => applyPluginBadge(c, d));
@@ -359,7 +374,7 @@ function AppInner() {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(loadDiffStats, 1_000);
     },
-    [loadDiffStats, selectedId, loadChannels, patchChannel, refreshShareCount],
+    [loadDiffStats, selectedId, loadChannels, patchChannel, refreshShareCount, notifications.refetch],
   );
   useEffect(
     () => () => {
@@ -755,6 +770,20 @@ function AppInner() {
           WebkitAppRegion: "drag",
         }}
       />
+      <NotificationButton unread={notifications.unread} open={drawerOpen} onToggle={() => setDrawerOpen((v) => !v)} />
+      {drawerOpen && (
+        <NotificationDrawer
+          notifications={notifications.notifications}
+          unread={notifications.unread}
+          channels={channels}
+          pluginsEpoch={pluginsEpoch}
+          onSelectChannel={(id) => {
+            setDrawerOpen(false);
+            handleSelect(id);
+          }}
+          onClose={() => setDrawerOpen(false)}
+        />
+      )}
       <Sidebar
         channels={channels}
         selectedId={selectedId}

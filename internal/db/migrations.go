@@ -549,6 +549,21 @@ var migrations = []migration{
 		updated_at DATETIME NOT NULL,
 		PRIMARY KEY (plugin_id, channel_id)
 	)`),
+	// notifications holds what Loop and the plugins tell the owner, shown
+	// in the app's notification drawer (see Notification).
+	sqlMigration(`CREATE TABLE IF NOT EXISTS notifications (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		plugin_id  TEXT NOT NULL DEFAULT '',
+		kind       TEXT NOT NULL,
+		channel_id TEXT NOT NULL DEFAULT '',
+		title      TEXT NOT NULL DEFAULT '',
+		body       TEXT NOT NULL DEFAULT '',
+		card       TEXT NOT NULL DEFAULT '',
+		data       TEXT NOT NULL DEFAULT 'null',
+		read       INTEGER NOT NULL DEFAULT 0,
+		created_at DATETIME NOT NULL
+	)`),
+	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_notifications_plugin ON notifications(plugin_id, id)`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the

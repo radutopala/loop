@@ -175,7 +175,8 @@ type Server struct {
 	plugins                 PluginManager
 	pluginRunner            PluginRunner
 	badges                  PluginBadgeStore
-	deliverAsync            func(func()) // runs a plugin event's delivery; go in production, inline in tests
+	notifications           NotificationStore
+	deliverAsync            func(func()) // runs a plugin event's delivery or a notification's recording; go in production, inline in tests
 	server                  *http.Server
 	listener                net.Listener
 	stopErr                 error // if set, Stop returns this error (for testing)
@@ -690,6 +691,10 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/plugin/v1/badge", s.handlePutPluginBadge)
 	mux.HandleFunc("DELETE /api/plugin/v1/badge", s.handleDeletePluginBadge)
 	mux.HandleFunc("POST /api/plugin/v1/cards", s.handlePostPluginCard)
+	mux.HandleFunc("GET /api/notifications", s.handleListNotifications)
+	mux.HandleFunc("POST /api/notifications/read", s.handleReadNotifications)
+	mux.HandleFunc("DELETE /api/notifications/{id}", s.handleDeleteNotification)
+	mux.HandleFunc("DELETE /api/notifications", s.handleClearNotifications)
 	mux.HandleFunc("GET /api/health", handleHealth)
 	mux.HandleFunc("POST /api/auth/rotate", s.handleRotateToken)
 	mux.HandleFunc("POST /api/content-caps", s.handleCreateContentCap)

@@ -261,11 +261,11 @@ func (s *FakeLoopSuite) TestCards() {
 	c := f.Client()
 	id, err := c.PostCard(s.ctx, "score", "Quiz", map[string]int{"score": 3})
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), "card-1", id)
+	require.Equal(s.T(), int64(1), id)
 	_, err = c.PostCard(s.ctx, "other", "", nil)
 	require.True(s.T(), pluginsdk.HasStatus(err, http.StatusBadRequest))
 	require.Equal(s.T(), http.StatusBadRequest, s.raw(f, http.MethodPost, "/cards", "{"))
-	require.Equal(s.T(), []Card{{MsgID: "card-1", Card: "score", Title: "Quiz", Data: json.RawMessage(`{"score":3}`)}}, f.Cards())
+	require.Equal(s.T(), []Card{{ID: 1, Card: "score", Title: "Quiz", Data: json.RawMessage(`{"score":3}`)}}, f.Cards())
 
 	_, err = NewFakeLoop(s.T(), Config{Manifest: &pluginsdk.Manifest{Capabilities: []string{pluginsdk.CapUICard}}}).Client().PostCard(s.ctx, "score", "", nil)
 	require.True(s.T(), pluginsdk.HasStatus(err, http.StatusBadRequest), "a manifest without ui declares no cards")

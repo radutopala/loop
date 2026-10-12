@@ -11,7 +11,7 @@ export interface PluginPanelInfo {
   singleton?: boolean;
 }
 
-/** A card a plugin posts in a channel's chat. */
+/** A card a plugin posts to the notification drawer. */
 export interface PluginCardInfo {
   id: string;
   /** The card's HTML page, under ui/ of the plugin's bundle. */

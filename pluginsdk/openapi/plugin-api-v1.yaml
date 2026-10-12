@@ -464,15 +464,16 @@ paths:
     post:
       operationId: postCard
       tags: [ui]
-      summary: Post a card to the channel's chat
+      summary: Post a card to the notification drawer
       description: |
         Posts one of the cards the manifest declares under ui.cards to the
-        chat of the plugin's channel, or of the thread it serves, as a
-        message that starts no agent turn. The desktop app draws the card's
-        page in the message, in a sandboxed frame; the page reads data
-        with the bridge's context.get. Cards show in the desktop app only,
-        so a channel on another platform refuses them. The body is capped
-        at 64 KB.
+        desktop app's notification drawer, as a notification about the
+        plugin's channel, or the thread it serves. The app draws the card's
+        page in a sandboxed frame; the page reads data with the bridge's
+        context.get. Cards show in the desktop app only, so a channel on
+        another platform refuses them. Cards share notify's limit of five a
+        minute per plugin; Loop keeps a plugin's newest 200 notifications.
+        The body is capped at 64 KB.
       x-loop-capabilities: [ui.card]
       requestBody:
         required: true
@@ -487,11 +488,12 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [msg_id]
+                required: [id]
                 properties:
-                  msg_id:
-                    type: string
-                    description: The chat message's id.
+                  id:
+                    type: integer
+                    format: int64
+                    description: The notification's id.
         "400":
           description: The body isn't JSON or is over 64 KB, the manifest declares no such card, or the channel isn't in the desktop app.
           content: { text/plain: { schema: { type: string } } }
@@ -499,6 +501,13 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/ChannelNotFound" }
         "409": { $ref: "#/components/responses/NotRunnable" }
+        "429":
+          description: Too many notifications.
+          headers:
+            Retry-After:
+              description: Seconds until the next one is allowed.
+              schema: { type: integer }
+          content: { text/plain: { schema: { type: string } } }
         "500": { $ref: "#/components/responses/InternalError" }
         "501": { $ref: "#/components/responses/PluginsDisabled" }
 components:

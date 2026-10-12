@@ -4,22 +4,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
-	"strings"
-	"time"
+	"strconv"
 
 	"github.com/radutopala/loop/internal/chatcomponents"
 	"github.com/radutopala/loop/internal/db"
-	"github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/plugin"
-	"github.com/radutopala/loop/internal/randutil"
 	"github.com/radutopala/loop/internal/types"
 )
-
-// pluginCardTag is the info-string tag of a plugin card's fence:
-// ```loop-plugin-card <plugin> <card> <title>, its body the card's data as
-// one line of JSON.
-const pluginCardTag = "loop-plugin-card"
 
 type pluginCardRequest struct {
 	Card  string          `json:"card"`
@@ -28,15 +21,15 @@ type pluginCardRequest struct {
 }
 
 type pluginCardResponse struct {
-	MsgID string `json:"msg_id"`
+	ID int64 `json:"id"`
 }
 
-// handlePostPluginCard posts one of the calling plugin's cards to its
-// channel's chat as an inert message, which the desktop app draws with the
-// card's page from the plugin's bundle and the data it was posted with.
+// handlePostPluginCard posts one of the calling plugin's cards to the
+// app's notification drawer, which draws it with the card's page from the
+// plugin's bundle and the data it was posted with.
 func (s *Server) handlePostPluginCard(w http.ResponseWriter, r *http.Request) {
 	p, ch, ok := s.pluginCaller(w, r, plugin.CapUICard)
-	if !ok {
+	if !ok || !requireConfigured(w, s.notifications, "notifications not configured") {
 		return
 	}
 	var req pluginCardRequest
@@ -64,25 +57,22 @@ func (s *Server) handlePostPluginCard(w http.ResponseWriter, r *http.Request) {
 		_ = json.Compact(&compact, req.Data)
 		data = compact.Bytes()
 	}
-	title := chatcomponents.Title(req.Title)
-	msg := &db.Message{
-		ChatID:      ch.ID,
-		ChannelID:   ch.ChannelID,
-		MsgID:       "card-" + randutil.HexID(16),
-		AuthorName:  p.PluginID,
-		Content:     "```" + strings.TrimSpace(strings.Join([]string{pluginCardTag, p.PluginID, req.Card, title}, " ")) + "\n" + string(data) + "\n```",
-		IsBot:       true,
-		IsProcessed: true,
-		CreatedAt:   time.Now().UTC(),
+	if ok, wait := s.notifyLimit.allow(p.PluginID); !ok {
+		w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(wait.Seconds()))))
+		http.Error(w, "too many notifications; try again later", http.StatusTooManyRequests)
+		return
 	}
-	if err := s.store.InsertMessage(r.Context(), msg); err != nil {
+	n := &db.Notification{
+		PluginID:  p.PluginID,
+		Kind:      db.NotificationCard,
+		ChannelID: ch.ChannelID,
+		Title:     chatcomponents.Title(req.Title),
+		Card:      req.Card,
+		Data:      string(data),
+	}
+	if err := s.notify(r.Context(), n); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if s.eventsHub != nil {
-		s.eventsHub.BroadcastMessageCreated(ch.ChannelID, events.MessageEventData{
-			ID: msg.ID, MsgID: msg.MsgID, AuthorName: msg.AuthorName, Content: msg.Content, IsBot: true, IsProcessed: true,
-		})
-	}
-	writeHTTPJSON(w, http.StatusCreated, pluginCardResponse{MsgID: msg.MsgID}, s.logger)
+	writeHTTPJSON(w, http.StatusCreated, pluginCardResponse{ID: n.ID}, s.logger)
 }

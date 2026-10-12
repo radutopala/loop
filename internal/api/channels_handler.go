@@ -461,8 +461,10 @@ func (s *Server) removeAgentContainers(ctx context.Context, channelID string) {
 // for removal after the keep-alive, leaving their `docker logs` to read
 // meanwhile, its Chrome container and profile volume, which can't go while
 // the container is there, are removed now, and its plugin containers are
-// removed, keeping their data.
+// removed, keeping their data. Its notifications and badges go too.
 func (s *Server) cleanupChannelContainers(ctx context.Context, channelID string) {
+	s.dropChannelNotifications(ctx, channelID)
+	s.prunePluginBadges(ctx)
 	if s.plugins != nil {
 		removed, err := s.plugins.RemoveChannel(ctx, channelID)
 		if err != nil {
