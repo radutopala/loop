@@ -195,7 +195,11 @@ func loopNotification(evt Event) *db.Notification {
 	case events.AgentStatusEventData:
 		return runNotification(evt.ChannelID, d)
 	case events.WorkflowRunEventData:
-		if evt.Type != EventWorkflowRunCompleted && evt.Type != EventWorkflowRunPaused {
+		switch {
+		case evt.Type == EventWorkflowRunPaused:
+		case evt.Type == EventWorkflowRunCompleted && (d.Status == "completed" || d.Status == "failed"):
+		default:
+			// Started, or cancelled or deleted by the owner.
 			return nil
 		}
 		n := &db.Notification{Kind: db.NotificationWorkflow, ChannelID: d.ChannelID, Body: d.Error}
