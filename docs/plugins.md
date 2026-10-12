@@ -381,7 +381,10 @@ served from a signed link with a content security policy that:
 - gives the page an opaque origin (no cookies, storage or access to the app);
 - loads scripts, styles, images, fonts and `fetch`es only from the plugin's own bundle, plus
   `data:`/`blob:` for images, fonts and media;
-- blocks inline `<script>`, `eval`, frames, form submission and navigation away.
+- blocks inline `<script>`, `eval`, frames and form submission.
+
+The policy can't stop a frame from navigating itself, so the desktop app does: a link or
+`location = …` in a panel or card page that leads outside the plugin's own signed link is refused.
 
 So a bundle ships everything it needs, uses script files, and gets its data through the bridge.
 
