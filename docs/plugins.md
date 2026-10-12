@@ -419,7 +419,7 @@ A plugin approved for `ui.notification.card` declares pages in the manifest's `u
 checked like a panel's) and posts one with `POST /cards`. Cards don't go in the chat, which is
 for talking with the agent: they land in the notification drawer of the channel or thread, opened
 from the bell at the right of the layout bar, next to Loop's own notifications about it
-(scheduled runs, failed runs, workflows). The sidebar row shows how many are unread. The drawer
+(scheduled runs, failed runs and scheduled scripts and plugin actions that failed, workflows). The sidebar row shows how many are unread. The drawer
 shows the card under the plugin's name and the `title`; the page is in a frame, under the same
 rules as a panel's. The page
 gets the same bridge as a panel, with three differences: `context.get` has the card's id as

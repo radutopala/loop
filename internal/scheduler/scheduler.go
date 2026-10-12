@@ -330,10 +330,26 @@ func (s *TaskScheduler) executeAndLog(ctx context.Context, task *db.ScheduledTas
 			RunID:     runLog.ID,
 			Status:    string(runLog.Status),
 			ChannelID: task.ChannelID,
+			ThreadID:  task.ThreadID,
+			Kind:      taskRunKind(task),
+			Error:     runLog.ErrorText,
 		})
 	}
 
 	return nil
+}
+
+// taskRunKind is what task runs, checked in the order the executor does.
+func taskRunKind(task *db.ScheduledTask) string {
+	switch {
+	case task.WorkflowName != "":
+		return events.TaskRunWorkflow
+	case task.PluginID != "":
+		return events.TaskRunPlugin
+	case task.BashScript != "":
+		return events.TaskRunBash
+	}
+	return events.TaskRunAgent
 }
 
 func parseOnceSchedule(schedule string) (time.Time, error) {

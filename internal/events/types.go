@@ -322,7 +322,21 @@ type TaskRunEventData struct {
 	RunID     int64  `json:"run_id"`
 	Status    string `json:"status"`
 	ChannelID string `json:"channel_id"`
+	// ThreadID is the task's thread, if it has one.
+	ThreadID string `json:"thread_id,omitempty"`
+	// Kind is what the task runs: TaskRunAgent, TaskRunBash,
+	// TaskRunPlugin or TaskRunWorkflow.
+	Kind  string `json:"kind,omitempty"`
+	Error string `json:"error,omitempty"`
 }
+
+// What a scheduled task runs, in TaskRunEventData.Kind.
+const (
+	TaskRunAgent    = "agent"
+	TaskRunBash     = "bash"
+	TaskRunPlugin   = "plugin"
+	TaskRunWorkflow = "workflow"
+)
 
 // WorkflowRunEventData is the payload for workflow.run.* events.
 type WorkflowRunEventData struct {

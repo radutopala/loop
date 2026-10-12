@@ -944,6 +944,7 @@ func (s *SchedulerSuite) TestTaskRunCompletedEventBroadcast() {
 		RunID:     10,
 		Status:    string(db.RunStatusSuccess),
 		ChannelID: "ch1",
+		Kind:      events.TaskRunAgent,
 	}).Run(signal)
 
 	ts := NewTaskScheduler(s.store, s.executor, 10*time.Millisecond, s.logger)
@@ -966,8 +967,8 @@ func (s *SchedulerSuite) TestTaskRunCompletedEventBroadcast() {
 
 func (s *SchedulerSuite) TestTaskRunFailedEventBroadcast() {
 	task := &db.ScheduledTask{
-		ID: 2, ChannelID: "ch2", Schedule: "1h",
-		Type: db.TaskTypeInterval, Prompt: "fail", Enabled: true,
+		ID: 2, ChannelID: "ch2", ThreadID: "th2", Schedule: "1h",
+		Type: db.TaskTypeInterval, BashScript: "exit 1", Enabled: true,
 	}
 	done, signal := signalDone()
 
@@ -983,6 +984,9 @@ func (s *SchedulerSuite) TestTaskRunFailedEventBroadcast() {
 		RunID:     20,
 		Status:    string(db.RunStatusFailed),
 		ChannelID: "ch2",
+		ThreadID:  "th2",
+		Kind:      events.TaskRunBash,
+		Error:     "exec failed",
 	}).Run(signal)
 
 	ts := NewTaskScheduler(s.store, s.executor, 10*time.Millisecond, s.logger)
@@ -1050,7 +1054,7 @@ func (s *SchedulerSuite) TestRunNowWithEventBroadcast() {
 
 	bc := new(mockTaskEventBroadcaster)
 	bc.On("BroadcastTaskRunCompleted", events.TaskRunEventData{
-		TaskID: 6, RunID: 60, Status: string(db.RunStatusSuccess), ChannelID: "ch2",
+		TaskID: 6, RunID: 60, Status: string(db.RunStatusSuccess), ChannelID: "ch2", Kind: events.TaskRunAgent,
 	}).Return()
 
 	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
@@ -1230,4 +1234,22 @@ func (s *SchedulerSuite) TestRunNowClaimError() {
 	require.Contains(s.T(), err.Error(), "db locked")
 
 	s.executor.AssertNotCalled(s.T(), "ExecuteTask", mock.Anything, mock.Anything)
+}
+
+func (s *SchedulerSuite) TestTaskRunKind() {
+	tests := []struct {
+		name string
+		task *db.ScheduledTask
+		want string
+	}{
+		{name: "agent", task: &db.ScheduledTask{Prompt: "hi"}, want: events.TaskRunAgent},
+		{name: "bash", task: &db.ScheduledTask{BashScript: "true"}, want: events.TaskRunBash},
+		{name: "plugin", task: &db.ScheduledTask{PluginID: "p", PluginAction: "a"}, want: events.TaskRunPlugin},
+		{name: "workflow", task: &db.ScheduledTask{WorkflowName: "w"}, want: events.TaskRunWorkflow},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			require.Equal(s.T(), tc.want, taskRunKind(tc.task))
+		})
+	}
 }

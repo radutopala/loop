@@ -215,8 +215,9 @@ func (s *Server) dropChannelNotifications(ctx context.Context, channelID string)
 }
 
 // RecordNotifications stores, in the background, the notification an event
-// of Loop's makes, if any: a scheduled run that ended, a run that failed, a
-// workflow run in a channel that ended or paused.
+// of Loop's makes, if any: a scheduled run that ended, a run or a scheduled
+// script or plugin action that failed, a workflow run in a channel that
+// ended or paused.
 func (s *Server) RecordNotifications(evt Event) {
 	if s.notifications == nil {
 		return
@@ -237,6 +238,8 @@ func loopNotification(evt Event) *db.Notification {
 	switch d := evt.Data.(type) {
 	case events.AgentStatusEventData:
 		return runNotification(evt.ChannelID, d)
+	case events.TaskRunEventData:
+		return taskRunNotification(d)
 	case events.WorkflowRunEventData:
 		switch {
 		case evt.Type == EventWorkflowRunPaused:
@@ -296,6 +299,20 @@ func runNotification(channelID string, d events.AgentStatusEventData) *db.Notifi
 		return nil
 	}
 	return n
+}
+
+// taskRunNotification is the notification of a scheduled script or plugin
+// action that failed, in the task's thread if it has one. An agent's run
+// tells its own status, and a workflow's run its own end.
+func taskRunNotification(d events.TaskRunEventData) *db.Notification {
+	if d.Status != string(db.RunStatusFailed) || (d.Kind != events.TaskRunBash && d.Kind != events.TaskRunPlugin) {
+		return nil
+	}
+	channelID := d.ChannelID
+	if d.ThreadID != "" {
+		channelID = d.ThreadID
+	}
+	return &db.Notification{Kind: db.NotificationRun, ChannelID: channelID, Title: taskName(d.TaskID) + " failed", Body: d.Error}
 }
 
 // taskName names a scheduled task in a notification: "Task #12", or

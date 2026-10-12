@@ -3193,7 +3193,7 @@ Called by a plugin's container with the token in its `LOOP_PLUGIN_TOKEN_FILE`; t
 
 What Loop and the plugins tell the owner about a channel or thread, listed in the desktop app's notification drawer of that channel. Owner only; every route answers `501` when the store isn't configured. Each change broadcasts a global `notifications.changed` event with no data; the app refetches the counts and the open drawer's list.
 
-Loop keeps a notification for a scheduled run that finished or failed, any other run that failed (except learn, explain and a plugin's agent), and a workflow run in a channel that ended or paused for input; not for a workflow run the owner cancelled or deleted. A plugin adds one with [`POST /api/plugin/v1/notify`](#plugin-api-v1) or [`POST /api/plugin/v1/cards`](#plugin-api-v1). Loop's own and each plugin's are capped at the newest 200. Deleting a channel drops its notifications; removing a plugin drops the plugin's.
+Loop keeps a notification for a scheduled run that finished or failed, a scheduled script or plugin action that failed (in the task's thread, if it has one), any other run that failed (except learn, explain and a plugin's agent), and a workflow run in a channel that ended or paused for input; not for a workflow run the owner cancelled or deleted. A plugin adds one with [`POST /api/plugin/v1/notify`](#plugin-api-v1) or [`POST /api/plugin/v1/cards`](#plugin-api-v1). Loop's own and each plugin's are capped at the newest 200. Deleting a channel drops its notifications; removing a plugin drops the plugin's.
 
 ### `GET /api/notifications?channel_id=`
 
