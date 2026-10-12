@@ -1,12 +1,10 @@
 package workflow
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"sync"
-	"text/template"
 	"time"
 
 	"github.com/radutopala/loop/internal/agent"
@@ -197,20 +195,4 @@ func (e *defaultEngine) checkTriggerRule(node *config.NodeDef, nodeStatus map[st
 	default:
 		return true
 	}
-}
-
-// renderTemplate renders a Go text/template string with the given RunContext.
-func renderTemplate(tmplStr string, data *RunContext) (string, error) {
-	if tmplStr == "" {
-		return "", nil
-	}
-	tmpl, err := template.New("").Parse(tmplStr)
-	if err != nil {
-		return "", err
-	}
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, data); err != nil {
-		return "", err
-	}
-	return buf.String(), nil
 }

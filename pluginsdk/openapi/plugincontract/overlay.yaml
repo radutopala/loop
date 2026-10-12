@@ -8,6 +8,9 @@ actions:
   - target: $.components.schemas.ToolRequest.properties.input
     update:
       x-go-type: json.RawMessage
+  - target: $.components.schemas.ToolResult.properties.structured_content
+    update:
+      x-go-type: json.RawMessage
   - target: $.components.schemas.ActionRequest.properties.input
     update:
       x-go-type: json.RawMessage

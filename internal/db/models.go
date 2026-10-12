@@ -1,6 +1,7 @@
 package db
 
 import (
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -333,13 +334,16 @@ type NodeRun struct {
 	Input string `json:"input"`
 	// SessionID is the Claude session id a prompt node's agent run produced, so
 	// its transcript is locatable and resumable. Empty for non-prompt nodes.
-	SessionID       string     `json:"session_id"`
-	Output          string     `json:"output"`
-	ErrorText       string     `json:"error_text"`
-	Attempt         int        `json:"attempt"`
-	StartedAt       *time.Time `json:"started_at"`
-	FinishedAt      *time.Time `json:"finished_at"`
-	LastHeartbeatAt *time.Time `json:"last_heartbeat_at,omitempty"`
+	SessionID string `json:"session_id"`
+	Output    string `json:"output"`
+	// Data is a plugin tool node's structured result, a JSON object; nil
+	// for other nodes.
+	Data            json.RawMessage `json:"data,omitempty"`
+	ErrorText       string          `json:"error_text"`
+	Attempt         int             `json:"attempt"`
+	StartedAt       *time.Time      `json:"started_at"`
+	FinishedAt      *time.Time      `json:"finished_at"`
+	LastHeartbeatAt *time.Time      `json:"last_heartbeat_at,omitempty"`
 }
 
 // MemoryFileInfo holds a distinct file_path + dir_path pair from the memory_files table.

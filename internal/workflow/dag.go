@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"sync"
@@ -52,6 +53,7 @@ func newDAGScheduler(e *defaultEngine, run *db.WorkflowRun, wfDef *config.Workfl
 		runCtx: &RunContext{
 			Inputs:      inputs,
 			NodeOutputs: make(map[string]string),
+			NodeData:    make(map[string]any),
 			RunMeta:     RunMeta{RunID: run.ID, WorktreePath: run.WorktreePath},
 			ChannelID:   run.ChannelID,
 		},
@@ -74,14 +76,56 @@ func newDAGScheduler(e *defaultEngine, run *db.WorkflowRun, wfDef *config.Workfl
 	return s
 }
 
+// nodeResults are what a run's successful nodes left for later templates,
+// read back from their rows to resume the run. For loop body children,
+// multiple rows can exist per node_id (one per iteration), and templates in
+// later iterations read the previous iteration's results, so the
+// HIGHEST-iteration success row wins deterministically — not whatever
+// ListNodeRuns happens to return last.
+type nodeResults struct {
+	outputs  map[string]string
+	data     map[string]any
+	outIter  map[string]int
+	dataIter map[string]int
+}
+
+func newNodeResults() *nodeResults {
+	return &nodeResults{
+		outputs:  map[string]string{},
+		data:     map[string]any{},
+		outIter:  map[string]int{},
+		dataIter: map[string]int{},
+	}
+}
+
+// add keeps nr's output and data, nr being a success row.
+func (r *nodeResults) add(nr *db.NodeRun) {
+	if nr.Output != "" {
+		if prev, ok := r.outIter[nr.NodeID]; !ok || nr.Iteration >= prev {
+			r.outputs[nr.NodeID] = nr.Output
+			r.outIter[nr.NodeID] = nr.Iteration
+		}
+	}
+	if len(nr.Data) == 0 {
+		return
+	}
+	// The engine stored a JSON object, which decodes.
+	d, _ := decodeJSON(nr.Data)
+	if prev, ok := r.dataIter[nr.NodeID]; !ok || nr.Iteration >= prev {
+		r.data[nr.NodeID] = d
+		r.dataIter[nr.NodeID] = nr.Iteration
+	}
+}
+
 // applyCheckpoint overlays DB state from a previous daemon lifetime onto the
 // fresh graph: completed/failed/skipped nodes keep their status and release
 // their children; the paused approval node (DB status "running") is reset to
 // pending so enqueueReady picks it up; any other running node was
 // mid-execution when the server died and is treated as failed. Pre-failed
 // nodes push their error onto errCh so finalizeDAG reports them.
-func (s *dagScheduler) applyCheckpoint(completedNodes map[string]db.NodeRunStatus, completedOutputs map[string]string) {
-	maps.Copy(s.runCtx.NodeOutputs, completedOutputs)
+func (s *dagScheduler) applyCheckpoint(completedNodes map[string]db.NodeRunStatus, results *nodeResults) {
+	maps.Copy(s.runCtx.NodeOutputs, results.outputs)
+	maps.Copy(s.runCtx.NodeData, results.data)
 
 	release := func(nodeID string) {
 		for _, childID := range s.downstream[nodeID] {
@@ -164,12 +208,12 @@ func (e *defaultEngine) executeDAGFromCheckpoint(
 	wfDef *config.WorkflowDef,
 	inputs map[string]string,
 	completedNodes map[string]db.NodeRunStatus,
-	completedOutputs map[string]string,
+	results *nodeResults,
 ) {
 	defer e.cleanupCancel(run.ID)
 
 	s := newDAGScheduler(e, run, wfDef, inputs)
-	s.applyCheckpoint(completedNodes, completedOutputs)
+	s.applyCheckpoint(completedNodes, results)
 
 	// Restore running status before enqueueing nodes.
 	if err := e.updateRunStatus(ctx, run.ID, db.WorkflowRunStatusRunning, ""); err != nil {
@@ -361,6 +405,7 @@ func (e *defaultEngine) completeNode(s *dagScheduler, node *config.NodeDef, res 
 		Input:      res.input,
 		SessionID:  res.sessionID,
 		Output:     res.output,
+		Data:       res.data,
 		Attempt:    1,
 		FinishedAt: &now,
 	}
@@ -408,6 +453,8 @@ type nodeExecResult struct {
 	output    string
 	input     string
 	sessionID string
+	// data is a plugin tool node's structured result, a JSON object.
+	data json.RawMessage
 }
 
 // updateRunStatus atomically reads the run from DB, updates status fields, and

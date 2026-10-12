@@ -23,6 +23,7 @@ import (
 	"github.com/radutopala/loop/internal/plugin/install"
 	"github.com/radutopala/loop/internal/plugin/proxy"
 	"github.com/radutopala/loop/internal/plugin/runtime"
+	"github.com/radutopala/loop/internal/workflow"
 )
 
 const (
@@ -126,12 +127,12 @@ func (w workflowPlugins) RunPluginAction(ctx context.Context, pluginID, action, 
 	return w.svc.RunAction(ctx, pluginID, action, runtime.Channel{ID: channelID, DirPath: dirPath}, req)
 }
 
-func (w workflowPlugins) CallPluginTool(ctx context.Context, pluginID, tool, channelID, dirPath, callID string, input json.RawMessage) (string, bool, error) {
+func (w workflowPlugins) CallPluginTool(ctx context.Context, pluginID, tool, channelID, dirPath, callID string, input json.RawMessage) (workflow.PluginToolResult, error) {
 	res, err := w.svc.WorkflowTool(ctx, pluginID, tool, runtime.Channel{ID: channelID, DirPath: dirPath}, proxy.ToolRequest{RunID: callID, Input: input})
 	if err != nil {
-		return "", false, err
+		return workflow.PluginToolResult{}, err
 	}
-	return res.Content, res.IsError, nil
+	return workflow.PluginToolResult{Content: res.Content, IsError: res.IsError, Structured: res.StructuredContent}, nil
 }
 
 // pluginEnabled reports whether a plugin is enabled in a channel's project:

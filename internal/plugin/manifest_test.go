@@ -126,8 +126,11 @@ func (s *ManifestSuite) TestValidate() {
 				{Name: "echo", Description: " ", InputSchema: json.RawMessage(`{"type":"string"}`)},
 				{Name: "Bad", Description: "x", InputSchema: json.RawMessage(`nope`)},
 				{Name: "unresolved", Description: "x", InputSchema: json.RawMessage(`{"type":"object","$ref":"#/missing"}`)},
+				{Name: "scored", Description: "x", InputSchema: json.RawMessage(`{"type":"object"}`), OutputSchema: json.RawMessage(`{"type":"object"}`)},
+				{Name: "listed", Description: "x", InputSchema: json.RawMessage(`{"type":"object"}`), OutputSchema: json.RawMessage(`{"type":"array"}`)},
+				{Name: "broken", Description: "x", InputSchema: json.RawMessage(`{"type":"object"}`), OutputSchema: json.RawMessage(`nope`)},
 			}
-		}, wantErr: []string{`tools[1]: tool "echo" is declared twice`, "tools[1]: description is required", "tools[1]: input_schema must be a JSON schema of type object", `tools[2]: name "Bad" must match`, "tools[2]: input_schema must be", "tools[3]: input_schema must be"}},
+		}, wantErr: []string{`tools[1]: tool "echo" is declared twice`, "tools[1]: description is required", "tools[1]: input_schema must be a JSON schema of type object", `tools[2]: name "Bad" must match`, "tools[2]: input_schema must be", "tools[3]: input_schema must be", "tools[5]: output_schema must be a JSON schema of type object", "tools[6]: output_schema must be"}},
 		{name: "agents", edit: func(m *Manifest) {
 			m.Tools = []Tool{tool}
 			m.Agents = []Agent{
@@ -262,6 +265,40 @@ func (s *ManifestSuite) TestToolValidateInput() {
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
 			err := tt.tool.ValidateInput(json.RawMessage(tt.input))
+			if tt.wantErr == "" {
+				require.NoError(s.T(), err)
+				return
+			}
+			require.ErrorContains(s.T(), err, tt.wantErr)
+		})
+	}
+}
+
+func (s *ManifestSuite) TestToolValidateOutput() {
+	scored := Tool{Name: "score", OutputSchema: json.RawMessage(`{"type":"object","properties":{"score":{"type":"integer"}},"required":["score"]}`)}
+	plain := Tool{Name: "echo"}
+	tests := []struct {
+		name       string
+		tool       Tool
+		structured string
+		wantErr    string
+	}{
+		{name: "valid", tool: scored, structured: `{"score":7}`},
+		{name: "off schema", tool: scored, structured: `{"score":"high"}`, wantErr: "score"},
+		{name: "missing", tool: scored, wantErr: "the result has no structured_content, which the tool's output_schema requires"},
+		{name: "none without a schema", tool: plain},
+		{name: "any object without a schema", tool: plain, structured: `{"a":[1]}`},
+		{name: "not an object", tool: plain, structured: `"x"`, wantErr: "structured_content must be a JSON object"},
+		{name: "not json", tool: plain, structured: `{`, wantErr: "structured_content is not JSON"},
+		{name: "bad schema", tool: Tool{OutputSchema: json.RawMessage(`nope`)}, structured: `{}`, wantErr: "the tool's output schema"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			var structured json.RawMessage
+			if tt.structured != "" {
+				structured = json.RawMessage(tt.structured)
+			}
+			err := tt.tool.ValidateOutput(structured)
 			if tt.wantErr == "" {
 				require.NoError(s.T(), err)
 				return

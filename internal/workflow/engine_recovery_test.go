@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync/atomic"
@@ -732,7 +733,8 @@ func (s *EngineSuite) TestRecoverRunningRunFailsOnInvalidPinnedDef() {
 }
 
 // TestRecoverPausedRunHighestIterationOutputWins covers the deterministic
-// highest-iteration tracking in recoverPausedRun's completedOutputs build.
+// highest-iteration tracking in recoverPausedRun's nodeResults build, for
+// outputs and data.
 // Templates in subsequent loop iterations read the previous iteration's
 // output via runCtx.NodeOutputs[childID], so on resume we must select the
 // HIGHEST-iteration Success row's Output — not whatever ListNodeRuns
@@ -760,7 +762,7 @@ func (s *EngineSuite) TestRecoverPausedRunHighestIterationOutputWins() {
 					ID:        "after",
 					Type:      config.NodeTypeBash,
 					DependsOn: []string{"loop"},
-					Script:    "echo {{.NodeOutputs.tick}}",
+					Script:    "echo {{.NodeOutputs.tick}} {{.NodeData.tick.n}}",
 				},
 			},
 		},
@@ -779,9 +781,9 @@ func (s *EngineSuite) TestRecoverPausedRunHighestIterationOutputWins() {
 	// last-write-wins, iter=0 would replace iter=2 and the downstream node
 	// would receive "iter0-out" instead of "iter2-out".
 	nodeRuns := []*db.NodeRun{
-		{RunID: "wfr-hi-iter", NodeID: "tick", Iteration: 2, Status: db.NodeRunStatusSuccess, Output: "iter2-out"},
-		{RunID: "wfr-hi-iter", NodeID: "tick", Iteration: 1, Status: db.NodeRunStatusSuccess, Output: "iter1-out"},
-		{RunID: "wfr-hi-iter", NodeID: "tick", Iteration: 0, Status: db.NodeRunStatusSuccess, Output: "iter0-out"},
+		{RunID: "wfr-hi-iter", NodeID: "tick", Iteration: 2, Status: db.NodeRunStatusSuccess, Output: "iter2-out", Data: json.RawMessage(`{"n":2}`)},
+		{RunID: "wfr-hi-iter", NodeID: "tick", Iteration: 1, Status: db.NodeRunStatusSuccess, Output: "iter1-out", Data: json.RawMessage(`{"n":1}`)},
+		{RunID: "wfr-hi-iter", NodeID: "tick", Iteration: 0, Status: db.NodeRunStatusSuccess, Output: "iter0-out", Data: json.RawMessage(`{"n":0}`)},
 		// The loop itself is marked Success so executeDAGFromCheckpoint
 		// skips re-executing the loop and proceeds straight to "after".
 		{RunID: "wfr-hi-iter", NodeID: "loop", Iteration: 0, Status: db.NodeRunStatusSuccess, Output: "iter2-out"},
@@ -821,7 +823,7 @@ func (s *EngineSuite) TestRecoverPausedRunHighestIterationOutputWins() {
 	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	rendered, _ := actualScript.Load().(string)
-	require.Equal(s.T(), "echo 'iter2-out'", rendered, "downstream node must see highest-iter (iter=2) output, not last-listed (iter=0)")
+	require.Equal(s.T(), "echo 'iter2-out' 2", rendered, "downstream node must see highest-iter (iter=2) output, not last-listed (iter=0)")
 }
 
 // TestRecoverRunningRunHighestIterationOutputWins mirrors the paused-run
@@ -844,7 +846,7 @@ func (s *EngineSuite) TestRecoverRunningRunHighestIterationOutputWins() {
 					ID:        "after",
 					Type:      config.NodeTypeBash,
 					DependsOn: []string{"loop"},
-					Script:    "echo {{.NodeOutputs.tick}}",
+					Script:    "echo {{.NodeOutputs.tick}} {{.NodeData.tick.n}}",
 				},
 			},
 		},
@@ -859,8 +861,8 @@ func (s *EngineSuite) TestRecoverRunningRunHighestIterationOutputWins() {
 	}
 
 	nodeRuns := []*db.NodeRun{
-		{RunID: "wfr-hi-iter-r", NodeID: "tick", Iteration: 1, Status: db.NodeRunStatusSuccess, Output: "winner"},
-		{RunID: "wfr-hi-iter-r", NodeID: "tick", Iteration: 0, Status: db.NodeRunStatusSuccess, Output: "loser"},
+		{RunID: "wfr-hi-iter-r", NodeID: "tick", Iteration: 1, Status: db.NodeRunStatusSuccess, Output: "winner", Data: json.RawMessage(`{"n":1}`)},
+		{RunID: "wfr-hi-iter-r", NodeID: "tick", Iteration: 0, Status: db.NodeRunStatusSuccess, Output: "loser", Data: json.RawMessage(`{"n":0}`)},
 		{RunID: "wfr-hi-iter-r", NodeID: "loop", Iteration: 0, Status: db.NodeRunStatusSuccess, Output: "winner"},
 	}
 
@@ -897,5 +899,5 @@ func (s *EngineSuite) TestRecoverRunningRunHighestIterationOutputWins() {
 	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	rendered, _ := actualScript.Load().(string)
-	require.Equal(s.T(), "echo 'winner'", rendered, "downstream node must see highest-iter output")
+	require.Equal(s.T(), "echo 'winner' 1", rendered, "downstream node must see highest-iter output")
 }

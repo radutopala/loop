@@ -53,6 +53,9 @@ func (s *ServerSuite) SetupTest() {
 				return ToolResult{Content: req.RunID + ":" + string(req.Input)}, nil
 			},
 			"broken": func(context.Context, ToolRequest) (ToolResult, error) { return ToolResult{}, errors.New("store down") },
+			"score": func(context.Context, ToolRequest) (ToolResult, error) {
+				return StructuredResult(map[string]any{"score": 7})
+			},
 		},
 		RunDone: func(_ context.Context, runID string, req RunDoneRequest) error {
 			if runID == "bad" {
@@ -126,6 +129,7 @@ func (s *ServerSuite) TestTools() {
 	}{
 		{"answer", "/tools/echo", `{"run_id":"r1","input":{"a":1}}`, http.StatusOK, `{"content":"r1:{\"a\":1}","is_error":false}`},
 		{"error", "/tools/broken", `{}`, http.StatusOK, `{"content":"store down","is_error":true}`},
+		{"structured", "/tools/score", `{}`, http.StatusOK, `{"content":"{\"score\":7}","is_error":false,"structured_content":{"score":7}}`},
 		{"unknown", "/tools/nope", `{}`, http.StatusNotFound, `{"content":"unknown tool","is_error":true}`},
 		{"bad body", "/tools/echo", `{`, http.StatusBadRequest, `{"error":"invalid JSON body: unexpected EOF"}`},
 	}
@@ -137,6 +141,34 @@ func (s *ServerSuite) TestTools() {
 		})
 	}
 	require.Contains(s.T(), s.logs.String(), `msg="tool broken" err="store down"`)
+}
+
+func (s *ServerSuite) TestStructuredResult() {
+	tests := []struct {
+		name    string
+		v       any
+		want    ToolResult
+		wantErr string
+	}{
+		{name: "object", v: struct {
+			Score int `json:"score"`
+		}{7}, want: ToolResult{Content: `{"score":7}`, StructuredContent: json.RawMessage(`{"score":7}`)}},
+		{name: "map", v: map[string]any{}, want: ToolResult{Content: `{}`, StructuredContent: json.RawMessage(`{}`)}},
+		{name: "not an object", v: []int{1}, wantErr: "structured content must encode as a JSON object"},
+		{name: "nil", v: nil, wantErr: "structured content must encode as a JSON object"},
+		{name: "doesn't encode", v: map[string]any{"f": func() {}}, wantErr: "json: unsupported type: func()"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			got, err := StructuredResult(tt.v)
+			if tt.wantErr != "" {
+				require.EqualError(s.T(), err, tt.wantErr)
+				return
+			}
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tt.want, got)
+		})
+	}
 }
 
 func (s *ServerSuite) TestRunDone() {

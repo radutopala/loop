@@ -23,9 +23,9 @@ func (m *mockPluginCaller) RunPluginAction(ctx context.Context, pluginID, action
 	return m.Called(ctx, pluginID, action, channelID, dirPath, callID, string(input)).Error(0)
 }
 
-func (m *mockPluginCaller) CallPluginTool(ctx context.Context, pluginID, tool, channelID, dirPath, callID string, input json.RawMessage) (string, bool, error) {
+func (m *mockPluginCaller) CallPluginTool(ctx context.Context, pluginID, tool, channelID, dirPath, callID string, input json.RawMessage) (PluginToolResult, error) {
 	args := m.Called(ctx, pluginID, tool, channelID, dirPath, callID, string(input))
-	return args.String(0), args.Bool(1), args.Error(2)
+	return args.Get(0).(PluginToolResult), args.Error(1)
 }
 
 func (s *EngineSuite) TestWithPlugins() {
@@ -42,6 +42,7 @@ func (s *EngineSuite) TestExecutePluginNode() {
 		setup      func(p *mockPluginCaller)
 		wantOutput string
 		wantInput  string
+		wantData   any
 		wantErr    string
 	}{
 		{
@@ -75,7 +76,7 @@ func (s *EngineSuite) TestExecutePluginNode() {
 				Input: json.RawMessage(`{"topic":"{{.Inputs.topic}}","count":3,"tags":["{{.NodeOutputs.prev}}",true],"opts":{"note":"{{.ChannelID}}"}}`)},
 			setup: func(p *mockPluginCaller) {
 				p.On("CallPluginTool", mock.Anything, "quiz", "ask", "ch1", "/src", "workflow:r1:n1",
-					`{"count":3,"opts":{"note":"ch1"},"tags":["earlier",true],"topic":"go"}`).Return("a question", false, nil).Once()
+					`{"count":3,"opts":{"note":"ch1"},"tags":["earlier",true],"topic":"go"}`).Return(PluginToolResult{Content: "a question"}, nil).Once()
 			},
 			wantOutput: "a question",
 			wantInput:  `{"count":3,"opts":{"note":"ch1"},"tags":["earlier",true],"topic":"go"}`,
@@ -84,16 +85,38 @@ func (s *EngineSuite) TestExecutePluginNode() {
 			name: "tool without input",
 			node: config.NodeDef{ID: "n1", Type: config.NodeTypePlugin, Plugin: "quiz", Tool: "ask"},
 			setup: func(p *mockPluginCaller) {
-				p.On("CallPluginTool", mock.Anything, "quiz", "ask", "ch1", "/src", "workflow:r1:n1", `{}`).Return("ok", false, nil).Once()
+				p.On("CallPluginTool", mock.Anything, "quiz", "ask", "ch1", "/src", "workflow:r1:n1", `{}`).Return(PluginToolResult{Content: "ok"}, nil).Once()
 			},
 			wantOutput: "ok",
 			wantInput:  `{}`,
 		},
 		{
+			name: "tool with structured content",
+			node: config.NodeDef{ID: "n1", Type: config.NodeTypePlugin, Plugin: "quiz", Tool: "score"},
+			setup: func(p *mockPluginCaller) {
+				p.On("CallPluginTool", mock.Anything, "quiz", "score", "ch1", "/src", "workflow:r1:n1", `{}`).
+					Return(PluginToolResult{Content: `{"score":7,"ratio":0.5,"tags":["a"]}`, Structured: json.RawMessage(`{"score":7,"ratio":0.5,"tags":["a"]}`)}, nil).Once()
+			},
+			wantOutput: `{"score":7,"ratio":0.5,"tags":["a"]}`,
+			wantInput:  `{}`,
+			wantData:   map[string]any{"score": int64(7), "ratio": 0.5, "tags": []any{"a"}},
+		},
+		{
+			name: "tool with structured content that isn't JSON",
+			node: config.NodeDef{ID: "n1", Type: config.NodeTypePlugin, Plugin: "quiz", Tool: "score"},
+			setup: func(p *mockPluginCaller) {
+				p.On("CallPluginTool", mock.Anything, "quiz", "score", "ch1", "/src", "workflow:r1:n1", `{}`).
+					Return(PluginToolResult{Content: "x", Structured: json.RawMessage(`{`)}, nil).Once()
+			},
+			wantOutput: "x",
+			wantInput:  `{}`,
+			wantErr:    "quiz's tool score answered structured content that isn't JSON",
+		},
+		{
 			name: "tool answers an error",
 			node: config.NodeDef{ID: "n1", Type: config.NodeTypePlugin, Plugin: "quiz", Tool: "ask"},
 			setup: func(p *mockPluginCaller) {
-				p.On("CallPluginTool", mock.Anything, "quiz", "ask", "ch1", "/src", "workflow:r1:n1", `{}`).Return("no topic", true, nil).Once()
+				p.On("CallPluginTool", mock.Anything, "quiz", "ask", "ch1", "/src", "workflow:r1:n1", `{}`).Return(PluginToolResult{Content: "no topic", IsError: true}, nil).Once()
 			},
 			wantOutput: "no topic",
 			wantInput:  `{}`,
@@ -103,7 +126,7 @@ func (s *EngineSuite) TestExecutePluginNode() {
 			name: "tool call fails",
 			node: config.NodeDef{ID: "n1", Type: config.NodeTypePlugin, Plugin: "quiz", Tool: "ask"},
 			setup: func(p *mockPluginCaller) {
-				p.On("CallPluginTool", mock.Anything, "quiz", "ask", "ch1", "/src", "workflow:r1:n1", `{}`).Return("", false, errors.New("no such tool")).Once()
+				p.On("CallPluginTool", mock.Anything, "quiz", "ask", "ch1", "/src", "workflow:r1:n1", `{}`).Return(PluginToolResult{}, errors.New("no such tool")).Once()
 			},
 			wantInput: `{}`,
 			wantErr:   "calling quiz's tool ask: no such tool",
@@ -135,7 +158,9 @@ func (s *EngineSuite) TestExecutePluginNode() {
 			runCtx := &RunContext{
 				Inputs:      map[string]string{"topic": "go"},
 				NodeOutputs: map[string]string{"prev": "earlier"},
-				ChannelID:   "ch1",
+				// An earlier iteration's data, which the node replaces.
+				NodeData:  map[string]any{"n1": "old"},
+				ChannelID: "ch1",
 			}
 			var mu sync.Mutex
 			res, err := e.executePluginNode(context.Background(), run, &tt.node, runCtx, &mu)
@@ -144,9 +169,17 @@ func (s *EngineSuite) TestExecutePluginNode() {
 			if tt.wantErr != "" {
 				require.ErrorContains(s.T(), err, tt.wantErr)
 				require.NotContains(s.T(), runCtx.NodeOutputs, "n1")
+				require.Equal(s.T(), "old", runCtx.NodeData["n1"])
+				return
+			}
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tt.wantOutput, runCtx.NodeOutputs["n1"])
+			if tt.wantData != nil {
+				require.Equal(s.T(), tt.wantData, runCtx.NodeData["n1"])
+				require.JSONEq(s.T(), tt.wantOutput, string(res.data))
 			} else {
-				require.NoError(s.T(), err)
-				require.Equal(s.T(), tt.wantOutput, runCtx.NodeOutputs["n1"])
+				require.NotContains(s.T(), runCtx.NodeData, "n1")
+				require.Nil(s.T(), res.data)
 			}
 			p.AssertExpectations(s.T())
 		})
@@ -177,7 +210,7 @@ func (s *EngineSuite) TestStartRunPluginNode() {
 	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
-	p.On("CallPluginTool", mock.Anything, "quiz", "ask", "ch1", "/src", mock.AnythingOfType("string"), `{"topic":"go"}`).Return("why", false, nil).Once()
+	p.On("CallPluginTool", mock.Anything, "quiz", "ask", "ch1", "/src", mock.AnythingOfType("string"), `{"topic":"go"}`).Return(PluginToolResult{Content: "why"}, nil).Once()
 	s.bashRunner.On("RunBash", mock.Anything, "echo 'why'", "ch1", "/src", "").Return("why\n", nil)
 
 	runID, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "quiz", ChannelID: "ch1", DirPath: "/src", Inputs: map[string]string{"topic": "go"}})
@@ -186,6 +219,47 @@ func (s *EngineSuite) TestStartRunPluginNode() {
 	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 	p.AssertCalled(s.T(), "CallPluginTool", mock.Anything, "quiz", "ask", "ch1", "/src", "workflow:"+runID+":ask", `{"topic":"go"}`)
 	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo 'why'", "ch1", "/src", "")
+}
+
+// TestStartRunPluginNodeData runs a workflow whose tool node's structured
+// content feeds a later node's template and is stored with the node's run.
+func (s *EngineSuite) TestStartRunPluginNodeData() {
+	p := new(mockPluginCaller)
+	s.engine.(*defaultEngine).plugins = p
+	s.workflows = []config.WorkflowDef{{
+		Name: "quiz",
+		Nodes: []config.NodeDef{
+			{ID: "check", Type: config.NodeTypePlugin, Plugin: "quiz", Tool: "score"},
+			{ID: "say", Type: config.NodeTypeBash, Script: "echo {{.NodeData.check.verdict}} {{gt .NodeData.check.score 5}}", DependsOn: []string{"check"}},
+		},
+	}}
+
+	var stored []byte
+	var storedMu sync.Mutex
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	s.store.On("UpsertNodeRun", mock.Anything, mock.MatchedBy(func(nr *db.NodeRun) bool {
+		return nr.NodeID == "check" && nr.Status == db.NodeRunStatusSuccess
+	})).Run(func(args mock.Arguments) {
+		storedMu.Lock()
+		stored = args.Get(1).(*db.NodeRun).Data
+		storedMu.Unlock()
+	}).Return(nil)
+	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	done := s.waitForRunStatus()
+
+	structured := json.RawMessage(`{"score":7,"verdict":"ok; rm -rf ~"}`)
+	p.On("CallPluginTool", mock.Anything, "quiz", "score", "ch1", "/src", mock.AnythingOfType("string"), `{}`).
+		Return(PluginToolResult{Content: string(structured), Structured: structured}, nil).Once()
+	s.bashRunner.On("RunBash", mock.Anything, "echo 'ok; rm -rf ~' true", "ch1", "/src", "").Return("ok\n", nil).Once()
+
+	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "quiz", ChannelID: "ch1", DirPath: "/src"})
+	require.NoError(s.T(), err)
+
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
+	s.bashRunner.AssertExpectations(s.T())
+	storedMu.Lock()
+	defer storedMu.Unlock()
+	require.JSONEq(s.T(), string(structured), string(stored))
 }
 
 // TestStartRunPluginNodeInvalid rejects a plugin node without a plugin

@@ -25,21 +25,27 @@ func WithPluginTools(pluginID string, tools []plugin.Tool) MemoryOption {
 }
 
 // registerPluginTools adds the plugin's tools. Loop checks each call's
-// input against the tool's schema before the plugin sees it.
+// input against the tool's schema before the plugin sees it, and the
+// structured content of its result against the output schema, if any.
 func (s *Server) registerPluginTools() {
 	for _, t := range s.pluginTools {
-		s.mcpServer.AddTool(&mcp.Tool{
+		tool := &mcp.Tool{
 			Name:        PluginToolPrefix + t.Name,
 			Description: t.Description,
 			InputSchema: t.InputSchema,
-		}, s.pluginToolHandler(t.Name))
+		}
+		if len(t.OutputSchema) > 0 {
+			tool.OutputSchema = t.OutputSchema
+		}
+		s.mcpServer.AddTool(tool, s.pluginToolHandler(t.Name))
 	}
 }
 
 // pluginToolResult is the plugin's answer to a tool call.
 type pluginToolResult struct {
-	Content string `json:"content"`
-	IsError bool   `json:"is_error"`
+	Content           string          `json:"content"`
+	IsError           bool            `json:"is_error"`
+	StructuredContent json.RawMessage `json:"structured_content,omitempty"`
 }
 
 func (s *Server) pluginToolHandler(tool string) mcp.ToolHandler {
@@ -55,9 +61,13 @@ func (s *Server) pluginToolHandler(tool string) mcp.ToolHandler {
 		if errResult != nil || err != nil {
 			return errResult, err
 		}
-		return &mcp.CallToolResult{
+		res := &mcp.CallToolResult{
 			IsError: result.IsError,
 			Content: []mcp.Content{&mcp.TextContent{Text: result.Content}},
-		}, nil
+		}
+		if len(result.StructuredContent) > 0 {
+			res.StructuredContent = result.StructuredContent
+		}
+		return res, nil
 	}
 }

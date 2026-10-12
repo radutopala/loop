@@ -225,12 +225,32 @@ any other.
 |---|---|---|
 | `GET /healthz` | | `200 {"api": "1", "version": "…"}` |
 | `POST /actions/{action}` | `{"trigger": "manual"\|"schedule"\|"workflow", "task_id": 0, "run_id", "input": {…}}` | `202` quickly; do the work afterwards |
-| `POST /tools/{tool}` | `{"run_id", "agent", "thread_id", "input": {…}}` | `200 {"content": "…", "is_error": false}`; the agent sees `content`, and `is_error` lets it retry; a workflow takes `content` as the node's output, and `is_error` fails the node |
+| `POST /tools/{tool}` | `{"run_id", "agent", "thread_id", "input": {…}}` | `200 {"content": "…", "is_error": false, "structured_content": {…}}`; the agent sees `content`, and `is_error` lets it retry; a workflow takes `content` as the node's output, and `is_error` fails the node. `structured_content` is optional |
 | `POST /runs/{run_id}/done` | `{"status": "done"\|"failed", "error": "…"}` | `204`; sent when an agent run the plugin started ends |
 | `POST /events` | `{"type", "channel_id", "thread_id", "data": {…}, "timestamp"}` | `204`; a Loop event the manifest subscribes to, with `data` as the app's events WebSocket carries it |
 | `ANY /x/{path}` | whatever the plugin's UI sends | the plugin's own API for its UI, proxied by Loop with method, query, body and `Content-Type` |
 
 Tool input is validated against the tool's `input_schema` before it reaches the plugin.
+
+A tool may also answer with `structured_content`, the result as a JSON object, like MCP's
+`structuredContent`. An agent gets it as the MCP result's `structuredContent`, and a workflow
+reads its fields as `{{.NodeData.<node id>.<field>}}`. A tool that declares an `output_schema`, a
+JSON schema of type `object`, must answer with `structured_content` that matches it; Loop checks
+it, and turns a result that doesn't into an `is_error` one (a workflow node fails). The schema is
+listed as the MCP tool's `outputSchema`. Keep `content` readable on its own: the JSON text is fine.
+
+```jsonc
+"tools": [{
+  "name": "score",
+  "description": "Grades an answer",
+  "input_schema": { "type": "object", "properties": { "answer": { "type": "string" } } },
+  "output_schema": {
+    "type": "object",
+    "properties": { "score": { "type": "integer" }, "verdict": { "type": "string" } },
+    "required": ["score"]
+  }
+}]
+```
 
 A workflow's `plugin` node runs an action or calls a tool on the container of the run's channel,
 starting it if it isn't running, when the channel's project enables the plugin (see
@@ -298,7 +318,8 @@ written in Go:
   secret, a Plugin API client and the listener.
 - `Server` serves `/healthz`, `/actions`, `/tools`, `/runs/{run_id}/done`, `/events` and your own
   `X` handler under `/x`, behind the secret. An action answers `202` and runs its `ActionFunc` in
-  the background; a tool's error becomes a result with `is_error` set; `Events` takes each event
+  the background; a tool's error becomes a result with `is_error` set, and `StructuredResult(v)`
+  makes a result whose `content` and `structured_content` are both `v`'s JSON; `Events` takes each event
   while Loop waits, so hand long work to `Server.Go`. `Server.Go` runs other
   background work, which `Close` cancels.
 - `Client` (the `API` interface) calls the Plugin API; a non-2xx answer is a `StatusError`, which

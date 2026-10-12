@@ -21,6 +21,7 @@ import (
 	"github.com/radutopala/loop/internal/plugin/proxy"
 	"github.com/radutopala/loop/internal/plugin/runtime"
 	"github.com/radutopala/loop/internal/testutil"
+	"github.com/radutopala/loop/internal/workflow"
 )
 
 // listingDocker is a Docker client whose container list succeeds, with no
@@ -238,28 +239,31 @@ func (s *MainSuite) TestWorkflowPlugins() {
 	})
 
 	tests := []struct {
-		name    string
-		res     *proxy.ToolResult
-		err     error
-		content string
-		isError bool
+		name string
+		res  *proxy.ToolResult
+		err  error
+		want workflow.PluginToolResult
 	}{
-		{name: "result", res: &proxy.ToolResult{Content: "hi"}, content: "hi"},
-		{name: "error result", res: &proxy.ToolResult{Content: "bad", IsError: true}, content: "bad", isError: true},
+		{name: "result", res: &proxy.ToolResult{Content: "hi"}, want: workflow.PluginToolResult{Content: "hi"}},
+		{name: "error result", res: &proxy.ToolResult{Content: "bad", IsError: true}, want: workflow.PluginToolResult{Content: "bad", IsError: true}},
+		{
+			name: "structured result",
+			res:  &proxy.ToolResult{Content: `{"a":1}`, StructuredContent: json.RawMessage(`{"a":1}`)},
+			want: workflow.PluginToolResult{Content: `{"a":1}`, Structured: json.RawMessage(`{"a":1}`)},
+		},
 		{name: "call fails", err: errors.New("down")},
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
 			svc := new(mockWorkflowPluginService)
 			svc.On("WorkflowTool", ctx, "quiz", "ask", ch, req).Return(tt.res, tt.err).Once()
-			content, isError, err := workflowPlugins{svc: svc}.CallPluginTool(ctx, "quiz", "ask", "ch1", "/src", req.RunID, req.Input)
+			got, err := workflowPlugins{svc: svc}.CallPluginTool(ctx, "quiz", "ask", "ch1", "/src", req.RunID, req.Input)
 			if tt.err != nil {
 				require.ErrorIs(s.T(), err, tt.err)
 			} else {
 				require.NoError(s.T(), err)
 			}
-			require.Equal(s.T(), tt.content, content)
-			require.Equal(s.T(), tt.isError, isError)
+			require.Equal(s.T(), tt.want, got)
 			svc.AssertExpectations(s.T())
 		})
 	}

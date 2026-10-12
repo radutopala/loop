@@ -11,6 +11,7 @@ import (
 
 // ValidateWorkflowDef checks workflow-level invariants that the executor
 // relies on but config loading does not enforce. Today it rejects:
+//   - template fields, in any node, that don't parse
 //   - plugin nodes, top-level or in a loop body, without a plugin, with
 //     both or neither of action and tool, or with an input that isn't a
 //     JSON object or comes with an action
@@ -33,6 +34,9 @@ func ValidateWorkflowDef(wfDef *config.WorkflowDef) error {
 	bodyChildOwner := map[string]string{}
 	for i := range wfDef.Nodes {
 		n := &wfDef.Nodes[i]
+		if err := validateNodeTemplates(n); err != nil {
+			return err
+		}
 		if n.Type == config.NodeTypePlugin {
 			if err := validatePluginNode(n); err != nil {
 				return err
@@ -56,6 +60,9 @@ func ValidateWorkflowDef(wfDef *config.WorkflowDef) error {
 			// below. Reject with a clear message instead.
 			if child == nil {
 				return fmt.Errorf("loop %q: body contains a nil child entry", n.ID)
+			}
+			if err := validateNodeTemplates(child); err != nil {
+				return fmt.Errorf("loop %q: %w", n.ID, err)
 			}
 			switch child.Type {
 			case config.NodeTypePrompt, config.NodeTypeBash:

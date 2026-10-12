@@ -139,12 +139,21 @@ type Tool struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	InputSchema json.RawMessage `json:"input_schema"`
+	// OutputSchema, if set, is the schema of the tool's
+	// structured_content, which every result that isn't an error must
+	// then carry.
+	OutputSchema json.RawMessage `json:"output_schema,omitempty"`
 }
 
 // schema compiles the tool's input schema.
 func (t *Tool) schema() (*jsonschema.Resolved, error) {
+	return compileSchema(t.InputSchema)
+}
+
+// compileSchema compiles a JSON schema.
+func compileSchema(raw json.RawMessage) (*jsonschema.Resolved, error) {
 	var s jsonschema.Schema
-	if err := json.Unmarshal(t.InputSchema, &s); err != nil {
+	if err := json.Unmarshal(raw, &s); err != nil {
 		return nil, err
 	}
 	return s.Resolve(nil)
@@ -160,6 +169,33 @@ func (t *Tool) ValidateInput(input json.RawMessage) error {
 	var v any
 	if err := json.Unmarshal(input, &v); err != nil {
 		return fmt.Errorf("the input is not JSON: %w", err)
+	}
+	return rs.Validate(v)
+}
+
+// ValidateOutput checks structured, a tool result's structured_content,
+// which must be a JSON object, against the tool's output schema. Without
+// an output schema, a result needn't carry one.
+func (t *Tool) ValidateOutput(structured json.RawMessage) error {
+	if len(structured) == 0 {
+		if len(t.OutputSchema) > 0 {
+			return errors.New("the result has no structured_content, which the tool's output_schema requires")
+		}
+		return nil
+	}
+	var v any
+	if err := json.Unmarshal(structured, &v); err != nil {
+		return fmt.Errorf("structured_content is not JSON: %w", err)
+	}
+	if _, ok := v.(map[string]any); !ok {
+		return errors.New("structured_content must be a JSON object")
+	}
+	if len(t.OutputSchema) == 0 {
+		return nil
+	}
+	rs, err := compileSchema(t.OutputSchema)
+	if err != nil {
+		return fmt.Errorf("the tool's output schema: %w", err)
 	}
 	return rs.Validate(v)
 }
@@ -351,6 +387,11 @@ func (m *Manifest) validateTools(add func(string, ...any)) map[string]bool {
 		}
 		if rs, err := t.schema(); err != nil || rs.Schema().Type != "object" {
 			add("tools[%d]: input_schema must be a JSON schema of type object", i)
+		}
+		if len(t.OutputSchema) > 0 {
+			if rs, err := compileSchema(t.OutputSchema); err != nil || rs.Schema().Type != "object" {
+				add("tools[%d]: output_schema must be a JSON schema of type object", i)
+			}
 		}
 	}
 	return names

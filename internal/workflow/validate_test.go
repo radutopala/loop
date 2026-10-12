@@ -292,3 +292,39 @@ func (s *ValidateSuite) TestLoopBodyPluginChild() {
 	err := ValidateWorkflowDef(body(&config.NodeDef{ID: "p", Type: config.NodeTypePlugin, Plugin: "quiz"}))
 	require.EqualError(s.T(), err, `loop "loop": plugin node "p": set exactly one of action and tool`)
 }
+
+func (s *ValidateSuite) TestTemplates() {
+	tests := []struct {
+		name    string
+		node    config.NodeDef
+		wantErr string
+	}{
+		{name: "helpers", node: config.NodeDef{ID: "n", Type: config.NodeTypeBash, Script: "true", When: `{{if contains .NodeOutputs.a "LGTM"}}true{{end}}`}},
+		{name: "when", node: config.NodeDef{ID: "n", Type: config.NodeTypeBash, Script: "true", When: `{{if nope .X}}true{{end}}`}, wantErr: `node "n": when: template: :1: function "nope" not defined`},
+		{name: "prompt", node: config.NodeDef{ID: "n", Type: config.NodeTypePrompt, Prompt: "{{.Bad"}, wantErr: `node "n": prompt: `},
+		{name: "system prompt", node: config.NodeDef{ID: "n", Type: config.NodeTypePrompt, Prompt: "hi", SystemPrompt: "{{.Bad"}, wantErr: `node "n": system_prompt: `},
+		{name: "script", node: config.NodeDef{ID: "n", Type: config.NodeTypeBash, Script: "{{.Bad"}, wantErr: `node "n": script: `},
+		{name: "condition", node: config.NodeDef{ID: "n", Type: config.NodeTypeLoop, Prompt: "hi", Condition: "{{.Bad"}, wantErr: `node "n": condition: `},
+		{name: "message", node: config.NodeDef{ID: "n", Type: config.NodeTypeApproval, Message: "{{.Bad"}, wantErr: `node "n": message: `},
+		{name: "input string", node: config.NodeDef{ID: "n", Type: config.NodeTypePlugin, Plugin: "quiz", Tool: "ask", Input: json.RawMessage(`{"a":{"b":["ok","{{.Bad"]}}`)}, wantErr: `node "n": input: `},
+		{name: "input in a list", node: config.NodeDef{ID: "n", Type: config.NodeTypePlugin, Plugin: "quiz", Tool: "ask", Input: json.RawMessage(`{"a":["{{.Bad"]}`)}, wantErr: `node "n": input: `},
+		{name: "input ok", node: config.NodeDef{ID: "n", Type: config.NodeTypePlugin, Plugin: "quiz", Tool: "ask", Input: json.RawMessage(`{"a":["{{.Inputs.x}}",1,{"b":"{{upper .Inputs.y}}"}]}`)}},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			err := ValidateWorkflowDef(&config.WorkflowDef{Name: "wf", Nodes: []config.NodeDef{tt.node}})
+			if tt.wantErr == "" {
+				require.NoError(s.T(), err)
+				return
+			}
+			require.ErrorContains(s.T(), err, tt.wantErr)
+		})
+	}
+}
+
+func (s *ValidateSuite) TestLoopBodyTemplates() {
+	err := ValidateWorkflowDef(&config.WorkflowDef{Name: "wf", Nodes: []config.NodeDef{{
+		ID: "loop", Type: config.NodeTypeLoop, Body: []*config.NodeDef{{ID: "b", Type: config.NodeTypeBash, Script: "{{.Bad"}},
+	}}})
+	require.ErrorContains(s.T(), err, `loop "loop": node "b": script: `)
+}

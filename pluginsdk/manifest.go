@@ -113,6 +113,9 @@ type Tool struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	InputSchema json.RawMessage `json:"input_schema"`
+	// OutputSchema, if set, is the schema of the StructuredContent every
+	// result that isn't an error then carries.
+	OutputSchema json.RawMessage `json:"output_schema,omitempty"`
 }
 
 // Action is something Loop triggers in the plugin, by hand or on a

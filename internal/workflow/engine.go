@@ -35,8 +35,16 @@ type PluginCaller interface {
 	// it.
 	RunPluginAction(ctx context.Context, pluginID, action, channelID, dirPath, callID string, input json.RawMessage) error
 	// CallPluginTool calls tool with input, a JSON object, as the call
-	// callID, and returns the tool's content and whether it is an error.
-	CallPluginTool(ctx context.Context, pluginID, tool, channelID, dirPath, callID string, input json.RawMessage) (string, bool, error)
+	// callID, and returns the tool's result.
+	CallPluginTool(ctx context.Context, pluginID, tool, channelID, dirPath, callID string, input json.RawMessage) (PluginToolResult, error)
+}
+
+// PluginToolResult is a plugin tool's answer to a workflow tool node.
+type PluginToolResult struct {
+	Content string
+	IsError bool
+	// Structured is the tool's structured_content, a JSON object, or nil.
+	Structured json.RawMessage
 }
 
 // Option configures an engine.
@@ -502,21 +510,14 @@ func (e *defaultEngine) recoverPausedRun(ctx context.Context, run *db.WorkflowRu
 		return
 	}
 
-	// For loop body children, multiple rows can exist per node_id (one per
-	// iteration). Templates in subsequent iterations read the previous
-	// iteration's output via runCtx.NodeOutputs[childID], so on resume we
-	// need the HIGHEST-iteration Success row to win deterministically —
-	// not whatever ListNodeRuns happens to return last.
+	// The success rows' outputs and data feed the remaining nodes'
+	// templates (see nodeResults).
 	completedNodes := make(map[string]db.NodeRunStatus, len(nodeRuns))
-	completedOutputs := make(map[string]string)
-	highestOutputIter := make(map[string]int)
+	results := newNodeResults()
 	for _, nr := range nodeRuns {
 		completedNodes[nr.NodeID] = nr.Status
-		if nr.Status == db.NodeRunStatusSuccess && nr.Output != "" {
-			if prev, ok := highestOutputIter[nr.NodeID]; !ok || nr.Iteration >= prev {
-				completedOutputs[nr.NodeID] = nr.Output
-				highestOutputIter[nr.NodeID] = nr.Iteration
-			}
+		if nr.Status == db.NodeRunStatusSuccess {
+			results.add(nr)
 		}
 	}
 
@@ -546,7 +547,7 @@ func (e *defaultEngine) recoverPausedRun(ctx context.Context, run *db.WorkflowRu
 	e.mu.Unlock()
 
 	e.logger.Info("workflow: recovering paused run from checkpoint", "run_id", run.ID, "workflow", run.WorkflowName, "paused_node", run.PausedNodeID)
-	go e.executeDAGFromCheckpoint(runCtx, run, wfDef, inputs, completedNodes, completedOutputs)
+	go e.executeDAGFromCheckpoint(runCtx, run, wfDef, inputs, completedNodes, results)
 }
 
 // isNodeHeartbeatFresh returns true if the node's last heartbeat is within the
@@ -587,11 +588,10 @@ func (e *defaultEngine) recoverRunningRun(ctx context.Context, run *db.WorkflowR
 	}
 
 	// Classify running nodes using heartbeat freshness.
-	// See recoverPausedRun: for loop body children, pick the highest-
-	// iteration Success row's output deterministically.
+	// See recoverPausedRun: the success rows' outputs and data feed the
+	// remaining nodes' templates.
 	completedNodes := make(map[string]db.NodeRunStatus, len(nodeRuns))
-	completedOutputs := make(map[string]string)
-	highestOutputIter := make(map[string]int)
+	results := newNodeResults()
 	for _, nr := range nodeRuns {
 		status := nr.Status
 		if status == db.NodeRunStatusRunning {
@@ -605,11 +605,8 @@ func (e *defaultEngine) recoverRunningRun(ctx context.Context, run *db.WorkflowR
 			// mark it failed (the else branch of the Running case).
 		}
 		completedNodes[nr.NodeID] = status
-		if status == db.NodeRunStatusSuccess && nr.Output != "" {
-			if prev, ok := highestOutputIter[nr.NodeID]; !ok || nr.Iteration >= prev {
-				completedOutputs[nr.NodeID] = nr.Output
-				highestOutputIter[nr.NodeID] = nr.Iteration
-			}
+		if status == db.NodeRunStatusSuccess {
+			results.add(nr)
 		}
 	}
 
@@ -639,7 +636,7 @@ func (e *defaultEngine) recoverRunningRun(ctx context.Context, run *db.WorkflowR
 	e.mu.Unlock()
 
 	e.logger.Info("workflow: recovering running run from checkpoint using heartbeat data", "run_id", run.ID, "workflow", run.WorkflowName)
-	go e.executeDAGFromCheckpoint(runCtx, run, wfDef, inputs, completedNodes, completedOutputs)
+	go e.executeDAGFromCheckpoint(runCtx, run, wfDef, inputs, completedNodes, results)
 }
 
 // failStaleRun marks a running workflow and its non-terminal nodes as failed

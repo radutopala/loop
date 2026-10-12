@@ -184,7 +184,7 @@ func (s *Server) handleCallPluginTool(w http.ResponseWriter, r *http.Request) {
 		pluginRuntimeChannel(parent),
 		proxy.ToolRequest{RunID: active.ID, Agent: active.Run.Agent, ThreadID: thread.ChannelID, Input: req.Input})
 	switch {
-	case errors.Is(err, install.ErrInvalidInput), errors.Is(err, install.ErrUnknownTool), errors.Is(err, proxy.ErrUnavailable):
+	case errors.Is(err, install.ErrInvalidInput), errors.Is(err, install.ErrInvalidOutput), errors.Is(err, install.ErrUnknownTool), errors.Is(err, proxy.ErrUnavailable):
 		res = &proxy.ToolResult{Content: err.Error(), IsError: true}
 	case errors.Is(err, install.ErrNotEnabled):
 		http.Error(w, err.Error(), http.StatusConflict)

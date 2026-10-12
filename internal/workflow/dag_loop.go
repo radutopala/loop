@@ -112,8 +112,7 @@ func (e *defaultEngine) executeLoopNode(ctx context.Context, run *db.WorkflowRun
 			result, tmplErr := renderTemplate(node.Condition, runCtx)
 			mu.Unlock()
 			if tmplErr != nil {
-				e.logger.Warn("workflow: loop condition failed", "node_id", node.ID, "error", tmplErr)
-				continue
+				return lastOutput, fmt.Errorf("rendering loop condition: %w", tmplErr)
 			}
 			if result == "true" {
 				break
@@ -314,6 +313,7 @@ func (e *defaultEngine) persistBodyChildEnd(run *db.WorkflowRun, child *config.N
 		Input:     res.input,
 		SessionID: res.sessionID,
 		Output:    res.output,
+		Data:      res.data,
 		Attempt:   attempt,
 		// StartedAt is carried into the UPSERT so that, if the running-row
 		// INSERT failed silently in runBodyChild (we only log + swallow),

@@ -184,6 +184,10 @@ func (s *ServerSuite) TestCallPluginTool() {
 			channels()
 			pm.On("CallTool", mock.Anything, "echo", "echo", rch, call).Return(nil, install.ErrInvalidInput).Once()
 		}, wantCode: http.StatusOK, wantBody: `{"content":"invalid tool input","is_error":true}`},
+		{name: "bad result", as: agentInThread, active: &active, body: body, setup: func(pm *MockPluginManager) {
+			channels()
+			pm.On("CallTool", mock.Anything, "echo", "echo", rch, call).Return(nil, install.ErrInvalidOutput).Once()
+		}, wantCode: http.StatusOK, wantBody: `{"content":"invalid tool result","is_error":true}`},
 		{name: "unknown tool", as: agentInThread, active: &active, body: body, setup: func(pm *MockPluginManager) {
 			channels()
 			pm.On("CallTool", mock.Anything, "echo", "echo", rch, call).Return(nil, install.ErrUnknownTool).Once()

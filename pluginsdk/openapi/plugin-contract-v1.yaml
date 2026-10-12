@@ -89,7 +89,9 @@ paths:
         node. Loop has checked `input` against the tool's input_schema. The
         agent sees `content` as the tool's result, and `is_error` lets it
         retry. A workflow takes `content` as the node's output, and
-        `is_error` fails the node.
+        `is_error` fails the node. `structured_content`, if set, reaches
+        the agent as the result's structured content, and a workflow as
+        the node's data.
       parameters:
         - name: tool
           in: path
@@ -291,6 +293,14 @@ components:
       properties:
         content: { type: string }
         is_error: { type: boolean }
+        structured_content:
+          type: object
+          additionalProperties: true
+          description: |
+            The result as a JSON object, like MCP's structuredContent. It is
+            required, and checked against the schema, when the tool declares
+            an output_schema. A workflow reads its fields as
+            {{.NodeData.<node id>.<field>}}.
     RunDoneRequest:
       type: object
       required: [status]

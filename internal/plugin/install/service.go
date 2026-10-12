@@ -41,6 +41,10 @@ var (
 	// ErrInvalidInput is returned for a tool call whose input doesn't match
 	// the tool's input schema.
 	ErrInvalidInput = errors.New("invalid tool input")
+	// ErrInvalidOutput is returned for a tool result whose
+	// structured_content isn't a JSON object or doesn't match the tool's
+	// output schema.
+	ErrInvalidOutput = errors.New("invalid tool result")
 	// ErrNotEnabled is returned for a plugin the channel's project doesn't
 	// enable, whose container therefore doesn't start there.
 	ErrNotEnabled = errors.New("the plugin is not enabled in this project")
@@ -408,7 +412,9 @@ func (s *Service) WorkflowTool(ctx context.Context, pluginID, tool string, ch ru
 }
 
 // callTool checks the input of a call of tool against its schema, then
-// forwards the call to the plugin's container in ch.
+// forwards the call to the plugin's container in ch. A result that isn't an
+// error must carry the structured content the tool's output schema asks
+// for.
 func (s *Service) callTool(ctx context.Context, st *db.PluginState, m *plugin.Manifest, tool string, ch runtime.Channel, req proxy.ToolRequest) (*proxy.ToolResult, error) {
 	i := slices.IndexFunc(m.Tools, func(t plugin.Tool) bool { return t.Name == tool })
 	if i < 0 {
@@ -421,7 +427,19 @@ func (s *Service) callTool(ctx context.Context, st *db.PluginState, m *plugin.Ma
 	if err != nil {
 		return nil, err
 	}
-	return s.caller.Tool(ctx, ep, tool, req)
+	res, err := s.caller.Tool(ctx, ep, tool, req)
+	if err != nil {
+		return nil, err
+	}
+	if res.IsError {
+		// An error needn't match the schema; it reaches the caller as text.
+		res.StructuredContent = nil
+		return res, nil
+	}
+	if err := m.Tools[i].ValidateOutput(res.StructuredContent); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidOutput, err)
+	}
+	return res, nil
 }
 
 // Allows returns nil when the plugin may run and the owner approved c for

@@ -79,13 +79,25 @@ Required inputs must be provided when starting a run. Inputs with `default` valu
 
 ### Template Interpolation
 
-All `prompt`, `system_prompt`, `script`, and `when` fields support Go `text/template` syntax:
+The `prompt`, `system_prompt`, `script`, `when`, `condition` and `message` fields, and every string in a plugin node's `input`, are Go `text/template` templates:
 
 | Expression | Description |
 |---|---|
 | `{{.Inputs.name}}` | Value of a named input |
 | `{{.NodeOutputs.node_id}}` | Output text from a completed upstream node |
+| `{{.NodeData.node_id.field}}` | A field of a plugin tool node's structured result (see [Plugin Node](#plugin-node-type-plugin)) |
 | `{{.RunMeta.RunID}}` | The workflow run ID |
+
+Besides `text/template`'s builtins (`eq`, `not`, `and`, `or`, `gt`, `len`, `index`, `printf`, …), templates can call:
+
+| Function | Description |
+|---|---|
+| `contains s substr`, `hasPrefix s prefix`, `hasSuffix s suffix` | String tests; a number is compared as its text, nothing as `""` |
+| `trim s`, `lower s`, `upper s` | Trim surrounding whitespace, change case |
+| `fromJSON s` | Decodes JSON text, e.g. `{{(fromJSON .NodeOutputs.check).score}}`; whole numbers decode as integers, so `{{gt (fromJSON .NodeOutputs.n) 5}}` works |
+| `toJSON v` | Encodes `v` as JSON text |
+
+`save_workflow`, `POST /api/workflows` and starting a run reject a template that doesn't parse, or that calls an unknown function, naming the node and field. A field of `NodeData` the tool didn't return renders as `<no value>`.
 
 ---
 
@@ -112,7 +124,7 @@ Runs a shell script in a Docker container using the same mounts and environment 
 |---|---|
 | `script` | Shell command(s) piped to `/bin/sh` on stdin. Accepts any sh-compatible content — a one-liner, multi-line scripts, pipelines, heredocs. To execute a script file on disk, just invoke it (e.g. `bash workflows/build.sh`); the bash container shares the same mounts as agent containers. Supports Go `text/template` rendering against workflow inputs and upstream node outputs. |
 
-User-controllable template values — `Inputs`, `NodeOutputs`, `ChannelID`, and `Review.CommentsJSON` — are POSIX shell-quoted at render time, so an unquoted spread like `echo {{.Inputs.foo}}` is safe even if `foo` contains shell metacharacters. The fully-rendered script is piped to `/bin/sh` via stdin rather than passed on the command line, so the script body never appears in the spawned process's argv.
+User-controllable template values — `Inputs`, `NodeOutputs`, `ChannelID`, and `Review.CommentsJSON` — are POSIX shell-quoted at render time, so an unquoted spread like `echo {{.Inputs.foo}}` is safe even if `foo` contains shell metacharacters. `NodeData` prints quoted too: a string as itself, an object or a list as its JSON, and numbers and booleans as they are. Its strings still compare as their raw text (`{{if eq .NodeData.check.verdict "ok"}}`), `trim`, `lower`, `upper`, `fromJSON` and `toJSON` keep their results quoted, and a `{{range}}` over an object skips keys that aren't plain words (letters, digits, `_`, `.`, `-`). `Inputs`, `NodeOutputs` and `ChannelID` are already quoted text in a script, so test them with the string functions in `when` rather than in `script`. The fully-rendered script is piped to `/bin/sh` via stdin rather than passed on the command line, so the script body never appears in the spawned process's argv.
 
 Stdout becomes the node output. A non-zero exit code fails the node.
 
@@ -126,7 +138,7 @@ Runs either a single prompt repeatedly, or an ordered sequence of child nodes pe
 | `prompt_path` | Path to a prompt file, resolved as `{loopDir}/workflows/{prompt_path}`. Mutually exclusive with `prompt` and `body`. |
 | `body` | Ordered list of child node definitions executed sequentially per iteration. Each child can be a `prompt`, `bash` or `plugin` node; nested `loop` and `approval` types are rejected at load time. Children may declare `depends_on` against siblings for visual edges in the DAG graph; execution order is the array order regardless. Mutually exclusive with `prompt` / `prompt_path`. |
 | `max_iterations` | Maximum number of iterations (default: 10) |
-| `condition` | Go template evaluated after each iteration; stops when it renders `"true"` |
+| `condition` | Go template evaluated after each iteration; stops when it renders `"true"`. A condition that fails to render fails the loop. |
 
 Each iteration's output is available as `{{.NodeOutputs.<id>}}` (overwritten each iteration; downstream nodes see the final output). The condition template receives the same `RunContext` as other templates, plus per-iteration state like `{{.Review.*}}` populated by the bash review parser (used by the seeded `review-loop` / `review-fix-loop` workflows — see [Review Panel](review.md)).
 
@@ -191,7 +203,7 @@ Runs an action of an installed [plugin](plugins.md), or calls one of its tools, 
 | `tool` | A tool name from the plugin's manifest. Mutually exclusive with `action`. |
 | `input` | A JSON object passed as the tool's or the action's input. Every string in it, however deep, is rendered as a template; for a tool the result must match the tool's `input_schema`. A tool's defaults to `{}`; an action without one gets none. |
 
-An action succeeds once the plugin accepts it, with `accepted` as the node's output; the plugin does the work afterwards, so a workflow that needs the result calls a tool instead. A tool's `content` becomes the node's output, and an answer marked `is_error` fails the node, so `retry` applies. A tool call is capped at 60 seconds unless the node's `timeout` is longer. A node without a plugin, with both or neither of `action` and `tool`, or with an `input` that isn't an object, is rejected by `save_workflow` and `POST /api/workflows`, and when a run starts.
+An action succeeds once the plugin accepts it, with `accepted` as the node's output; the plugin does the work afterwards, so a workflow that needs the result calls a tool instead. A tool's `content` becomes the node's output, and an answer marked `is_error` fails the node, so `retry` applies. A tool that answers with `structured_content`, a JSON object, gives later nodes its fields as `{{.NodeData.<node id>.<field>}}`; a tool that declares an `output_schema` must answer with one that matches it, or the node fails. The structured result is stored with the node's run, so it survives a restart. A tool call is capped at 60 seconds unless the node's `timeout` is longer. A node without a plugin, with both or neither of `action` and `tool`, or with an `input` that isn't an object, is rejected by `save_workflow` and `POST /api/workflows`, and when a run starts.
 
 ```jsonc
 {
@@ -201,6 +213,13 @@ An action succeeds once the plugin accepts it, with `accepted` as the node's out
   "tool": "ask",
   "input": { "topic": "{{.Inputs.topic}}", "count": 3 }
 }
+```
+
+A later node reads a tool's structured result:
+
+```jsonc
+{ "id": "grade", "type": "plugin", "plugin": "quiz", "tool": "score", "input": { "answer": "{{.NodeOutputs.answer}}" } },
+{ "id": "praise", "type": "prompt", "depends_on": ["grade"], "when": "{{ gt .NodeData.grade.score 7 }}", "prompt": "Congratulate: {{.NodeData.grade.verdict}}" }
 ```
 
 ---
@@ -542,6 +561,7 @@ Workflow state is persisted in SQLite:
 | `input` | TEXT | Rendered node input: bash script / resolved prompt / plugin tool or action input (empty for loop/approval, and for an action without input) |
 | `session_id` | TEXT | Prompt node's Claude session id (resumable transcript); empty otherwise |
 | `output` | TEXT | Node output text |
+| `data` | TEXT | A plugin tool node's structured result, as JSON; empty otherwise |
 | `error_text` | TEXT | Error message on failure |
 | `attempt` | INTEGER | Execution attempt number |
 | `started_at` | TIMESTAMP | Node start time |

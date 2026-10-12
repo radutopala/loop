@@ -622,7 +622,7 @@ func (s *EngineSuite) TestPromptNodeSystemPromptTemplateError() {
 			Nodes: []config.NodeDef{{
 				ID: "ask", Type: config.NodeTypePrompt,
 				Prompt:       "Hello",
-				SystemPrompt: "{{.Bad",
+				SystemPrompt: `{{fromJSON "x"}}`,
 			}},
 		},
 	}
@@ -640,7 +640,7 @@ func (s *EngineSuite) TestPromptNodeTemplateError() {
 	s.workflows = []config.WorkflowDef{
 		{
 			Name:  "bad-prompt",
-			Nodes: []config.NodeDef{{ID: "ask", Type: config.NodeTypePrompt, Prompt: "{{.Bad"}},
+			Nodes: []config.NodeDef{{ID: "ask", Type: config.NodeTypePrompt, Prompt: `{{fromJSON "x"}}`}},
 		},
 	}
 
@@ -657,7 +657,7 @@ func (s *EngineSuite) TestBashNodeScriptTemplateError() {
 	s.workflows = []config.WorkflowDef{
 		{
 			Name:  "bad-script",
-			Nodes: []config.NodeDef{{ID: "run", Type: config.NodeTypeBash, Script: "{{.Bad"}},
+			Nodes: []config.NodeDef{{ID: "run", Type: config.NodeTypeBash, Script: `{{fromJSON "x"}}`}},
 		},
 	}
 
@@ -707,7 +707,7 @@ func (s *EngineSuite) TestWhenConditionTemplateError() {
 		{
 			Name: "bad-when",
 			Nodes: []config.NodeDef{
-				{ID: "run", Type: config.NodeTypeBash, Script: "echo ok", When: "{{.Bad"},
+				{ID: "run", Type: config.NodeTypeBash, Script: "echo ok", When: `{{fromJSON "x"}}`},
 			},
 		},
 	}

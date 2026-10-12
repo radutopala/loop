@@ -71,10 +71,12 @@ type ToolRequest struct {
 }
 
 // ToolResult is the plugin's answer to a tool call, which the agent sees as
-// the tool's result.
+// the tool's result. StructuredContent, a JSON object, is the result as
+// data, like MCP's structuredContent.
 type ToolResult struct {
-	Content string `json:"content"`
-	IsError bool   `json:"is_error"`
+	Content           string          `json:"content"`
+	IsError           bool            `json:"is_error"`
+	StructuredContent json.RawMessage `json:"structured_content,omitempty"`
 }
 
 // Run statuses sent to POST /runs/{run_id}/done.

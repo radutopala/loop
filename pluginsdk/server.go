@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -35,8 +36,28 @@ type ActionRequest = plugincontract.ActionRequest
 type ToolRequest = plugincontract.ToolRequest
 
 // ToolResult is the answer to a tool call, which the agent sees as the
-// tool's result. IsError lets it retry.
+// tool's result. IsError lets it retry. StructuredContent, a JSON object,
+// is the result as data, which a workflow's plugin node keeps as its node
+// data; StructuredResult builds one.
 type ToolResult = plugincontract.ToolResult
+
+// errNotObject is StructuredResult's error for a value that doesn't encode
+// as a JSON object.
+var errNotObject = errors.New("structured content must encode as a JSON object")
+
+// StructuredResult returns a result whose StructuredContent is v, which must
+// encode as a JSON object, and whose Content is the same JSON, for agents
+// that read only text.
+func StructuredResult(v any) (ToolResult, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	if len(b) == 0 || b[0] != '{' {
+		return ToolResult{}, errNotObject
+	}
+	return ToolResult{Content: string(b), StructuredContent: b}, nil
+}
 
 // Run statuses Loop sends to POST /runs/{run_id}/done.
 const (

@@ -566,6 +566,9 @@ var migrations = []migration{
 	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_notifications_plugin ON notifications(plugin_id, id)`),
 	// The drawer lists a channel's notifications.
 	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_notifications_channel ON notifications(channel_id, id)`),
+	// data is a plugin tool node's structured result, a JSON object, which
+	// later nodes read as {{.NodeData.<node id>}}.
+	sqlMigration(`ALTER TABLE workflow_node_runs ADD COLUMN data TEXT NOT NULL DEFAULT ''`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the

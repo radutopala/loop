@@ -16,13 +16,15 @@ var errPluginsOff = errors.New("plugins are not enabled")
 
 // executePluginNode runs a plugin node on the plugin's container in the
 // run's channel, with its input rendered. An action succeeds once the
-// plugin accepts it; a tool's content is the node's output, and a result
-// the plugin marks as an error fails the node.
+// plugin accepts it; a tool's content is the node's output, its structured
+// content the node's data, and a result the plugin marks as an error fails
+// the node.
 func (e *defaultEngine) executePluginNode(ctx context.Context, run *db.WorkflowRun, node *config.NodeDef, runCtx *RunContext, mu *sync.Mutex) (nodeExecResult, error) {
 	if e.plugins == nil {
 		return nodeExecResult{}, errPluginsOff
 	}
 	var res nodeExecResult
+	var data any
 	in, err := pluginInput(node.Input)
 	if err != nil {
 		return res, err
@@ -50,18 +52,30 @@ func (e *defaultEngine) executePluginNode(ctx context.Context, run *db.WorkflowR
 		}
 		res.output = "accepted"
 	} else {
-		content, isError, err := e.plugins.CallPluginTool(ctx, node.Plugin, node.Tool, run.ChannelID, run.DirPath, callID, body)
+		tr, err := e.plugins.CallPluginTool(ctx, node.Plugin, node.Tool, run.ChannelID, run.DirPath, callID, body)
 		if err != nil {
 			return res, fmt.Errorf("calling %s's tool %s: %w", node.Plugin, node.Tool, err)
 		}
-		res.output = content
-		if isError {
-			return res, fmt.Errorf("%s's tool %s answered an error: %s", node.Plugin, node.Tool, content)
+		res.output = tr.Content
+		if tr.IsError {
+			return res, fmt.Errorf("%s's tool %s answered an error: %s", node.Plugin, node.Tool, tr.Content)
+		}
+		if len(tr.Structured) > 0 {
+			if data, err = decodeJSON(tr.Structured); err != nil {
+				return res, fmt.Errorf("%s's tool %s answered structured content that isn't JSON: %w", node.Plugin, node.Tool, err)
+			}
+			res.data = tr.Structured
 		}
 	}
 
 	mu.Lock()
 	runCtx.NodeOutputs[node.ID] = res.output
+	if data != nil {
+		runCtx.NodeData[node.ID] = data
+	} else {
+		// A loop body node's earlier iteration may have left data.
+		delete(runCtx.NodeData, node.ID)
+	}
 	mu.Unlock()
 	return res, nil
 }

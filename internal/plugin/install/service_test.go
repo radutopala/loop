@@ -345,6 +345,7 @@ const actionManifest = `{
 	"tools": [
 		{"name": "echo", "description": "Echoes text", "input_schema": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}},
 		{"name": "edit", "description": "Edits", "input_schema": {"type": "object"}},
+		{"name": "score", "description": "Scores", "input_schema": {"type": "object"}, "output_schema": {"type": "object", "properties": {"score": {"type": "integer"}}, "required": ["score"]}},
 	],
 	"agents": [{"id": "say", "read_only": true, "tools": ["echo"]}, {"id": "writer", "tools": ["edit"]}],
 }`
@@ -638,13 +639,20 @@ func (s *ServiceSuite) TestWorkflowTool() {
 	call := func(input string) proxy.ToolRequest {
 		return proxy.ToolRequest{RunID: "workflow:r1:n1", Input: json.RawMessage(input)}
 	}
+	answers := func(tool string, res *proxy.ToolResult) func(proxy.ToolRequest) {
+		return func(req proxy.ToolRequest) {
+			s.runtime.On("Ensure", s.ctx, mock.Anything, ch).Return(ep, nil).Once()
+			s.caller.On("Tool", s.ctx, ep, tool, req).Return(res, nil).Once()
+		}
+	}
 	tests := []struct {
-		name   string
-		tool   string
-		req    proxy.ToolRequest
-		setup  func(req proxy.ToolRequest)
-		want   *proxy.ToolResult
-		wantIs error
+		name    string
+		tool    string
+		req     proxy.ToolRequest
+		setup   func(req proxy.ToolRequest)
+		want    *proxy.ToolResult
+		wantIs  error
+		wantErr string
 	}{
 		{name: "any declared tool", tool: "edit", req: call(`{}`), setup: func(req proxy.ToolRequest) {
 			s.runtime.On("Ensure", s.ctx, mock.Anything, ch).Return(ep, nil).Once()
@@ -652,6 +660,23 @@ func (s *ServiceSuite) TestWorkflowTool() {
 		}, want: &proxy.ToolResult{Content: "done"}},
 		{name: "undeclared tool", tool: "nope", req: call(`{}`), wantIs: ErrUnknownTool},
 		{name: "invalid input", tool: "echo", req: call(`{"text":1}`), wantIs: ErrInvalidInput},
+		{name: "structured", tool: "score", req: call(`{}`), setup: answers("score", &proxy.ToolResult{Content: "7", StructuredContent: json.RawMessage(`{"score":7}`)}),
+			want: &proxy.ToolResult{Content: "7", StructuredContent: json.RawMessage(`{"score":7}`)}},
+		{name: "structured without a schema", tool: "edit", req: call(`{}`), setup: answers("edit", &proxy.ToolResult{Content: "ok", StructuredContent: json.RawMessage(`{"a":[1]}`)}),
+			want: &proxy.ToolResult{Content: "ok", StructuredContent: json.RawMessage(`{"a":[1]}`)}},
+		{name: "an error's structured content is dropped", tool: "score", req: call(`{}`), setup: answers("score", &proxy.ToolResult{Content: "no", IsError: true, StructuredContent: json.RawMessage(`[]`)}),
+			want: &proxy.ToolResult{Content: "no", IsError: true}},
+		{name: "missing structured content", tool: "score", req: call(`{}`), setup: answers("score", &proxy.ToolResult{Content: "7"}),
+			wantErr: "invalid tool result: the result has no structured_content, which the tool's output_schema requires"},
+		{name: "structured content off schema", tool: "score", req: call(`{}`), setup: answers("score", &proxy.ToolResult{StructuredContent: json.RawMessage(`{"score":"high"}`)}), wantIs: ErrInvalidOutput},
+		{name: "structured content not an object", tool: "edit", req: call(`{}`), setup: answers("edit", &proxy.ToolResult{StructuredContent: json.RawMessage(`[1]`)}),
+			wantErr: "invalid tool result: structured_content must be a JSON object"},
+		{name: "structured content not JSON", tool: "edit", req: call(`{}`), setup: answers("edit", &proxy.ToolResult{StructuredContent: json.RawMessage(`{`)}),
+			wantErr: "invalid tool result: structured_content is not JSON: unexpected end of JSON input"},
+		{name: "call", tool: "edit", req: call(`{}`), setup: func(req proxy.ToolRequest) {
+			s.runtime.On("Ensure", s.ctx, mock.Anything, ch).Return(ep, nil).Once()
+			s.caller.On("Tool", s.ctx, ep, "edit", req).Return(nil, errors.New("refused")).Once()
+		}, wantErr: "refused"},
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
@@ -662,12 +687,15 @@ func (s *ServiceSuite) TestWorkflowTool() {
 				tt.setup(tt.req)
 			}
 			res, err := s.svc.WorkflowTool(s.ctx, "echo", tt.tool, ch, tt.req)
-			if tt.wantIs != nil {
+			switch {
+			case tt.wantIs != nil:
 				require.ErrorIs(s.T(), err, tt.wantIs)
-				return
+			case tt.wantErr != "":
+				require.EqualError(s.T(), err, tt.wantErr)
+			default:
+				require.NoError(s.T(), err)
+				require.Equal(s.T(), tt.want, res)
 			}
-			require.NoError(s.T(), err)
-			require.Equal(s.T(), tt.want, res)
 		})
 	}
 

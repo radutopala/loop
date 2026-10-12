@@ -561,10 +561,9 @@ func (s *EngineSuite) TestLoopBodyChildTimeoutInvalidDurationIgnored() {
 	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 }
 
-// TestLoopBodyConditionTemplateErrorContinues verifies that a bad condition
-// template logs a warning and continues iterating (rather than failing the
-// run) — same recovery semantics as the legacy self-prompt loop.
-func (s *EngineSuite) TestLoopBodyConditionTemplateErrorContinues() {
+// TestLoopBodyConditionTemplateErrorFails verifies that a condition that
+// fails to render fails the loop instead of running it to max_iterations.
+func (s *EngineSuite) TestLoopBodyConditionTemplateErrorFails() {
 	s.workflows = []config.WorkflowDef{
 		{
 			Name: "loop-bad-cond",
@@ -573,7 +572,7 @@ func (s *EngineSuite) TestLoopBodyConditionTemplateErrorContinues() {
 					ID:            "loop",
 					Type:          config.NodeTypeLoop,
 					MaxIterations: 2,
-					Condition:     "{{.Bad", // unparseable template
+					Condition:     `{{fromJSON "x"}}`, // fails to render
 					Body: []*config.NodeDef{
 						{ID: "tick", Type: config.NodeTypeBash, Script: "echo tick"},
 					},
@@ -593,9 +592,9 @@ func (s *EngineSuite) TestLoopBodyConditionTemplateErrorContinues() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "loop-bad-cond"})
 	require.NoError(s.T(), err)
 
-	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
+	s.awaitStatus(done, db.WorkflowRunStatusFailed)
 
-	require.Equal(s.T(), int32(2), calls.Load(), "bad condition template must not abort the loop")
+	require.Equal(s.T(), int32(1), calls.Load(), "a bad condition must stop the loop")
 }
 
 // TestLoopBodyReviewExecErrorRotatesPrevIDs verifies the failed-review-bash

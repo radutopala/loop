@@ -4290,6 +4290,8 @@ Get a workflow run with all node statuses and outputs.
 }
 ```
 
+A plugin tool node's run also has `data`, the tool's `structured_content`, when the tool answered with one.
+
 **Errors:** `404` if the run does not exist. `501` if the workflow engine is not configured.
 
 ### `POST /api/workflows/runs/{id}/resume`

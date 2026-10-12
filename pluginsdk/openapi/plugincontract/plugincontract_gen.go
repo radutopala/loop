@@ -83,6 +83,12 @@ type ToolRequest struct {
 type ToolResult struct {
 	Content string `json:"content"`
 	IsError bool   `json:"is_error"`
+
+	// StructuredContent The result as a JSON object, like MCP's structuredContent. It is
+	// required, and checked against the schema, when the tool declares
+	// an output_schema. A workflow reads its fields as
+	// {{.NodeData.<node id>.<field>}}.
+	StructuredContent json.RawMessage `json:"structured_content,omitempty"`
 }
 
 // XPath defines model for XPath.
