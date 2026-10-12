@@ -770,20 +770,6 @@ function AppInner() {
           WebkitAppRegion: "drag",
         }}
       />
-      <NotificationButton unread={notifications.unread} open={drawerOpen} onToggle={() => setDrawerOpen((v) => !v)} />
-      {drawerOpen && (
-        <NotificationDrawer
-          notifications={notifications.notifications}
-          unread={notifications.unread}
-          channels={channels}
-          pluginsEpoch={pluginsEpoch}
-          onSelectChannel={(id) => {
-            setDrawerOpen(false);
-            handleSelect(id);
-          }}
-          onClose={() => setDrawerOpen(false)}
-        />
-      )}
       <Sidebar
         channels={channels}
         selectedId={selectedId}
@@ -1023,6 +1009,22 @@ function AppInner() {
             </div>
           </div>
         </div>
+      )}
+      {/* Last, so the header's drag region doesn't take the bell's clicks: a
+          later drag region wins over an earlier no-drag one. */}
+      <NotificationButton unread={notifications.unread} open={drawerOpen} onToggle={() => setDrawerOpen((v) => !v)} />
+      {drawerOpen && (
+        <NotificationDrawer
+          notifications={notifications.notifications}
+          unread={notifications.unread}
+          channels={channels}
+          pluginsEpoch={pluginsEpoch}
+          onSelectChannel={(id) => {
+            setDrawerOpen(false);
+            handleSelect(id);
+          }}
+          onClose={() => setDrawerOpen(false)}
+        />
       )}
     </div>
   );

@@ -87,7 +87,7 @@ export function NotificationDrawer({ notifications, unread, channels, pluginsEpo
 
   return (
     <>
-      <div data-testid="notifications-backdrop" onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
+      <div data-testid="notifications-backdrop" onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 40, WebkitAppRegion: "no-drag" }} />
       <aside
         data-testid="notifications-drawer"
         style={{
@@ -105,6 +105,7 @@ export function NotificationDrawer({ notifications, unread, channels, pluginsEpo
           borderRadius: colors.islandRadius,
           boxShadow: "0 8px 32px rgba(0,0,0,0.35)",
           overflow: "hidden",
+          WebkitAppRegion: "no-drag",
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderBottom: `1px solid ${colors.border}` }}>
