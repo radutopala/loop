@@ -148,6 +148,7 @@ type Server struct {
 	notifyLimit             notifyLimit                           // caps each plugin's notifications and cards
 	ui                      *uibridge.Bridge                      // the app windows the UI routes drive
 	uiStateWaitOverride     time.Duration                         // tests shorten GET /api/ui/state's wait
+	treeMaxOverride         int                                   // tests shorten GET /channel/tree's cap
 	history                 configHistory                         // records each config.json's revisions; see lockConfig
 	messages                MessageSender
 	memoryIndexer           MemoryIndexer

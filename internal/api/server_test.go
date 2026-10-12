@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -203,10 +204,34 @@ type ServerSuite struct {
 	sys       *testutil.MockSystem
 	srv       *Server
 	mux       *http.ServeMux
+	migrated  *db.SQLiteStore // copied by sqliteStore
 }
 
 func TestServerSuite(t *testing.T) {
 	suite.Run(t, new(ServerSuite))
+}
+
+// SetupSuite migrates one SQLite database for sqliteStore to copy: running
+// every migration again for each test that needs a real store is slow.
+func (s *ServerSuite) SetupSuite() {
+	store, err := db.NewSQLiteStore(filepath.Join(s.T().TempDir(), "loop.db"))
+	require.NoError(s.T(), err)
+	s.migrated = store
+}
+
+func (s *ServerSuite) TearDownSuite() {
+	require.NoError(s.T(), s.migrated.Close())
+}
+
+// sqliteStore returns a real, migrated SQLite store, closed when the test ends.
+func (s *ServerSuite) sqliteStore() *db.SQLiteStore {
+	path := filepath.Join(s.T().TempDir(), "loop.db")
+	_, err := s.migrated.WriterDB().Exec("VACUUM INTO ?", path)
+	require.NoError(s.T(), err)
+	store, err := db.NewSQLiteStore(path)
+	require.NoError(s.T(), err)
+	s.T().Cleanup(func() { _ = store.Close() })
+	return store
 }
 
 func (s *ServerSuite) SetupTest() {

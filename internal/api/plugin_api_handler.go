@@ -263,7 +263,7 @@ func (s *Server) handlePluginTree(w http.ResponseWriter, r *http.Request) {
 		if glob != "" && !matchesGlob(glob, f) || !readable(f) {
 			continue
 		}
-		if len(out.Files) == pluginTreeMax {
+		if len(out.Files) == s.treeMax() {
 			out.Truncated = true
 			break
 		}
@@ -279,6 +279,14 @@ func matchesGlob(glob, p string) bool {
 	}
 	ok, _ := path.Match(glob, path.Base(p))
 	return ok
+}
+
+// treeMax is pluginTreeMax unless a test lowers it.
+func (s *Server) treeMax() int {
+	if s.treeMaxOverride > 0 {
+		return s.treeMaxOverride
+	}
+	return pluginTreeMax
 }
 
 // trackedFiles lists the files git tracks in dir, or walks dir when it
@@ -301,7 +309,7 @@ func (s *Server) trackedFiles(r *http.Request, dir string) ([]string, error) {
 			return filepath.SkipDir
 		case !d.Type().IsRegular():
 			return nil
-		case len(files) > pluginTreeMax:
+		case len(files) > s.treeMax():
 			return filepath.SkipAll
 		}
 		rel, _ := filepath.Rel(dir, p)

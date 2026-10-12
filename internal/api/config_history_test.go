@@ -33,9 +33,7 @@ func (h homeSystem) UserHomeDir() (string, error) { return h.home, nil }
 func (s *ServerSuite) useConfigHistory() string {
 	s.srv.sys = osutil.RealSystem{}
 	s.srv.loopDir = filepath.Join(s.T().TempDir(), ".loop")
-	store, err := db.NewSQLiteStore(filepath.Join(s.T().TempDir(), "loop.db"))
-	require.NoError(s.T(), err)
-	s.T().Cleanup(func() { _ = store.Close() })
+	store := s.sqliteStore()
 	s.srv.history.store = store
 	require.NoError(s.T(), os.MkdirAll(s.srv.loopDir, 0o755))
 	return filepath.Join(s.srv.loopDir, "config.json")

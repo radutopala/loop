@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -152,16 +151,13 @@ func (s *ServerSuite) TestSearchChannelsPluginBadges() {
 			if tt.plugins {
 				s.pluginRoutes()
 			}
-			store, err := db.NewSQLiteStore(filepath.Join(s.T().TempDir(), "loop.db"))
-			require.NoError(s.T(), err)
+			store := s.sqliteStore()
 			ctx := context.Background()
 			require.NoError(s.T(), store.SetPluginBadge(ctx, &db.PluginBadge{PluginID: "echo", ChannelID: "ch-1", Text: "3", Title: "3 due"}))
 			require.NoError(s.T(), store.SetPluginBadge(ctx, &db.PluginBadge{PluginID: "quiz", ChannelID: "ch-1", Text: "ok"}))
 			require.NoError(s.T(), store.SetPluginBadge(ctx, &db.PluginBadge{PluginID: "echo", ChannelID: "ch-2", Text: "1"}))
 			if tt.closed {
 				require.NoError(s.T(), store.Close())
-			} else {
-				s.T().Cleanup(func() { _ = store.Close() })
 			}
 			s.srv.SetPluginBadges(store)
 
@@ -250,9 +246,7 @@ func (s *ServerSuite) TestPrunePluginBadgesOff() {
 // badgeStore keeps badges in a real SQLite and returns it with the events
 // the server broadcasts.
 func (s *ServerSuite) badgeStore() (*db.SQLiteStore, *[]Event) {
-	store, err := db.NewSQLiteStore(filepath.Join(s.T().TempDir(), "loop.db"))
-	require.NoError(s.T(), err)
-	s.T().Cleanup(func() { _ = store.Close() })
+	store := s.sqliteStore()
 	s.srv.SetPluginBadges(store)
 	hub := NewEventsHub(testLogger())
 	sent := &[]Event{}

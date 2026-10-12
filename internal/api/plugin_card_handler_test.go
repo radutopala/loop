@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -23,9 +22,7 @@ var cardManifest = &plugin.Manifest{UI: &plugin.UI{Cards: []plugin.Card{{ID: "sc
 // notificationStore keeps notifications in a real SQLite for the server
 // and returns it with the events the server broadcasts.
 func (s *ServerSuite) notificationStore() (*db.SQLiteStore, *[]Event) {
-	store, err := db.NewSQLiteStore(filepath.Join(s.T().TempDir(), "loop.db"))
-	require.NoError(s.T(), err)
-	s.T().Cleanup(func() { _ = store.Close() })
+	store := s.sqliteStore()
 	s.srv.SetNotifications(store)
 	hub := NewEventsHub(testLogger())
 	sent := &[]Event{}

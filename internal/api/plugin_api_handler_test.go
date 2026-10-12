@@ -371,8 +371,9 @@ func (s *ServerSuite) TestPluginTree() {
 }
 
 func (s *ServerSuite) TestPluginTreeTruncated() {
+	s.srv.treeMaxOverride = 3
 	dir := s.T().TempDir()
-	for i := range pluginTreeMax + 2 {
+	for i := range 5 {
 		require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "f"+strconv.Itoa(i)), nil, 0o644))
 	}
 	s.pluginAPIRoutes(plugin.CapFilesRead, dir)
@@ -380,7 +381,7 @@ func (s *ServerSuite) TestPluginTreeTruncated() {
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 	var out pluginTreeResponse
 	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &out))
-	require.Len(s.T(), out.Files, pluginTreeMax)
+	require.Len(s.T(), out.Files, 3)
 	require.True(s.T(), out.Truncated)
 }
 
