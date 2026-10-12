@@ -72,7 +72,7 @@ Agent (Claude Code)  ←→  MCP Protocol (stdio)  ←→  loop mcp  ←→  HTT
 | `delete_review_comment` | Delete an agent comment by `comment_id` (`DELETE /api/channels/{id}/review/comments/{cid}`), from the PR too when it was pushed. GitHub comments are refused. Denied in read-only runs. |
 | `update_review_comment` | Replace an unpushed agent comment's `body` (`PATCH /api/channels/{id}/review/comments/{cid}`), e.g. to fold in what a deleted duplicate added. Pushed and GitHub comments can't change. Denied in read-only runs. |
 | `push_review_comment` | Post one agent comment to the PR as the configured gh user (`POST .../review/comments/{cid}/push`). Denied in read-only runs. |
-| `push_all_review_comments` | Post every unpushed agent comment to the PR (`POST .../review/push-all`) and report how many were pushed and which failed. Denied in read-only runs. |
+| `push_all_review_comments` | Post every unpushed agent comment to the PR (`POST .../review/push-all`), skipping those the dedup pass marked `false_positive` or `already_fixed`, and report how many were pushed, skipped and which failed. Denied in read-only runs. |
 
 The review tools act on the agent's own channel only and take no `channel_id`. The daemon holds the routes that change comments to the token's own channel as well (see [Agent scope](api.md#agent-scope)).
 

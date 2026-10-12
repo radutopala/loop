@@ -277,6 +277,13 @@ export function buildCheckAllPrompt(session?: ReviewSession | null): string {
   return lines.join("\n");
 }
 
+// isActionable reports whether Address all and Push all take c: it isn't
+// pushed yet, and the dedup pass didn't mark it false_positive or
+// already_fixed. A comment with no verdict yet counts.
+export function isActionable(c: ReviewComment): boolean {
+  return !c.pushed && c.verdict !== "false_positive" && c.verdict !== "already_fixed";
+}
+
 // allActionItems lists the header's "All" menu: the actions over every
 // comment of a kind, each with its count, and only those with something
 // to act on. A click while another action is busy does nothing, since the
@@ -1015,7 +1022,7 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
   const onAddressOne = useCallback((c: ReviewComment) => sendAboutComment(buildAddressPrompt(c, session)), [sendAboutComment, session]);
 
   const onAddressAll = useCallback(async () => {
-    const pending = (session?.comments ?? []).filter((c) => !c.pushed);
+    const pending = (session?.comments ?? []).filter(isActionable);
     if (pending.length === 0) return;
     // Toggle `busy` for the duration of the sendMessage round-trip so the
     // header buttons (which all gate on `busy`) actually disable. Without
@@ -1088,7 +1095,7 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
     }
   }, [channelId]);
 
-  const pendingCount = useMemo(() => (session?.comments ?? []).filter((c) => !c.pushed).length, [session]);
+  const pendingCount = useMemo(() => (session?.comments ?? []).filter(isActionable).length, [session]);
 
   const btnStyle: React.CSSProperties = {
     background: "transparent",

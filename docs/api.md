@@ -2565,10 +2565,12 @@ Response: `{"pushed": true}` (or `{"pushed": true, "already": true}` if already 
 
 ### `POST /api/channels/{id}/review/push-all`
 
-Push every unpushed comment in the session. Errors are accumulated rather
-than short-circuiting — one bad comment does not block the rest.
+Push every unpushed comment in the session, except those the dedup pass
+marked `false_positive` or `already_fixed`; `skipped` counts them. Errors
+are accumulated rather than short-circuiting — one bad comment does not
+block the rest.
 
-Response: `{"pushed": N, "failed": M, "errors": ["id: msg", ...]}`.
+Response: `{"pushed": N, "skipped": S, "failed": M, "errors": ["id: msg", ...]}`.
 
 ---
 

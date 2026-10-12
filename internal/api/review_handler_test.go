@@ -1011,6 +1011,8 @@ func (s *ReviewHandlerSuite) TestPushAllMixedResults() {
 	s.rs.AddComment("ch1", &review.Comment{ID: "a", Path: "x.go", Line: 1, Body: "body-a", Side: "RIGHT"})
 	s.rs.AddComment("ch1", &review.Comment{ID: "b", Path: "y.go", Line: 2, Body: "body-b", Side: "RIGHT"})
 	s.rs.AddComment("ch1", &review.Comment{ID: "c", Path: "z.go", Line: 3, Body: "body-c", Side: "RIGHT", Pushed: true})
+	s.rs.AddComment("ch1", &review.Comment{ID: "d", Path: "d.go", Line: 4, Body: "body-d", Side: "RIGHT", Verdict: review.VerdictFalsePositive})
+	s.rs.AddComment("ch1", &review.Comment{ID: "e", Path: "e.go", Line: 5, Body: "body-e", Side: "RIGHT", Verdict: review.VerdictAlreadyFixed})
 
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
 	slug := &githubapi.RepoSlug{Owner: "o", Name: "r"}
@@ -1025,6 +1027,7 @@ func (s *ReviewHandlerSuite) TestPushAllMixedResults() {
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &res))
 	require.Equal(s.T(), 1, res.Pushed)
 	require.Equal(s.T(), 1, res.Failed)
+	require.Equal(s.T(), 2, res.Skipped, "the dismissed comments d and e aren't pushed")
 	require.Len(s.T(), res.Errors, 1)
 	require.Contains(s.T(), res.Errors[0], "b: ")
 	// Already-pushed comment c is left alone (not re-pushed, not counted).

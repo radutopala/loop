@@ -287,6 +287,12 @@ func (s *ReviewToolSuite) TestReviewCommentTools() {
 			wantMethod: "POST", wantURL: "http://localhost:8222/api/channels/test-channel/review/push-all",
 			want: "Pushed 2 review comment(s) to the PR; 1 failed.\n- error: c3: 422\n",
 		},
+		{
+			name: "push all skips dismissed", tool: "push_all_review_comments", args: map[string]any{},
+			respStatus: 200, respBody: `{"pushed":1,"skipped":2,"failed":0,"errors":[]}`,
+			wantMethod: "POST", wantURL: "http://localhost:8222/api/channels/test-channel/review/push-all",
+			want: "Pushed 1 review comment(s) to the PR; 0 failed.\nSkipped 2 marked false_positive or already_fixed.\n",
+		},
 	}
 	for _, tc := range cases {
 		s.Run(tc.name, func() {

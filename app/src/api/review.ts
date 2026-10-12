@@ -72,6 +72,8 @@ export interface ReviewSessionResponse {
 
 export interface PushAllResult {
   pushed: number;
+  // Comments marked false_positive or already_fixed, which aren't pushed.
+  skipped: number;
   failed: number;
   errors?: string[];
 }

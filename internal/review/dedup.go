@@ -336,6 +336,13 @@ func standing(c *Comment) bool {
 	return c.Verdict == "" || c.Verdict == VerdictReal
 }
 
+// Dismissed reports whether verdict rules a comment out: a false positive,
+// or a finding the checkout no longer has. Such a comment isn't fixed,
+// addressed or pushed in bulk.
+func Dismissed(verdict string) bool {
+	return verdict == VerdictFalsePositive || verdict == VerdictAlreadyFixed
+}
+
 // knownVerdict reports whether v is one of the Verdict constants.
 func knownVerdict(v string) bool {
 	return v == VerdictReal || v == VerdictFalsePositive || v == VerdictAlreadyFixed

@@ -425,3 +425,14 @@ func (s *DedupSuite) TestParseDedupReplyPushedOnlyJudgedWhenAsked() {
 		})
 	}
 }
+
+func (s *DedupSuite) TestDismissed() {
+	for verdict, want := range map[string]bool{
+		"":                   false,
+		VerdictReal:          false,
+		VerdictFalsePositive: true,
+		VerdictAlreadyFixed:  true,
+	} {
+		require.Equal(s.T(), want, Dismissed(verdict), verdict)
+	}
+}

@@ -6,6 +6,7 @@ import {
   buildAddressPrompt,
   buildCheckAllPrompt,
   buildDiscussDraft,
+  isActionable,
   reviewEffortOptions,
   reviewModelOptions,
   WHY_QUESTION,
@@ -238,6 +239,18 @@ describe("buildCheckAllPrompt", () => {
         "5. End with what the dedup pass removed and how many comments got each verdict.\n\n" +
         "Don't change any code. Apart from the dedup pass, don't edit, delete or push any comment.",
     );
+  });
+});
+
+describe("isActionable", () => {
+  it.each([
+    ["unjudged", {}, true],
+    ["real", { verdict: "real" }, true],
+    ["false positive", { verdict: "false_positive" }, false],
+    ["already fixed", { verdict: "already_fixed" }, false],
+    ["pushed", { pushed: true, verdict: "real" }, false],
+  ] as [string, Partial<ReviewComment>, boolean][])("%s", (_name, extra, want) => {
+    expect(isActionable(comment("b", extra))).toBe(want);
   });
 });
 

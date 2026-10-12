@@ -426,7 +426,7 @@ func parseReviewOutput(stdout string, runCtx *RunContext) {
 	// fixed in the checkout, isn't a finding: the fix step doesn't get it,
 	// and a round that leaves only those has nothing to fix.
 	parsed.Comments = slices.DeleteFunc(parsed.Comments, func(c ReviewComment) bool {
-		return c.Verdict == review.VerdictFalsePositive || c.Verdict == review.VerdictAlreadyFixed
+		return review.Dismissed(c.Verdict)
 	})
 	runCtx.Review.Comments = parsed.Comments
 	runCtx.Review.NoComments = parsed.NoComments || len(parsed.Comments) == 0

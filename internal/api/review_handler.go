@@ -500,9 +500,12 @@ func (s *reviewService) handleReviewPushComment(w http.ResponseWriter, r *http.R
 // are accumulated rather than short-circuiting so a single bad comment
 // doesn't block the rest.
 type pushAllResult struct {
-	Pushed int      `json:"pushed"`
-	Failed int      `json:"failed"`
-	Errors []string `json:"errors,omitempty"`
+	Pushed int `json:"pushed"`
+	// Skipped counts the comments the dedup pass marked false_positive
+	// or already_fixed, which aren't pushed.
+	Skipped int      `json:"skipped"`
+	Failed  int      `json:"failed"`
+	Errors  []string `json:"errors,omitempty"`
 }
 
 // handleReviewIngestComments accepts agent-reported findings from the
@@ -586,6 +589,12 @@ func (s *reviewService) handleReviewPushAll(w http.ResponseWriter, r *http.Reque
 	var result pushAllResult
 	for _, c := range sess.Comments {
 		if c.Pushed {
+			continue
+		}
+		// The dedup pass ruled it out; a push of that one comment still
+		// sends it.
+		if review.Dismissed(c.Verdict) {
+			result.Skipped++
 			continue
 		}
 		if err := s.pushOneComment(r.Context(), channelID, sess, c); err != nil {

@@ -134,7 +134,9 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
    [Required output format](#required-output-format).
 3. **Push** — each comment ships with **Push** (single), and the header's
    **All ▾** menu carries **Push all to GitHub (N)** (when at least one
-   comment is unpushed). The backend uses `gh api ... /pulls/N/comments` against the
+   comment is unpushed). Push all, like **Address all**, leaves out the
+   comments the dedup pass marked `false_positive` or `already_fixed`;
+   their own **Push** still sends them. The backend uses `gh api ... /pulls/N/comments` against the
    captured head SHA so comments anchor to the right commit even if the PR
    is force-pushed later. A pushed comment stays one comment: when Sync or
    a run reads the PR's comments back, GitHub's copy of it is folded into
@@ -240,7 +242,7 @@ comments to act on:
 | **Discuss** | The finding quoted under its `path:line`, with a blank line below it | No — it lands in the composer for you to finish |
 | **Why?** | The same quote, with `Please explain why we need this.` filled into that blank line | Yes, straight away |
 | **Address** | `Please address this review comment from the PR:` plus file, line, side, PR number, head SHA and author, then the quoted body and the run transcripts | Yes, straight away |
-| **Address all (N)** | The same request over every unpushed finding: the metadata header once, then a numbered block per finding, then the run transcripts | Yes, straight away |
+| **Address all (N)** | The same request over every unpushed finding not marked `false_positive` or `already_fixed`: the metadata header once, then a numbered block per finding, then the run transcripts | Yes, straight away |
 | **Check all (N)** | A request to clean up, then verify, every finding this session's runs reported (not the GitHub comments): PR number, head SHA and the PR checkout, then steps — run `dedup_review_findings`, read what is left with `get_review_comments`, check each against the code (real / false positive / already fixed), reply with an entry per comment (its category when it has one, its verdict and why, and a link to a pushed comment's GitHub thread; no severity unless the comment states one), ending with what the dedup pass removed and the count per verdict; change nothing else | Yes, straight away |
 
 Discuss and Why? are one builder and one send path differing by a single

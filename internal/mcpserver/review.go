@@ -43,7 +43,7 @@ func (s *Server) registerReviewTools() {
 	}, s.handlePushReviewComment)
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "push_all_review_comments",
-		Description: "Post every unpushed agent comment in this channel's review session to the PR on GitHub, as the configured gh user. Reports how many were pushed and which failed.",
+		Description: "Post every unpushed agent comment in this channel's review session to the PR on GitHub, as the configured gh user. Comments the dedup pass marked false_positive or already_fixed are skipped. Reports how many were pushed, skipped and which failed.",
 	}, s.handlePushAllReviewComments)
 }
 
@@ -325,9 +325,10 @@ func (s *Server) handlePushReviewComment(_ context.Context, _ *mcp.CallToolReque
 func (s *Server) handlePushAllReviewComments(_ context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
 	s.logger.Info("mcp tool call", "tool", "push_all_review_comments", "channel_id", s.channelID)
 	type pushAllResult struct {
-		Pushed int      `json:"pushed"`
-		Failed int      `json:"failed"`
-		Errors []string `json:"errors"`
+		Pushed  int      `json:"pushed"`
+		Skipped int      `json:"skipped"`
+		Failed  int      `json:"failed"`
+		Errors  []string `json:"errors"`
 	}
 	res, errResult, err := doAPICall[pushAllResult](s, "POST", s.reviewURL("/push-all"), http.StatusOK, nil)
 	if errResult != nil || err != nil {
@@ -335,6 +336,9 @@ func (s *Server) handlePushAllReviewComments(_ context.Context, _ *mcp.CallToolR
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Pushed %d review comment(s) to the PR; %d failed.\n", res.Pushed, res.Failed)
+	if res.Skipped > 0 {
+		fmt.Fprintf(&b, "Skipped %d marked false_positive or already_fixed.\n", res.Skipped)
+	}
 	for _, e := range res.Errors {
 		fmt.Fprintf(&b, "- error: %s\n", e)
 	}
