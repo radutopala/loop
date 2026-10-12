@@ -51,6 +51,9 @@ interface PaneLeafHeaderProps {
   panel: PanelType;
   /** For plugin panes: the plugin panel shown. */
   plugin?: PluginPaneRef;
+  /** For plugin panes: the leaf whose ui.set_title the header shows, when
+   *  it isn't leafId (a panel's agent view heads the panel's pane). */
+  titleLeafId?: string;
   usedSingletons: Set<PanelType>;
   isMaximized?: boolean;
   isMinimized?: boolean;
@@ -73,6 +76,7 @@ export function PaneLeafHeader({
   leafId,
   panel,
   plugin,
+  titleLeafId,
   usedSingletons,
   isMaximized,
   isMinimized,
@@ -87,7 +91,7 @@ export function PaneLeafHeader({
 }: PaneLeafHeaderProps) {
   const { colors } = useTheme();
   const isAgent = panel === "docker-agent";
-  const pluginTitle = usePaneTitle(leafId);
+  const pluginTitle = usePaneTitle(titleLeafId ?? leafId);
   const label = isAgent ? agentInfo?.name || leafId : (panel === "plugin" && pluginTitle) || paneLabel(panel, plugin);
   const statsEntry = statsForPanel(panel, containerStats);
 

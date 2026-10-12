@@ -285,7 +285,7 @@ export function PluginPanel({ plugin: ref, channelId, channelName, dirPath, leaf
               running={agent.running}
               split={split}
               onSplitChange={changeSplit}
-              chatHeader={<PaneLeafHeader leafId={viewLeafId} panel="plugin" plugin={ref} usedSingletons={NO_SINGLETONS} />}
+              chatHeader={<PaneLeafHeader leafId={viewLeafId} panel="plugin" plugin={ref} titleLeafId={leafId} usedSingletons={NO_SINGLETONS} />}
               chat={
                 <>
                   <div ref={setFrameSlot} data-testid="plugin-agent-frame-slot" style={{ flex: 1 }} />
