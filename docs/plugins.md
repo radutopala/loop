@@ -224,7 +224,7 @@ any other.
 | Method and path | Body | Answer |
 |---|---|---|
 | `GET /healthz` | | `200 {"api": "1", "version": "…"}` |
-| `POST /actions/{action}` | `{"trigger": "manual"\|"schedule"\|"workflow", "task_id": 0}` | `202` quickly; do the work afterwards |
+| `POST /actions/{action}` | `{"trigger": "manual"\|"schedule"\|"workflow", "task_id": 0, "run_id", "input": {…}}` | `202` quickly; do the work afterwards |
 | `POST /tools/{tool}` | `{"run_id", "agent", "thread_id", "input": {…}}` | `200 {"content": "…", "is_error": false}`; the agent sees `content`, and `is_error` lets it retry; a workflow takes `content` as the node's output, and `is_error` fails the node |
 | `POST /runs/{run_id}/done` | `{"status": "done"\|"failed", "error": "…"}` | `204`; sent when an agent run the plugin started ends |
 | `POST /events` | `{"type", "channel_id", "thread_id", "data": {…}, "timestamp"}` | `204`; a Loop event the manifest subscribes to, with `data` as the app's events WebSocket carries it |
@@ -234,9 +234,12 @@ Tool input is validated against the tool's `input_schema` before it reaches the 
 
 A workflow's `plugin` node runs an action or calls a tool on the container of the run's channel,
 starting it if it isn't running, when the channel's project enables the plugin (see
-[Workflows: Plugin Node](workflows.md#plugin-node-type-plugin)). Its action gets `"trigger":
-"workflow"`. Its tool call may name any tool in the manifest, not only those given to an agent,
-and comes with `run_id` `workflow:<run id>:<node id>` and an empty `agent` and `thread_id`.
+[Workflows: Plugin Node](workflows.md#plugin-node-type-plugin)). Both come with `run_id`
+`workflow:<run id>:<node id>` and the node's rendered `input`. Its action gets `"trigger":
+"workflow"`, and the node succeeds once the plugin accepts it, so an action's result never
+reaches the workflow: a workflow that needs one calls a tool. Its tool call may name any tool in
+the manifest, not only those given to an agent, comes with an empty `agent` and `thread_id`,
+and may run past 60 seconds when the node's `timeout` is longer.
 
 ### When a plugin stops answering
 

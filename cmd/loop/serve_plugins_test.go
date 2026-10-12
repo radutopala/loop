@@ -230,8 +230,9 @@ func (s *MainSuite) TestWorkflowPlugins() {
 
 	s.Run("action", func() {
 		svc := new(mockWorkflowPluginService)
-		svc.On("RunAction", ctx, "quiz", "daily", ch, proxy.ActionRequest{Trigger: proxy.TriggerWorkflow}).Return(errors.New("boom")).Once()
-		err := workflowPlugins{svc: svc}.RunPluginAction(ctx, "quiz", "daily", "ch1", "/src")
+		req := proxy.ActionRequest{Trigger: proxy.TriggerWorkflow, RunID: "workflow:r1:n1", Input: json.RawMessage(`{"a":1}`)}
+		svc.On("RunAction", ctx, "quiz", "daily", ch, req).Return(errors.New("boom")).Once()
+		err := workflowPlugins{svc: svc}.RunPluginAction(ctx, "quiz", "daily", "ch1", "/src", "workflow:r1:n1", json.RawMessage(`{"a":1}`))
 		require.EqualError(s.T(), err, "boom")
 		svc.AssertExpectations(s.T())
 	})

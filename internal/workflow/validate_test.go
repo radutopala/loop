@@ -268,7 +268,7 @@ func (s *ValidateSuite) TestPluginNode() {
 		{name: "both", node: plugin(config.NodeDef{Plugin: "quiz", Action: "daily", Tool: "ask"}), wantErr: `plugin node "n": set exactly one of action and tool`},
 		{name: "input not an object", node: plugin(config.NodeDef{Plugin: "quiz", Tool: "ask", Input: json.RawMessage(`"x"`)}), wantErr: `plugin node "n": input must be a JSON object`},
 		{name: "input not JSON", node: plugin(config.NodeDef{Plugin: "quiz", Tool: "ask", Input: json.RawMessage(`{`)}), wantErr: `plugin node "n": input must be a JSON object: `},
-		{name: "input with an action", node: plugin(config.NodeDef{Plugin: "quiz", Action: "daily", Input: json.RawMessage(`{"a":1}`)}), wantErr: `plugin node "n": input is only for a tool`},
+		{name: "action with input", node: plugin(config.NodeDef{Plugin: "quiz", Action: "daily", Input: json.RawMessage(`{"a":"{{.Inputs.a}}"}`)})},
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {

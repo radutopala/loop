@@ -56,12 +56,13 @@ func (s *ClientSuite) TestAction() {
 			}))
 			defer srv.Close()
 
-			err := NewClient(srv.Client()).Action(context.Background(), runtime.Endpoint{URL: srv.URL, Secret: "sec"}, "daily run", ActionRequest{Trigger: TriggerSchedule, TaskID: 7})
+			req := ActionRequest{Trigger: TriggerWorkflow, RunID: "workflow:r1:n1", Input: json.RawMessage(`{"topic":"go"}`)}
+			err := NewClient(srv.Client()).Action(context.Background(), runtime.Endpoint{URL: srv.URL, Secret: "sec"}, "daily run", req)
 			require.Equal(s.T(), http.MethodPost, method)
 			require.Equal(s.T(), "/actions/daily%20run", path)
 			require.Equal(s.T(), "Bearer sec", auth)
 			require.Equal(s.T(), "application/json", ctype)
-			require.Equal(s.T(), ActionRequest{Trigger: TriggerSchedule, TaskID: 7}, got)
+			require.Equal(s.T(), req, got)
 			if tt.wantErr != "" {
 				require.EqualError(s.T(), err, tt.wantErr)
 				return
@@ -132,6 +133,41 @@ func (s *ClientSuite) TestTool() {
 			}
 			require.NoError(s.T(), err)
 			require.Equal(s.T(), tt.want, res)
+		})
+	}
+}
+
+// deadlineDoer records the deadline of the request it's given and fails it.
+type deadlineDoer struct {
+	deadline time.Time
+}
+
+func (d *deadlineDoer) Do(r *http.Request) (*http.Response, error) {
+	d.deadline, _ = r.Context().Deadline()
+	return nil, errors.New("refused")
+}
+
+func (s *ClientSuite) TestToolTimeout() {
+	tests := []struct {
+		name   string
+		within time.Duration
+		want   time.Duration
+	}{
+		{name: "capped", want: ToolTimeout},
+		{name: "an earlier deadline", within: time.Second, want: time.Second},
+		{name: "a later deadline lifts the cap", within: 5 * time.Minute, want: 5 * time.Minute},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			ctx := context.Background()
+			if tt.within > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, tt.within)
+				defer cancel()
+			}
+			d := &deadlineDoer{}
+			_, _ = NewClient(d).Tool(ctx, runtime.Endpoint{URL: "http://plugin"}, "echo", ToolRequest{Input: json.RawMessage(`{}`)})
+			require.WithinDuration(s.T(), time.Now().Add(tt.want), d.deadline, 5*time.Second)
 		})
 	}
 }

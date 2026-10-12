@@ -16,6 +16,14 @@ const (
 
 // ActionRequest defines model for ActionRequest.
 type ActionRequest struct {
+	// Input A workflow node's input, a JSON object with its templates
+	// rendered; left out when the node has none.
+	Input json.RawMessage `json:"input,omitempty"`
+
+	// RunID For a workflow's plugin node, workflow:<run id>:<node id>; left
+	// out otherwise.
+	RunID string `json:"run_id,omitempty"`
+
 	// TaskID The scheduled task that ran the action; left out for a manual run.
 	TaskID  int64   `json:"task_id,omitempty"`
 	Trigger Trigger `json:"trigger"`

@@ -59,7 +59,8 @@ paths:
       description: |
         Runs one of the manifest's actions, by hand, on a schedule or from
         a workflow's plugin node. Answer at once and do the work afterwards; report how it went
-        through events. Loop takes any 2xx as accepted.
+        through events. Loop takes any 2xx as accepted, and a workflow's node
+        succeeds then: a workflow that needs a result calls a tool instead.
       parameters:
         - name: action
           in: path
@@ -259,6 +260,15 @@ components:
           type: integer
           format: int64
           description: The scheduled task that ran the action; left out for a manual run.
+        run_id:
+          type: string
+          description: |
+            For a workflow's plugin node, workflow:<run id>:<node id>; left
+            out otherwise.
+        input:
+          description: |
+            A workflow node's input, a JSON object with its templates
+            rendered; left out when the node has none.
     ToolRequest:
       type: object
       required: [run_id, agent, thread_id, input]

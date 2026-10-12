@@ -107,7 +107,7 @@ func ValidateWorkflowDef(wfDef *config.WorkflowDef) error {
 }
 
 // validatePluginNode checks a plugin node's fields: a plugin, exactly one
-// of action and tool, and an input, for a tool only, that is a JSON object.
+// of action and tool, and an input, if any, that is a JSON object.
 func validatePluginNode(n *config.NodeDef) error {
 	if n.Plugin == "" {
 		return fmt.Errorf("plugin node %q: plugin is required", n.ID)
@@ -115,12 +115,8 @@ func validatePluginNode(n *config.NodeDef) error {
 	if (n.Action == "") == (n.Tool == "") {
 		return fmt.Errorf("plugin node %q: set exactly one of action and tool", n.ID)
 	}
-	in, err := pluginInput(n.Input)
-	if err != nil {
+	if _, err := pluginInput(n.Input); err != nil {
 		return fmt.Errorf("plugin node %q: %w", n.ID, err)
-	}
-	if n.Action != "" && len(in) > 0 {
-		return fmt.Errorf("plugin node %q: input is only for a tool", n.ID)
 	}
 	return nil
 }

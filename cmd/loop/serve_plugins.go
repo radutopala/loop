@@ -121,8 +121,9 @@ type workflowPlugins struct {
 	svc workflowPluginService
 }
 
-func (w workflowPlugins) RunPluginAction(ctx context.Context, pluginID, action, channelID, dirPath string) error {
-	return w.svc.RunAction(ctx, pluginID, action, runtime.Channel{ID: channelID, DirPath: dirPath}, proxy.ActionRequest{Trigger: proxy.TriggerWorkflow})
+func (w workflowPlugins) RunPluginAction(ctx context.Context, pluginID, action, channelID, dirPath, callID string, input json.RawMessage) error {
+	req := proxy.ActionRequest{Trigger: proxy.TriggerWorkflow, RunID: callID, Input: input}
+	return w.svc.RunAction(ctx, pluginID, action, runtime.Channel{ID: channelID, DirPath: dirPath}, req)
 }
 
 func (w workflowPlugins) CallPluginTool(ctx context.Context, pluginID, tool, channelID, dirPath, callID string, input json.RawMessage) (string, bool, error) {

@@ -19,8 +19,8 @@ type mockPluginCaller struct {
 	mock.Mock
 }
 
-func (m *mockPluginCaller) RunPluginAction(ctx context.Context, pluginID, action, channelID, dirPath string) error {
-	return m.Called(ctx, pluginID, action, channelID, dirPath).Error(0)
+func (m *mockPluginCaller) RunPluginAction(ctx context.Context, pluginID, action, channelID, dirPath, callID string, input json.RawMessage) error {
+	return m.Called(ctx, pluginID, action, channelID, dirPath, callID, string(input)).Error(0)
 }
 
 func (m *mockPluginCaller) CallPluginTool(ctx context.Context, pluginID, tool, channelID, dirPath, callID string, input json.RawMessage) (string, bool, error) {
@@ -48,15 +48,24 @@ func (s *EngineSuite) TestExecutePluginNode() {
 			name: "action",
 			node: config.NodeDef{ID: "n1", Type: config.NodeTypePlugin, Plugin: "quiz", Action: "daily"},
 			setup: func(p *mockPluginCaller) {
-				p.On("RunPluginAction", mock.Anything, "quiz", "daily", "ch1", "/src").Return(nil).Once()
+				p.On("RunPluginAction", mock.Anything, "quiz", "daily", "ch1", "/src", "workflow:r1:n1", "").Return(nil).Once()
 			},
 			wantOutput: "accepted",
+		},
+		{
+			name: "action with templated input",
+			node: config.NodeDef{ID: "n1", Type: config.NodeTypePlugin, Plugin: "quiz", Action: "daily", Input: json.RawMessage(`{"topic":"{{.Inputs.topic}}","count":3}`)},
+			setup: func(p *mockPluginCaller) {
+				p.On("RunPluginAction", mock.Anything, "quiz", "daily", "ch1", "/src", "workflow:r1:n1", `{"count":3,"topic":"go"}`).Return(nil).Once()
+			},
+			wantOutput: "accepted",
+			wantInput:  `{"count":3,"topic":"go"}`,
 		},
 		{
 			name: "action fails",
 			node: config.NodeDef{ID: "n1", Type: config.NodeTypePlugin, Plugin: "quiz", Action: "daily"},
 			setup: func(p *mockPluginCaller) {
-				p.On("RunPluginAction", mock.Anything, "quiz", "daily", "ch1", "/src").Return(errors.New("not installed")).Once()
+				p.On("RunPluginAction", mock.Anything, "quiz", "daily", "ch1", "/src", "workflow:r1:n1", "").Return(errors.New("not installed")).Once()
 			},
 			wantErr: "running quiz's action daily: not installed",
 		},
@@ -208,7 +217,7 @@ func (s *EngineSuite) TestLoopBodyPluginChild() {
 	done := s.waitForTerminalStatus()
 
 	var calls atomic.Int32
-	p.On("RunPluginAction", mock.Anything, "quiz", "daily", "", "").Return(nil).Run(func(_ mock.Arguments) { calls.Add(1) })
+	p.On("RunPluginAction", mock.Anything, "quiz", "daily", "", "", mock.Anything, "").Return(nil).Run(func(_ mock.Arguments) { calls.Add(1) })
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "loop-plugin"})
 	require.NoError(s.T(), err)

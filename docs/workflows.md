@@ -189,9 +189,9 @@ Runs an action of an installed [plugin](plugins.md), or calls one of its tools, 
 | `plugin` | The plugin's id |
 | `action` | An action id from the plugin's manifest. Mutually exclusive with `tool`. |
 | `tool` | A tool name from the plugin's manifest. Mutually exclusive with `action`. |
-| `input` | For `tool` only: a JSON object passed as the tool's input. Every string in it, however deep, is rendered as a template; the result must match the tool's `input_schema`. Defaults to `{}`. |
+| `input` | A JSON object passed as the tool's or the action's input. Every string in it, however deep, is rendered as a template; for a tool the result must match the tool's `input_schema`. A tool's defaults to `{}`; an action without one gets none. |
 
-An action succeeds once the plugin accepts it, with `accepted` as the node's output; the plugin does the work afterwards. A tool's `content` becomes the node's output, and an answer marked `is_error` fails the node, so `retry` applies. A node without a plugin, with both or neither of `action` and `tool`, or with an `input` that isn't an object, is rejected by `save_workflow` and `POST /api/workflows`, and when a run starts.
+An action succeeds once the plugin accepts it, with `accepted` as the node's output; the plugin does the work afterwards, so a workflow that needs the result calls a tool instead. A tool's `content` becomes the node's output, and an answer marked `is_error` fails the node, so `retry` applies. A tool call is capped at 60 seconds unless the node's `timeout` is longer. A node without a plugin, with both or neither of `action` and `tool`, or with an `input` that isn't an object, is rejected by `save_workflow` and `POST /api/workflows`, and when a run starts.
 
 ```jsonc
 {
@@ -539,7 +539,7 @@ Workflow state is persisted in SQLite:
 | `node_id` | TEXT | Node identifier |
 | `iteration` | INTEGER | Loop iteration index (0 for nodes outside a loop body, 0..N for nodes inside one). Unique key is `(run_id, node_id, iteration)`. |
 | `status` | TEXT | `pending`, `running`, `success`, `failed`, `skipped` |
-| `input` | TEXT | Rendered node input: bash script / resolved prompt / plugin tool input (empty for loop/approval/plugin action) |
+| `input` | TEXT | Rendered node input: bash script / resolved prompt / plugin tool or action input (empty for loop/approval, and for an action without input) |
 | `session_id` | TEXT | Prompt node's Claude session id (resumable transcript); empty otherwise |
 | `output` | TEXT | Node output text |
 | `error_text` | TEXT | Error message on failure |

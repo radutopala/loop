@@ -30,9 +30,10 @@ type BashRunner interface {
 // PluginCaller runs plugin nodes on the plugin's container in a channel,
 // starting it if the channel's project enables the plugin.
 type PluginCaller interface {
-	// RunPluginAction asks the plugin to run action; it returns once the
-	// plugin accepts it.
-	RunPluginAction(ctx context.Context, pluginID, action, channelID, dirPath string) error
+	// RunPluginAction asks the plugin to run action as the call callID,
+	// with input, a JSON object or nil; it returns once the plugin accepts
+	// it.
+	RunPluginAction(ctx context.Context, pluginID, action, channelID, dirPath, callID string, input json.RawMessage) error
 	// CallPluginTool calls tool with input, a JSON object, as the call
 	// callID, and returns the tool's content and whether it is an error.
 	CallPluginTool(ctx context.Context, pluginID, tool, channelID, dirPath, callID string, input json.RawMessage) (string, bool, error)

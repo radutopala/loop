@@ -86,7 +86,7 @@ type NodeDef struct {
 	Plugin        string          `json:"plugin,omitempty" jsonschema:"Installed plugin id for 'plugin' nodes"`
 	Action        string          `json:"action,omitempty" jsonschema:"Action id from the plugin's manifest for 'plugin' nodes. Mutually exclusive with tool."`
 	Tool          string          `json:"tool,omitempty" jsonschema:"Tool name from the plugin's manifest for 'plugin' nodes. Mutually exclusive with action."`
-	Input         json.RawMessage `json:"input,omitempty" jsonschema:"JSON object passed as a 'plugin' node's tool input; every string in it supports templates"`
+	Input         json.RawMessage `json:"input,omitempty" jsonschema:"JSON object passed as a 'plugin' node's tool or action input; every string in it supports templates"`
 	Timeout       string          `json:"timeout,omitempty" jsonschema:"Per-node timeout as a Go time.Duration (e.g. '5m'). For 'approval' nodes: deadline for human response."`
 	Retry         *RetryConfig    `json:"retry,omitempty" jsonschema:"Optional retry policy for transient failures"`
 }

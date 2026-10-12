@@ -310,7 +310,7 @@ type schemaNodeDef struct {
 	Plugin        string              `json:"plugin,omitempty" jsonschema:"Installed plugin id for 'plugin' nodes"`
 	Action        string              `json:"action,omitempty" jsonschema:"Action id from the plugin's manifest for 'plugin' nodes. Mutually exclusive with tool."`
 	Tool          string              `json:"tool,omitempty" jsonschema:"Tool name from the plugin's manifest for 'plugin' nodes. Mutually exclusive with action."`
-	Input         map[string]any      `json:"input,omitempty" jsonschema:"JSON object passed as a 'plugin' node's tool input; every string in it supports templates"`
+	Input         map[string]any      `json:"input,omitempty" jsonschema:"JSON object passed as a 'plugin' node's tool or action input; every string in it supports templates"`
 }
 
 // schemaWorkflowDef mirrors config.WorkflowDef but uses schemaNodeDef so the

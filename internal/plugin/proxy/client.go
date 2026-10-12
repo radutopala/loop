@@ -24,7 +24,8 @@ const (
 	// ActionTimeout caps an action call; a plugin answers it at once and
 	// carries on in the background.
 	ActionTimeout = 10 * time.Second
-	// ToolTimeout caps a tool call, which an agent waits on.
+	// ToolTimeout caps a tool call, which an agent waits on, unless the
+	// caller's deadline, such as a workflow node's timeout, is later.
 	ToolTimeout = 60 * time.Second
 	// RunDoneTimeout caps telling a plugin one of its agent runs ended.
 	RunDoneTimeout = 10 * time.Second
@@ -49,10 +50,14 @@ const (
 	TriggerWorkflow Trigger = "workflow"
 )
 
-// ActionRequest is the body of POST /actions/{action}.
+// ActionRequest is the body of POST /actions/{action}. A workflow's call
+// has a run id of the form workflow:<run id>:<node id>, and the node's
+// input, if any.
 type ActionRequest struct {
-	Trigger Trigger `json:"trigger"`
-	TaskID  int64   `json:"task_id,omitempty"`
+	Trigger Trigger         `json:"trigger"`
+	TaskID  int64           `json:"task_id,omitempty"`
+	RunID   string          `json:"run_id,omitempty"`
+	Input   json.RawMessage `json:"input,omitempty"`
 }
 
 // ToolRequest is the body of POST /tools/{tool}: a call from agent, in the
@@ -177,7 +182,11 @@ func (c *Client) Tool(ctx context.Context, ep runtime.Endpoint, tool string, req
 		return nil, fmt.Errorf("encoding the tool call: %w", err)
 	}
 	var res ToolResult
-	err = c.call(ctx, ep, ToolTimeout, func(ctx context.Context) error {
+	timeout := ToolTimeout
+	if deadline, ok := ctx.Deadline(); ok {
+		timeout = max(timeout, time.Until(deadline))
+	}
+	err = c.call(ctx, ep, timeout, func(ctx context.Context) error {
 		return c.post(ctx, ep, "/tools/"+url.PathEscape(tool), body, &res)
 	})
 	if err != nil {

@@ -15,27 +15,23 @@ import (
 var errPluginsOff = errors.New("plugins are not enabled")
 
 // executePluginNode runs a plugin node on the plugin's container in the
-// run's channel. An action succeeds once the plugin accepts it; a tool's
-// content is the node's output, and a result the plugin marks as an error
-// fails the node.
+// run's channel, with its input rendered. An action succeeds once the
+// plugin accepts it; a tool's content is the node's output, and a result
+// the plugin marks as an error fails the node.
 func (e *defaultEngine) executePluginNode(ctx context.Context, run *db.WorkflowRun, node *config.NodeDef, runCtx *RunContext, mu *sync.Mutex) (nodeExecResult, error) {
 	if e.plugins == nil {
 		return nodeExecResult{}, errPluginsOff
 	}
 	var res nodeExecResult
-	if node.Action != "" {
-		if err := e.plugins.RunPluginAction(ctx, node.Plugin, node.Action, run.ChannelID, run.DirPath); err != nil {
-			return res, fmt.Errorf("running %s's action %s: %w", node.Plugin, node.Action, err)
-		}
-		res.output = "accepted"
-	} else {
-		in, err := pluginInput(node.Input)
-		if err != nil {
-			return res, err
-		}
-		if in == nil {
-			in = map[string]any{}
-		}
+	in, err := pluginInput(node.Input)
+	if err != nil {
+		return res, err
+	}
+	if in == nil && node.Tool != "" {
+		in = map[string]any{}
+	}
+	var body json.RawMessage
+	if in != nil {
 		mu.Lock()
 		rendered, err := renderInput(in, runCtx)
 		mu.Unlock()
@@ -44,9 +40,17 @@ func (e *defaultEngine) executePluginNode(ctx context.Context, run *db.WorkflowR
 		}
 		// The input is decoded JSON with rendered strings, which always
 		// encodes.
-		body, _ := json.Marshal(rendered)
+		body, _ = json.Marshal(rendered)
 		res.input = string(body)
-		content, isError, err := e.plugins.CallPluginTool(ctx, node.Plugin, node.Tool, run.ChannelID, run.DirPath, "workflow:"+run.ID+":"+node.ID, body)
+	}
+	callID := "workflow:" + run.ID + ":" + node.ID
+	if node.Action != "" {
+		if err := e.plugins.RunPluginAction(ctx, node.Plugin, node.Action, run.ChannelID, run.DirPath, callID, body); err != nil {
+			return res, fmt.Errorf("running %s's action %s: %w", node.Plugin, node.Action, err)
+		}
+		res.output = "accepted"
+	} else {
+		content, isError, err := e.plugins.CallPluginTool(ctx, node.Plugin, node.Tool, run.ChannelID, run.DirPath, callID, body)
 		if err != nil {
 			return res, fmt.Errorf("calling %s's tool %s: %w", node.Plugin, node.Tool, err)
 		}
