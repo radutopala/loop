@@ -66,8 +66,8 @@
         return THEME;
       case "settings.get":
         return cfg.settings;
-      case "ui.notify":
-        needs("ui.notify");
+      case "ui.notification.notify":
+        needs("ui.notification.notify");
         str(params, "title");
         str(params, "body", false);
         return null;
