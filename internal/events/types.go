@@ -144,6 +144,11 @@ type AgentStatusEventData struct {
 	// this to suppress the macOS dock bounce on runs the user didn't start
 	// (they happen often and aren't user-actionable).
 	Trigger string `json:"trigger,omitempty"`
+	// TaskID is the scheduled task a "scheduled" run is of.
+	TaskID int64 `json:"task_id,omitempty"`
+	// Parked is set on a "completed" scheduled run that stopped at an ask
+	// or plan card, waiting on the owner's answer.
+	Parked bool `json:"parked,omitempty"`
 }
 
 // ToolUseEventData is the payload for tool.use events.

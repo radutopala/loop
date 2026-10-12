@@ -274,17 +274,35 @@ func runNotification(channelID string, d events.AgentStatusEventData) *db.Notifi
 		return nil
 	}
 	n := &db.Notification{Kind: db.NotificationRun, ChannelID: channelID}
+	scheduled := d.Trigger == "scheduled"
 	switch {
 	case d.Status == "error":
 		n.Title, n.Body = "Run failed", d.Error
-		if d.Trigger == "scheduled" {
-			n.Title = "Scheduled run failed"
+		if scheduled {
+			n.Title = taskName(d.TaskID) + " failed"
 		}
-	case d.Status == "completed" && d.Trigger == "scheduled":
-		n.Title = "Scheduled run finished"
-		n.Body = fmt.Sprintf("in %ds", (d.DurationMs+500)/1000)
+	case d.Status == "completed" && scheduled && d.Parked:
+		n.Title = taskName(d.TaskID) + " is waiting for your answer"
+	case d.Status == "completed" && scheduled:
+		n.Title = taskName(d.TaskID) + " finished"
+		n.Body = "Took " + (time.Duration(d.DurationMs) * time.Millisecond).Round(time.Second).String()
+		switch {
+		case d.NumTurns == 1:
+			n.Body += " · 1 turn"
+		case d.NumTurns > 1:
+			n.Body += fmt.Sprintf(" · %d turns", d.NumTurns)
+		}
 	default:
 		return nil
 	}
 	return n
+}
+
+// taskName names a scheduled task in a notification: "Task #12", or
+// "Scheduled task" without its id.
+func taskName(id int64) string {
+	if id == 0 {
+		return "Scheduled task"
+	}
+	return fmt.Sprintf("Task #%d", id)
 }

@@ -568,7 +568,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	// subscription bootstrap). The frontend routes the parent event to the
 	// thread's store via thread_id so the parent doesn't show running state.
 	if e.events != nil {
-		status := events.AgentStatusEventData{Status: "running", RunID: runID, ThreadID: threadID, Trigger: "scheduled"}
+		status := events.AgentStatusEventData{Status: "running", RunID: runID, ThreadID: threadID, Trigger: "scheduled", TaskID: task.ID}
 		if hasThread {
 			e.events.BroadcastAgentStatus(threadID, status)
 		}
@@ -583,7 +583,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	}
 	if err != nil {
 		if e.events != nil {
-			errStatus := events.AgentStatusEventData{Status: "error", RunID: runID, Error: err.Error(), ThreadID: threadID, Trigger: "scheduled"}
+			errStatus := events.AgentStatusEventData{Status: "error", RunID: runID, Error: err.Error(), ThreadID: threadID, Trigger: "scheduled", TaskID: task.ID}
 			if hasThread {
 				// Broadcast to thread directly so the thread view updates immediately.
 				e.events.BroadcastAgentStatus(threadID, errStatus)
@@ -595,7 +595,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 
 	if resp.Error != "" {
 		if e.events != nil {
-			errStatus := events.AgentStatusEventData{Status: "error", RunID: runID, Error: resp.Error, ThreadID: threadID, Trigger: "scheduled"}
+			errStatus := events.AgentStatusEventData{Status: "error", RunID: runID, Error: resp.Error, ThreadID: threadID, Trigger: "scheduled", TaskID: task.ID}
 			if hasThread {
 				e.events.BroadcastAgentStatus(threadID, errStatus)
 			}
@@ -650,6 +650,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 			Model:      resp.Model,
 			ThreadID:   threadID,
 			Trigger:    "scheduled",
+			TaskID:     task.ID,
 		}
 		if targetChannelID != task.ChannelID {
 			e.events.BroadcastAgentStatus(targetChannelID, done)
@@ -706,7 +707,7 @@ func (e *TaskExecutor) finishParkedRun(ctx context.Context, task *db.ScheduledTa
 		}
 	}
 	// A run only parks from its tool callbacks, which are set with events.
-	done := events.AgentStatusEventData{Status: "completed", RunID: runID, ThreadID: threadID, Trigger: "scheduled"}
+	done := events.AgentStatusEventData{Status: "completed", RunID: runID, ThreadID: threadID, Trigger: "scheduled", TaskID: task.ID, Parked: true}
 	if targetID != task.ChannelID {
 		e.events.BroadcastAgentStatus(targetID, done)
 	}
