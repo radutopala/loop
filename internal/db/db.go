@@ -99,6 +99,7 @@ type Store interface {
 	UpdateChannelLearnOverride(ctx context.Context, channelID, value string) error
 	GetHiddenThread(ctx context.Context, parentID, kind string) (*Channel, error)
 	ListHiddenThreads(ctx context.Context, parentID string) ([]*Channel, error)
+	ListPluginThreads(ctx context.Context, pluginID string) ([]*Channel, error)
 	InsertHiddenThread(ctx context.Context, ch *Channel) error
 	FileLearnProposals(ctx context.Context, channelID string, proposals []*LearnProposal, withdraw []LearnWithdrawal) ([]*LearnProposal, error)
 	ListLearnProposals(ctx context.Context, channelID string) ([]*LearnProposal, error)

@@ -34,6 +34,12 @@ func (s *IntegrationSuite) TestPluginThreadsAreHidden() {
 	p, err := store.GetHiddenThread(ctx, "c1", PluginKind("cogtest"))
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "p1", p.ChannelID)
+	require.NoError(s.T(), store.InsertHiddenThread(ctx, &Channel{ChannelID: "p3", ParentID: "t1", Kind: PluginKind("cogtest")}))
+	threads, err := store.ListPluginThreads(ctx, "cogtest")
+	require.NoError(s.T(), err)
+	require.Len(s.T(), threads, 2)
+	require.Equal(s.T(), "p1", threads[0].ChannelID)
+	require.Equal(s.T(), "p3", threads[1].ChannelID)
 
 	for i, id := range []string{"p1", "b1", "c1"} {
 		require.NoError(s.T(), store.InsertMessage(ctx, &Message{ChatID: chatID, ChannelID: id, MsgID: "m" + id, Content: "quiz", Kind: MessageKindMessage, CreatedAt: time.Now().Add(time.Duration(i) * time.Second)}))

@@ -517,6 +517,11 @@ func (m *MockStore) ListHiddenThreads(ctx context.Context, parentID string) ([]*
 	return args.Get(0).([]*db.Channel), args.Error(1)
 }
 
+func (m *MockStore) ListPluginThreads(ctx context.Context, pluginID string) ([]*db.Channel, error) {
+	args := m.Called(ctx, pluginID)
+	return args.Get(0).([]*db.Channel), args.Error(1)
+}
+
 func (m *MockStore) InsertHiddenThread(ctx context.Context, ch *db.Channel) error {
 	return m.Called(ctx, ch).Error(0)
 }

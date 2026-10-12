@@ -54,6 +54,7 @@ type ChannelLister interface {
 	UpdateChannelLearnOverride(ctx context.Context, channelID, value string) error
 	GetHiddenThread(ctx context.Context, parentID, kind string) (*db.Channel, error)
 	ListHiddenThreads(ctx context.Context, parentID string) ([]*db.Channel, error)
+	ListPluginThreads(ctx context.Context, pluginID string) ([]*db.Channel, error)
 	UpdateChannelExplainOverride(ctx context.Context, channelID, value string) error
 	ListExplanations(ctx context.Context, channelID string) ([]*db.Explanation, error)
 	FileLearnProposals(ctx context.Context, channelID string, proposals []*db.LearnProposal, withdraw []db.LearnWithdrawal) ([]*db.LearnProposal, error)

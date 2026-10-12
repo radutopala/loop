@@ -264,8 +264,13 @@ func (s *Server) handleRemovePlugin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	purge := r.URL.Query().Get("purge") == "true"
 	badges := s.pluginBadgesOf(r.Context(), id)
-	err := s.plugins.Remove(r.Context(), id, r.URL.Query().Get("purge") == "true")
+	var threads []*db.Channel
+	if purge {
+		threads = s.pluginThreads(r.Context(), id)
+	}
+	err := s.plugins.Remove(r.Context(), id, purge)
 	switch {
 	case errors.Is(err, install.ErrNotInstalled):
 		http.Error(w, err.Error(), http.StatusNotFound)
@@ -274,6 +279,7 @@ func (s *Server) handleRemovePlugin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.deletePluginThreads(r.Context(), threads)
 	// Removing the plugin dropped its badges and its notifications.
 	for _, b := range badges {
 		s.broadcastPluginBadge(b.ChannelID, pluginBadge{PluginID: id})
@@ -283,6 +289,31 @@ func (s *Server) handleRemovePlugin(w http.ResponseWriter, r *http.Request) {
 	}
 	s.PluginsChanged()
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// pluginThreads returns the hidden threads the plugin's agent runs went
+// in, which a purge deletes. A lookup error only leaves them behind, so it's
+// logged.
+func (s *Server) pluginThreads(ctx context.Context, pluginID string) []*db.Channel {
+	threads, err := s.store.ListPluginThreads(ctx, pluginID)
+	if err != nil {
+		s.logger.Warn("plugin cleanup: listing the plugin's threads", "plugin", pluginID, "error", err)
+	}
+	return threads
+}
+
+// deletePluginThreads deletes a purged plugin's hidden threads, with their
+// messages, sessions, containers and MCP configs, as deleting their channel
+// would. The plugin is gone either way, so a failure is logged.
+func (s *Server) deletePluginThreads(ctx context.Context, threads []*db.Channel) {
+	for _, t := range threads {
+		if err := s.store.DeleteChannel(ctx, t.ChannelID); err != nil {
+			s.logger.Warn("plugin cleanup: deleting the plugin's thread", "thread_id", t.ChannelID, "error", err)
+			continue
+		}
+		s.stopHiddenThreads(ctx, []*db.Channel{t})
+		s.removeMCPConfigs(t, []*db.Channel{t})
+	}
 }
 
 type pluginActionRequest struct {

@@ -70,3 +70,18 @@ func (s *SQLiteStore) ListHiddenThreads(ctx context.Context, parentID string) ([
 	defer rows.Close()
 	return scanChannels(rows)
 }
+
+// ListPluginThreads returns the hidden threads pluginID's agent runs go in,
+// one under each channel or thread it ran in.
+func (s *SQLiteStore) ListPluginThreads(ctx context.Context, pluginID string) ([]*Channel, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+channelColumns+`
+		 FROM channels WHERE kind = ? ORDER BY id`,
+		PluginKind(pluginID),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanChannels(rows)
+}

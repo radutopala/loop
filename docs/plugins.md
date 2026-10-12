@@ -58,7 +58,7 @@ from the shell. The API behind both:
 | `GET /api/plugins?channel_id=` | the installed plugins with their `actions`, `enabled_by_default`, `settings_schema`, `global_settings` and `containers` (`channel_id`, `channel_name`, `status`, `last_error`, `updated_at`); with `channel_id`, also `enabled` and `project_enabled` (the project file's own value), `project_settings`, `settings` and `settings_problems` for that channel's project, and a top-level `project_trusted` |
 | `POST /api/plugins/inspect` | body `{"image", "dev"}`: pulls and checks an image, installing nothing |
 | `POST /api/plugins` | body `{"image", "dev", "digest", "approve": […]}`: installs or upgrades |
-| `DELETE /api/plugins/{id}?purge=` | removes a plugin; `purge` also deletes its data in every channel |
+| `DELETE /api/plugins/{id}?purge=` | removes a plugin; `purge` also deletes its data and its agent runs' hidden threads in every channel |
 | `POST /api/plugins/{id}/channels/{channel}/stop` | stops the plugin's container in a channel, keeping its data |
 
 Installing, removing and stopping send a `plugins.changed` event to every client, and so do every
@@ -393,7 +393,8 @@ Once the plugin has started an agent run in the pane's channel, its panes show a
 right of their header. It opens the agent view over the layout, as the Learn view opens: the panel
 on the left half, the run's chat on the right, and the logo on their seam, which moves while a run
 runs. The label closes it again. The panel isn't reloaded on the way. The chat is read-only: only
-the plugin starts runs in its thread, each in a new session of its own.
+the plugin starts runs in its thread, each in a new session of its own. Removing the plugin with
+`--purge` deletes the thread with its runs; a plain removal keeps it for when it's installed again.
 
 ### Bridge
 

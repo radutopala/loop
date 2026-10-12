@@ -15,6 +15,7 @@ import (
 
 	"github.com/radutopala/loop/internal/agentgate"
 	"github.com/radutopala/loop/internal/config"
+	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/plugin"
 	"github.com/radutopala/loop/internal/plugin/install"
@@ -264,6 +265,7 @@ func (s *ServerSuite) TestInstallPlugin() {
 
 func (s *ServerSuite) TestRemovePlugin() {
 	pm := s.pluginRoutes()
+	s.store.On("ListPluginThreads", mock.Anything, "echo").Return([]*db.Channel(nil), nil).Once()
 	pm.On("Remove", mock.Anything, "echo", true).Return(nil).Once()
 	rec := s.testRequest("DELETE", "/api/plugins/echo?purge=true", "")
 	require.Equal(s.T(), http.StatusNoContent, rec.Code)
@@ -275,6 +277,61 @@ func (s *ServerSuite) TestRemovePlugin() {
 	pm.On("Remove", mock.Anything, "echo", false).Return(errors.New("boom")).Once()
 	rec = s.testRequest("DELETE", "/api/plugins/echo", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+}
+
+// TestRemovePluginPurgeDeletesThreads covers a purge deleting the hidden
+// threads the plugin's agent ran in: each is deleted, stopped and loses its
+// containers and MCP config, and one that fails to delete is left. A plain
+// removal keeps them.
+func (s *ServerSuite) TestRemovePluginPurgeDeletesThreads() {
+	pm := s.pluginRoutes()
+	threads := []*db.Channel{
+		{ChannelID: "plugin-1", ParentID: "ch-1", DirPath: "/src/app", Kind: db.PluginKind("echo")},
+		{ChannelID: "plugin-2", ParentID: "th-1", DirPath: "/src/app", Kind: db.PluginKind("echo")},
+	}
+	s.store.On("ListPluginThreads", mock.Anything, "echo").Return(threads, nil).Once()
+	pm.On("Remove", mock.Anything, "echo", true).Return(nil).Once()
+	s.store.On("DeleteChannel", mock.Anything, "plugin-1").Return(nil).Once()
+	s.store.On("DeleteChannel", mock.Anything, "plugin-2").Return(errors.New("boom")).Once()
+	canceller := new(MockRunCanceller)
+	canceller.On("StopHiddenThread", "plugin-1").Return().Once()
+	s.srv.SetRunCanceller(canceller)
+	reg := &mockContainerManager{byChannel: []*container.ContainerInfo{
+		{ContainerID: "agent-p1", ChannelID: "plugin-1", Type: container.ContainerTypeAgent},
+	}}
+	reg.On("RemoveContainer", mock.Anything, "agent-p1").Return(nil).Once()
+	s.srv.containerRegistry = reg
+	var removed [][2]string
+	s.srv.removeMCPConfig = func(dir, id string) error {
+		removed = append(removed, [2]string{dir, id})
+		return nil
+	}
+
+	rec := s.testRequest("DELETE", "/api/plugins/echo?purge=true", "")
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	canceller.AssertExpectations(s.T())
+	reg.AssertExpectations(s.T())
+	require.Equal(s.T(), [][2]string{{"/src/app", "plugin-1"}}, removed)
+
+	// A failed lookup leaves the threads; the plugin still goes.
+	s.store.On("ListPluginThreads", mock.Anything, "echo").Return([]*db.Channel(nil), errors.New("boom")).Once()
+	pm.On("Remove", mock.Anything, "echo", true).Return(nil).Once()
+	rec = s.testRequest("DELETE", "/api/plugins/echo?purge=true", "")
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+
+	// A failed removal leaves them too.
+	s.store.On("ListPluginThreads", mock.Anything, "echo").Return(threads, nil).Once()
+	pm.On("Remove", mock.Anything, "echo", true).Return(errors.New("boom")).Once()
+	rec = s.testRequest("DELETE", "/api/plugins/echo?purge=true", "")
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+
+	// A plain removal keeps them.
+	pm.On("Remove", mock.Anything, "echo", false).Return(nil).Once()
+	rec = s.testRequest("DELETE", "/api/plugins/echo", "")
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	s.store.AssertNumberOfCalls(s.T(), "ListPluginThreads", 3)
+	s.store.AssertNumberOfCalls(s.T(), "DeleteChannel", 2)
+	pm.AssertExpectations(s.T())
 }
 
 func (s *ServerSuite) TestRunPluginAction() {
