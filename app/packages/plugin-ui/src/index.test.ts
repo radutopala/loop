@@ -249,13 +249,15 @@ describe("notifications", () => {
     hostEnd.notify("settings", { count: 7 });
     hostEnd.notify("event", { type: "quiz_ready", data: { id: 1 } });
     hostEnd.notify("other", {});
-    await nextTick();
+    // The port delivers in order, so once the last listener has its call
+    // the others have theirs.
+    await vi.waitFor(() => expect(events).toHaveBeenCalledWith({ type: "quiz_ready", data: { id: 1 } }));
     expect(themes).toHaveBeenCalledWith(pluginTheme(lightColors));
     expect(settings).toHaveBeenCalledWith({ count: 7 });
-    expect(events).toHaveBeenCalledWith({ type: "quiz_ready", data: { id: 1 } });
     offTheme();
     hostEnd.notify("theme", pluginTheme(darkColors));
-    await nextTick();
+    hostEnd.notify("settings", { count: 8 });
+    await vi.waitFor(() => expect(settings).toHaveBeenCalledWith({ count: 8 }));
     expect(themes).toHaveBeenCalledTimes(1);
   });
 });
@@ -281,8 +283,7 @@ describe("applyTheme", () => {
     expect(el.dataset.theme).toBe("dark");
     expect(el.vars["--bg"]).toBe(darkColors.bg);
     hostEnd.notify("theme", pluginTheme(lightColors));
-    await nextTick();
-    expect(el.dataset.theme).toBe("light");
+    await vi.waitFor(() => expect(el.dataset.theme).toBe("light"));
     off();
   });
 
