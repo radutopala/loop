@@ -158,6 +158,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I right-click on "([^"]*)"$`, tc.rightClickOn)
 	ctx.Step(`^I record clipboard writes$`, tc.recordClipboardWrites)
 	ctx.Step(`^the clipboard should hold "([^"]*)"$`, tc.assertClipboardHolds)
+	ctx.Step(`^the clipboard should contain "([^"]*)"$`, tc.assertClipboardContains)
 	ctx.Step(`^I type "([^"]*)" into "([^"]*)"$`, tc.typeInto)
 	ctx.Step(`^I type "([^"]*)" into the agent terminal$`, tc.typeIntoAgentTerminal)
 	ctx.Step(`^I submit the agent terminal$`, tc.submitAgentTerminal)
@@ -218,6 +219,8 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I rest the pointer on "([^"]*)" in the sidebar$`, tc.restPointerInSidebar)
 	ctx.Step(`^I rest the pointer on the element "([^"]*)"$`, tc.restPointerOnElement)
 	ctx.Step(`^I move the pointer off the sidebar$`, tc.movePointerOffSidebar)
+	ctx.Step(`^I drag across the text of "([^"]*)"$`, tc.dragAcrossText)
+	ctx.Step(`^the selected text should contain "([^"]*)"$`, tc.assertSelectedText)
 	ctx.Step(`^the row info should show the (channel|worktree)'s path and branch "([^"]*)"$`, tc.assertRowInfo)
 	ctx.Step(`^the row info "(ticket|branch-detail|commit|commit-detail|sync|model|status|description)" should read "([^"]*)"$`, tc.assertRowInfoLine)
 	ctx.Step(`^the row info should not show "(ticket|commit|sync|model|status|description)"$`, tc.assertRowInfoLineAbsent)
@@ -534,6 +537,26 @@ func (tc *TestContext) assertClipboardHolds(want string) error {
 		return fmt.Errorf("clipboard holds nothing, want %q", want)
 	}
 	return fmt.Errorf("clipboard holds %q, want %q", *got, want)
+}
+
+// assertClipboardContains checks the last recorded clipboard write holds
+// want, for copies of more than one line.
+func (tc *TestContext) assertClipboardContains(want string) error {
+	var got *string
+	err := chromedp.Run(tc.chromeTab.ctx,
+		chromedp.Poll(fmt.Sprintf(`(window.__bddClipboard ?? "").includes(%q)`, want), nil,
+			chromedp.WithPollingTimeout(5*time.Second), chromedp.WithPollingInterval(100*time.Millisecond)),
+	)
+	if err == nil {
+		return nil
+	}
+	if evalErr := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(`window.__bddClipboard ?? null`, &got)); evalErr != nil {
+		return evalErr
+	}
+	if got == nil {
+		return fmt.Errorf("clipboard holds nothing, want it to contain %q", want)
+	}
+	return fmt.Errorf("clipboard holds %q, want it to contain %q", *got, want)
 }
 
 // assertFieldHolds checks an input or textarea's value, polling briefly so a
@@ -1260,6 +1283,47 @@ func (tc *TestContext) restPointerOnElement(selector string) error {
 		return fmt.Errorf("element %q: %w", selector, err)
 	}
 	return chromedp.Run(tc.chromeTab.ctx, chromedp.MouseEvent(input.MouseMoved, at[0], at[1]))
+}
+
+// dragAcrossText selects text the way a person does: the real mouse presses
+// at the start of the first line of text in the element the CSS selector
+// matches and drags to its end.
+func (tc *TestContext) dragAcrossText(selector string) error {
+	js := fmt.Sprintf(`(() => {
+		const el = document.querySelector(%q);
+		if (!el) return null;
+		const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, { acceptNode: (n) => (n.textContent.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP) });
+		const node = w.nextNode();
+		if (!node) return null;
+		const range = document.createRange();
+		range.selectNodeContents(node);
+		const r = range.getClientRects()[0];
+		return r && r.width > 0 ? [r.left + 1, r.right - 1, r.top + r.height / 2] : null;
+	})()`, selector)
+	var at []float64
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Poll(js, &at, chromedp.WithPollingTimeout(10*time.Second))); err != nil {
+		return fmt.Errorf("text in %q: %w", selector, err)
+	}
+	x0, x1, y := at[0], at[1], at[2]
+	return chromedp.Run(tc.chromeTab.ctx,
+		chromedp.MouseEvent(input.MouseMoved, x0, y),
+		chromedp.MouseEvent(input.MousePressed, x0, y, chromedp.ButtonLeft),
+		chromedp.MouseEvent(input.MouseMoved, (x0+x1)/2, y, chromedp.ButtonLeft),
+		chromedp.MouseEvent(input.MouseMoved, x1, y, chromedp.ButtonLeft),
+		chromedp.MouseEvent(input.MouseReleased, x1, y, chromedp.ButtonLeft),
+	)
+}
+
+// assertSelectedText checks the page's text selection holds want.
+func (tc *TestContext) assertSelectedText(want string) error {
+	var got string
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(`window.getSelection().toString()`, &got)); err != nil {
+		return err
+	}
+	if !strings.Contains(got, want) {
+		return fmt.Errorf("selected text %q does not contain %q", got, want)
+	}
+	return nil
 }
 
 func (tc *TestContext) movePointerOffSidebar() error {

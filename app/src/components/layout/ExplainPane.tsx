@@ -10,6 +10,7 @@ import { ExplainIcon } from "../chat/ExplainIcon";
 import { explanationPending, snippetLine } from "../chat/explainState";
 import { formatMessageTimestamp } from "../chat/timestamps";
 import { buildMarkdownStyles } from "../panels/FilePanel";
+import { CopyButton } from "../shared/CopyButton";
 
 // How long the card a bubble's Explain action opened stays outlined.
 const FOCUS_HIGHLIGHT_MS = 4000;
@@ -140,6 +141,10 @@ function ExplanationCard({
   // Rendered like the editor's markdown preview: the chat's renderer has no
   // headings or lists, which write-ups are made of.
   const html = useMemo(() => (hasContent ? renderMarkdownSafe(e.content) : ""), [hasContent, e.content]);
+  // React sets innerHTML again whenever this object is a new one, and the pane
+  // renders every second or so: a fresh object would replace the write-up's
+  // nodes under a drag, and the selection would jump to the top.
+  const inner = useMemo(() => ({ __html: html }), [html]);
 
   return (
     <div
@@ -166,6 +171,7 @@ function ExplanationCard({
           {e.status === "running" ? "explaining…" : e.status}
         </span>
         <div style={{ flex: 1 }} />
+        {hasContent && <CopyButton testId="explanation-copy" text={e.content} html={html} visible title="Copy write-up" />}
         {hasContent && (
           <div style={{ display: "flex", flexShrink: 0, border: `1px solid ${colors.border}`, borderRadius: 4, overflow: "hidden" }}>
             {(["preview", "source"] as const).map((mode) => (
@@ -266,8 +272,8 @@ function ExplanationCard({
             <div
               data-testid="explanation-content"
               className="readme-content"
-              dangerouslySetInnerHTML={{ __html: html }}
-              style={{ marginTop: 6, fontFamily: fonts.sans, color: colors.text, lineHeight: 1.6 }}
+              dangerouslySetInnerHTML={inner}
+              style={{ marginTop: 6, fontFamily: fonts.sans, color: colors.text, lineHeight: 1.6, userSelect: "text" }}
             />
             <style>{buildMarkdownStyles(colors)}</style>
           </>
