@@ -11,6 +11,9 @@ export const BRIDGE_INIT = "loop-plugin:init";
 /** The most JSON one panel may keep with state.set. */
 export const MAX_STATE_BYTES = 64 << 10;
 
+/** The most text one ui.copy may put on the clipboard. */
+export const MAX_COPY_BYTES = 1 << 20;
+
 const METHOD_NOT_FOUND = -32601;
 const INVALID_PARAMS = -32602;
 const CALL_FAILED = -32000;
@@ -63,6 +66,8 @@ export interface BridgeHost {
   settings: () => Record<string, unknown>;
   notify: (title: string, body: string) => void;
   openFile: (path: string, line?: number) => Promise<void>;
+  /** Puts text on the clipboard. */
+  copy: (text: string) => Promise<void>;
   loadState: () => unknown;
   saveState: (value: unknown) => void;
   /** Set for a card: its id and the data it was posted with. */
@@ -114,6 +119,13 @@ export async function callBridge(host: BridgeHost, method: string, params: Param
       const line = params.line;
       if (line !== undefined && (typeof line !== "number" || !Number.isInteger(line) || line < 1)) throw new BridgeError(INVALID_PARAMS, "line must be a positive integer");
       await host.openFile(str(params, "path"), line);
+      return null;
+    }
+    case "ui.copy": {
+      needs(host, "ui.copy");
+      const text = str(params, "text");
+      if (new TextEncoder().encode(text).length > MAX_COPY_BYTES) throw new BridgeError(INVALID_PARAMS, "text is over 1 MB");
+      await host.copy(text);
       return null;
     }
     case "ui.resize": {

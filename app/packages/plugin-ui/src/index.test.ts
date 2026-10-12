@@ -16,12 +16,13 @@ function fakeHost(over: Partial<BridgeHost> = {}): BridgeHost {
     channelId: "ch1",
     channelName: "proj",
     dirPath: "/src/proj",
-    capabilities: ["ui.notify", "ui.open_file"],
+    capabilities: ["ui.notify", "ui.open_file", "ui.copy"],
     request: vi.fn(async (method: string, path: string) => ({ status: 200, body: { method, path } })),
     theme: () => pluginTheme(darkColors),
     settings: () => ({ count: 5 }),
     notify: vi.fn(),
     openFile: vi.fn(async () => {}),
+    copy: vi.fn(async () => {}),
     loadState: vi.fn(() => state),
     saveState: vi.fn((v: unknown) => {
       state = v;
@@ -135,6 +136,12 @@ describe("calls", () => {
     const { bridge, host } = pair();
     await expect(run(bridge)).resolves.toBeUndefined();
     expect(host.openFile).toHaveBeenCalledWith(...want);
+  });
+
+  it("ui.copy", async () => {
+    const { bridge, host } = pair();
+    await expect(bridge.ui.copy("go test ./...")).resolves.toBeUndefined();
+    expect(host.copy).toHaveBeenCalledWith("go test ./...");
   });
 
   it("context.get in a card", async () => {

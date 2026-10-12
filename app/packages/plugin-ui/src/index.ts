@@ -131,6 +131,9 @@ export interface Bridge {
     /** Opens a file of the channel in the editor, at line if given. Needs
      *  the ui.open_file capability. */
     openFile(path: string, line?: number): Promise<void>;
+    /** Puts text on the clipboard, at most 1 MB of it. Needs the ui.copy
+     *  capability. */
+    copy(text: string): Promise<void>;
     /** Sizes a card's frame to height pixels, kept within 80 to 900. A
      *  panel fills its pane and can't. */
     resize(height: number): Promise<void>;
@@ -283,6 +286,9 @@ export function connectPort(port: MessagePort, opts: BridgeOptions = {}): Bridge
       },
       openFile: async (path, line) => {
         await call("ui.open_file", line === undefined ? { path } : { path, line });
+      },
+      copy: async (text) => {
+        await call("ui.copy", { text });
       },
       resize: async (height) => {
         await call("ui.resize", { height });

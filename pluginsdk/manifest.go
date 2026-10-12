@@ -27,6 +27,7 @@ const (
 	CapUIRun         = "ui.run"
 	CapUIBadge       = "ui.badge"
 	CapUICard        = "ui.card"
+	CapUICopy        = "ui.copy"
 )
 
 // Loop events a manifest may subscribe to.

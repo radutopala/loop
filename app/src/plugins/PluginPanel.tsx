@@ -12,6 +12,7 @@ import { PaneLeafHeader } from "../splitPane/PaneLeafHeader";
 import { useTheme } from "../ThemeContext";
 import type { WSEvent } from "../types";
 import type { PluginPaneRef } from "../types/panels";
+import { writeClipboard } from "../utils/copyToClipboard";
 import { storageGetJSON, storageSetJSON } from "../utils/storage";
 import { BRIDGE_INIT, type Bridge, type BridgeHost, connectBridge, pluginTheme } from "./bridge";
 import { agentOpenKey, PluginAgentBadge, PluginAgentThread, type SubscribeChannelEvents, usePluginAgent, usePluginAgentOpen } from "./PluginAgent";
@@ -92,6 +93,7 @@ export function PluginPanel({ plugin: ref, channelId, channelName, dirPath, leaf
           const detail: FileLinkOpenDetail = { channelId, target: { rootIndex: file.root_index, relPath: file.rel_path }, line: line ?? null };
           window.dispatchEvent(new CustomEvent<FileLinkOpenDetail>("loop:open-file", { detail }));
         },
+        copy: (text) => writeClipboard(text),
         loadState: () => storageGetJSON(`plugin-state:${pluginId}:${channelId}:${panelId}`),
         saveState: (value) => storageSetJSON(`plugin-state:${pluginId}:${channelId}:${panelId}`, value),
       }

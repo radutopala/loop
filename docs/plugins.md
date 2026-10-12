@@ -145,6 +145,7 @@ Capabilities are approved by the owner at install and checked on every call:
 | `ui.panel` | panels |
 | `ui.notify` | `POST /notify`, the bridge's `ui.notify` |
 | `ui.open_file` | the bridge's `ui.open_file` |
+| `ui.copy` | the bridge's `ui.copy` |
 | `memory.write` | `PUT /memory/{name}`, `DELETE /memory/{name}` |
 | `events.subscribe` | the manifest's `events`, sent to `POST /events` |
 | `ui.run` | `POST /ui/commands`: drives an app window, in the plugin's channel and its threads |
@@ -371,6 +372,7 @@ On load the host posts `{"type": "loop-plugin:init"}` to the frame with a `Messa
 | `settings.get` | | the plugin's settings in the channel's project |
 | `ui.notify` | `{"title", "body"}` | `null`; needs `ui.notify` |
 | `ui.open_file` | `{"path", "line"?}` | `null`; opens a file of the channel in the editor; needs `ui.open_file` |
+| `ui.copy` | `{"text"}` | `null`; puts `text`, at most 1 MB, on the clipboard; needs `ui.copy` |
 | `ui.resize` | `{"height"}` | `null`; sets a card's height in pixels, kept within 80 to 900; a panel fills its pane and gets an error |
 
 The theme's `vars` are `--bg`, `--surface`, `--fg`, `--muted`, `--border`, `--accent`,

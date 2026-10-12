@@ -6,6 +6,7 @@ import { pluginXRequest } from "../api/plugins";
 import type { FileLinkOpenDetail } from "../components/chat/FileLink";
 import { useContentCapsEpoch } from "../hooks/useContentCapsEpoch";
 import { useTheme } from "../ThemeContext";
+import { writeClipboard } from "../utils/copyToClipboard";
 import { BRIDGE_INIT, type Bridge, type BridgeHost, connectBridge, pluginTheme } from "./bridge";
 import { cardHeight, cardInitialHeight } from "./cardHeight";
 import { findPluginCard } from "./PluginPanelsContext";
@@ -78,6 +79,7 @@ export function PluginCard({ pluginId, cardId, label, data, channelId, channelNa
           const detail: FileLinkOpenDetail = { channelId, target: { rootIndex: file.root_index, relPath: file.rel_path }, line: line ?? null };
           window.dispatchEvent(new CustomEvent<FileLinkOpenDetail>("loop:open-file", { detail }));
         },
+        copy: (text) => writeClipboard(text),
         loadState: () => state.current,
         saveState: (value) => {
           state.current = value;

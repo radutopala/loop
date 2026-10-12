@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { darkColors, fonts, lightColors } from "../theme";
-import { BridgeError, type BridgeHost, callBridge, connectBridge, MAX_STATE_BYTES, pluginTheme } from "./bridge";
+import { BridgeError, type BridgeHost, callBridge, connectBridge, MAX_COPY_BYTES, MAX_STATE_BYTES, pluginTheme } from "./bridge";
 
 function host(over: Partial<BridgeHost> = {}): BridgeHost {
   return {
@@ -9,12 +9,13 @@ function host(over: Partial<BridgeHost> = {}): BridgeHost {
     channelId: "ch1",
     channelName: "proj",
     dirPath: "/src/proj",
-    capabilities: ["ui.notify", "ui.open_file"],
+    capabilities: ["ui.notify", "ui.open_file", "ui.copy"],
     request: vi.fn(async () => ({ status: 200, body: { ok: true } })),
     theme: () => pluginTheme(darkColors),
     settings: () => ({ question_count: 5 }),
     notify: vi.fn(),
     openFile: vi.fn(async () => {}),
+    copy: vi.fn(async () => {}),
     loadState: vi.fn(() => undefined),
     saveState: vi.fn(),
     ...over,
@@ -115,6 +116,17 @@ describe("callBridge", () => {
     expect(h.notify).toHaveBeenCalledWith("Quiz ready", "");
   });
 
+  it("ui.copy", async () => {
+    const h = host();
+    await expect(callBridge(h, "ui.copy", { text: "go test ./..." })).resolves.toBeNull();
+    expect(h.copy).toHaveBeenCalledWith("go test ./...");
+  });
+
+  it("ui.copy fails with the clipboard", async () => {
+    const h = host({ copy: vi.fn(async () => Promise.reject(new Error("denied"))) });
+    await expect(callBridge(h, "ui.copy", { text: "x" })).rejects.toThrow("denied");
+  });
+
   it.each([
     { name: "line", params: { path: "a.go", line: 3 }, want: ["a.go", 3] },
     { name: "no line", params: { path: "a.go" }, want: ["a.go", undefined] },
@@ -131,6 +143,9 @@ describe("callBridge", () => {
     { name: "state over 64 KB", method: "state.set", params: { value: "x".repeat(MAX_STATE_BYTES) }, code: -32602, msg: "state is over 64 KB" },
     { name: "notify without the cap", method: "ui.notify", params: { title: "t" }, caps: [], code: -32000, msg: "the plugin wasn't approved for ui.notify" },
     { name: "notify body not a string", method: "ui.notify", params: { title: "t", body: 3 }, code: -32602, msg: "body must be a string" },
+    { name: "copy without the cap", method: "ui.copy", params: { text: "t" }, caps: [], code: -32000, msg: "the plugin wasn't approved for ui.copy" },
+    { name: "copy without text", method: "ui.copy", params: {}, code: -32602, msg: "text must be a non-empty string" },
+    { name: "copy over 1 MB", method: "ui.copy", params: { text: "é".repeat(MAX_COPY_BYTES / 2 + 1) }, code: -32602, msg: "text is over 1 MB" },
     { name: "open_file without the cap", method: "ui.open_file", params: { path: "a" }, caps: [], code: -32000, msg: "the plugin wasn't approved for ui.open_file" },
     { name: "open_file line zero", method: "ui.open_file", params: { path: "a", line: 0 }, code: -32602, msg: "line must be a positive integer" },
     { name: "open_file line fractional", method: "ui.open_file", params: { path: "a", line: 1.5 }, code: -32602, msg: "line must be a positive integer" },

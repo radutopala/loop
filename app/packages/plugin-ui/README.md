@@ -49,6 +49,7 @@ const saved = await bridge.state.get<{ tab: string }>();
 
 await bridge.ui.notify("Done", "3 items added"); // needs the ui.notify capability
 await bridge.ui.openFile("cmd/main.go", 12); // needs the ui.open_file capability
+await bridge.ui.copy("go test ./..."); // needs the ui.copy capability
 ```
 
 | | |
@@ -60,6 +61,7 @@ await bridge.ui.openFile("cmd/main.go", 12); // needs the ui.open_file capabilit
 | `state.get()`, `state.set(value)` | small JSON UI state, kept per plugin, channel and panel |
 | `events.on(cb)` | `{type, data}` the plugin's container sent with `POST /events` |
 | `ui.notify(title, body?)`, `ui.openFile(path, line?)` | |
+| `ui.copy(text)` | puts text on the clipboard, at most 1 MB |
 | `ui.resize(height)` | a card's height in pixels, kept within 80 to 900 |
 | `theme.get()`, `theme.onChange(cb)` | `{mode, vars}` |
 | `call(method, params?, timeoutMs?)` | any bridge method by name |
