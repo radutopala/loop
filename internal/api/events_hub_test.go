@@ -1598,3 +1598,14 @@ func (s *EventsHubSuite) TestBroadcastGateApprovalResolved() {
 	require.Equal(s.T(), EventGateApprovalResolved, evt.Type)
 	require.Equal(s.T(), "ch-1", evt.ChannelID)
 }
+
+func (s *EventsHubSuite) TestObserve() {
+	hub := NewEventsHub(testLogger())
+	var seen []Event
+	hub.Observe(func(e Event) { seen = append(seen, e) })
+	hub.Observe(func(e Event) { seen = append(seen, e) })
+	hub.Broadcast(Event{Type: EventAgentStatus, ChannelID: "ch-1"})
+	require.Len(s.T(), seen, 2)
+	require.Equal(s.T(), EventAgentStatus, seen[0].Type)
+	require.NotZero(s.T(), seen[0].Timestamp)
+}

@@ -132,10 +132,10 @@ export function orderedComments(summaries: FileSummary[], byFile: Map<string, Re
       }
     }
     // Stable within a line: several comments on one line stack in array
-    // order, which is exactly how FileSection renders them. A comment whose
-    // line falls outside every hunk is dropped — FileSection has no row to
-    // hang it under, so counting it would strand the navigator on a target
-    // that never scrolls anywhere.
+    // order, which is exactly how FileSection renders them. splitComments
+    // leaves a comment on no hunk line among the orphans; one that gets
+    // here anyway is dropped, since FileSection has no row to hang it
+    // under and the navigator would stall on it.
     const sorted = cs
       .map((c, i) => ({ c, i, at: pos.get(commentLineSide(c) === "LEFT" ? `L:${c.line}` : `R:${c.line}`) }))
       .filter((e): e is { c: ReviewComment; i: number; at: number } => e.at !== undefined)
@@ -144,6 +144,27 @@ export function orderedComments(summaries: FileSummary[], byFile: Map<string, Re
   });
   for (const c of orphans) out.push({ id: c.id, path: c.path, fileIdx: -1, github: c.source === "github" });
   return out;
+}
+
+// splitComments groups comments by file path. Comments on files NOT in the
+// diff still need to be visible (e.g. an outdated GH comment whose file was
+// touched on a later force-push), and so do those on a line no hunk shows
+// (e.g. an agent anchoring past the end of the file). Those are the
+// orphans, which render under an "Out of diff" pseudo-file at the bottom.
+export function splitComments(parsedFiles: ParsedFile[], comments: ReviewComment[]): { byFile: Map<string, ReviewComment[]>; orphans: ReviewComment[] } {
+  const rows = new Map(parsedFiles.map((p) => [p.path, new Set(p.hunks.flatMap((h) => h.lines.map(lineKey)))]));
+  const byFile = new Map<string, ReviewComment[]>();
+  const orphans: ReviewComment[] = [];
+  for (const c of comments) {
+    if (rows.get(c.path)?.has(commentLineSide(c) === "LEFT" ? `L:${c.line}` : `R:${c.line}`)) {
+      const arr = byFile.get(c.path) ?? [];
+      arr.push(c);
+      byFile.set(c.path, arr);
+    } else {
+      orphans.push(c);
+    }
+  }
+  return { byFile, orphans };
 }
 
 function summarize(parsed: ParsedFile, fileComments: ReviewComment[]): FileSummary {
@@ -175,25 +196,7 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
 
   const parsedFiles = useMemo(() => parseUnifiedDiff(rawDiff), [rawDiff]);
 
-  // Comments grouped by file path. Comments on files NOT in the diff
-  // still need to be visible (e.g. an outdated GH comment whose file was
-  // touched on a later force-push). They render under an "Out of diff"
-  // pseudo-file at the bottom.
-  const { byFile, orphans } = useMemo(() => {
-    const knownPaths = new Set(parsedFiles.map((p) => p.path));
-    const byFile = new Map<string, ReviewComment[]>();
-    const orphans: ReviewComment[] = [];
-    for (const c of comments) {
-      if (knownPaths.has(c.path)) {
-        const arr = byFile.get(c.path) ?? [];
-        arr.push(c);
-        byFile.set(c.path, arr);
-      } else {
-        orphans.push(c);
-      }
-    }
-    return { byFile, orphans };
-  }, [parsedFiles, comments]);
+  const { byFile, orphans } = useMemo(() => splitComments(parsedFiles, comments), [parsedFiles, comments]);
 
   const summaries = useMemo(() => parsedFiles.map((p) => summarize(p, byFile.get(p.path) ?? [])), [parsedFiles, byFile]);
 
@@ -1115,9 +1118,8 @@ function FileSection({
   registerCommentRef: (id: string, el: HTMLDivElement | null) => void;
 }) {
   // Group comments by (line, side) so multiple comments on the same line
-  // render as a stack underneath that line. The backend widens git's
-  // `-U` enough to land every comment on a hunk line, so we don't need
-  // a separate out-of-hunk path here.
+  // render as a stack underneath that line. A comment on no hunk line
+  // goes to the out-of-diff section instead, so each one here has a row.
   const commentMap = new Map<string, ReviewComment[]>();
   for (const c of comments) {
     const k = commentLineSide(c) === "LEFT" ? `L:${c.line}` : `R:${c.line}`;

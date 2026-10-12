@@ -2,8 +2,8 @@ import type { PanelType } from "../types/panels";
 import { EXCLUSIVE_PANELS, SINGLETON_PANELS } from "../types/panels";
 import type { DropPosition, LeafNode, PaneNode, SplitDirection, SplitNode } from "./types";
 
-export function makeLeaf(id: string, panel: PanelType, flex = 1, openMode?: import("../types/panels").AgentOpenMode): LeafNode {
-  return { type: "leaf", id, panel, flex, ...(openMode ? { openMode } : {}) };
+export function makeLeaf(id: string, panel: PanelType, flex = 1, openMode?: import("../types/panels").AgentOpenMode, plugin?: import("../types/panels").PluginPaneRef): LeafNode {
+  return { type: "leaf", id, panel, flex, ...(openMode ? { openMode } : {}), ...(plugin ? { plugin } : {}) };
 }
 
 export function findLeafById(node: PaneNode, id: string): LeafNode | null {
@@ -147,7 +147,8 @@ export function moveLeaf(tree: PaneNode, dragId: string, dropId: string, positio
   const insertLeafAt = (node: PaneNode): PaneNode => {
     if (node.type === "leaf") {
       if (node.id !== dropId) return node;
-      const children = insertBefore ? [makeLeaf(dragId, dragLeaf.panel), { ...node, flex: 1 }] : [{ ...node, flex: 1 }, makeLeaf(dragId, dragLeaf.panel)];
+      const moved: LeafNode = { ...dragLeaf, flex: 1 };
+      const children = insertBefore ? [moved, { ...node, flex: 1 }] : [{ ...node, flex: 1 }, moved];
       return { type: "split" as const, direction, children, flex: node.flex };
     }
     return { ...node, children: node.children.map((c) => insertLeafAt(c)) };
@@ -165,8 +166,12 @@ export function collectPanelTypes(node: PaneNode): Set<PanelType> {
 }
 
 export function canAddPanel(tree: PaneNode | null, panel: PanelType): boolean {
-  if (!tree) return true;
-  const used = collectPanelTypes(tree);
+  return !tree || canAddPanelBeside(collectPanelTypes(tree), panel);
+}
+
+/** Whether a pane of panel can join panes of the used types: a singleton
+ *  shows once, and one of an exclusive group keeps the others out. */
+export function canAddPanelBeside(used: Set<PanelType>, panel: PanelType): boolean {
   if ((SINGLETON_PANELS as string[]).includes(panel) && used.has(panel)) {
     return false;
   }

@@ -581,6 +581,12 @@ For development: `make docker-build` builds from `container/Dockerfile` in the r
 | `loop app:url` | | Print the web UI's URL signed in with the API token (`--base`, default `http://localhost:5173/`), for running the UI in a browser |
 | `loop ui:state` | | Print the desktop app windows' state (`--watch` to print each change); see [docs/api.md](docs/api.md#ui-bridge) |
 | `loop ui:run` | | Run UI steps, a JSON array from an argument or stdin, in an app window (`--client`, `--timeout`) |
+| `loop plugin:list` | | List the installed plugins; plugins need `plugins.enabled` in the global config, see [docs/api.md](docs/api.md#plugins) |
+| `loop plugin:install <image>` | | Pull a plugin image, show its capabilities and install it once approved (`--dev` for a local image, `--yes` to skip the prompt) |
+| `loop plugin:upgrade <id> [tag]` | | Install a tag (default `latest`) of a plugin's image; new capabilities need approval (`--yes`) |
+| `loop plugin:remove <id>` | | Remove a plugin and its containers (`--purge` also removes its data) |
+| `loop plugin:dev <dir>` | | Build the Dockerfile in a plugin's source dir and install the image as a dev plugin (`--yes` to skip the prompt) |
+| `loop plugin:run <id> <action>` | | Run a plugin action in the current directory's channel, starting its container there (`--channel-id` or `--dir` for another channel) |
 | `loop readme` | `r` | Print the README documentation |
 
 `loop --help` lists every command from the command tree. Nested commands show by colon path and run that way too: `loop review:run` is `loop review run`.
@@ -1169,7 +1175,7 @@ In headless/Linux environments where Electron can't launch, `LOOP_NO_ELECTRON=1 
 | `get_review_comments` | Read the channel's review session: the PR, head SHA, status and every comment with its id, location, pushed state, source (agent or GitHub, with the GitHub id), category and the dedup pass's verdict; filter to unpushed agent comments or one file. The diff is left out |
 | `dedup_review_findings` | Run the review dedup pass: drop agent comments that repeat another, trim bundled ones, re-anchor misplaced ones, and record a real / false-positive / already-fixed verdict on the rest |
 | `delete_review_comment` | Delete an agent review comment (from the PR too if pushed); GitHub comments are refused |
-| `update_review_comment` | Replace an unpushed agent review comment's body |
+| `update_review_comment` | Replace an unpushed agent review comment's body and/or record a verdict on it |
 | `push_review_comment` | Post one agent review comment to the PR |
 | `push_all_review_comments` | Post every unpushed agent review comment to the PR |
 | `search_memory` | Semantic search across memory files (ranked by similarity) |
@@ -1216,6 +1222,7 @@ Requires [Go 1.27+](https://go.dev/dl/).
 
 ```sh
 make build            # Build the loop binary
+make build-linux      # Build a linux loop (for plugins.gate_binary)
 make install          # Install to $GOPATH/bin
 make docker-build     # Build the Docker agent image (from local source)
 make restart          # Reinstall + restart daemon

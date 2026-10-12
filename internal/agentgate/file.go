@@ -22,6 +22,9 @@ const (
 	OpChmod  = "chmod"
 	OpChown  = "chown"
 	OpLink   = "link"
+	// OpExec matches the file an execve(2)/execveat(2) runs; see
+	// Policy.MatchExecFile.
+	OpExec = "exec"
 )
 
 // FileRequest is the post-read view of a file-op trap. The server-side

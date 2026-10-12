@@ -9,6 +9,7 @@ app/resources/
 
 # Test coverage
 coverage.out
+coverage-pluginsdk.out
 coverage.html
 
 # IDE

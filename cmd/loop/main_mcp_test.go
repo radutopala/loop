@@ -341,3 +341,41 @@ func (s *MainSuite) TestNewMCPCmdWithDirFlag() {
 	_ = cmd.Execute()
 	require.True(s.T(), called)
 }
+
+func (s *MainSuite) TestNewMCPCmdPluginTools() {
+	s.Run("plugin agent", func() {
+		logPath := filepath.Join(s.T().TempDir(), "mcp.log")
+		var srv *mcpserver.Server
+		s.app.newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger, opts ...mcpserver.MemoryOption) *mcpserver.Server {
+			srv = mcpserver.New(channelID, apiURL, authorID, httpClient, logger, opts...)
+			return srv
+		}
+		cmd := s.app.newMCPCmd()
+		cmd.SetArgs([]string{"--channel-id", "th1", "--api-url", "http://test:8222", "--log", logPath,
+			"--agent-id", agent.PluginAgentID("echo", "say"), "--plugin-id", "echo",
+			"--plugin-tools", `[{"name":"echo","description":"Echoes","input_schema":{"type":"object"}}]`})
+		_ = cmd.Execute()
+		require.NotNil(s.T(), srv)
+
+		ctx := context.Background()
+		t1, t2 := mcpsdk.NewInMemoryTransports()
+		go func() { _ = srv.MCPServer().Run(ctx, t1) }()
+		session, err := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "c", Version: "1"}, nil).Connect(ctx, t2, nil)
+		require.NoError(s.T(), err)
+		defer session.Close()
+		tools, err := session.ListTools(ctx, nil)
+		require.NoError(s.T(), err)
+		var names []string
+		for _, tool := range tools.Tools {
+			names = append(names, tool.Name)
+		}
+		require.Contains(s.T(), names, "plugin_echo")
+		require.NotContains(s.T(), names, "list_agents", "a plugin's agent works alone")
+	})
+	s.Run("bad tools", func() {
+		cmd := s.app.newMCPCmd()
+		cmd.SetArgs([]string{"--channel-id", "th1", "--api-url", "http://test:8222", "--plugin-id", "echo", "--plugin-tools", "{"})
+		cmd.SilenceUsage, cmd.SilenceErrors = true, true
+		require.ErrorContains(s.T(), cmd.Execute(), "parsing --plugin-tools")
+	})
+}

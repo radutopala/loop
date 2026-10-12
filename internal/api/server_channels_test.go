@@ -311,6 +311,7 @@ func (s *ServerSuite) TestDeleteChannelCleansUpContainers() {
 			{ContainerID: "agent-c1", ChannelID: "ch-1", Type: container.ContainerTypeAgent},
 			{ContainerID: "shell-c2", ChannelID: "ch-1", Type: container.ContainerTypeShell},
 			{ContainerID: "chrome-c3", ChannelID: "ch-1", Type: container.ContainerTypeChrome},
+			{ContainerID: "plugin-c4", ChannelID: "ch-1", Type: container.ContainerTypePlugin},
 			{ContainerID: "done-c4", ChannelID: "ch-1", Type: container.ContainerTypeAgent, Status: container.ContainerStatusPendingRemoval},
 			{ContainerID: "shell-t1", ChannelID: "t-1", Type: container.ContainerTypeShell},
 		},
@@ -326,6 +327,12 @@ func (s *ServerSuite) TestDeleteChannelCleansUpContainers() {
 	browserMgr.On("StopBrowser", mock.Anything, "t-1").Return("", nil)
 	browserMgr.On("RemoveProfile", mock.Anything, "t-1").Return(nil)
 
+	// The plugin runtime stops its own containers.
+	pm := new(MockPluginManager)
+	pm.On("RemoveChannel", mock.Anything, "ch-1").Return(true, nil).Once()
+	pm.On("RemoveChannel", mock.Anything, "t-1").Return(false, errors.New("docker down")).Once()
+	s.srv.SetPluginManager(pm)
+
 	s.srv.containerRegistry = reg
 	s.srv.containerKeepAlive = 5 * time.Minute
 	s.srv.browser.setProviders(browserMgr, s.srv.browser.hostProvider)
@@ -337,6 +344,7 @@ func (s *ServerSuite) TestDeleteChannelCleansUpContainers() {
 	require.Equal(s.T(), http.StatusNoContent, w.Code)
 	reg.AssertExpectations(s.T())
 	browserMgr.AssertExpectations(s.T())
+	pm.AssertExpectations(s.T())
 }
 
 // TestDeleteThreadMarksContainers covers a deleted thread's containers:
@@ -350,17 +358,22 @@ func (s *ServerSuite) TestDeleteThreadMarksContainers() {
 		{ContainerID: "shell-t1", ChannelID: "thread-1", Type: container.ContainerTypeShell},
 		{ContainerID: "agent-t1", ChannelID: "thread-1", Type: container.ContainerTypeAgent},
 		{ContainerID: "done-t1", ChannelID: "thread-1", Type: container.ContainerTypeAgent, Status: container.ContainerStatusPendingRemoval},
+		{ContainerID: "plugin-t1", ChannelID: "thread-1", Type: container.ContainerTypePlugin}, // the plugin runtime's
 		{ContainerID: "shell-other", ChannelID: "thread-2", Type: container.ContainerTypeShell},
 	}}
 	reg.On("ScheduleRemove", "shell-t1", time.Minute).Return()
 	reg.On("ScheduleRemove", "agent-t1", time.Minute).Return()
 	s.srv.containerRegistry = reg
 	s.srv.containerKeepAlive = time.Minute
+	pm := new(MockPluginManager)
+	pm.On("RemoveChannel", mock.Anything, "thread-1").Return(true, nil).Once()
+	s.srv.SetPluginManager(pm)
 
 	rec := s.testRequest("DELETE", "/api/threads/thread-1", "")
 
 	require.Equal(s.T(), http.StatusNoContent, rec.Code)
 	reg.AssertExpectations(s.T())
+	pm.AssertExpectations(s.T())
 }
 
 // TestDeleteThreadHiddenContainerRemoveError covers a hidden thread's
@@ -488,6 +501,7 @@ func (s *ServerSuite) TestDeleteThreadStopsHiddenThreads() {
 	reg := &mockContainerManager{byChannel: []*container.ContainerInfo{
 		{ContainerID: "agent-l1", ChannelID: "learn-1", Type: container.ContainerTypeAgent},
 		{ContainerID: "chrome-l1", ChannelID: "learn-1", Type: container.ContainerTypeChrome}, // the BrowserProvider's
+		{ContainerID: "plugin-l1", ChannelID: "learn-1", Type: container.ContainerTypePlugin}, // the plugin runtime's
 		{ContainerID: "agent-e1", ChannelID: "explain-1", Type: container.ContainerTypeAgent},
 	}}
 	reg.On("RemoveContainer", mock.Anything, "agent-l1").Return(nil)

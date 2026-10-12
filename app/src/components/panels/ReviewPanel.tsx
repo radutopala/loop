@@ -13,6 +13,7 @@ import {
   type ReviewPR,
   type ReviewSession,
   type ReviewStatus,
+  type ReviewVerdict,
   setReviewAgent,
   setReviewFork,
   stopReview,
@@ -269,27 +270,51 @@ export function buildCheckAllPrompt(session?: ReviewSession | null): string {
     "1. Run the dedup_review_findings tool first, so comments that report the same issue are merged before you check them. If it fails, say why and carry on.",
     "2. Read the comments left with the get_review_comments tool. Skip the ones whose source is github.",
     `3. For each one, read the code it points at${checkout ? " in the checkout above" : ""} and decide whether it is a real issue, a false positive, or already fixed.`,
-    `4. Reply with one entry per comment: its id, path:line, category (when it has one), verdict and why. Link a pushed comment to ${prURL ? `${prURL}#discussion_r<its GitHub id>` : "its GitHub thread"}. Only show a severity the comment itself states; don't rate them yourself.`,
-    "5. End with what the dedup pass removed and how many comments got each verdict.",
+    "4. Record your verdict on each one with the update_review_comment tool: its comment_id, verdict (real, false_positive or already_fixed) and a one-sentence reason citing the line you read. Don't pass a body. Your verdict replaces the dedup pass's, so the Review panel shows yours.",
+    `5. Reply with one entry per comment: its id, path:line, category (when it has one), verdict and why. Link a pushed comment to ${prURL ? `${prURL}#discussion_r<its GitHub id>` : "its GitHub thread"}. Only show a severity the comment itself states; don't rate them yourself.`,
+    "6. End with what the dedup pass removed and how many comments got each verdict.",
     "",
-    "Don't change any code. Apart from the dedup pass, don't edit, delete or push any comment.",
+    "Don't change any code. Apart from the dedup pass and recording verdicts, don't edit, delete or push any comment.",
   );
   return lines.join("\n");
 }
 
+// isActionable reports whether Address all and Push all take c: it isn't
+// pushed yet, and the dedup pass didn't mark it false_positive or
+// already_fixed. A comment with no verdict yet counts.
+export function isActionable(c: ReviewComment): boolean {
+  return !c.pushed && c.verdict !== "false_positive" && c.verdict !== "already_fixed";
+}
+
+// skippedNote names the unpushed comments Address all and Push all leave
+// out, in the verdict badges' words: " · skips 1 false positive, 2 already
+// fixed". It's empty when they leave none out.
+export function skippedNote(comments: ReviewComment[]): string {
+  const count = (v: ReviewVerdict) => comments.filter((c) => !c.pushed && c.verdict === v).length;
+  const parts: string[] = [];
+  const fp = count("false_positive");
+  const af = count("already_fixed");
+  if (fp > 0) parts.push(`${fp} false positive`);
+  if (af > 0) parts.push(`${af} already fixed`);
+  return parts.length > 0 ? ` · skips ${parts.join(", ")}` : "";
+}
+
 // allActionItems lists the header's "All" menu: the actions over every
 // comment of a kind, each with its count, and only those with something
-// to act on. A click while another action is busy does nothing, since the
-// menu can stay open while one starts.
-export function allActionItems(a: { newCount: number; pendingCount: number; busy: boolean; onCheckAll: () => void; onAddressAll: () => void; onPushAll: () => void }): MenuItem[] {
+// to act on. skipped is skippedNote's text, which Address all and Push all
+// carry so their count reads against Check all's. A click while another
+// action is busy does nothing, since the menu can stay open while one
+// starts.
+export function allActionItems(a: { newCount: number; pendingCount: number; skipped?: string; busy: boolean; onCheckAll: () => void; onAddressAll: () => void; onPushAll: () => void }): MenuItem[] {
   const guard = (fn: () => void) => () => {
     if (!a.busy) fn();
   };
   const items: MenuItem[] = [];
   if (a.newCount > 0) items.push({ label: `Check all (${a.newCount})`, onClick: guard(a.onCheckAll) });
   if (a.pendingCount > 0) {
-    items.push({ label: `Address all (${a.pendingCount})`, onClick: guard(a.onAddressAll) });
-    items.push({ label: `Push all to GitHub (${a.pendingCount})`, onClick: guard(a.onPushAll) });
+    const skipped = a.skipped ?? "";
+    items.push({ label: `Address all (${a.pendingCount})${skipped}`, onClick: guard(a.onAddressAll) });
+    items.push({ label: `Push all to GitHub (${a.pendingCount})${skipped}`, onClick: guard(a.onPushAll) });
   }
   return items;
 }
@@ -1015,7 +1040,7 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
   const onAddressOne = useCallback((c: ReviewComment) => sendAboutComment(buildAddressPrompt(c, session)), [sendAboutComment, session]);
 
   const onAddressAll = useCallback(async () => {
-    const pending = (session?.comments ?? []).filter((c) => !c.pushed);
+    const pending = (session?.comments ?? []).filter(isActionable);
     if (pending.length === 0) return;
     // Toggle `busy` for the duration of the sendMessage round-trip so the
     // header buttons (which all gate on `busy`) actually disable. Without
@@ -1088,7 +1113,8 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
     }
   }, [channelId]);
 
-  const pendingCount = useMemo(() => (session?.comments ?? []).filter((c) => !c.pushed).length, [session]);
+  const pendingCount = useMemo(() => (session?.comments ?? []).filter(isActionable).length, [session]);
+  const skipped = useMemo(() => skippedNote(session?.comments ?? []), [session]);
 
   const btnStyle: React.CSSProperties = {
     background: "transparent",
@@ -1492,6 +1518,7 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
           items={allActionItems({
             newCount,
             pendingCount,
+            skipped,
             busy,
             onCheckAll: () => void onCheckAll(),
             onAddressAll: () => void onAddressAll(),

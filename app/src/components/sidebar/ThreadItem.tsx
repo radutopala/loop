@@ -1,10 +1,12 @@
 import { useRef, useState } from "react";
 import { forkThread } from "../../api/channels";
+import { unreadLabel, unreadTitle } from "../../notifications/notifications";
+import { useNotificationsState } from "../../notifications/useNotifications";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { Channel } from "../../types";
 import type { PillKind } from "./pills";
-import { REVIEWING_PILL, SIDEBAR_PILLS } from "./pills";
+import { pluginBadgeTitle, REVIEWING_PILL, SIDEBAR_PILLS } from "./pills";
 import { RowInfoPopup } from "./RowInfoPopup";
 import { useExpandToSelected, useRevealSelected } from "./reveal";
 import { SessionKindIcon } from "./SessionKindIcon";
@@ -80,7 +82,11 @@ export function ThreadItem({
   const isUnread = unreadIdsRef?.current?.has(thread.id) ?? false;
   const activePills = SIDEBAR_PILLS.filter((p) => pillsRef?.current?.get(p.kind)?.has(thread.id));
   const reviewing = !!thread.review_running;
-  const hasAnyPill = activePills.length > 0 || reviewing;
+  const badges = thread.plugin_badges ?? [];
+  // The open row's bell already counts its notifications.
+  const unread = useNotificationsState().unread[thread.id] ?? 0;
+  const notes = selected ? 0 : unread;
+  const hasAnyPill = activePills.length > 0 || reviewing || badges.length > 0 || notes > 0;
   const displayName = sessionName(thread);
 
   return (
@@ -259,6 +265,23 @@ export function ThreadItem({
               color={colors[REVIEWING_PILL.color]}
               title={REVIEWING_PILL.title}
               marginLeft={isUnread || activePills.length > 0 || thread.diff_additions > 0 || thread.diff_deletions > 0 ? 4 : "auto"}
+            />
+          )}
+          {badges.map((b, i) => (
+            <StatusPill
+              key={`plugin:${b.plugin_id}`}
+              label={b.text}
+              color={colors.textMuted}
+              title={pluginBadgeTitle(b)}
+              marginLeft={isUnread || activePills.length > 0 || reviewing || i > 0 || thread.diff_additions > 0 || thread.diff_deletions > 0 ? 4 : "auto"}
+            />
+          ))}
+          {notes > 0 && (
+            <StatusPill
+              label={unreadLabel(notes)}
+              color={colors.textMuted}
+              title={unreadTitle(notes)}
+              marginLeft={isUnread || activePills.length > 0 || reviewing || badges.length > 0 || thread.diff_additions > 0 || thread.diff_deletions > 0 ? 4 : "auto"}
             />
           )}
           {(thread.container_running || thread.agent_running || isRunningMapRef?.current?.get(thread.id) || reviewing) && (

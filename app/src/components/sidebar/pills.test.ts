@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { REVIEWING_PILL, SIDEBAR_PILLS, trustPillIds } from "./pills";
+import { pluginBadgeTitle, REVIEWING_PILL, SIDEBAR_PILLS, trustPillIds } from "./pills";
 
 describe("REVIEWING_PILL", () => {
   it("stays out of the pills that mean the session needs you", () => {
@@ -17,5 +17,15 @@ describe("trustPillIds", () => {
       { id: "unset", parent_id: "" },
     ]);
     expect([...ids]).toEqual(["proj"]);
+  });
+});
+
+describe("pluginBadgeTitle", () => {
+  it.each([
+    [{ plugin_id: "quiz", text: "3", title: "3 quizzes due" }, "quiz: 3 quizzes due"],
+    [{ plugin_id: "quiz", text: "3" }, "quiz: 3"],
+    [{ plugin_id: "quiz", text: "3", title: "" }, "quiz: 3"],
+  ])("%o → %s", (b, want) => {
+    expect(pluginBadgeTitle(b)).toBe(want);
   });
 });

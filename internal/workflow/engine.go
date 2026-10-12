@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -16,6 +17,9 @@ import (
 	"github.com/radutopala/loop/internal/events"
 )
 
+// ErrRunNotFound is returned for a run that doesn't exist.
+var ErrRunNotFound = errors.New("workflow run not found")
+
 // Runner executes agent requests (prompt nodes) in Docker containers.
 type Runner interface {
 	Run(ctx context.Context, req *agent.AgentRequest) (*agent.AgentResponse, error)
@@ -25,6 +29,34 @@ type Runner interface {
 // the combined stdout/stderr.
 type BashRunner interface {
 	RunBash(ctx context.Context, script, channelID, dirPath, parentDirPath string) (string, error)
+}
+
+// PluginCaller runs plugin nodes on the plugin's container in a channel,
+// starting it if the channel's project enables the plugin.
+type PluginCaller interface {
+	// RunPluginAction asks the plugin to run action as the call callID,
+	// with input, a JSON object or nil; it returns once the plugin accepts
+	// it.
+	RunPluginAction(ctx context.Context, pluginID, action, channelID, dirPath, callID string, input json.RawMessage) error
+	// CallPluginTool calls tool with input, a JSON object, as the call
+	// callID, and returns the tool's result.
+	CallPluginTool(ctx context.Context, pluginID, tool, channelID, dirPath, callID string, input json.RawMessage) (PluginToolResult, error)
+}
+
+// PluginToolResult is a plugin tool's answer to a workflow tool node.
+type PluginToolResult struct {
+	Content string
+	IsError bool
+	// Structured is the tool's structured_content, a JSON object, or nil.
+	Structured json.RawMessage
+}
+
+// Option configures an engine.
+type Option func(*defaultEngine)
+
+// WithPlugins lets plugin nodes run, through p.
+func WithPlugins(p PluginCaller) Option {
+	return func(e *defaultEngine) { e.plugins = p }
 }
 
 // EventBroadcaster sends workflow events to connected clients.
@@ -62,6 +94,7 @@ type defaultEngine struct {
 	store       db.Store
 	runner      Runner
 	bashRunner  BashRunner
+	plugins     PluginCaller // nil while plugins are off
 	broadcaster EventBroadcaster
 	workflows   func(dirPath, parentDirPath string) []config.WorkflowDef // returns merged workflows from config
 	loopDir     string
@@ -81,7 +114,7 @@ type defaultEngine struct {
 
 // NewEngine creates a workflow engine. The concurrency config controls how many
 // workflow runs and node goroutines may execute in parallel (0 = unlimited).
-func NewEngine(store db.Store, runner Runner, bashRunner BashRunner, broadcaster EventBroadcaster, workflowsFunc func(dirPath, parentDirPath string) []config.WorkflowDef, loopDir string, concurrency config.WorkflowConcurrency, logger *slog.Logger) Engine {
+func NewEngine(store db.Store, runner Runner, bashRunner BashRunner, broadcaster EventBroadcaster, workflowsFunc func(dirPath, parentDirPath string) []config.WorkflowDef, loopDir string, concurrency config.WorkflowConcurrency, logger *slog.Logger, opts ...Option) Engine {
 	e := &defaultEngine{
 		store:             store,
 		runner:            runner,
@@ -100,6 +133,9 @@ func NewEngine(store db.Store, runner Runner, bashRunner BashRunner, broadcaster
 	if concurrency.MaxConcurrentNodes > 0 {
 		e.nodeSem = make(chan struct{}, concurrency.MaxConcurrentNodes)
 	}
+	for _, opt := range opts {
+		opt(e)
+	}
 	return e
 }
 
@@ -110,7 +146,7 @@ func (e *defaultEngine) StartRun(ctx context.Context, opts StartRunOptions) (str
 		return "", err
 	}
 
-	if err := validateWorkflowDef(wfDef); err != nil {
+	if err := ValidateWorkflowDef(wfDef); err != nil {
 		return "", err
 	}
 
@@ -207,7 +243,7 @@ func (e *defaultEngine) ResumeRun(ctx context.Context, runID, response string) e
 		return fmt.Errorf("looking up run: %w", err)
 	}
 	if run == nil {
-		return fmt.Errorf("workflow run not found: %s", runID)
+		return fmt.Errorf("%w: %s", ErrRunNotFound, runID)
 	}
 	if run.PausedNodeID == "" {
 		return fmt.Errorf("no pending approval for run: %s", runID)
@@ -240,7 +276,7 @@ func (e *defaultEngine) CancelRun(ctx context.Context, runID string) error {
 		return err
 	}
 	if run == nil {
-		return fmt.Errorf("workflow run not found: %s", runID)
+		return fmt.Errorf("%w: %s", ErrRunNotFound, runID)
 	}
 	if run.Status != db.WorkflowRunStatusRunning && run.Status != db.WorkflowRunStatusPaused {
 		return nil // already terminal
@@ -261,7 +297,7 @@ func (e *defaultEngine) DeleteRun(ctx context.Context, runID string) error {
 		return err
 	}
 	if run == nil {
-		return fmt.Errorf("workflow run not found: %s", runID)
+		return fmt.Errorf("%w: %s", ErrRunNotFound, runID)
 	}
 	// Cancel if still active.
 	if run.Status == db.WorkflowRunStatusRunning || run.Status == db.WorkflowRunStatusPaused {
@@ -287,7 +323,7 @@ func (e *defaultEngine) RetryRun(ctx context.Context, runID string) (string, err
 		return "", fmt.Errorf("looking up run: %w", err)
 	}
 	if run == nil {
-		return "", fmt.Errorf("workflow run not found: %s", runID)
+		return "", fmt.Errorf("%w: %s", ErrRunNotFound, runID)
 	}
 	if run.Status == db.WorkflowRunStatusRunning || run.Status == db.WorkflowRunStatusPaused {
 		return "", fmt.Errorf("cannot retry a run that is still %s", run.Status)
@@ -465,7 +501,7 @@ func (e *defaultEngine) recoverPausedRun(ctx context.Context, run *db.WorkflowRu
 	// that was hand-edited in ~/.loop/config.json while paused; without
 	// this guard executeDAGFromCheckpoint trips half-way through with an
 	// "unsupported body child" error after already running siblings.
-	if err := validateWorkflowDef(wfDef); err != nil {
+	if err := ValidateWorkflowDef(wfDef); err != nil {
 		e.logger.Error("workflow: cannot recover paused run — definition fails validation", "run_id", run.ID, "workflow", run.WorkflowName, "error", err)
 		e.failStaleRun(ctx, run)
 		return
@@ -478,21 +514,14 @@ func (e *defaultEngine) recoverPausedRun(ctx context.Context, run *db.WorkflowRu
 		return
 	}
 
-	// For loop body children, multiple rows can exist per node_id (one per
-	// iteration). Templates in subsequent iterations read the previous
-	// iteration's output via runCtx.NodeOutputs[childID], so on resume we
-	// need the HIGHEST-iteration Success row to win deterministically —
-	// not whatever ListNodeRuns happens to return last.
+	// The success rows' outputs and data feed the remaining nodes'
+	// templates (see nodeResults).
 	completedNodes := make(map[string]db.NodeRunStatus, len(nodeRuns))
-	completedOutputs := make(map[string]string)
-	highestOutputIter := make(map[string]int)
+	results := newNodeResults()
 	for _, nr := range nodeRuns {
 		completedNodes[nr.NodeID] = nr.Status
-		if nr.Status == db.NodeRunStatusSuccess && nr.Output != "" {
-			if prev, ok := highestOutputIter[nr.NodeID]; !ok || nr.Iteration >= prev {
-				completedOutputs[nr.NodeID] = nr.Output
-				highestOutputIter[nr.NodeID] = nr.Iteration
-			}
+		if nr.Status == db.NodeRunStatusSuccess {
+			results.add(nr)
 		}
 	}
 
@@ -522,7 +551,7 @@ func (e *defaultEngine) recoverPausedRun(ctx context.Context, run *db.WorkflowRu
 	e.mu.Unlock()
 
 	e.logger.Info("workflow: recovering paused run from checkpoint", "run_id", run.ID, "workflow", run.WorkflowName, "paused_node", run.PausedNodeID)
-	go e.executeDAGFromCheckpoint(runCtx, run, wfDef, inputs, completedNodes, completedOutputs)
+	go e.executeDAGFromCheckpoint(runCtx, run, wfDef, inputs, completedNodes, results)
 }
 
 // isNodeHeartbeatFresh returns true if the node's last heartbeat is within the
@@ -549,7 +578,7 @@ func (e *defaultEngine) recoverRunningRun(ctx context.Context, run *db.WorkflowR
 		return
 	}
 
-	if err := validateWorkflowDef(wfDef); err != nil {
+	if err := ValidateWorkflowDef(wfDef); err != nil {
 		e.logger.Error("workflow: cannot recover running run — definition fails validation", "run_id", run.ID, "workflow", run.WorkflowName, "error", err)
 		e.failStaleRun(ctx, run)
 		return
@@ -563,11 +592,10 @@ func (e *defaultEngine) recoverRunningRun(ctx context.Context, run *db.WorkflowR
 	}
 
 	// Classify running nodes using heartbeat freshness.
-	// See recoverPausedRun: for loop body children, pick the highest-
-	// iteration Success row's output deterministically.
+	// See recoverPausedRun: the success rows' outputs and data feed the
+	// remaining nodes' templates.
 	completedNodes := make(map[string]db.NodeRunStatus, len(nodeRuns))
-	completedOutputs := make(map[string]string)
-	highestOutputIter := make(map[string]int)
+	results := newNodeResults()
 	for _, nr := range nodeRuns {
 		status := nr.Status
 		if status == db.NodeRunStatusRunning {
@@ -581,11 +609,8 @@ func (e *defaultEngine) recoverRunningRun(ctx context.Context, run *db.WorkflowR
 			// mark it failed (the else branch of the Running case).
 		}
 		completedNodes[nr.NodeID] = status
-		if status == db.NodeRunStatusSuccess && nr.Output != "" {
-			if prev, ok := highestOutputIter[nr.NodeID]; !ok || nr.Iteration >= prev {
-				completedOutputs[nr.NodeID] = nr.Output
-				highestOutputIter[nr.NodeID] = nr.Iteration
-			}
+		if status == db.NodeRunStatusSuccess {
+			results.add(nr)
 		}
 	}
 
@@ -615,7 +640,7 @@ func (e *defaultEngine) recoverRunningRun(ctx context.Context, run *db.WorkflowR
 	e.mu.Unlock()
 
 	e.logger.Info("workflow: recovering running run from checkpoint using heartbeat data", "run_id", run.ID, "workflow", run.WorkflowName)
-	go e.executeDAGFromCheckpoint(runCtx, run, wfDef, inputs, completedNodes, completedOutputs)
+	go e.executeDAGFromCheckpoint(runCtx, run, wfDef, inputs, completedNodes, results)
 }
 
 // failStaleRun marks a running workflow and its non-terminal nodes as failed

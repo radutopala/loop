@@ -229,12 +229,13 @@ func (s *SQLiteStore) ListPendingChannels(ctx context.Context) ([]string, error)
 	return ids, rows.Err()
 }
 
-// DeleteQueuedMessage removes a waiting (not-yet-processed, non-bot) user message
-// from the queue. Returns true when a row was deleted, false when no matching row
-// exists (already processed, wrong channel, bot message, or never existed).
+// DeleteQueuedMessage removes a waiting (not-yet-processed, not running,
+// non-bot) user message from the queue. Returns true when a row was deleted,
+// false when no matching row exists (already running or processed, wrong
+// channel, bot message, or never existed).
 func (s *SQLiteStore) DeleteQueuedMessage(ctx context.Context, channelID, msgID string) (bool, error) {
 	res, err := s.db.ExecContext(ctx,
-		`DELETE FROM messages WHERE channel_id = ? AND msg_id = ? AND is_bot = 0 AND is_processed = 0 AND kind = 'message'`,
+		`DELETE FROM messages WHERE channel_id = ? AND msg_id = ? AND is_bot = 0 AND is_processed = 0 AND is_running = 0 AND kind = 'message'`,
 		channelID, msgID,
 	)
 	if err != nil {
@@ -426,7 +427,7 @@ func (s *SQLiteStore) GetMessagesCursor(ctx context.Context, channelID string, c
 func (s *SQLiteStore) SearchMessages(ctx context.Context, query string, limit int) ([]*Message, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+messageColumns+` FROM messages WHERE kind = 'message' AND content LIKE ?
-		 AND channel_id NOT IN (SELECT channel_id FROM channels WHERE kind IN (`+hiddenKinds+`))
+		 AND channel_id NOT IN (SELECT channel_id FROM channels WHERE `+hiddenKind+`)
 		 ORDER BY created_at DESC LIMIT ?`,
 		"%"+query+"%", limit,
 	)

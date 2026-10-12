@@ -15,8 +15,8 @@ export default defineConfig({
     proxy: {
       // Content links (iframes, images, <base href>) the UI can't add a token to.
       "/c/": {
+        // Keep the page's Host: plugin panels get a CSP pinned to it.
         target: apiTarget,
-        changeOrigin: true,
       },
       "/api": {
         target: apiTarget,

@@ -225,6 +225,27 @@ func (s *PolicySuite) TestMatchFileFallsThroughToDefault() {
 	require.Equal(s.T(), "default", r.RuleID)
 }
 
+func (s *PolicySuite) TestMatchExecFile() {
+	p, err := CompilePolicy(types.DecisionDeny, nil, nil,
+		[]types.FileRule{
+			{Paths: []string{"/data/**"}, Decision: types.DecisionAllow},
+			{Paths: []string{"/data/**"}, Operations: []string{OpWrite, OpExec}, Decision: types.DecisionDeny, Message: "no exec"},
+		})
+	require.NoError(s.T(), err)
+	require.True(s.T(), p.HasExecFileRules())
+	r, ok := p.MatchExecFile("/data/bin/x")
+	require.True(s.T(), ok, "a rule matching any op doesn't cover exec")
+	require.Equal(s.T(), MatchResult{Decision: types.DecisionDeny, Message: "no exec", RuleID: "file[1]"}, r)
+	_, ok = p.MatchExecFile("/bin/x")
+	require.False(s.T(), ok, "the default decision doesn't apply to exec")
+
+	p, err = CompilePolicy(types.DecisionAllow, nil, nil, []types.FileRule{{Decision: types.DecisionDeny}})
+	require.NoError(s.T(), err)
+	require.False(s.T(), p.HasExecFileRules())
+	_, ok = p.MatchExecFile("/data/x")
+	require.False(s.T(), ok)
+}
+
 // --- Helper edge cases ---
 
 func (s *PolicySuite) TestMatchAnyGlobSkipsBadPattern() {

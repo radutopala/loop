@@ -659,7 +659,8 @@ The Explain pane's header says `Explain`, with `explaining a turn…` while one 
 - its status, time, and the start of the turn's prompt and reply;
 - **Go to message**, which scrolls the chat to the turn's last message;
 - **Re-explain**, which explains the turn again and replaces the card's content (disabled while it's queued or running);
-- the write-up, or the error when the run failed. A `Preview | Source` toggle in the card's header switches between the write-up rendered like the editor's markdown preview (the default) and its original markdown.
+- the write-up, or the error when the run failed. A `Preview | Source` toggle in the card's header switches between the write-up rendered like the editor's markdown preview (the default) and its original markdown;
+- a **Copy** button next to that toggle, which copies the whole write-up: its markdown as plain text, and the rendered write-up as rich text for targets that take it (a doc, Slack). The write-up's text can be selected and copied like the chat's.
 
 The card a turn's button asked for is scrolled into view and outlined for a few seconds. If Loop's connection drops, the explanations are fetched again when it comes back.
 

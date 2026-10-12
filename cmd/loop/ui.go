@@ -35,6 +35,7 @@ fails:
   {"op":"select_channel","channel_id":"…"}   open a channel, thread or worktree thread
   {"op":"set_tab","tab":"Chat"}               switch to a layout tab
   {"op":"create_tab","tab":"Review"}          open a new split tab (default "Layout N")
+  {"op":"create_tab","canvas":true}           a canvas tab, whose panes are tiles (default "Canvas N")
   {"op":"rename_tab","tab":"Review","name":"Diff"}
   {"op":"remove_tab","tab":"Diff"}            close a tab
   {"op":"add_pane","panel":"docker-agent","next_to":"chat","direction":"horizontal","open_mode":"fresh"}
@@ -45,6 +46,7 @@ fails:
   {"op":"restore_pane"}                       put it back
   {"op":"open_file","path":"cmd/main.go","line":12}
   {"op":"add_pane","panel":"playground","item":"board","scope":"project"}
+  {"op":"add_pane","panel":"plugin","item":"cogtest/quiz"}  a plugin's panel (or its id)
   {"op":"send_input","pane":"docker-agent","text":"…","submit":true}
   {"op":"read_output","pane":"docker-agent","lines":50}
   {"op":"wait_for","pane":"docker-agent","match":"regexp","quiet_ms":2000}

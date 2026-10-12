@@ -2,11 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { SideView } from "../components/layout/LearnSplit";
 import type { AgentInfo } from "../hooks/useAgentRegistry";
 import type { ContainerStatsByType } from "../hooks/useContainerStats";
+import { usePluginPanels } from "../plugins/PluginPanelsContext";
 import { EmptyLayoutPicker } from "../splitPane/AddPanelButton";
 import { useTheme } from "../ThemeContext";
-import { type AgentOpenMode, EXCLUSIVE_PANELS, type LeafNode, PANEL_OPTIONS, type PanelType, SINGLETON_PANELS } from "../types/panels";
+import { EXCLUSIVE_PANELS, type LeafNode, type PanelType, type PaneMeta, SINGLETON_PANELS } from "../types/panels";
 import { CanvasLearnDock, LEARN_DOCK_GAP } from "./CanvasLearnDock";
 import { CanvasTile } from "./CanvasTile";
+import { canvasAddRows } from "./canvasAddRows";
 import { DEFAULT_TILE_SIZES, findNonOverlappingPosition } from "./tilePlacement";
 import type { CanvasNode, CanvasTile as CanvasTileType } from "./types";
 
@@ -24,6 +26,17 @@ interface CanvasLayoutProps {
   /** The Learn view, docked to the chat's tile while it's up (see
    * CanvasLearnDock). */
   learnDock?: LearnDock;
+  /** Set to what UI steps do on the canvas. */
+  controlRef?: React.MutableRefObject<CanvasControl | null>;
+}
+
+/** What UI steps do on a canvas besides changing its tiles. */
+export interface CanvasControl {
+  /** The tile filling the view, if one does. */
+  maximized(): string | null;
+  /** c with the tile id filling the view, the one that did put back; with
+   *  null, just that. */
+  maximize(c: CanvasNode, id: string | null): CanvasNode;
 }
 
 export interface LearnDock {
@@ -36,7 +49,8 @@ export interface LearnDock {
 }
 
 /** Free-form canvas layout with draggable/resizable tiles, pan & zoom. */
-export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats, onCanvasChange, hiddenPanels, learnDock }: CanvasLayoutProps) {
+export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats, onCanvasChange, hiddenPanels, learnDock, controlRef }: CanvasLayoutProps) {
+  const pluginPanels = usePluginPanels();
   const { colors } = useTheme();
   const [showAddMenu, setShowAddMenu] = useState<{ x: number; y: number } | null>(null);
   const [maximizedId, setMaximizedId] = useState<string | null>(null);
@@ -122,41 +136,55 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats,
     [canvas, onCanvasChange],
   );
 
+  // The tile filling the view: maximizing one saves its place and size to
+  // put it back to.
+  const maximizedRef = useRef<string | null>(null);
+  maximizedRef.current = maximizedId;
+
+  const restored = useCallback((c: CanvasNode, id: string): CanvasNode => {
+    const saved = savedBoundsRef.current;
+    savedBoundsRef.current = null;
+    maximizedRef.current = null;
+    setMaximizedId(null);
+    return saved ? { ...c, tiles: c.tiles.map((t) => (t.id === id ? { ...t, ...saved } : t)) } : c;
+  }, []);
+
+  const maximized = useCallback((c: CanvasNode, id: string): CanvasNode => {
+    const tile = c.tiles.find((t) => t.id === id);
+    if (!tile) return c;
+    // Fill the visible viewport.
+    savedBoundsRef.current = { x: tile.x, y: tile.y, width: tile.width, height: tile.height };
+    const v = c.viewport;
+    const rect = containerRef.current?.getBoundingClientRect();
+    const w = (rect?.width ?? 1200) / v.zoom;
+    const h = (rect?.height ?? 800) / v.zoom;
+    const worldX = -v.x / v.zoom;
+    const worldY = -v.y / v.zoom;
+    const maxZ = Math.max(...c.tiles.map((t) => t.zIndex), 0);
+    maximizedRef.current = id;
+    setMaximizedId(id);
+    return { ...c, tiles: c.tiles.map((t) => (t.id === id ? { ...t, x: worldX + 10 / v.zoom, y: worldY + 10 / v.zoom, width: w - 20 / v.zoom, height: h - 20 / v.zoom, zIndex: maxZ + 1 } : t)) };
+  }, []);
+
   const handleToggleMaximize = useCallback(
     (id: string) => {
       const c = canvasRef.current;
-      const tile = c.tiles.find((t) => t.id === id);
-      if (!tile) return;
-
-      if (maximizedId === id) {
-        // Restore original bounds.
-        const saved = savedBoundsRef.current;
-        if (saved) {
-          onCanvasChange({
-            ...c,
-            tiles: c.tiles.map((t) => (t.id === id ? { ...t, ...saved } : t)),
-          });
-        }
-        savedBoundsRef.current = null;
-        setMaximizedId(null);
-      } else {
-        // Save current bounds, then fill the visible viewport.
-        savedBoundsRef.current = { x: tile.x, y: tile.y, width: tile.width, height: tile.height };
-        const rect = containerRef.current?.getBoundingClientRect();
-        const w = (rect?.width ?? 1200) / vp.zoom;
-        const h = (rect?.height ?? 800) / vp.zoom;
-        const worldX = -vp.x / vp.zoom;
-        const worldY = -vp.y / vp.zoom;
-        const maxZ = Math.max(...c.tiles.map((t) => t.zIndex), 0);
-        onCanvasChange({
-          ...c,
-          tiles: c.tiles.map((t) => (t.id === id ? { ...t, x: worldX + 10 / vp.zoom, y: worldY + 10 / vp.zoom, width: w - 20 / vp.zoom, height: h - 20 / vp.zoom, zIndex: maxZ + 1 } : t)),
-        });
-        setMaximizedId(id);
-      }
+      onCanvasChange(maximizedRef.current === id ? restored(c, id) : maximized(c, id));
     },
-    [maximizedId, vp, onCanvasChange],
+    [onCanvasChange, restored, maximized],
   );
+
+  if (controlRef) {
+    controlRef.current = {
+      maximized: () => maximizedRef.current,
+      maximize: (c, id) => {
+        const current = maximizedRef.current;
+        if (current === id) return c;
+        const next = current ? restored(c, current) : c;
+        return id ? maximized(next, id) : next;
+      },
+    };
+  }
 
   /** Convert screen coordinates to world coordinates. */
   const screenToWorld = useCallback(
@@ -172,7 +200,7 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats,
   );
 
   const handleAddTile = useCallback(
-    (panel: PanelType, position?: { x: number; y: number }, meta?: { openMode?: AgentOpenMode }) => {
+    (panel: PanelType, position?: { x: number; y: number }, meta?: PaneMeta) => {
       // Default position: center of the visible viewport.
       let worldPos: { x: number; y: number };
       if (position) {
@@ -189,6 +217,8 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats,
       // Nudge position to avoid overlapping existing tiles.
       const adjusted = findNonOverlappingPosition(worldPos.x, worldPos.y, tileW, tileH, canvas.tiles);
       const openMode = panel === "docker-agent" ? meta?.openMode : undefined;
+      const plugin = panel === "plugin" ? meta?.plugin : undefined;
+      if (panel === "plugin" && !plugin) return;
       const newTile: CanvasTileType = {
         id,
         panel,
@@ -198,6 +228,7 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats,
         height: tileH,
         zIndex: maxZ + 1,
         ...(openMode ? { openMode } : {}),
+        ...(plugin ? { plugin } : {}),
       };
       const newTiles: CanvasTileType[] = [newTile];
       if (panel === "editor" && !canvas.tiles.some((t) => t.panel === "file-tree")) {
@@ -415,14 +446,14 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats,
             boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
           }}
         >
-          {PANEL_OPTIONS.filter((opt) => !hiddenPanels?.includes(opt.panel)).map((opt) => {
-            const disabled = usedSingletons.has(opt.panel);
+          {canvasAddRows(usedSingletons, pluginPanels, hiddenPanels).map((opt) => {
+            const disabled = opt.disabled;
             return (
               <button
-                key={opt.panel}
+                key={opt.key}
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (!disabled) handleAddTile(opt.panel);
+                  if (!disabled) handleAddTile(opt.panel, undefined, opt.meta);
                 }}
                 disabled={disabled}
                 style={{
@@ -499,6 +530,7 @@ const PANEL_COLORS: Record<PanelType, string> = {
   audit: "#ef4444",
   quality: "#22c55e",
   review: "#facc15",
+  plugin: "#2dd4bf",
 };
 
 function CanvasMinimap({

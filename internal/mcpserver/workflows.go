@@ -292,7 +292,7 @@ func (s *Server) handleRetryWorkflowRunMCP(_ context.Context, _ *mcp.CallToolReq
 // config.NodeDef.
 type schemaNodeDef struct {
 	ID            string              `json:"id" jsonschema:"required,Unique node identifier within the workflow"`
-	Type          string              `json:"type" jsonschema:"required,Node type: 'prompt' (AI agent), 'bash' (shell script), 'loop' (prompt repeated until condition), or 'approval' (human decision)"`
+	Type          string              `json:"type" jsonschema:"required,Node type: 'prompt' (AI agent), 'bash' (shell script), 'loop' (prompt repeated until condition), 'approval' (human decision), or 'plugin' (a plugin's action or tool)"`
 	DependsOn     []string            `json:"depends_on,omitempty" jsonschema:"IDs of nodes that must complete before this one starts"`
 	When          string              `json:"when,omitempty" jsonschema:"Go template expression; node is skipped when it renders 'false'"`
 	TriggerRule   string              `json:"trigger_rule,omitempty" jsonschema:"How dependencies gate this node: 'all_success' (default), 'all_done', or 'one_success'"`
@@ -307,6 +307,10 @@ type schemaNodeDef struct {
 	Message       string              `json:"message,omitempty" jsonschema:"Approval message shown to the human for 'approval' nodes; supports templates"`
 	Timeout       string              `json:"timeout,omitempty" jsonschema:"Per-node timeout as a Go time.Duration (e.g. '5m')."`
 	Retry         *config.RetryConfig `json:"retry,omitempty" jsonschema:"Optional retry policy for transient failures"`
+	Plugin        string              `json:"plugin,omitempty" jsonschema:"Installed plugin id for 'plugin' nodes"`
+	Action        string              `json:"action,omitempty" jsonschema:"Action id from the plugin's manifest for 'plugin' nodes. Mutually exclusive with tool."`
+	Tool          string              `json:"tool,omitempty" jsonschema:"Tool name from the plugin's manifest for 'plugin' nodes. Mutually exclusive with action."`
+	Input         map[string]any      `json:"input,omitempty" jsonschema:"JSON object passed as a 'plugin' node's tool or action input; every string in it supports templates"`
 }
 
 // schemaWorkflowDef mirrors config.WorkflowDef but uses schemaNodeDef so the
@@ -332,9 +336,9 @@ func (s *Server) handleSaveWorkflow(_ context.Context, _ *mcp.CallToolRequest, i
 		return errorResult("action must be 'add' or 'update'"), nil, nil
 	}
 
-	// schemaWorkflowDef is plain data (strings, typed maps, slices), so the
-	// marshal cannot fail, and the struct-to-struct round-trip into the
-	// matching config.WorkflowDef field types cannot fail either.
+	// schemaWorkflowDef is plain data (strings, typed maps, slices, decoded
+	// JSON), so the marshal cannot fail, and the struct-to-struct round-trip
+	// into the matching config.WorkflowDef field types cannot fail either.
 	wfJSON, _ := json.Marshal(input.Workflow)
 	var wf config.WorkflowDef
 	_ = json.Unmarshal(wfJSON, &wf)

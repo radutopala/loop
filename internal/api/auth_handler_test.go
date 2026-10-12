@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"io"
@@ -19,6 +20,8 @@ import (
 
 	"github.com/radutopala/loop/internal/apiauth"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/plugin"
+	"github.com/radutopala/loop/internal/plugin/install"
 )
 
 type AuthHandlerSuite struct {
@@ -107,6 +110,7 @@ func (s *AuthHandlerSuite) TestCreateContentCapRejects() {
 		"unknown kind":        `{"kind":"zip"}`,
 		"raw without channel": `{"kind":"raw"}`,
 		"playground no name":  `{"kind":"playground","channel_id":"ch1"}`,
+		"plugin no name":      `{"kind":"plugin"}`,
 	}
 	for name, body := range tests {
 		s.Run(name, func() {
@@ -156,6 +160,76 @@ func (s *AuthHandlerSuite) TestServePlayground() {
 	s.Run("bad name", func() {
 		base := s.mint(`{"kind":"playground","channel_id":"ch1","name":"../x"}`)
 		require.Equal(s.T(), http.StatusBadRequest, s.do("", "GET", base, "").Code)
+	})
+}
+
+func (s *AuthHandlerSuite) TestServePluginUI() {
+	dir := filepath.Join(s.dir, "plugins", "echo", "images", "aa")
+	s.write(filepath.Join(dir, "plugin.json"), "{}")
+	s.write(filepath.Join(dir, "ui", "main", "index.html"), "<p>echo</p>")
+	s.write(filepath.Join(dir, "ui", "main", "app.js"), "let x")
+	require.NoError(s.T(), os.Symlink(filepath.Join(dir, "plugin.json"), filepath.Join(dir, "ui", "link.json")))
+	base := s.mint(`{"kind":"plugin","name":"echo"}`)
+
+	s.Run("disabled", func() {
+		require.Equal(s.T(), http.StatusNotImplemented, s.do("", "GET", base+"ui/main/index.html", "").Code)
+	})
+
+	pm := new(MockPluginManager)
+	s.srv.SetPluginManager(pm)
+	pm.On("Allows", mock.Anything, "echo", plugin.CapUIPanel).Return(nil)
+	pm.On("UI", mock.Anything, "echo").Return(dir, &plugin.Manifest{ID: "echo"}, nil)
+
+	rec := s.do("", "GET", base+"ui/main/index.html", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	require.Equal(s.T(), "<p>echo</p>", rec.Body.String())
+	require.Equal(s.T(), "text/html; charset=utf-8", rec.Header().Get("Content-Type"))
+	require.Equal(s.T(), pluginPanelCSP("http://example.com"+base), rec.Header().Get("Content-Security-Policy"))
+	require.Contains(s.T(), rec.Header().Get("Content-Security-Policy"), "sandbox allow-scripts allow-forms;")
+
+	rec = s.do("", "GET", base+"ui/main/app.js", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	require.Equal(s.T(), "text/javascript; charset=utf-8", rec.Header().Get("Content-Type"))
+
+	req := httptest.NewRequest("GET", base+"ui/main/app.js", nil)
+	req.TLS = &tls.ConnectionState{}
+	rec = httptest.NewRecorder()
+	s.handler.ServeHTTP(rec, req)
+	require.Contains(s.T(), rec.Header().Get("Content-Security-Policy"), "script-src https://example.com"+base+" ")
+
+	for path, code := range map[string]int{
+		"plugin.json":         http.StatusNotFound,
+		"ui/main/nope.js":     http.StatusNotFound,
+		"ui/main":             http.StatusNotFound,
+		"ui/..%2Fplugin.json": http.StatusBadRequest,
+		"ui/link.json":        http.StatusBadRequest,
+	} {
+		require.Equal(s.T(), code, s.do("", "GET", base+path, "").Code, path)
+	}
+
+	s.Run("not approved", func() {
+		other := s.mint(`{"kind":"plugin","name":"other"}`)
+		pm.On("Allows", mock.Anything, "other", plugin.CapUIPanel).Return(install.ErrNotApproved).Once()
+		pm.On("Allows", mock.Anything, "other", plugin.CapUICard).Return(install.ErrNotApproved).Once()
+		require.Equal(s.T(), http.StatusForbidden, s.do("", "GET", other+"ui/main/index.html", "").Code)
+	})
+	s.Run("cards only", func() {
+		cards := s.mint(`{"kind":"plugin","name":"cards"}`)
+		pm.On("Allows", mock.Anything, "cards", plugin.CapUIPanel).Return(install.ErrNotApproved).Once()
+		pm.On("Allows", mock.Anything, "cards", plugin.CapUICard).Return(nil).Once()
+		pm.On("UI", mock.Anything, "cards").Return(dir, &plugin.Manifest{ID: "cards"}, nil).Once()
+		require.Equal(s.T(), http.StatusOK, s.do("", "GET", cards+"ui/main/index.html", "").Code)
+	})
+	s.Run("not installed", func() {
+		gone := s.mint(`{"kind":"plugin","name":"none"}`)
+		pm.On("Allows", mock.Anything, "none", plugin.CapUIPanel).Return(install.ErrNotInstalled).Once()
+		require.Equal(s.T(), http.StatusForbidden, s.do("", "GET", gone+"ui/main/index.html", "").Code)
+	})
+	s.Run("removed meanwhile", func() {
+		gone := s.mint(`{"kind":"plugin","name":"gone"}`)
+		pm.On("Allows", mock.Anything, "gone", plugin.CapUIPanel).Return(nil).Once()
+		pm.On("UI", mock.Anything, "gone").Return("", nil, install.ErrNotInstalled).Once()
+		require.Equal(s.T(), http.StatusForbidden, s.do("", "GET", gone+"ui/main/index.html", "").Code)
 	})
 }
 

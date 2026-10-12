@@ -96,12 +96,23 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
    just one finding, that means the new findings plus the earlier ones
    still standing (judged `real`, or not judged yet), since the run may
    follow a fix: a fixed one becomes `already_fixed`, and a review-fix
-   loop stops handing it to the fix step. The verdicts are `real`, `false_positive` (the code doesn't do what the comment
+   loop stops handing it to the fix step. The pass sees an earlier
+   finding already marked `false_positive` or `already_fixed` with its
+   verdict and reason, and when the run reports it again, the earlier
+   finding is kept and the new repeat is folded into it. A
+   `false_positive` keeps its verdict, and a new finding resting on the
+   claim it was dismissed for is folded in rather than verified, so a
+   false positive stays one across rounds. An `already_fixed` finding
+   reported again is read again, since the fix may have been undone. A
+   note the fold appends to the kept finding keeps its verdict. A dedup
+   pass you start yourself checks everything again. The verdicts are `real`, `false_positive` (the code doesn't do what the comment
    says, or the behaviour is intended, handled elsewhere or what the PR
    sets out to do) or `already_fixed`, with a one-sentence reason citing
    the line it read. Moves and verdicts are claims about the code, so
-   Loop keeps one only when the pass opened that comment's file in the PR
-   worktree with the Read tool; one made from the comment text alone is dropped (and
+   Loop keeps one only when a Read tool call of the pass showed that
+   comment's line (and, for a move, the line it moves to) in the PR
+   worktree; reads through Bash don't count, and one made from the comment
+   text alone is dropped (and
    logged). The diff card shows the
    verdict as a badge (verified, false positive, already fixed) with the
    reason on hover, and `get_review_comments` lists it. A verdict deletes
@@ -134,7 +145,9 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
    [Required output format](#required-output-format).
 3. **Push** — each comment ships with **Push** (single), and the header's
    **All ▾** menu carries **Push all to GitHub (N)** (when at least one
-   comment is unpushed). The backend uses `gh api ... /pulls/N/comments` against the
+   comment is unpushed). Push all, like **Address all**, leaves out the
+   comments the dedup pass marked `false_positive` or `already_fixed`;
+   their own **Push** still sends them. The backend uses `gh api ... /pulls/N/comments` against the
    captured head SHA so comments anchor to the right commit even if the PR
    is force-pushed later. A pushed comment stays one comment: when Sync or
    a run reads the PR's comments back, GitHub's copy of it is folded into
@@ -240,8 +253,8 @@ comments to act on:
 | **Discuss** | The finding quoted under its `path:line`, with a blank line below it | No — it lands in the composer for you to finish |
 | **Why?** | The same quote, with `Please explain why we need this.` filled into that blank line | Yes, straight away |
 | **Address** | `Please address this review comment from the PR:` plus file, line, side, PR number, head SHA and author, then the quoted body and the run transcripts | Yes, straight away |
-| **Address all (N)** | The same request over every unpushed finding: the metadata header once, then a numbered block per finding, then the run transcripts | Yes, straight away |
-| **Check all (N)** | A request to clean up, then verify, every finding this session's runs reported (not the GitHub comments): PR number, head SHA and the PR checkout, then steps — run `dedup_review_findings`, read what is left with `get_review_comments`, check each against the code (real / false positive / already fixed), reply with an entry per comment (its category when it has one, its verdict and why, and a link to a pushed comment's GitHub thread; no severity unless the comment states one), ending with what the dedup pass removed and the count per verdict; change nothing else | Yes, straight away |
+| **Address all (N)** | The same request over every unpushed finding not marked `false_positive` or `already_fixed`: the metadata header once, then a numbered block per finding, then the run transcripts | Yes, straight away |
+| **Check all (N)** | A request to clean up, then verify, every finding this session's runs reported (not the GitHub comments): PR number, head SHA and the PR checkout, then steps — run `dedup_review_findings`, read what is left with `get_review_comments`, check each against the code (real / false positive / already fixed) and record that verdict with a reason through `update_review_comment`, reply with an entry per comment (its category when it has one, its verdict and why, and a link to a pushed comment's GitHub thread; no severity unless the comment states one), ending with what the dedup pass removed and the count per verdict; change nothing else | Yes, straight away |
 
 Discuss and Why? are one builder and one send path differing by a single
 string, so the quote, the transcripts and the spacing cannot drift apart
@@ -263,8 +276,9 @@ collapses into the `on github` marker once pushed.
 what is left itself with `get_review_comments`, which acts on the same channel's
 session, so the request stays short however many findings there are and each
 body arrives whole. The message carries no count, since the dedup pass changes
-it. It
-names the PR checkout because the review runs in the PR worktree, which need not
+it. The agent records the verdict it reaches on each comment, replacing the
+dedup pass's, so the badges and the **All ▾** menu's skip note match its
+reply. It names the PR checkout because the review runs in the PR worktree, which need not
 be the chat's working directory.
 
 All five first dispatch `loop:open-panel`, so a Chat panel is mounted in the
@@ -330,9 +344,12 @@ twenty comments spread over four files is painful to scroll by hand:
 - **Floating prev/next** (`review-comment-nav`, pinned bottom-right over the
   scroll) steps **comment to comment**, in render order: files top-to-bottom,
   within a file by the diff line each comment anchors to, then out-of-diff
-  comments last. Jumping to a comment in a collapsed file expands that file
-  first and moves the file rail's highlight with it. The widget only appears
-  once the session has at least one anchored comment.
+  comments last. A comment on a line no hunk shows, such as one anchored
+  past the end of its file, counts as out of diff and renders in that
+  section too, so the navigator's **new** count matches **Check all**'s.
+  Jumping to a comment in a collapsed file expands that file first and
+  moves the file rail's highlight with it. The widget only appears once
+  the session has at least one anchored comment.
 - **new | all** (the pair at the left of the floating widget) picks what
   the floating prev/next walks. **new**, the default, is only the findings
   this review session's runs reported, so a PR with a long GitHub thread

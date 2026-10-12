@@ -523,6 +523,30 @@ func (s *WorkflowsSuite) TestSaveWorkflowUpdateSuccess() {
 	require.Contains(s.T(), text, "existing-wf")
 }
 
+func (s *WorkflowsSuite) TestSaveWorkflowPluginNode() {
+	var sent map[string]any
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		require.NoError(s.T(), json.NewDecoder(req.Body).Decode(&sent))
+		return jsonResponse(http.StatusNoContent, ""), nil
+	}
+
+	_, isError := s.callTool("save_workflow", map[string]any{
+		"action": "add",
+		"workflow": map[string]any{
+			"name": "quiz",
+			"nodes": []any{map[string]any{
+				"id": "ask", "type": "plugin", "plugin": "quiz", "tool": "ask",
+				"input": map[string]any{"topic": "{{.Inputs.topic}}"},
+			}},
+		},
+	})
+	require.False(s.T(), isError)
+	node := sent["workflow"].(map[string]any)["nodes"].([]any)[0].(map[string]any)
+	require.Equal(s.T(), "quiz", node["plugin"])
+	require.Equal(s.T(), "ask", node["tool"])
+	require.Equal(s.T(), map[string]any{"topic": "{{.Inputs.topic}}"}, node["input"])
+}
+
 func (s *WorkflowsSuite) TestSaveWorkflowProjectScope() {
 	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
 		return jsonResponse(http.StatusNoContent, ""), nil

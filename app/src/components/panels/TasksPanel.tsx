@@ -3,7 +3,7 @@ import type { ScheduledTask, TaskRunLog, WorkflowDef } from "../../api/loopApi";
 import { createTask, deleteTask, fetchTaskRuns, fetchTasks, fetchWorkflows, runTaskNow, updateTask } from "../../api/loopApi";
 import { useEventStream } from "../../hooks/useEventStream";
 import { useTheme } from "../../ThemeContext";
-import { defaultScheduleForType, nextRunLabel, TYPE_COLORS, timeAgo } from "../../utils/taskUtils";
+import { defaultScheduleForType, nextRunLabel, TYPE_COLORS, taskSummary, timeAgo } from "../../utils/taskUtils";
 import { TaskScheduleField, type TaskType } from "./TaskScheduleField";
 
 interface TasksPanelProps {
@@ -490,7 +490,7 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
             whiteSpace: "nowrap",
           }}
         >
-          {task.workflow_name ? `workflow: ${task.workflow_name}` : task.bash_script ? `bash: ${task.bash_script}` : task.prompt}
+          {taskSummary(task)}
         </div>
         {task.enabled && task.type !== "manual" && <div style={{ color: colors.textDim, fontSize: 10 }}>Next: {nextRunLabel(task.next_run_at)}</div>}
       </div>
@@ -684,7 +684,11 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
             </button>
           </div>
           <div style={{ color: colors.textLight, fontSize: 12, fontFamily: "monospace" }}>{selectedTask.type === "manual" ? "on demand (run manually)" : selectedTask.schedule}</div>
-          {selectedTask.workflow_name ? (
+          {selectedTask.plugin_id ? (
+            <div data-testid="task-detail-plugin" style={{ color: colors.text, fontSize: 12 }}>
+              <span style={{ color: colors.active, fontWeight: 600 }}>Plugin:</span> {selectedTask.plugin_id}'s {selectedTask.plugin_action} action
+            </div>
+          ) : selectedTask.workflow_name ? (
             <>
               <div style={{ color: colors.text, fontSize: 12 }}>
                 <span style={{ color: colors.active, fontWeight: 600 }}>Workflow:</span> {selectedTask.workflow_name}

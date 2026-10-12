@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -752,6 +753,48 @@ func (s *ServerSuite) TestModifyWorkflowInvalidWorkflowJSON() {
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 }
 
+func (s *ServerSuite) TestModifyWorkflowRejectsInvalidDefinition() {
+	tests := []struct {
+		name     string
+		workflow string
+		want     string
+	}{
+		{name: "wrong field type", workflow: `{"name":"wf","nodes":"x"}`, want: "invalid workflow: json: cannot unmarshal"},
+		{name: "plugin node without action or tool", workflow: `{"name":"wf","nodes":[{"id":"n","type":"plugin","plugin":"quiz"}]}`, want: `invalid workflow: plugin node "n": set exactly one of action and tool`},
+		{name: "plugin node input not an object", workflow: `{"name":"wf","nodes":[{"id":"n","type":"plugin","plugin":"quiz","tool":"ask","input":[1]}]}`, want: `invalid workflow: plugin node "n": input must be a JSON object`},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			rec := s.testRequest("POST", "/api/workflows", `{"action":"add","workflow":`+tt.workflow+`}`)
+			require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+			require.Contains(s.T(), rec.Body.String(), tt.want)
+		})
+	}
+}
+
+func (s *ServerSuite) TestModifyWorkflowAddPluginNode() {
+	sys := new(testutil.MockSystem)
+	sys.On("UserHomeDir").Return("/home/test", nil)
+	sys.On("ReadFile", "/home/test/.loop/config.json").Return([]byte(`{}`), nil)
+	var written []byte
+	sys.On("WriteFile", "/home/test/.loop/config.json", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) { written = args.Get(1).([]byte) }).Return(nil)
+	s.srv.sys = sys
+
+	rec := s.testRequest("POST", "/api/workflows", `{
+		"action": "add",
+		"scope": "global",
+		"workflow": {"name":"quiz","nodes":[{"id":"ask","type":"plugin","plugin":"quiz","tool":"ask","input":{"topic":"{{.Inputs.topic}}"}}]}
+	}`)
+
+	require.Equal(s.T(), http.StatusNoContent, rec.Code, rec.Body.String())
+	var cfg map[string]any
+	require.NoError(s.T(), json.Unmarshal(written, &cfg))
+	node := cfg["workflows"].([]any)[0].(map[string]any)["nodes"].([]any)[0].(map[string]any)
+	require.Equal(s.T(), "ask", node["tool"])
+	require.Equal(s.T(), map[string]any{"topic": "{{.Inputs.topic}}"}, node["input"])
+}
+
 func (s *ServerSuite) TestModifyWorkflowProjectScope() {
 	sys := new(testutil.MockSystem)
 	sys.On("MkdirAll", "/project/.loop", os.FileMode(0755)).Return(nil)
@@ -990,4 +1033,42 @@ func (s *ServerSuite) TestStartWorkflowRun_ChannelResolutionError() {
 
 	rec := s.testRequest("POST", "/api/workflows/runs", `{"workflow_name":"wf","channel_id":"bad-ch"}`)
 	require.Equal(s.T(), http.StatusCreated, rec.Code)
+}
+
+// TestWorkflowRunActions_NotFound answers 404 for an action on a run that
+// doesn't exist.
+func (s *ServerSuite) TestWorkflowRunActions_NotFound() {
+	notFound := fmt.Errorf("%w: wfr-1", workflow.ErrRunNotFound)
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+		setup  func(*MockWorkflowEngine)
+	}{
+		{name: "cancel", method: "POST", path: "/api/workflows/runs/wfr-1/cancel", setup: func(m *MockWorkflowEngine) {
+			m.On("CancelRun", mock.Anything, "wfr-1").Return(notFound)
+		}},
+		{name: "resume", method: "POST", path: "/api/workflows/runs/wfr-1/resume", body: `{"response":""}`, setup: func(m *MockWorkflowEngine) {
+			m.On("ResumeRun", mock.Anything, "wfr-1", "").Return(notFound)
+		}},
+		{name: "delete", method: "DELETE", path: "/api/workflows/runs/wfr-1", setup: func(m *MockWorkflowEngine) {
+			m.On("DeleteRun", mock.Anything, "wfr-1").Return(notFound)
+		}},
+		{name: "retry", method: "POST", path: "/api/workflows/runs/wfr-1/retry", setup: func(m *MockWorkflowEngine) {
+			m.On("RetryRun", mock.Anything, "wfr-1").Return("", notFound)
+		}},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			wfe := new(MockWorkflowEngine)
+			tt.setup(wfe)
+			s.srv.SetWorkflowEngine(wfe)
+			defer func() { s.srv.workflowEngine = nil }()
+
+			rec := s.testRequest(tt.method, tt.path, tt.body)
+			require.Equal(s.T(), http.StatusNotFound, rec.Code)
+			require.Contains(s.T(), rec.Body.String(), "workflow run not found: wfr-1")
+		})
+	}
 }

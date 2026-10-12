@@ -33,7 +33,7 @@ After `Start` returns, `cmd/loop/serve.go` runs the **DB-queue resume sweep** be
 1. `store.ResetStaleRunningMessages` clears `is_running=1` rows left over from the prior daemon run (their containers are gone, so their agent runs cannot survive a restart). The sweep returns `(channel_id, msg_id)` pairs grouped per channel and the daemon broadcasts a `messages.processed` event per channel so any reconnected client clears the stale "processing" label.
 2. `store.ListPendingChannels` returns every channel that still has `is_triggered=1 AND is_processed=0` rows; the daemon spawns a `go orch.ResumeChannel(ctx, ch)` per channel. `ResumeChannel` is `drainChannel(ctx, ch, nil)` — the same path `HandleMessage` uses, but with a `nil` incoming so the run is reconstructed from the row alone.
 
-Rows that were running mid-restart end up marked processed with no agent response — the user sees the "processing" label disappear and can re-send if they wanted it. Queued rows resume in priority order.
+Rows that were running mid-restart end up marked processed with no agent response — the user sees the "processing" label disappear and can re-send if they wanted it. Queued rows resume in priority order. Once `Stop` has begun, drains claim no further rows, so a row still queued at shutdown stays queued for this resume instead of being claimed as the daemon exits and then swept as run.
 
 ## Message Flow
 

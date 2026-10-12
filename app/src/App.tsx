@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchGlobalConfig } from "./api/configApi";
 import {
   createChannel,
@@ -36,12 +36,13 @@ import { trustPillIds } from "./components/sidebar/pills";
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { useAppPanelState } from "./hooks/useAppPanelState";
 import { type ActiveChatState, useChatStateStore } from "./hooks/useChatStateStore";
+import { NotificationsContext, useUnreadNotifications } from "./notifications/useNotifications";
 import { DEFAULT_FONT_SIZES, ThemeProvider, useTheme } from "./ThemeContext";
 import { fonts } from "./theme";
-import type { Channel, ChannelAgentConfigData, ChannelUpdatedData, ImageBuildStatusData, ImageUpdateAvailableData, UpdateStatus, WSEvent } from "./types";
+import type { Channel, ChannelAgentConfigData, ChannelUpdatedData, ImageBuildStatusData, ImageUpdateAvailableData, PluginBadge, UpdateStatus, WSEvent } from "./types";
 import { useUiBridge } from "./uiBridge/useUiBridge";
 import type { ChannelPatch } from "./utils/channelUpdate";
-import { applyChannelUpdate, applyReviewStatus, replayChannelPatches } from "./utils/channelUpdate";
+import { applyChannelUpdate, applyPluginBadge, applyReviewStatus, replayChannelPatches } from "./utils/channelUpdate";
 import { logErr } from "./utils/log";
 import { parseChannelTarget } from "./utils/messageLinks";
 import { storageGet, storageRemove, storageSet } from "./utils/storage";
@@ -162,6 +163,12 @@ function AppInner() {
   }, [refreshShareCount]);
 
   const layoutRef = useRef<WorkspaceLayoutRef>(null);
+
+  // What Loop and the plugins told the owner, by channel: the sidebar's
+  // counts and each layout's bell and drawer.
+  const notifications = useUnreadNotifications(ready);
+  const [pluginsEpoch, setPluginsEpoch] = useState(0);
+  const notificationsState = useMemo(() => ({ unread: notifications.unread, epoch: notifications.epoch, pluginsEpoch }), [notifications.unread, notifications.epoch, pluginsEpoch]);
 
   // Fetch diff stats for the selected channel and keep them updated via events.
   const loadDiffStats = useCallback(async () => {
@@ -323,6 +330,19 @@ function AppInner() {
         patchChannel(event.channel_id, (c) => applyReviewStatus(c, d.status, event.timestamp));
         return;
       }
+      if (event.type === "notifications.changed") {
+        notifications.refetch();
+        return;
+      }
+      if (event.type === "plugins.changed") {
+        setPluginsEpoch((n) => n + 1);
+        return;
+      }
+      if (event.type === "plugin.badge") {
+        const d = event.data as PluginBadge;
+        patchChannel(event.channel_id, (c) => applyPluginBadge(c, d));
+        return;
+      }
       if (event.type === "channel.agent_config") {
         const d = event.data as ChannelAgentConfigData;
         patchChannel(event.channel_id, (c) => ({ ...c, model_override: d.model_override, effort_override: d.effort_override }));
@@ -354,7 +374,7 @@ function AppInner() {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(loadDiffStats, 1_000);
     },
-    [loadDiffStats, selectedId, loadChannels, patchChannel, refreshShareCount],
+    [loadDiffStats, selectedId, loadChannels, patchChannel, refreshShareCount, notifications.refetch],
   );
   useEffect(
     () => () => {
@@ -724,272 +744,274 @@ function AppInner() {
   const settingsChannelId = settingsChannel?.id ?? null;
 
   return (
-    <div
-      style={{
-        display: "flex",
-        height: "100vh",
-        backgroundColor: colors.canvas,
-        color: colors.text,
-        fontFamily: fonts.sans,
-        position: "relative",
-        padding: colors.islandGap,
-        gap: colors.islandGap,
-      }}
-    >
-      {/* Branding — always pinned to top-right corner */}
-      <img
-        src={horizontalLogo}
-        alt="Loop"
-        width={52}
+    <NotificationsContext.Provider value={notificationsState}>
+      <div
         style={{
-          position: "absolute",
-          top: 12,
-          right: 12,
-          zIndex: 10,
-          pointerEvents: "none",
-          WebkitAppRegion: "drag",
+          display: "flex",
+          height: "100vh",
+          backgroundColor: colors.canvas,
+          color: colors.text,
+          fontFamily: fonts.sans,
+          position: "relative",
+          padding: colors.islandGap,
+          gap: colors.islandGap,
         }}
-      />
-      <Sidebar
-        channels={channels}
-        selectedId={selectedId}
-        collapsed={!sidebarOpen}
-        onSelect={handleSelect}
-        onOpenDirectory={handleOpenDirectory}
-        onCreateChannel={handleCreateChannel}
-        onCreateThread={handleCreateThread}
-        onCreateWorktree={handleCreateWorktree}
-        onDeleteThread={handleDelete}
-        onRenameThread={handleRename}
-        onSetDescription={handleSetDescription}
-        onSetTicketURL={handleSetTicketURL}
-        onSetLocked={handleSetLocked}
-        onDeleteBatch={handleDeleteBatch}
-        onOpenSettings={() => togglePanel("settings")}
-        onOpenConfig={openConfig}
-        onOpenReadme={() => togglePanel("readme")}
-        onOpenContainers={() => togglePanel("containers")}
-        onOpenTasks={() => togglePanel("tasks")}
-        onOpenWorkflows={() => togglePanel("workflows")}
-        onOpenShares={() => togglePanel("shares")}
-        shareCount={shareCount}
-        updateStatus={updateStatus}
-        onDownloadUpdate={handleDownloadUpdate}
-        onInstallUpdate={handleInstallUpdate}
-        isRunningMapRef={isRunningMapRef}
-        unreadIdsRef={unreadIdsRef}
-        pillsRef={pillsRef}
-        unreadCount={unreadCount}
-        onMarkAllRead={markAllRead}
-        imageBuildStatus={imageBuildStatus}
-        imageUpdateAvailable={imageUpdateAvailable}
-        onRebuildImage={handleRebuildImage}
-        onToggleSidebar={() => setSidebarOpen((v) => !v)}
-      />
-      {selectedId && selectedChannel ? (
-        <>
-          <WorkspaceLayout
-            ref={layoutRef}
-            key={`layout-${selectedId}-${mountKey}`}
-            channelId={selectedId}
-            channel={selectedChannel}
-            onReviewProjectTrust={reviewProjectTrust}
-            sidebarOpen={sidebarOpen}
-            style={readmeOpen || settingsOpen || containersOpen || tasksOpen || workflowsOpen || sharesOpen ? { display: "none" } : undefined}
-            onToggleSidebar={() => setSidebarOpen((v) => !v)}
-            onOpenPalette={() => setPaletteOpen(true)}
-            scrollToMessageId={scrollToMessageId}
-            onScrollComplete={() => setScrollToMessageId(null)}
-            openMemoryFile={openMemoryFile}
-            onOpenMemoryFileComplete={() => setOpenMemoryFile(null)}
-            onStatusChange={loadChannels}
-            error={error}
-            onDismissError={() => setError(null)}
-            diffStats={diffStats}
-            parentIsWorktree={!!(selectedChannel.parent_id && channels.find((c) => c.id === selectedChannel.parent_id)?.worktree)}
-            onCreateWorktree={handleCreateWorktree}
-            onImportWorktree={handleImportWorktree}
-            onSelectThread={handleSelect}
-            initialChatState={getState(selectedId)}
-            onChatStateUnmount={handleChatStateUnmount}
-            getChatState={getState}
-            subscribeChatEvents={subscribeChatEvents}
-            subscribeChannelEvents={subscribeChannelEvents}
-            wsOpens={wsOpens}
-            registerReviewView={registerReviewView}
-            clearAskUserPill={clearAskUserPill}
-            clearPlanPill={clearPlanPill}
-          />
-          {readmeOpen && (
-            <MarkdownFilePanel
-              dirPath={selectedDirPath}
-              branch={selectedBranch}
-              channel={selectedChannel}
-              maximized
-              sidebarOpen={sidebarOpen}
-              onToggleSidebar={() => setSidebarOpen((v) => !v)}
-              onOpenPalette={() => setPaletteOpen(true)}
-              onClose={() => closePanel("readme")}
-            />
-          )}
-          {containersOpen && (
-            <ContainersPanel
-              ref={containersPanelRef}
-              channel={selectedChannel}
-              sidebarOpen={sidebarOpen}
-              onToggleSidebar={() => setSidebarOpen((v) => !v)}
-              onOpenPalette={() => setPaletteOpen(true)}
-              onClose={() => closePanel("containers")}
-            />
-          )}
-          {tasksOpen && (
-            <GlobalTasksPanel
-              channel={selectedChannel}
-              sidebarOpen={sidebarOpen}
-              onToggleSidebar={() => setSidebarOpen((v) => !v)}
-              onOpenPalette={() => setPaletteOpen(true)}
-              onClose={() => closePanel("tasks")}
-              onSelectChannel={(id) => {
-                closePanel("tasks");
-                handleSelect(id);
-              }}
-            />
-          )}
-          {workflowsOpen && (
-            <WorkflowsGlobalPanel
-              ref={workflowsPanelRef}
-              channel={selectedChannel}
-              sidebarOpen={sidebarOpen}
-              onOpenPalette={() => setPaletteOpen(true)}
-              onClose={() => closePanel("workflows")}
-              onSelectChannel={(id) => {
-                closePanel("workflows");
-                handleSelect(id);
-              }}
-            />
-          )}
-          {sharesOpen && <GlobalSharesPanel channel={selectedChannel} sidebarOpen={sidebarOpen} onOpenPalette={() => setPaletteOpen(true)} onClose={() => closePanel("shares")} />}
-        </>
-      ) : (
-        <>
-          {settingsOpen ? null : containersOpen ? (
-            <ContainersPanel
-              ref={containersPanelRef}
-              sidebarOpen={sidebarOpen}
-              onToggleSidebar={() => setSidebarOpen((v) => !v)}
-              onOpenPalette={() => setPaletteOpen(true)}
-              onClose={() => closePanel("containers")}
-            />
-          ) : tasksOpen ? (
-            <GlobalTasksPanel
-              sidebarOpen={sidebarOpen}
-              onToggleSidebar={() => setSidebarOpen((v) => !v)}
-              onOpenPalette={() => setPaletteOpen(true)}
-              onClose={() => closePanel("tasks")}
-              onSelectChannel={(id) => {
-                closePanel("tasks");
-                handleSelect(id);
-              }}
-            />
-          ) : workflowsOpen ? (
-            <WorkflowsGlobalPanel
-              ref={workflowsPanelRef}
-              sidebarOpen={sidebarOpen}
-              onOpenPalette={() => setPaletteOpen(true)}
-              onClose={() => closePanel("workflows")}
-              onSelectChannel={(id) => {
-                closePanel("workflows");
-                handleSelect(id);
-              }}
-            />
-          ) : sharesOpen ? (
-            <GlobalSharesPanel sidebarOpen={sidebarOpen} onOpenPalette={() => setPaletteOpen(true)} onClose={() => closePanel("shares")} />
-          ) : (
-            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <LoopLogo />
-            </div>
-          )}
-        </>
-      )}
-      {/* Outside the branches above so a channel arriving after load doesn't remount it and drop unsaved edits */}
-      {settingsOpen && (
-        <Settings
-          open={settingsOpen}
-          projectDirPath={settingsDirPath}
-          channelId={settingsChannelId}
-          channel={settingsChannel || selectedChannel}
-          sidebarOpen={sidebarOpen}
-          onToggleSidebar={() => setSidebarOpen((v) => !v)}
-          onOpenPalette={() => setPaletteOpen(true)}
-          onClose={() => closePanel("settings")}
-          onDaemonRestarted={loadChannels}
+      >
+        {/* Branding — always pinned to top-right corner */}
+        <img
+          src={horizontalLogo}
+          alt="Loop"
+          width={52}
+          style={{
+            position: "absolute",
+            top: 12,
+            right: 12,
+            zIndex: 10,
+            pointerEvents: "none",
+            WebkitAppRegion: "drag",
+          }}
+        />
+        <Sidebar
+          channels={channels}
+          selectedId={selectedId}
+          collapsed={!sidebarOpen}
+          onSelect={handleSelect}
+          onOpenDirectory={handleOpenDirectory}
+          onCreateChannel={handleCreateChannel}
+          onCreateThread={handleCreateThread}
+          onCreateWorktree={handleCreateWorktree}
+          onDeleteThread={handleDelete}
+          onRenameThread={handleRename}
+          onSetDescription={handleSetDescription}
+          onSetTicketURL={handleSetTicketURL}
+          onSetLocked={handleSetLocked}
+          onDeleteBatch={handleDeleteBatch}
+          onOpenSettings={() => togglePanel("settings")}
+          onOpenConfig={openConfig}
+          onOpenReadme={() => togglePanel("readme")}
+          onOpenContainers={() => togglePanel("containers")}
+          onOpenTasks={() => togglePanel("tasks")}
+          onOpenWorkflows={() => togglePanel("workflows")}
+          onOpenShares={() => togglePanel("shares")}
+          shareCount={shareCount}
+          updateStatus={updateStatus}
+          onDownloadUpdate={handleDownloadUpdate}
+          onInstallUpdate={handleInstallUpdate}
+          isRunningMapRef={isRunningMapRef}
+          unreadIdsRef={unreadIdsRef}
+          pillsRef={pillsRef}
+          unreadCount={unreadCount}
+          onMarkAllRead={markAllRead}
           imageBuildStatus={imageBuildStatus}
           imageUpdateAvailable={imageUpdateAvailable}
           onRebuildImage={handleRebuildImage}
-          onConfigDirtyChange={setConfigDirty}
-          initialSection={settingsSection}
-          onProjectTrusted={loadChannels}
+          onToggleSidebar={() => setSidebarOpen((v) => !v)}
         />
-      )}
-      <CommandPalette
-        channels={channels}
-        selectedChannelId={selectedId}
-        open={paletteOpen}
-        onClose={() => setPaletteOpen(false)}
-        onSelect={handleSelect}
-        onSelectMessage={handleSelectMessage}
-        onSelectMemoryFile={handleSelectMemoryFile}
-      />
+        {selectedId && selectedChannel ? (
+          <>
+            <WorkspaceLayout
+              ref={layoutRef}
+              key={`layout-${selectedId}-${mountKey}`}
+              channelId={selectedId}
+              channel={selectedChannel}
+              onReviewProjectTrust={reviewProjectTrust}
+              sidebarOpen={sidebarOpen}
+              style={readmeOpen || settingsOpen || containersOpen || tasksOpen || workflowsOpen || sharesOpen ? { display: "none" } : undefined}
+              onToggleSidebar={() => setSidebarOpen((v) => !v)}
+              onOpenPalette={() => setPaletteOpen(true)}
+              scrollToMessageId={scrollToMessageId}
+              onScrollComplete={() => setScrollToMessageId(null)}
+              openMemoryFile={openMemoryFile}
+              onOpenMemoryFileComplete={() => setOpenMemoryFile(null)}
+              onStatusChange={loadChannels}
+              error={error}
+              onDismissError={() => setError(null)}
+              diffStats={diffStats}
+              parentIsWorktree={!!(selectedChannel.parent_id && channels.find((c) => c.id === selectedChannel.parent_id)?.worktree)}
+              onCreateWorktree={handleCreateWorktree}
+              onImportWorktree={handleImportWorktree}
+              onSelectThread={handleSelect}
+              initialChatState={getState(selectedId)}
+              onChatStateUnmount={handleChatStateUnmount}
+              getChatState={getState}
+              subscribeChatEvents={subscribeChatEvents}
+              subscribeChannelEvents={subscribeChannelEvents}
+              wsOpens={wsOpens}
+              registerReviewView={registerReviewView}
+              clearAskUserPill={clearAskUserPill}
+              clearPlanPill={clearPlanPill}
+            />
+            {readmeOpen && (
+              <MarkdownFilePanel
+                dirPath={selectedDirPath}
+                branch={selectedBranch}
+                channel={selectedChannel}
+                maximized
+                sidebarOpen={sidebarOpen}
+                onToggleSidebar={() => setSidebarOpen((v) => !v)}
+                onOpenPalette={() => setPaletteOpen(true)}
+                onClose={() => closePanel("readme")}
+              />
+            )}
+            {containersOpen && (
+              <ContainersPanel
+                ref={containersPanelRef}
+                channel={selectedChannel}
+                sidebarOpen={sidebarOpen}
+                onToggleSidebar={() => setSidebarOpen((v) => !v)}
+                onOpenPalette={() => setPaletteOpen(true)}
+                onClose={() => closePanel("containers")}
+              />
+            )}
+            {tasksOpen && (
+              <GlobalTasksPanel
+                channel={selectedChannel}
+                sidebarOpen={sidebarOpen}
+                onToggleSidebar={() => setSidebarOpen((v) => !v)}
+                onOpenPalette={() => setPaletteOpen(true)}
+                onClose={() => closePanel("tasks")}
+                onSelectChannel={(id) => {
+                  closePanel("tasks");
+                  handleSelect(id);
+                }}
+              />
+            )}
+            {workflowsOpen && (
+              <WorkflowsGlobalPanel
+                ref={workflowsPanelRef}
+                channel={selectedChannel}
+                sidebarOpen={sidebarOpen}
+                onOpenPalette={() => setPaletteOpen(true)}
+                onClose={() => closePanel("workflows")}
+                onSelectChannel={(id) => {
+                  closePanel("workflows");
+                  handleSelect(id);
+                }}
+              />
+            )}
+            {sharesOpen && <GlobalSharesPanel channel={selectedChannel} sidebarOpen={sidebarOpen} onOpenPalette={() => setPaletteOpen(true)} onClose={() => closePanel("shares")} />}
+          </>
+        ) : (
+          <>
+            {settingsOpen ? null : containersOpen ? (
+              <ContainersPanel
+                ref={containersPanelRef}
+                sidebarOpen={sidebarOpen}
+                onToggleSidebar={() => setSidebarOpen((v) => !v)}
+                onOpenPalette={() => setPaletteOpen(true)}
+                onClose={() => closePanel("containers")}
+              />
+            ) : tasksOpen ? (
+              <GlobalTasksPanel
+                sidebarOpen={sidebarOpen}
+                onToggleSidebar={() => setSidebarOpen((v) => !v)}
+                onOpenPalette={() => setPaletteOpen(true)}
+                onClose={() => closePanel("tasks")}
+                onSelectChannel={(id) => {
+                  closePanel("tasks");
+                  handleSelect(id);
+                }}
+              />
+            ) : workflowsOpen ? (
+              <WorkflowsGlobalPanel
+                ref={workflowsPanelRef}
+                sidebarOpen={sidebarOpen}
+                onOpenPalette={() => setPaletteOpen(true)}
+                onClose={() => closePanel("workflows")}
+                onSelectChannel={(id) => {
+                  closePanel("workflows");
+                  handleSelect(id);
+                }}
+              />
+            ) : sharesOpen ? (
+              <GlobalSharesPanel sidebarOpen={sidebarOpen} onOpenPalette={() => setPaletteOpen(true)} onClose={() => closePanel("shares")} />
+            ) : (
+              <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <LoopLogo />
+              </div>
+            )}
+          </>
+        )}
+        {/* Outside the branches above so a channel arriving after load doesn't remount it and drop unsaved edits */}
+        {settingsOpen && (
+          <Settings
+            open={settingsOpen}
+            projectDirPath={settingsDirPath}
+            channelId={settingsChannelId}
+            channel={settingsChannel || selectedChannel}
+            sidebarOpen={sidebarOpen}
+            onToggleSidebar={() => setSidebarOpen((v) => !v)}
+            onOpenPalette={() => setPaletteOpen(true)}
+            onClose={() => closePanel("settings")}
+            onDaemonRestarted={loadChannels}
+            imageBuildStatus={imageBuildStatus}
+            imageUpdateAvailable={imageUpdateAvailable}
+            onRebuildImage={handleRebuildImage}
+            onConfigDirtyChange={setConfigDirty}
+            initialSection={settingsSection}
+            onProjectTrusted={loadChannels}
+          />
+        )}
+        <CommandPalette
+          channels={channels}
+          selectedChannelId={selectedId}
+          open={paletteOpen}
+          onClose={() => setPaletteOpen(false)}
+          onSelect={handleSelect}
+          onSelectMessage={handleSelectMessage}
+          onSelectMemoryFile={handleSelectMemoryFile}
+        />
 
-      {/* Unsaved config changes — confirm channel switch */}
-      {pendingSelectId !== null && (
-        <div
-          style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.5)" }}
-          onClick={() => setPendingSelectId(null)}
-        >
-          <div style={{ backgroundColor: colors.surface, borderRadius: 12, padding: "20px 24px", maxWidth: 360, boxShadow: "0 8px 32px rgba(0,0,0,0.3)" }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ fontSize: 14, fontWeight: 600, color: colors.text, marginBottom: 8 }}>Unsaved Changes</div>
-            <div style={{ fontSize: 13, color: colors.textDim, marginBottom: 16, lineHeight: 1.5 }}>You have unsaved config changes. Discard them and switch channels?</div>
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button
-                onClick={() => setPendingSelectId(null)}
-                style={{
-                  padding: "6px 14px",
-                  backgroundColor: "transparent",
-                  border: `1px solid ${colors.border}`,
-                  borderRadius: 6,
-                  color: colors.text,
-                  fontSize: 12,
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  const id = pendingSelectId;
-                  setPendingSelectId(null);
-                  doSelect(id);
-                }}
-                style={{
-                  padding: "6px 14px",
-                  backgroundColor: colors.error,
-                  border: "none",
-                  borderRadius: 6,
-                  color: colors.white,
-                  fontSize: 12,
-                  fontWeight: 500,
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                }}
-              >
-                Discard & Switch
-              </button>
+        {/* Unsaved config changes — confirm channel switch */}
+        {pendingSelectId !== null && (
+          <div
+            style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.5)" }}
+            onClick={() => setPendingSelectId(null)}
+          >
+            <div style={{ backgroundColor: colors.surface, borderRadius: 12, padding: "20px 24px", maxWidth: 360, boxShadow: "0 8px 32px rgba(0,0,0,0.3)" }} onClick={(e) => e.stopPropagation()}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: colors.text, marginBottom: 8 }}>Unsaved Changes</div>
+              <div style={{ fontSize: 13, color: colors.textDim, marginBottom: 16, lineHeight: 1.5 }}>You have unsaved config changes. Discard them and switch channels?</div>
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                <button
+                  onClick={() => setPendingSelectId(null)}
+                  style={{
+                    padding: "6px 14px",
+                    backgroundColor: "transparent",
+                    border: `1px solid ${colors.border}`,
+                    borderRadius: 6,
+                    color: colors.text,
+                    fontSize: 12,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    const id = pendingSelectId;
+                    setPendingSelectId(null);
+                    doSelect(id);
+                  }}
+                  style={{
+                    padding: "6px 14px",
+                    backgroundColor: colors.error,
+                    border: "none",
+                    borderRadius: 6,
+                    color: colors.white,
+                    fontSize: 12,
+                    fontWeight: 500,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  Discard & Switch
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
+    </NotificationsContext.Provider>
   );
 }

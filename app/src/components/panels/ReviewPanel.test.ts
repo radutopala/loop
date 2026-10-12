@@ -6,8 +6,10 @@ import {
   buildAddressPrompt,
   buildCheckAllPrompt,
   buildDiscussDraft,
+  isActionable,
   reviewEffortOptions,
   reviewModelOptions,
+  skippedNote,
   WHY_QUESTION,
   withoutComment,
   withUpdatedComment,
@@ -222,9 +224,10 @@ describe("buildCheckAllPrompt", () => {
         "1. Run the dedup_review_findings tool first, so comments that report the same issue are merged before you check them. If it fails, say why and carry on.\n" +
         "2. Read the comments left with the get_review_comments tool. Skip the ones whose source is github.\n" +
         "3. For each one, read the code it points at in the checkout above and decide whether it is a real issue, a false positive, or already fixed.\n" +
-        "4. Reply with one entry per comment: its id, path:line, category (when it has one), verdict and why. Link a pushed comment to https://github.com/o/r/pull/7#discussion_r<its GitHub id>. Only show a severity the comment itself states; don't rate them yourself.\n" +
-        "5. End with what the dedup pass removed and how many comments got each verdict.\n\n" +
-        "Don't change any code. Apart from the dedup pass, don't edit, delete or push any comment.",
+        "4. Record your verdict on each one with the update_review_comment tool: its comment_id, verdict (real, false_positive or already_fixed) and a one-sentence reason citing the line you read. Don't pass a body. Your verdict replaces the dedup pass's, so the Review panel shows yours.\n" +
+        "5. Reply with one entry per comment: its id, path:line, category (when it has one), verdict and why. Link a pushed comment to https://github.com/o/r/pull/7#discussion_r<its GitHub id>. Only show a severity the comment itself states; don't rate them yourself.\n" +
+        "6. End with what the dedup pass removed and how many comments got each verdict.\n\n" +
+        "Don't change any code. Apart from the dedup pass and recording verdicts, don't edit, delete or push any comment.",
     );
   });
 
@@ -234,10 +237,42 @@ describe("buildCheckAllPrompt", () => {
         "1. Run the dedup_review_findings tool first, so comments that report the same issue are merged before you check them. If it fails, say why and carry on.\n" +
         "2. Read the comments left with the get_review_comments tool. Skip the ones whose source is github.\n" +
         "3. For each one, read the code it points at and decide whether it is a real issue, a false positive, or already fixed.\n" +
-        "4. Reply with one entry per comment: its id, path:line, category (when it has one), verdict and why. Link a pushed comment to its GitHub thread. Only show a severity the comment itself states; don't rate them yourself.\n" +
-        "5. End with what the dedup pass removed and how many comments got each verdict.\n\n" +
-        "Don't change any code. Apart from the dedup pass, don't edit, delete or push any comment.",
+        "4. Record your verdict on each one with the update_review_comment tool: its comment_id, verdict (real, false_positive or already_fixed) and a one-sentence reason citing the line you read. Don't pass a body. Your verdict replaces the dedup pass's, so the Review panel shows yours.\n" +
+        "5. Reply with one entry per comment: its id, path:line, category (when it has one), verdict and why. Link a pushed comment to its GitHub thread. Only show a severity the comment itself states; don't rate them yourself.\n" +
+        "6. End with what the dedup pass removed and how many comments got each verdict.\n\n" +
+        "Don't change any code. Apart from the dedup pass and recording verdicts, don't edit, delete or push any comment.",
     );
+  });
+});
+
+describe("isActionable", () => {
+  it.each([
+    ["unjudged", {}, true],
+    ["real", { verdict: "real" }, true],
+    ["false positive", { verdict: "false_positive" }, false],
+    ["already fixed", { verdict: "already_fixed" }, false],
+    ["pushed", { pushed: true, verdict: "real" }, false],
+  ] as [string, Partial<ReviewComment>, boolean][])("%s", (_name, extra, want) => {
+    expect(isActionable(comment("b", extra))).toBe(want);
+  });
+});
+
+describe("skippedNote", () => {
+  it("names the unpushed dismissed comments by verdict", () => {
+    const cs = [
+      comment("a", { verdict: "false_positive" }),
+      comment("b", { verdict: "already_fixed" }),
+      comment("c", { verdict: "already_fixed" }),
+      comment("d", { verdict: "false_positive", pushed: true }),
+      comment("e", { verdict: "real" }),
+      comment("f"),
+    ];
+    expect(skippedNote(cs)).toBe(" · skips 1 false positive, 2 already fixed");
+    expect(skippedNote([comment("a", { verdict: "already_fixed" })])).toBe(" · skips 1 already fixed");
+  });
+
+  it("is empty when nothing is skipped", () => {
+    expect(skippedNote([comment("a", { verdict: "real" }), comment("b", { verdict: "false_positive", pushed: true })])).toBe("");
   });
 });
 
@@ -266,6 +301,11 @@ describe("allActionItems", () => {
     expect(items(0, 2).list.map((it) => it.label)).toEqual(["Address all (2)", "Push all to GitHub (2)"]);
     expect(items(1, 0).list.map((it) => it.label)).toEqual(["Check all (1)"]);
     expect(items(0, 0).list).toEqual([]);
+  });
+
+  it("says what Address all and Push all skip", () => {
+    const list = allActionItems({ newCount: 12, pendingCount: 11, skipped: " · skips 1 false positive", busy: false, onCheckAll: () => {}, onAddressAll: () => {}, onPushAll: () => {} });
+    expect(list.map((it) => it.label)).toEqual(["Check all (12)", "Address all (11) · skips 1 false positive", "Push all to GitHub (11) · skips 1 false positive"]);
   });
 
   it("does nothing while another action is busy", () => {

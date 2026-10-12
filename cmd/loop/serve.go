@@ -745,6 +745,10 @@ func (a *app) serve() error {
 
 	eventsHub := api.NewEventsHub(logger)
 	apiSrv.SetEventsHub(eventsHub)
+	if ns, ok := store.(api.NotificationStore); ok {
+		apiSrv.SetNotifications(ns)
+		eventsHub.Observe(apiSrv.RecordNotifications)
+	}
 	branchPoller := api.NewBranchPoller(store, eventsHub, cfg.LoopDir, 0, logger)
 	apiSrv.SetBranchPoller(branchPoller)
 	branchPoller.SetOnDirChange(apiSrv.InvalidatePRCacheForDir)
@@ -789,6 +793,18 @@ func (a *app) serve() error {
 		chromeProvider.SetImageGate(lifecycleMgr)
 	}
 
+	plug, err := a.newPlugins(ctx, cfg, reloadConfig, store, auth.agents, lifecycleMgr, containerReg, logger)
+	if err != nil {
+		return err
+	}
+	if plug != nil {
+		apiSrv.SetPluginManager(plug.service)
+		apiSrv.SetPluginBadges(plug.store)
+		eventsHub.Observe(apiSrv.ForwardToPlugins)
+		go plug.service.Run(ctx, pluginIdleInterval, apiSrv.PluginsStopped, logger)
+		executor.SetPluginActions(pluginActionRunner(plug.service))
+	}
+
 	// Ensure agent image asynchronously so the API is available during builds.
 	a.ensureImageAsync(ctx, dockerClient, cfg, eventsHub, lifecycleMgr, logger)
 
@@ -802,7 +818,11 @@ func (a *app) serve() error {
 		bashRunner = &workflow.LocalBashRunner{SafeDir: cfg.LoopDir, APIURL: localAPIURL(cfg.APIAddr)}
 		logger.Info("workflow bash nodes will execute locally (workflow_bash_local=true)")
 	}
-	wfEngine := workflow.NewEngine(store, runner, bashRunner, eventsHub, workflowsFromConfig(cfg, reloadConfig), cfg.LoopDir, cfg.WorkflowConcurrency, logger)
+	var wfOpts []workflow.Option
+	if plug != nil {
+		wfOpts = append(wfOpts, workflow.WithPlugins(workflowPlugins{svc: plug.service}))
+	}
+	wfEngine := workflow.NewEngine(store, runner, bashRunner, eventsHub, workflowsFromConfig(cfg, reloadConfig), cfg.LoopDir, cfg.WorkflowConcurrency, logger, wfOpts...)
 	if err := wfEngine.RecoverRuns(ctx); err != nil {
 		logger.Error("failed to recover workflow runs", "error", err)
 	}
@@ -823,6 +843,11 @@ func (a *app) serve() error {
 	apiSrv.SetSessionSwitcher(orch)
 	apiSrv.SetAskResolver(orch)
 	apiSrv.SetQueueResumer(orch)
+	apiSrv.SetPluginRunner(orch)
+	if plug != nil {
+		orch.SetPluginRunNotifier(plug.service)
+		orch.SetPluginRunStore(plug.store)
+	}
 	if statsClient, ok := dockerClient.(api.ContainerStatsFetcher); ok {
 		apiSrv.SetContainerStatsFetcher(statsClient)
 	}
@@ -886,6 +911,8 @@ func (a *app) serve() error {
 	} else if n > 0 {
 		logger.Warn("failed learn passes interrupted by the prior daemon run", "count", n)
 	}
+	// Plugin runs likewise; their plugins are told of those that fail.
+	orch.RecoverPluginRuns(ctx)
 	if pending, err := store.ListPendingChannels(ctx); err != nil {
 		logger.Error("listing pending channels", "error", err)
 	} else {
@@ -913,6 +940,10 @@ func (a *app) serve() error {
 
 	// Clean up Chrome sidecar containers.
 	apiSrv.CleanupBrowsers(shutdownCtx)
+
+	if plug != nil {
+		plug.stop(shutdownCtx)
+	}
 
 	if err := orch.Stop(); err != nil {
 		slog.Error("shutdown error", "error", err)

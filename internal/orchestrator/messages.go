@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -28,11 +29,12 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *bot.IncomingMessa
 	}
 	if !active {
 		if !o.resolveThread(ctx, msg.ChannelID) {
-			if msg.AuthorID == learnAuthorID || msg.AuthorID == explainAuthorID {
-				// A learn pass's or explanation's trigger whose hidden
-				// thread was deleted meanwhile. It must not bring the
-				// thread back as a plain channel, where the run would be
-				// unrestricted.
+			if msg.AuthorID == learnAuthorID || msg.AuthorID == explainAuthorID || msg.AuthorID == pluginAuthorID {
+				// A learn pass's, explanation's or plugin run's trigger
+				// whose hidden thread was deleted meanwhile. It must not
+				// bring the thread back as a plain channel, where the run
+				// would be unrestricted.
+				o.pluginRunDone(ctx, msg, errors.New("the plugin's thread was deleted"))
 				o.logger.Debug("dropping the trigger", "reason", "hidden thread gone", "channel_id", msg.ChannelID, "author_id", msg.AuthorID)
 				return
 			}
@@ -197,6 +199,12 @@ func (o *Orchestrator) drainChannel(ctx context.Context, channelID string, incom
 		if o.IsChannelPlanned(channelID) || o.IsChannelAsked(channelID) {
 			return
 		}
+		// Once Loop is stopping, a row claimed now would be cut short or never
+		// started, and the next start would reset it as run. Left queued, the
+		// next start resumes it instead.
+		if o.stopping() {
+			return
+		}
 
 		row, err := o.store.ClaimNextPending(ctx, channelID)
 		if err != nil {
@@ -294,6 +302,8 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 	// deferred to after the run saves its own.
 	o.sessionRunStarted(msg.ChannelID)
 	defer o.sessionRunDone(ctx, msg.ChannelID)
+	var runErr error
+	defer func() { o.pluginRunDone(ctx, msg, runErr) }()
 
 	// An explanation's or learn pass's run marks it running here and done
 	// or failed below.
@@ -301,6 +311,7 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 	pass := o.learnPassStarted(ctx, msg)
 	req, recent, channel, err := o.prepareAgentRequest(ctx, msg, reviewedTurn(expl, pass))
 	if err != nil {
+		runErr = err
 		o.explainRunDone(ctx, expl, "", err)
 		o.learnPassDone(ctx, pass, err)
 		return
@@ -337,6 +348,7 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 		// refetchHead the FE kicks off on status non-running can race the
 		// is_processed=1 DB write and overwrite the locally-applied flip
 		// with stale fetched rows.
+		runErr = err
 		o.markTriggerProcessed(ctx, msg, recent)
 		o.explainRunDone(ctx, expl, "", err)
 		o.learnPassDone(ctx, pass, err)
@@ -364,7 +376,7 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 // runTrigger tags a run in ch's agent.status events with what started it,
 // so the renderer can hold back the dock bounce and notifications for runs
 // the user didn't ask for: "learn" for a learn pass, "explain" for an
-// explanation, "bot" when the bot
+// explanation, "plugin" for a plugin's agent run, "bot" when the bot
 // itself re-entered HandleMessage (an agent posting via the send_message or
 // create_thread MCP tools), "learn-reply" for a user's message in a learn
 // thread, "" for a user's message anywhere else.
@@ -374,6 +386,8 @@ func (o *Orchestrator) runTrigger(ch *db.Channel, authorID string) string {
 		return "learn"
 	case authorID == explainAuthorID:
 		return "explain"
+	case authorID == pluginAuthorID:
+		return "plugin"
 	case o.bot.IsBotUser(authorID):
 		return "bot"
 	case ch != nil && ch.Kind == db.ChannelKindLearn:
@@ -481,29 +495,8 @@ func (o *Orchestrator) prepareAgentRequest(ctx context.Context, msg *bot.Incomin
 			}
 		}
 	}
-	// A learn thread only ever runs read-only, as a learn pass or a user's
-	// reply to one. Without its parent there's nothing to set up, and it
-	// must not run as a chat with the full tool set instead.
-	if channel.Kind == db.ChannelKindLearn {
-		if parent == nil {
-			o.logger.Error("learn: loading the learn thread's parent", "error", parentErr, "channel_id", msg.ChannelID, "parent_id", channel.ParentID)
-			return nil, nil, nil, fmt.Errorf("learn thread %s: parent %q not found", msg.ChannelID, channel.ParentID)
-		}
-		if err := o.applyLearnRequest(ctx, req, parent, msg.AuthorID == learnAuthorID, turnID); err != nil {
-			return nil, nil, nil, err
-		}
-	}
-	// An explain thread only ever runs explanations, each a read-only fork
-	// of its parent's session; anything else must not run there.
-	if channel.Kind == db.ChannelKindExplain {
-		if msg.AuthorID != explainAuthorID {
-			return nil, nil, nil, errNotExplainRun(msg.ChannelID)
-		}
-		if parent == nil {
-			o.logger.Error("explain: loading the explain thread's parent", "error", parentErr, "channel_id", msg.ChannelID, "parent_id", channel.ParentID)
-			return nil, nil, nil, fmt.Errorf("explain thread %s: parent %q not found", msg.ChannelID, channel.ParentID)
-		}
-		if err := o.applyExplainRequest(ctx, req, parent, turnID); err != nil {
+	if db.IsHiddenKind(channel.Kind) {
+		if err := o.shapeHiddenRun(ctx, req, msg, channel, parent, parentErr, turnID); err != nil {
 			return nil, nil, nil, err
 		}
 	}

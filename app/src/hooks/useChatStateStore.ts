@@ -17,7 +17,7 @@ import type {
   ToolUseData,
   WSEvent,
 } from "../types";
-import { alertsOnRunEnd, bouncesOnRunEnd, shouldForwardToChatListeners, subscriptionChannels } from "./chatEventRouting";
+import { alertsOnRunEnd, bouncesOnRunEnd, notifiesOnRunEnd, shouldForwardToChatListeners, subscriptionChannels } from "./chatEventRouting";
 import { useWebSocketConnection } from "./useWebSocketConnection";
 
 /** Ephemeral per-channel state that survives channel switches. */
@@ -71,7 +71,7 @@ interface UseChatStateStoreOptions {
 }
 
 /** Channel events the sidebar shows for every row, not just the selected one. */
-const SIDEBAR_EVENTS = new Set(["channel.created", "channel.deleted", "channel.updated", "channel.agent_config", "review.status"]);
+const SIDEBAR_EVENTS = new Set(["channel.created", "channel.deleted", "channel.updated", "channel.agent_config", "review.status", "plugin.badge"]);
 
 /**
  * App-level store that keeps per-channel chat state in memory and maintains a
@@ -643,7 +643,7 @@ export function useChatStateStore({ channels, channelsFetchedAt, selectedId, onA
           unreadIdsRef.current.add(unreadTarget);
           setUnreadCount(unreadIdsRef.current.size);
         }
-        if (alerts && (document.hidden || unreadTarget !== selectedIdRef.current)) {
+        if (notifiesOnRunEnd(data.trigger) && (document.hidden || unreadTarget !== selectedIdRef.current)) {
           const ch = channelsRef.current.find((c) => c.id === unreadTarget) ?? channelsRef.current.find((c) => c.id === channelId);
           const name = ch?.name || channelId;
           const body = data.status === "completed" ? `Completed in ${Math.round((data.duration_ms ?? 0) / 1000)}s` : `Error: ${data.error ?? "unknown"}`;

@@ -99,6 +99,7 @@ type Store interface {
 	UpdateChannelLearnOverride(ctx context.Context, channelID, value string) error
 	GetHiddenThread(ctx context.Context, parentID, kind string) (*Channel, error)
 	ListHiddenThreads(ctx context.Context, parentID string) ([]*Channel, error)
+	ListPluginThreads(ctx context.Context, pluginID string) ([]*Channel, error)
 	InsertHiddenThread(ctx context.Context, ch *Channel) error
 	FileLearnProposals(ctx context.Context, channelID string, proposals []*LearnProposal, withdraw []LearnWithdrawal) ([]*LearnProposal, error)
 	ListLearnProposals(ctx context.Context, channelID string) ([]*LearnProposal, error)
@@ -273,7 +274,7 @@ func (s *SQLiteStore) withTx(ctx context.Context, fn func(tx *sql.Tx) error) err
 const (
 	messageColumns = `id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, is_triggered, is_running, priority, mode, created_at, kind, chain_position, tool_use_id, tool_name, is_error, trigger_msg_id, not_before, edit_hold_until, session_id, transcript_uuid`
 	channelColumns = `id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, task_id, description, ticket_url, learn_override, explain_override, kind, created_at, updated_at`
-	taskColumns    = `id, channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec, thread_id, worktree, origin_branch, update_before_run, running, workflow_name, workflow_inputs, bash_script`
+	taskColumns    = `id, channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec, thread_id, worktree, origin_branch, update_before_run, running, workflow_name, workflow_inputs, bash_script, plugin_id, plugin_action`
 )
 
 // helpers
@@ -373,7 +374,7 @@ func scanScheduledTasks(rows *sql.Rows) ([]*ScheduledTask, error) {
 			&taskType, &task.Prompt, &enabled, &task.NextRunAt,
 			&task.CreatedAt, &task.UpdatedAt, &task.TemplateName, &task.AutoDeleteSec, &task.ThreadID, &worktree,
 			&task.OriginBranch, &updateBeforeRun, &running,
-			&task.WorkflowName, &task.WorkflowInputs, &task.BashScript,
+			&task.WorkflowName, &task.WorkflowInputs, &task.BashScript, &task.PluginID, &task.PluginAction,
 		); err != nil {
 			return nil, err
 		}

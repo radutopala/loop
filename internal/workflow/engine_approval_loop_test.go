@@ -95,7 +95,7 @@ func (s *EngineSuite) TestApprovalNodeMessageTemplateError() {
 		{
 			Name: "approval-bad-msg",
 			Nodes: []config.NodeDef{
-				{ID: "approve", Type: config.NodeTypeApproval, Message: "{{.Bad", Timeout: "100ms"},
+				{ID: "approve", Type: config.NodeTypeApproval, Message: `{{fromJSON "x"}}`, Timeout: "100ms"},
 			},
 		},
 	}
@@ -144,7 +144,7 @@ func (s *EngineSuite) TestResumeRunNotFound() {
 	s.store.On("GetWorkflowRun", mock.Anything, "missing").Return(nil, nil)
 
 	err := s.engine.ResumeRun(context.Background(), "missing", "ok")
-	require.ErrorContains(s.T(), err, "workflow run not found")
+	require.ErrorIs(s.T(), err, ErrRunNotFound)
 }
 
 func (s *EngineSuite) TestResumeRunGetError() {
@@ -277,7 +277,7 @@ func (s *EngineSuite) TestLoopNodeConditionTemplateError() {
 		{
 			Name: "loop-bad-cond",
 			Nodes: []config.NodeDef{
-				{ID: "loop", Type: config.NodeTypeLoop, Prompt: "Test", MaxIterations: 2, Condition: "{{.Bad"},
+				{ID: "loop", Type: config.NodeTypeLoop, Prompt: "Test", MaxIterations: 2, Condition: `{{fromJSON "x"}}`},
 			},
 		},
 	}
@@ -293,8 +293,8 @@ func (s *EngineSuite) TestLoopNodeConditionTemplateError() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "loop-bad-cond"})
 	require.NoError(s.T(), err)
 
-	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
+	s.awaitStatus(done, db.WorkflowRunStatusFailed)
 
-	// Should run all iterations despite bad condition (condition error → continue).
-	require.Equal(s.T(), 2, callCount)
+	// A condition that fails to render fails the loop after its first iteration.
+	require.Equal(s.T(), 1, callCount)
 }

@@ -36,6 +36,16 @@ const (
 	envAPIURL     = "LOOP_API_URL"
 	envHostUser   = "LOOP_HOST_USER"
 
+	// envApprover picks who answers a trap the policy sends for approval.
+	// Unset or approverHTTP asks the user through the gate-server, and needs
+	// envAPIURL and the gate token. approverDeny denies every such trap
+	// without asking: it's for plugin containers, which run unattended
+	// code with nobody to answer a prompt, so they get no token and no API
+	// URL to ask with.
+	envApprover  = "LOOP_GATE_APPROVER"
+	approverHTTP = "http"
+	approverDeny = "deny"
+
 	// envLegacyToken is where the gate token used to travel before it moved
 	// to a root-only file. Stripped from the child's env should a caller
 	// still set it, so the agent never sees a token either way.

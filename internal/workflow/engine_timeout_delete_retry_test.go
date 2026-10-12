@@ -267,7 +267,7 @@ func (s *EngineSuite) TestDeleteRunNotFound() {
 	s.store.On("GetWorkflowRun", mock.Anything, "missing").Return(nil, nil)
 
 	err := s.engine.DeleteRun(context.Background(), "missing")
-	require.ErrorContains(s.T(), err, "workflow run not found")
+	require.ErrorIs(s.T(), err, ErrRunNotFound)
 }
 
 func (s *EngineSuite) TestDeleteRunGetWorkflowRunError() {
@@ -386,7 +386,7 @@ func (s *EngineSuite) TestRetryRunNotFound() {
 	s.store.On("GetWorkflowRun", mock.Anything, "missing").Return(nil, nil)
 
 	_, err := s.engine.RetryRun(context.Background(), "missing")
-	require.ErrorContains(s.T(), err, "workflow run not found")
+	require.ErrorIs(s.T(), err, ErrRunNotFound)
 }
 
 func (s *EngineSuite) TestRetryRunGetWorkflowRunError() {

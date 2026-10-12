@@ -2,6 +2,7 @@ package container
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -36,6 +37,10 @@ type callbackShellCreator struct {
 
 func (c *callbackShellCreator) CreateShellContainer(ctx context.Context, channelID, dirPath, parentDirPath string) (string, error) {
 	return c.fn(ctx, channelID, dirPath, parentDirPath)
+}
+
+func (c *callbackShellCreator) ContainerRunning(context.Context, string) (bool, error) {
+	return true, nil
 }
 
 type ContainerRegistrySuite struct {
@@ -216,6 +221,16 @@ func (s *ContainerRegistrySuite) TestRunningChannelIDsExcludesPendingRemoval() {
 	ids := s.reg.RunningChannelIDs(context.Background())
 	require.Len(s.T(), ids, 1)
 	require.Contains(s.T(), ids, "ch-2")
+}
+
+func (s *ContainerRegistrySuite) TestRunningChannelIDsExcludesPlugins() {
+	s.broadcaster.On("BroadcastContainerRegistered", mock.Anything).Times(2)
+
+	s.reg.Register(&ContainerInfo{ContainerID: "c1", ChannelID: "ch-1", Type: ContainerTypeAgent})
+	s.reg.Register(&ContainerInfo{ContainerID: "c2", ChannelID: "ch-2", Type: ContainerTypePlugin})
+
+	ids := s.reg.RunningChannelIDs(context.Background())
+	require.Equal(s.T(), map[string]struct{}{"ch-1": {}}, ids)
 }
 
 func (s *ContainerRegistrySuite) TestRunningChannelIDsEmpty() {
@@ -485,6 +500,16 @@ func (s *ContainerRegistrySuite) TestReconcileRemovesStaleEntries() {
 	require.NotNil(s.T(), s.reg.Get("c2"))
 	require.Nil(s.T(), s.reg.Get("c1"))
 	require.Nil(s.T(), s.reg.Get("c3"))
+}
+
+func (s *ContainerRegistrySuite) TestReconcileKeepsPlugins() {
+	s.broadcaster.On("BroadcastContainerRegistered", mock.Anything).Once()
+
+	s.reg.Register(&ContainerInfo{ContainerID: "p1", ChannelID: "ch-1", Type: ContainerTypePlugin})
+
+	removed := s.reg.Reconcile(map[string]struct{}{})
+	require.Empty(s.T(), removed)
+	require.NotNil(s.T(), s.reg.Get("p1"))
 }
 
 func (s *ContainerRegistrySuite) TestReconcileNoStaleEntries() {
@@ -852,18 +877,57 @@ func (m *mockCreator) CreateShellContainer(ctx context.Context, channelID, dirPa
 	return args.String(0), args.Error(1)
 }
 
+func (m *mockCreator) ContainerRunning(ctx context.Context, containerID string) (bool, error) {
+	args := m.Called(ctx, containerID)
+	return args.Bool(0), args.Error(1)
+}
+
 func (s *ContainerRegistrySuite) TestFindOrCreateShellExisting() {
 	s.broadcaster.On("BroadcastContainerRegistered", mock.Anything)
+	s.broadcaster.On("BroadcastContainerRemoved", mock.Anything)
 
-	s.reg.Register(&ContainerInfo{ContainerID: "existing-123", ChannelID: "ch-1", Type: ContainerTypeShell})
+	tests := []struct {
+		name    string
+		running bool
+		err     error
+		logger  *slog.Logger
+		remover bool
+		wantID  string
+	}{
+		{name: "running", running: true, wantID: "existing-123"},
+		{name: "docker can't say", err: errors.New("docker down"), wantID: "existing-123"},
+		{name: "removed outside loop", logger: slog.Default(), remover: true, wantID: "new-456"},
+		{name: "removed outside loop without a remover", wantID: "new-456"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.reg = NewRegistry(s.broadcaster)
+			if tt.logger != nil {
+				s.reg.SetLogger(tt.logger)
+			}
+			s.reg.Register(&ContainerInfo{ContainerID: "existing-123", ChannelID: "ch-1", Type: ContainerTypeShell})
+			remover := new(mockRemover)
+			if tt.remover {
+				remover.On("ContainerRemove", mock.Anything, "existing-123").Return(errors.New("no such container")).Once()
+				s.reg.SetContainerRemover(remover)
+			}
 
-	creator := new(mockCreator)
-	s.reg.SetShellCreator(creator)
+			creator := new(mockCreator)
+			creator.On("ContainerRunning", mock.Anything, "existing-123").Return(tt.running, tt.err)
+			creator.On("CreateShellContainer", mock.Anything, "ch-1", "", "").Return("new-456", nil).Maybe()
+			s.reg.SetShellCreator(creator)
 
-	id, err := s.reg.FindOrCreateShell(context.Background(), "ch-1", "", "")
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "existing-123", id)
-	creator.AssertNotCalled(s.T(), "CreateShellContainer", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+			id, err := s.reg.FindOrCreateShell(context.Background(), "ch-1", "", "")
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tt.wantID, id)
+			if tt.wantID == "existing-123" {
+				creator.AssertNotCalled(s.T(), "CreateShellContainer", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+			} else {
+				require.Nil(s.T(), s.reg.Get("existing-123"), "the dead shell is unregistered")
+			}
+			remover.AssertExpectations(s.T())
+		})
+	}
 }
 
 func (s *ContainerRegistrySuite) TestFindOrCreateShellCreate() {
@@ -891,6 +955,15 @@ func (s *ContainerRegistrySuite) TestFindOrCreateShellNoCreator() {
 	_, err := s.reg.FindOrCreateShell(context.Background(), "ch-1", "", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "shell creator not configured")
+}
+
+func (s *ContainerRegistrySuite) TestFindOrCreateShellNoCreatorExisting() {
+	s.broadcaster.On("BroadcastContainerRegistered", mock.Anything)
+	s.reg.Register(&ContainerInfo{ContainerID: "existing-123", ChannelID: "ch-1", Type: ContainerTypeShell})
+
+	id, err := s.reg.FindOrCreateShell(context.Background(), "ch-1", "", "")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "existing-123", id)
 }
 
 func (s *ContainerRegistrySuite) TestFindOrCreateShellIgnoresAgentContainers() {
@@ -926,17 +999,20 @@ func (s *ContainerRegistrySuite) TestFindOrCreateShellIgnoresPendingRemoval() {
 func (s *ContainerRegistrySuite) TestFindOrCreateShellReclaimsPendingRemoval() {
 	s.broadcaster.On("BroadcastContainerRegistered", mock.Anything)
 	s.broadcaster.On("BroadcastContainerStatusChanged", mock.Anything)
+	s.broadcaster.On("BroadcastContainerRemoved", mock.Anything)
 
 	tests := []struct {
 		name    string
 		logger  *slog.Logger
 		fired   bool
+		gone    bool
 		wantID  string
 		creates bool
 	}{
 		{name: "timer pending", logger: slog.Default(), wantID: "old-shell"},
 		{name: "timer pending without a logger", wantID: "old-shell"},
 		{name: "timer already fired", logger: slog.Default(), fired: true, wantID: "new-shell", creates: true},
+		{name: "removed outside loop", logger: slog.Default(), gone: true, wantID: "new-shell", creates: true},
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
@@ -956,12 +1032,16 @@ func (s *ContainerRegistrySuite) TestFindOrCreateShellReclaimsPendingRemoval() {
 			}
 
 			creator := new(mockCreator)
+			creator.On("ContainerRunning", mock.Anything, "old-shell").Return(!tt.gone, nil)
 			creator.On("CreateShellContainer", mock.Anything, "ch-1", "", "").Return("new-shell", nil)
 			s.reg.SetShellCreator(creator)
 
 			id, err := s.reg.FindOrCreateShell(context.Background(), "ch-1", "", "")
 			require.NoError(s.T(), err)
 			require.Equal(s.T(), tt.wantID, id)
+			if tt.gone {
+				require.Nil(s.T(), s.reg.Get("old-shell"), "the dead shell is unregistered")
+			}
 			if !tt.creates {
 				info := s.reg.Get("old-shell")
 				require.Equal(s.T(), ContainerStatusRunning, info.Status)

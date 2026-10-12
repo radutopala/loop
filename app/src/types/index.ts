@@ -47,6 +47,15 @@ export interface Channel {
   ticket_url?: string;
   /** The project config's host-reaching fields wait for the owner's trust (for a worktree chain, the root checkout's config). */
   trust_pending?: boolean;
+  /** The badges plugins show on the row, by plugin id. */
+  plugin_badges?: PluginBadge[];
+}
+
+/** A plugin's badge on a sidebar row: a short label and its tooltip. */
+export interface PluginBadge {
+  plugin_id: string;
+  text: string;
+  title?: string;
 }
 
 export interface Message {

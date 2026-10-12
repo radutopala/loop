@@ -18,5 +18,5 @@
     "noUncheckedIndexedAccess": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src", "electron"]
+  "include": ["src", "electron", "packages"]
 }

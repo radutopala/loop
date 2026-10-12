@@ -68,13 +68,30 @@ export function LearnBadge({ leafId, learn, open, onToggle }: LearnBadgeProps) {
 export function usePaneHeaderSlot(leafId: string): HTMLElement | null {
   const [slot, setSlot] = useState<HTMLElement | null>(null);
   useLayoutEffect(() => {
-    const find = () => document.getElementById(`pane-header-slot-${leafId}`);
+    const id = `pane-header-slot-${leafId}`;
+    const find = () => document.getElementById(id);
+    // A view that stays mounted (a plugin's panel) outlives its header: the
+    // layout changing around the pane mounts a new header, and a new slot.
+    const onSlot = (e: Event) => {
+      if ((e as CustomEvent<string>).detail === id) setSlot(find());
+    };
+    window.addEventListener(PANE_HEADER_SLOT_EVENT, onSlot);
     const el = find();
     setSlot(el);
-    if (el) return;
+    if (el) return () => window.removeEventListener(PANE_HEADER_SLOT_EVENT, onSlot);
     // Slot may mount in the same frame; retry once after paint.
     const raf = requestAnimationFrame(() => setSlot(find()));
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener(PANE_HEADER_SLOT_EVENT, onSlot);
+    };
   }, [leafId]);
   return slot;
+}
+
+const PANE_HEADER_SLOT_EVENT = "pane-header-slot";
+
+/** The ref of a pane header's slot: tells usePaneHeaderSlot a new one is in. */
+export function paneHeaderSlotRef(el: HTMLElement | null) {
+  if (el) window.dispatchEvent(new CustomEvent(PANE_HEADER_SLOT_EVENT, { detail: el.id }));
 }

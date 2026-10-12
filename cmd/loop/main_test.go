@@ -97,6 +97,11 @@ func (m *mockDockerClient) ContainerStop(ctx context.Context, containerID string
 	return m.Called(ctx, containerID).Error(0)
 }
 
+func (m *mockDockerClient) ContainerRunning(ctx context.Context, containerID string) (bool, error) {
+	args := m.Called(ctx, containerID)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *mockDockerClient) ImageList(ctx context.Context, image string) ([]string, error) {
 	args := m.Called(ctx, image)
 	if args.Get(0) == nil {

@@ -155,7 +155,7 @@ func (s *ReviewHandlerSuite) TestDedupRemovesDuplicates() {
 	// u's file was never read in the worktree (aw.go only shares its suffix,
 	// and /repo/w.go is the parent checkout's copy), so its move and verdict
 	// are guesses and get dropped.
-	runner := &mockReviewRunner{reads: []string{"/repo/.worktrees/pr-7/x.go", "z.go", "/repo/.worktrees/pr-7/aw.go", "/repo/w.go"}, runFn: func() (*agent.AgentResponse, error) {
+	runner := &mockReviewRunner{reads: []review.FileRead{{Path: "/repo/.worktrees/pr-7/x.go"}, {Path: "z.go"}, {Path: "/repo/.worktrees/pr-7/aw.go"}, {Path: "/repo/w.go"}}, runFn: func() (*agent.AgentResponse, error) {
 		require.Equal(s.T(), review.StatusReviewing, s.rs.Get("ch1").Status)
 		s.rs.RemoveComment("ch1", "e")
 		s.rs.RemoveComment("ch1", "g")
@@ -277,7 +277,7 @@ func (s *ReviewHandlerSuite) TestDedupTrimsBundledComment() {
 // Without a hub the note and the verdict still land on the comment.
 func (s *ReviewHandlerSuite) TestDedupNoteWithoutHub() {
 	s.wireDedupSession()
-	s.srv.review.setAgent(&mockReviewRunner{reads: []string{"/repo/.worktrees/pr-7/x.go"}, runFn: func() (*agent.AgentResponse, error) {
+	s.srv.review.setAgent(&mockReviewRunner{reads: []review.FileRead{{Path: "/repo/.worktrees/pr-7/x.go"}}, runFn: func() (*agent.AgentResponse, error) {
 		return &agent.AgentResponse{Response: `{"clusters":[{"keep":"a","drop":["b"],"note":"n"}],"verdicts":[{"id":"a","verdict":"already_fixed"}]}`}, nil
 	}}, "", "")
 
@@ -286,6 +286,52 @@ func (s *ReviewHandlerSuite) TestDedupNoteWithoutHub() {
 	kept, _ := s.rs.FindComment("ch1", "a")
 	require.Equal(s.T(), "Nil map write panics on the first insert.\n\nAlso flagged: n", kept.Body)
 	require.Equal(s.T(), review.VerdictAlreadyFixed, kept.Verdict)
+}
+
+// A verdict or a move counts only when a Read showed the comment's line, and
+// for a move the line it goes to; a LEFT-side comment's line is in the base
+// revision, so any read of its file counts.
+func (s *ReviewHandlerSuite) TestDedupClaimsNeedTheLineRead() {
+	s.wireDedupSession()
+	require.True(s.T(), s.rs.AddComment("ch1", &review.Comment{ID: "e", Path: "y.go", Line: 100, Side: "LEFT", Body: "Removed check.", Source: "agent"}))
+	s.srv.review.setAgent(&mockReviewRunner{
+		reads: []review.FileRead{{Path: "/repo/.worktrees/pr-7/x.go", Offset: 5, Limit: 6}, {Path: "/repo/.worktrees/pr-7/y.go", Limit: 5}},
+		runFn: func() (*agent.AgentResponse, error) {
+			return &agent.AgentResponse{Response: `{"moves":[{"id":"a","line":11},{"id":"d","line":30}],` +
+				`"verdicts":[{"id":"a","verdict":"real"},{"id":"b","verdict":"real"},{"id":"e","verdict":"false_positive"}]}`}, nil
+		},
+	}, "", "")
+
+	w := s.postDedup()
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	got := func(id string) *review.Comment {
+		c, _ := s.rs.FindComment("ch1", id)
+		return c
+	}
+	require.Equal(s.T(), 11, got("a").Line)
+	require.Equal(s.T(), review.VerdictReal, got("a").Verdict)
+	// b's line 14 is past the read's range.
+	require.Empty(s.T(), got("b").Verdict)
+	// d's line 1 was read, the line it moves to wasn't.
+	require.Equal(s.T(), 1, got("d").Line)
+	require.Equal(s.T(), review.VerdictFalsePositive, got("e").Verdict)
+}
+
+// A note folds in what the group's dropped comments raise, so the kept
+// comment keeps its verdict, a dismissed one included.
+func (s *ReviewHandlerSuite) TestDedupNoteKeepsVerdict() {
+	s.wireDedupSession()
+	require.NotNil(s.T(), s.rs.SetVerdict("ch1", "a", review.VerdictFalsePositive, "x.go:3 checks it"))
+	s.srv.review.setAgent(&mockReviewRunner{runFn: func() (*agent.AgentResponse, error) {
+		return &agent.AgentResponse{Response: `{"clusters":[{"keep":"a","drop":["b"],"note":"n"}]}`}, nil
+	}}, "", "")
+
+	w := s.postDedup()
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	kept, _ := s.rs.FindComment("ch1", "a")
+	require.Equal(s.T(), "Nil map write panics on the first insert.\n\nAlso flagged: n", kept.Body)
+	require.Equal(s.T(), review.VerdictFalsePositive, kept.Verdict)
+	require.Equal(s.T(), "x.go:3 checks it", kept.VerdictReason)
 }
 
 func (s *ReviewHandlerSuite) TestDedupRunFailures() {

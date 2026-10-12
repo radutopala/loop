@@ -1,4 +1,5 @@
 import { RE2JS } from "re2js";
+import type { PluginPaneOption } from "../plugins/PluginPanelsContext";
 import { AGENT_OPEN_MODE_OPTIONS, type AgentOpenMode, PANEL_OPTIONS, type PanelType } from "../types/panels";
 import type { PaneInfo, PaneOptions, StepResult, TerminalInput, UiHost, UiStep, WorkspaceController } from "./types";
 
@@ -65,8 +66,14 @@ export async function runSteps(steps: UiStep[], host: UiHost, timeoutMs = DEFAUL
 }
 
 async function waitFor(run: Run, what: string, ready: () => boolean): Promise<void> {
+  await waitForValue(run, what, () => (ready() ? true : null));
+}
+
+/** Waits until get returns a value, and returns it. */
+async function waitForValue<T>(run: Run, what: string, get: () => T | null): Promise<T> {
   const { host, deadline } = run;
-  while (!ready()) {
+  for (let value = get(); ; value = get()) {
+    if (value !== null) return value;
     if (host.now() >= deadline) throw new StepError(`timed out waiting for ${what}`);
     await host.sleep(POLL_MS);
     stillOn(run);
@@ -89,12 +96,6 @@ function workspaceOf(run: Run): { channelId: string; ws: WorkspaceController } {
   return { channelId, ws };
 }
 
-function splitWorkspace(run: Run): { channelId: string; ws: WorkspaceController } {
-  const w = workspaceOf(run);
-  if (w.ws.view().canvas) throw new StepError("the open tab is a canvas; pane steps work on split tabs");
-  return w;
-}
-
 /** A pane by id, else the first pane of that panel type. */
 function findPane(panes: PaneInfo[], pane: string | undefined): PaneInfo {
   if (!pane) throw new StepError("pane is required");
@@ -105,7 +106,7 @@ function findPane(panes: PaneInfo[], pane: string | undefined): PaneInfo {
 
 function panelOf(panel: string | undefined): PanelType {
   if (!panel) throw new StepError("panel is required");
-  if (!PANEL_OPTIONS.some((o) => o.panel === panel)) throw new StepError(`unknown panel "${panel}"`);
+  if (panel !== "plugin" && !PANEL_OPTIONS.some((o) => o.panel === panel)) throw new StepError(`unknown panel "${panel}"`);
   return panel as PanelType;
 }
 
@@ -124,17 +125,37 @@ function attempt<T>(fn: () => T): T {
   }
 }
 
-/** The playground a playground pane a step makes shows, checked against
- *  the channel's. */
-async function paneOptions(step: UiStep, panel: PanelType, channelId: string, host: UiHost): Promise<PaneOptions> {
+/** The plugin panel a plugin pane a step makes shows: item names it as
+ *  plugin/panel, or as the plugin's id when it has one panel. A channel just
+ *  opened is still listing its plugins, so it waits for them. */
+async function pluginPane(step: UiStep, run: Run, ws: WorkspaceController, replacing: string | undefined): Promise<PaneOptions["plugin"]> {
+  if (step.scope !== undefined) throw new StepError("scope is for playground panes");
+  if (!step.item) throw new StepError("item is required for a plugin pane: plugin/panel, or the plugin's id");
+  const all = await waitForValue(run, "the plugins to be listed", () => ws.pluginPanes(replacing));
+  const found = all.filter((o) => o.key === step.item || o.ref.id === step.item);
+  if (found.length === 0) throw new StepError(`no plugin panel "${step.item}"; plugin panels: ${all.map((o) => o.key).join(", ") || "none"}`);
+  if (found.length > 1) throw new StepError(`plugin "${step.item}" has several panels; give plugin/panel: ${found.map((o) => o.key).join(", ")}`);
+  const [option] = found as [PluginPaneOption];
+  if (option.disabled) throw new StepError(`the tab already shows ${option.key}, which shows once`);
+  return option.ref;
+}
+
+/** How the pane a step makes starts: an agent's open mode, the playground
+ *  a playground pane shows, checked against the channel's, or the panel a
+ *  plugin pane shows; replacing is the pane a replace_pane step replaces. */
+async function paneOptions(step: UiStep, panel: PanelType, channelId: string, run: Run, ws: WorkspaceController, replacing?: string): Promise<PaneOptions> {
   const opts: PaneOptions = {};
   const openMode = openModeOf(step.open_mode);
   if (openMode) opts.openMode = openMode;
+  if (panel === "plugin") {
+    opts.plugin = await pluginPane(step, run, ws, replacing);
+    return opts;
+  }
   if (step.item === undefined && step.scope === undefined) return opts;
-  if (panel !== "playground") throw new StepError("item and scope are for playground panes");
+  if (panel !== "playground") throw new StepError("item and scope are for playground and plugin panes");
   if (!step.item) throw new StepError("item is required with scope");
   if (step.scope !== undefined && step.scope !== "global" && step.scope !== "project") throw new StepError(`unknown scope "${step.scope}"; use global or project`);
-  const all = await host.playgrounds(channelId);
+  const all = await run.host.playgrounds(channelId);
   const found = all.filter((p) => p.name === step.item && (step.scope === undefined || p.scope === step.scope));
   if (found.length === 0) throw new StepError(`no playground "${step.item}"; playgrounds: ${all.map((p) => `${p.name} (${p.scope})`).join(", ") || "none"}`);
   if (found.length > 1) throw new StepError(`playground "${step.item}" is both global and project; give scope`);
@@ -177,7 +198,7 @@ async function runStep(step: UiStep, run: Run): Promise<StepOutput> {
       const name = step.tab?.trim();
       if (step.tab !== undefined && !name) throw new StepError("tab can't be empty");
       if (name && ws.view().tabs.includes(name)) throw new StepError(`there's already a tab "${name}"`);
-      const tab = ws.createTab(name);
+      const tab = ws.createTab(name, step.canvas);
       await waitFor(run, `tab ${tab} to open`, () => ws.view().tab === tab);
       return { tab };
     }
@@ -207,44 +228,44 @@ async function runStep(step: UiStep, run: Run): Promise<StepOutput> {
       return {};
     }
     case "replace_pane": {
-      const { channelId, ws } = splitWorkspace(run);
+      const { channelId, ws } = workspaceOf(run);
       const pane = findPane(ws.view().panes, step.pane);
       const panel = panelOf(step.panel);
-      const opts = await paneOptions(step, panel, channelId, host);
+      const opts = await paneOptions(step, panel, channelId, run, ws, pane.id);
       stillOn(run);
       return { pane: attempt(() => ws.replacePane(pane.id, panel, opts)) };
     }
     case "add_pane": {
-      const { channelId, ws } = splitWorkspace(run);
+      const { channelId, ws } = workspaceOf(run);
       const panel = panelOf(step.panel);
       const nextTo = step.next_to === undefined ? undefined : findPane(ws.view().panes, step.next_to).id;
       const direction = step.direction ?? "horizontal";
       if (direction !== "horizontal" && direction !== "vertical") throw new StepError(`unknown direction "${direction}"; use horizontal or vertical`);
       const side = step.side ?? "after";
       if (side !== "before" && side !== "after") throw new StepError(`unknown side "${side}"; use before or after`);
-      const opts = await paneOptions(step, panel, channelId, host);
+      const opts = await paneOptions(step, panel, channelId, run, ws);
       stillOn(run);
       return { pane: attempt(() => ws.addPane(panel, nextTo, direction, side === "before", opts)) };
     }
     case "remove_pane": {
-      const { ws } = splitWorkspace(run);
+      const { ws } = workspaceOf(run);
       const pane = findPane(ws.view().panes, step.pane);
       attempt(() => ws.removePane(pane.id));
       return {};
     }
     case "maximize_pane": {
-      const { ws } = splitWorkspace(run);
+      const { ws } = workspaceOf(run);
       const pane = findPane(ws.view().panes, step.pane);
-      ws.maximize(pane.id);
+      attempt(() => ws.maximize(pane.id));
       return { pane: pane.id };
     }
     case "restore_pane": {
-      const { ws } = splitWorkspace(run);
-      ws.maximize(null);
+      const { ws } = workspaceOf(run);
+      attempt(() => ws.maximize(null));
       return {};
     }
     case "open_file": {
-      const { channelId } = splitWorkspace(run);
+      const { channelId } = workspaceOf(run);
       if (!step.path) throw new StepError("path is required");
       if (step.line !== undefined && (!Number.isInteger(step.line) || step.line < 1)) throw new StepError("line must be a whole number from 1");
       await host.openFile(channelId, step.path, step.line).catch((err) => {

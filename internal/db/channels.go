@@ -248,8 +248,10 @@ func (s *SQLiteStore) DeleteChannelsByParentID(ctx context.Context, parentID str
 	})
 }
 
-// hiddenKinds lists the kinds of hidden thread, as an SQL IN list.
-const hiddenKinds = `'` + ChannelKindLearn + `', '` + ChannelKindExplain + `'`
+// hiddenKind is the SQL condition that a channels row is a hidden thread,
+// the query form of IsHiddenKind. A plugin's kind needs an id after the
+// prefix, hence the `_`.
+const hiddenKind = `(kind IN ('` + ChannelKindLearn + `', '` + ChannelKindExplain + `') OR kind LIKE '` + ChannelKindPluginPrefix + `_%')`
 
 // deleteHiddenChildren deletes the hidden learn and explain threads under
 // the channels parents selects (a placeholder or a subquery taking arg),
@@ -257,7 +259,7 @@ const hiddenKinds = `'` + ChannelKindLearn + `', '` + ChannelKindExplain + `'`
 // channel, and the learn proposals, learn passes and explanations filed
 // for those channels.
 func deleteHiddenChildren(ctx context.Context, tx *sql.Tx, parents string, arg string) error {
-	hiddenIDs := `SELECT channel_id FROM channels WHERE kind IN (` + hiddenKinds + `) AND parent_id IN (` + parents + `)`
+	hiddenIDs := `SELECT channel_id FROM channels WHERE ` + hiddenKind + ` AND parent_id IN (` + parents + `)`
 	if _, err := tx.ExecContext(ctx, `DELETE FROM messages WHERE channel_id IN (`+hiddenIDs+`)`, arg); err != nil {
 		return fmt.Errorf("deleting hidden thread messages: %w", err)
 	}
@@ -273,7 +275,7 @@ func deleteHiddenChildren(ctx context.Context, tx *sql.Tx, parents string, arg s
 	if _, err := tx.ExecContext(ctx, `DELETE FROM learn_passes WHERE channel_id IN (`+parents+`)`, arg); err != nil {
 		return fmt.Errorf("deleting learn passes: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM channels WHERE kind IN (`+hiddenKinds+`) AND parent_id IN (`+parents+`)`, arg); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM channels WHERE `+hiddenKind+` AND parent_id IN (`+parents+`)`, arg); err != nil {
 		return fmt.Errorf("deleting hidden threads: %w", err)
 	}
 	return nil

@@ -270,6 +270,13 @@ func (s *ReviewToolSuite) TestReviewCommentTools() {
 			want:     "Updated review comment c1 at a.go:3.",
 		},
 		{
+			name: "record a verdict", tool: "update_review_comment", args: map[string]any{"comment_id": "c1", "verdict": "false_positive", "reason": "Only one goroutine writes it."},
+			respStatus: 200, respBody: `{"id":"c1","path":"a.go","line":3,"verdict":"false_positive"}`,
+			wantMethod: "PATCH", wantURL: "http://localhost:8222/api/channels/test-channel/review/comments/c1",
+			wantBody: `{"verdict":"false_positive","verdict_reason":"Only one goroutine writes it."}`,
+			want:     "Updated review comment c1 at a.go:3; verdict false_positive.",
+		},
+		{
 			name: "push", tool: "push_review_comment", args: map[string]any{"comment_id": "c1"},
 			respStatus: 200, respBody: `{"pushed":true}`,
 			wantMethod: "POST", wantURL: "http://localhost:8222/api/channels/test-channel/review/comments/c1/push",
@@ -286,6 +293,12 @@ func (s *ReviewToolSuite) TestReviewCommentTools() {
 			respStatus: 200, respBody: `{"pushed":2,"failed":1,"errors":["c3: 422"]}`,
 			wantMethod: "POST", wantURL: "http://localhost:8222/api/channels/test-channel/review/push-all",
 			want: "Pushed 2 review comment(s) to the PR; 1 failed.\n- error: c3: 422\n",
+		},
+		{
+			name: "push all skips dismissed", tool: "push_all_review_comments", args: map[string]any{},
+			respStatus: 200, respBody: `{"pushed":1,"skipped":2,"failed":0,"errors":[]}`,
+			wantMethod: "POST", wantURL: "http://localhost:8222/api/channels/test-channel/review/push-all",
+			want: "Pushed 1 review comment(s) to the PR; 0 failed.\nSkipped 2 marked false_positive or already_fixed.\n",
 		},
 	}
 	for _, tc := range cases {
@@ -320,7 +333,7 @@ func (s *ReviewToolSuite) TestReviewCommentToolsNeedArgs() {
 	}{
 		{"delete_review_comment", map[string]any{"comment_id": ""}, "comment_id is required"},
 		{"update_review_comment", map[string]any{"comment_id": "", "body": "b"}, "comment_id is required"},
-		{"update_review_comment", map[string]any{"comment_id": "c1", "body": "  "}, "body is required"},
+		{"update_review_comment", map[string]any{"comment_id": "c1", "body": "  "}, "body or verdict is required"},
 		{"push_review_comment", map[string]any{"comment_id": ""}, "comment_id is required"},
 	}
 	for _, tc := range cases {

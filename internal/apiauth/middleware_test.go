@@ -30,9 +30,13 @@ func TestMiddlewareSuite(t *testing.T) {
 }
 
 func (s *MiddlewareSuite) SetupTest() {
-	agents := fakeAgents{"agent-tok": {Kind: KindAgent, ContainerID: "c1", ChannelID: "ch1"}}
+	agents := fakeAgents{
+		"agent-tok":  {Kind: KindAgent, ContainerID: "c1", ChannelID: "ch1"},
+		"plugin-tok": {Kind: KindPlugin, PluginID: "cogtest", ContainerID: "c2", ChannelID: "ch1"},
+	}
 	s.auth = NewAuthenticator("owner-tok", agents,
 		NewRouteSet("POST /api/messages", "GET /api/channels/{id}/queued"),
+		NewRouteSet("/api/plugin/v1/"),
 		NewRouteSet("GET /api/health", "GET /c/{cap}/{path...}"))
 	s.seen = nil
 }
@@ -76,6 +80,12 @@ func (s *MiddlewareSuite) TestDecisions() {
 		{"agent wrong method", "GET", "/api/messages", bearer("agent-tok"), 403, ""},
 		{"agent owner route", "PUT", "/api/config", bearer("agent-tok"), 403, ""},
 		{"agent terminal", "GET", "/api/ws/terminal", map[string]string{"Sec-WebSocket-Protocol": "loop.token.agent-tok"}, 403, ""},
+		{"agent plugin route", "GET", "/api/plugin/v1/files", bearer("agent-tok"), 403, ""},
+		{"plugin route", "GET", "/api/plugin/v1/files", bearer("plugin-tok"), 200, KindPlugin},
+		{"plugin public route", "GET", "/api/health", bearer("plugin-tok"), 200, ""},
+		{"plugin agent route", "POST", "/api/messages", bearer("plugin-tok"), 403, ""},
+		{"plugin owner route", "PUT", "/api/config", bearer("plugin-tok"), 403, ""},
+		{"owner plugin route", "GET", "/api/plugin/v1/files", bearer("owner-tok"), 200, KindOwner},
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
@@ -123,7 +133,7 @@ func (s *MiddlewareSuite) TestRotateOwner() {
 }
 
 func (s *MiddlewareSuite) TestNoAgentLookup() {
-	s.auth = NewAuthenticator("owner-tok", nil, NewRouteSet("POST /api/messages"), NewRouteSet())
+	s.auth = NewAuthenticator("owner-tok", nil, NewRouteSet("POST /api/messages"), NewRouteSet(), NewRouteSet())
 	require.Equal(s.T(), 401, s.serve("POST", "/api/messages", map[string]string{"Authorization": "Bearer agent-tok"}))
 	require.Equal(s.T(), 200, s.serve("POST", "/api/messages", map[string]string{"Authorization": "Bearer owner-tok"}))
 }

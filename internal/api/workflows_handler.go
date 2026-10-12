@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"strconv"
@@ -208,6 +209,16 @@ func resolveNamedChannel(channelMap map[string]*db.Channel, channelID string) *d
 	return ch
 }
 
+// httpWorkflowRunError answers err from an action on one run: 404 when the
+// run doesn't exist, 500 otherwise.
+func httpWorkflowRunError(w http.ResponseWriter, err error) {
+	status := http.StatusInternalServerError
+	if errors.Is(err, workflow.ErrRunNotFound) {
+		status = http.StatusNotFound
+	}
+	http.Error(w, err.Error(), status)
+}
+
 func (s *Server) handleCancelWorkflowRun(w http.ResponseWriter, r *http.Request) {
 	if !requireConfigured(w, s.workflowEngine, "workflow engine not configured") {
 		return
@@ -215,7 +226,7 @@ func (s *Server) handleCancelWorkflowRun(w http.ResponseWriter, r *http.Request)
 
 	runID := r.PathValue("id")
 	if err := s.workflowEngine.CancelRun(r.Context(), runID); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httpWorkflowRunError(w, err)
 		return
 	}
 
@@ -239,7 +250,7 @@ func (s *Server) handleResumeWorkflowRun(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := s.workflowEngine.ResumeRun(r.Context(), runID, req.Response); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httpWorkflowRunError(w, err)
 		return
 	}
 
@@ -253,7 +264,7 @@ func (s *Server) handleDeleteWorkflowRun(w http.ResponseWriter, r *http.Request)
 
 	runID := r.PathValue("id")
 	if err := s.workflowEngine.DeleteRun(r.Context(), runID); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httpWorkflowRunError(w, err)
 		return
 	}
 
@@ -272,7 +283,7 @@ func (s *Server) handleRetryWorkflowRun(w http.ResponseWriter, r *http.Request) 
 	runID := r.PathValue("id")
 	newRunID, err := s.workflowEngine.RetryRun(r.Context(), runID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httpWorkflowRunError(w, err)
 		return
 	}
 
@@ -373,6 +384,15 @@ func (s *Server) handleModifyWorkflow(w http.ResponseWriter, r *http.Request) {
 		name, _ := wfMap["name"].(string)
 		if name == "" {
 			http.Error(w, "workflow.name is required", http.StatusBadRequest)
+			return
+		}
+		var def config.WorkflowDef
+		if err := json.Unmarshal(req.Workflow, &def); err != nil {
+			http.Error(w, "invalid workflow: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := workflow.ValidateWorkflowDef(&def); err != nil {
+			http.Error(w, "invalid workflow: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 		wfName = name

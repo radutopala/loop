@@ -21,6 +21,9 @@ export interface ScheduledTask {
   workflow_name?: string;
   workflow_inputs?: string;
   bash_script?: string;
+  /** Set on a task Loop created for a plugin's action. */
+  plugin_id?: string;
+  plugin_action?: string;
 }
 
 export interface TaskRunLog {

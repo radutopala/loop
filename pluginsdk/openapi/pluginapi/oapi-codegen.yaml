@@ -1,0 +1,20 @@
+# Generates the Plugin API's types from plugin-api-v1.yaml; see
+# pluginsdk/generate.go.
+package: pluginapi
+output: openapi/pluginapi/pluginapi_gen.go
+generate:
+  models: true
+output-options:
+  skip-prune: true
+  skip-enum-validate: true
+  prefer-skip-optional-pointer: true
+  name-normalizer: ToCamelCaseWithInitialisms
+  additional-initialisms: [SHA, LOC]
+  type-mapping:
+    number:
+      default: { type: float64 }
+    string:
+      formats:
+        date-time: { type: string }
+  overlay:
+    path: openapi/pluginapi/overlay.yaml

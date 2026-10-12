@@ -1,4 +1,4 @@
-import type { Channel, ChannelUpdatedData } from "../types";
+import type { Channel, ChannelUpdatedData, PluginBadge } from "../types";
 
 /**
  * Applies a channel.updated event to a channel. The branch poller's events
@@ -38,6 +38,17 @@ export function applyChannelUpdate(c: Channel, d: ChannelUpdatedData): Channel {
  */
 export function applyReviewStatus(c: Channel, status: string, at: number): Channel {
   return { ...c, review_running: status === "reviewing", last_activity_at: Math.max(c.last_activity_at ?? 0, at) };
+}
+
+/**
+ * Applies a plugin.badge event to a channel: the plugin's badge replaces the
+ * one it set before, and an empty text clears it. Badges stay in plugin id
+ * order, as the channel list returns them.
+ */
+export function applyPluginBadge(c: Channel, b: PluginBadge): Channel {
+  const rest = (c.plugin_badges ?? []).filter((x) => x.plugin_id !== b.plugin_id);
+  const badges = b.text ? [...rest, b].sort((x, y) => x.plugin_id.localeCompare(y.plugin_id)) : rest;
+  return { ...c, plugin_badges: badges.length > 0 ? badges : undefined };
 }
 
 /** A live change to one channel, stamped with performance.now() on arrival. */

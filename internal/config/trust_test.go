@@ -533,3 +533,82 @@ func (s *TrustSuite) TestTrustedWorktreeKeepsParentOverride() {
 	require.Less(s.T(), ruleIndex(rules, "/w/**", types.DecisionDeny), allow)
 	require.Less(s.T(), allow, ruleIndex(rules, kube, types.DecisionDeny))
 }
+
+func (s *TrustSuite) TestMergePlugins() {
+	on, off := true, false
+	main := &Config{Plugins: PluginsConfig{Enabled: true, GateBinary: "/g", ByID: map[string]PluginConfig{"echo": {Enabled: &on}, "quiz": {Enabled: &off}}}}
+
+	// The project's own keys and enables wait for trust.
+	s.project(`{"plugins": {"enabled": false, "gate_binary": "/p", "echo": {"enabled": false}, "quiz": {"enabled": true}, "new": {}}}`)
+	st, err := s.store.Status("/proj")
+	require.NoError(s.T(), err)
+	require.False(s.T(), st.Trusted)
+	require.Contains(s.T(), st.Current, `"quiz": true`)
+	merged, err := s.loader().loadProjectConfig("/proj", main)
+	require.NoError(s.T(), err)
+	require.True(s.T(), merged.Plugins.EnabledFor("echo"))
+	require.False(s.T(), merged.Plugins.EnabledFor("quiz"))
+	require.True(s.T(), merged.Plugins.Enabled, "global only")
+	require.Equal(s.T(), "/g", merged.Plugins.GateBinary, "global only")
+
+	require.NoError(s.T(), s.store.Trust("/proj", st.Hash))
+	merged, err = s.loader().loadProjectConfig("/proj", main)
+	require.NoError(s.T(), err)
+	require.False(s.T(), merged.Plugins.EnabledFor("echo"))
+	require.True(s.T(), merged.Plugins.EnabledFor("quiz"))
+	require.False(s.T(), merged.Plugins.EnabledFor("new"))
+	require.True(s.T(), main.Plugins.EnabledFor("echo"), "the global config is left as it was")
+
+	// A project enabling a plugin the global config doesn't name.
+	merged, err = s.loader().loadProjectConfig("/proj", &Config{})
+	require.NoError(s.T(), err)
+	require.True(s.T(), merged.Plugins.EnabledFor("quiz"))
+	require.False(s.T(), merged.Plugins.EnabledFor("echo"))
+
+	// Approved enables apply even when the file drops them.
+	s.project(`{"mounts": ["/new:/new"]}`)
+	merged, err = s.loader().loadProjectConfig("/proj", main)
+	require.NoError(s.T(), err)
+	require.True(s.T(), merged.Plugins.EnabledFor("quiz"))
+	require.False(s.T(), merged.Plugins.EnabledFor("echo"))
+}
+
+func (s *TrustSuite) TestMergePluginSettings() {
+	main := &Config{Plugins: PluginsConfig{ByID: map[string]PluginConfig{"quiz": {Settings: map[string]any{"count": float64(5), "lang": "en"}}}}}
+
+	// Settings only shape what the plugin does with the capabilities the
+	// owner approved: they apply untrusted, each over the global one.
+	s.project(`{"plugins": {"quiz": {"settings": {"count": 8}}, "echo": {"settings": {"loud": true}}, "bare": {}}}`)
+	merged, err := s.loader().loadProjectConfig("/proj", main)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), map[string]any{"count": float64(8), "lang": "en"}, merged.Plugins.ByID["quiz"].Settings)
+	require.Equal(s.T(), map[string]any{"loud": true}, merged.Plugins.ByID["echo"].Settings)
+	require.Nil(s.T(), merged.Plugins.ByID["bare"].Settings)
+	require.Equal(s.T(), map[string]any{"count": float64(5), "lang": "en"}, main.Plugins.ByID["quiz"].Settings, "the global config is left as it was")
+}
+
+func (s *TrustSuite) TestProjectPlugins() {
+	on := true
+	tests := []struct {
+		name    string
+		data    string
+		want    PluginsConfig
+		wantErr string
+	}{
+		{name: "enables", data: `{"plugins": {"echo": {"enabled": true}}, // comment
+}`, want: PluginsConfig{ByID: map[string]PluginConfig{"echo": {Enabled: &on}}}},
+		{name: "no plugins", data: `{"mounts": []}`},
+		{name: "not json", data: `{`, wantErr: "parsing project config file"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			got, err := ProjectPlugins([]byte(tt.data))
+			if tt.wantErr != "" {
+				s.Require().ErrorContains(err, tt.wantErr)
+				return
+			}
+			s.Require().NoError(err)
+			s.Require().Equal(tt.want, got)
+		})
+	}
+}

@@ -1,0 +1,31 @@
+# Go types for the open-ended JSON and the plain strings in
+# plugin-contract-v1.yaml.
+overlay: 1.0.0
+info:
+  title: Go types for the plugin contract
+  version: "1"
+actions:
+  - target: $.components.schemas.ToolRequest.properties.input
+    update:
+      x-go-type: json.RawMessage
+  - target: $.components.schemas.ToolResult.properties.structured_content
+    update:
+      x-go-type: json.RawMessage
+  - target: $.components.schemas.ActionRequest.properties.input
+    update:
+      x-go-type: json.RawMessage
+  - target: $.components.schemas.Event.properties.data
+    update:
+      x-go-type: json.RawMessage
+  - target: $.components.schemas.Event.properties.type
+    update:
+      x-go-type: string
+  - target: $.components.schemas.RunDoneRequest.properties.status
+    update:
+      x-go-type: string
+  - target: $.components.schemas.Health.properties.api
+    update:
+      x-go-type: string
+  - target: $.components.schemas.ActionRequest.properties.trigger
+    update:
+      x-go-type-name: Trigger

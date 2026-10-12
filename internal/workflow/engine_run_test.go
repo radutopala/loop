@@ -359,7 +359,7 @@ func (s *EngineSuite) TestCancelRunNotFound() {
 	s.store.On("GetWorkflowRun", mock.Anything, "missing").Return(nil, nil)
 
 	err := s.engine.CancelRun(context.Background(), "missing")
-	require.ErrorContains(s.T(), err, "workflow run not found")
+	require.ErrorIs(s.T(), err, ErrRunNotFound)
 }
 
 func (s *EngineSuite) TestCancelRunAlreadyCompleted() {
@@ -622,7 +622,7 @@ func (s *EngineSuite) TestPromptNodeSystemPromptTemplateError() {
 			Nodes: []config.NodeDef{{
 				ID: "ask", Type: config.NodeTypePrompt,
 				Prompt:       "Hello",
-				SystemPrompt: "{{.Bad",
+				SystemPrompt: `{{fromJSON "x"}}`,
 			}},
 		},
 	}
@@ -640,7 +640,7 @@ func (s *EngineSuite) TestPromptNodeTemplateError() {
 	s.workflows = []config.WorkflowDef{
 		{
 			Name:  "bad-prompt",
-			Nodes: []config.NodeDef{{ID: "ask", Type: config.NodeTypePrompt, Prompt: "{{.Bad"}},
+			Nodes: []config.NodeDef{{ID: "ask", Type: config.NodeTypePrompt, Prompt: `{{fromJSON "x"}}`}},
 		},
 	}
 
@@ -657,7 +657,7 @@ func (s *EngineSuite) TestBashNodeScriptTemplateError() {
 	s.workflows = []config.WorkflowDef{
 		{
 			Name:  "bad-script",
-			Nodes: []config.NodeDef{{ID: "run", Type: config.NodeTypeBash, Script: "{{.Bad"}},
+			Nodes: []config.NodeDef{{ID: "run", Type: config.NodeTypeBash, Script: `{{fromJSON "x"}}`}},
 		},
 	}
 
@@ -707,7 +707,7 @@ func (s *EngineSuite) TestWhenConditionTemplateError() {
 		{
 			Name: "bad-when",
 			Nodes: []config.NodeDef{
-				{ID: "run", Type: config.NodeTypeBash, Script: "echo ok", When: "{{.Bad"},
+				{ID: "run", Type: config.NodeTypeBash, Script: "echo ok", When: `{{fromJSON "x"}}`},
 			},
 		},
 	}

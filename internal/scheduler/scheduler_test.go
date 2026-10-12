@@ -109,18 +109,38 @@ func (s *SchedulerSuite) TestAddTask() {
 		},
 		{
 			name:    "invalid cron",
-			task:    &db.ScheduledTask{ChannelID: "ch1", Schedule: "invalid cron", Type: db.TaskTypeCron},
+			task:    &db.ScheduledTask{ChannelID: "ch1", Schedule: "invalid cron", Type: db.TaskTypeCron, Prompt: "x"},
 			wantErr: "calculating next run",
 		},
 		{
 			name:    "invalid interval",
-			task:    &db.ScheduledTask{ChannelID: "ch1", Schedule: "not-a-duration", Type: db.TaskTypeInterval},
+			task:    &db.ScheduledTask{ChannelID: "ch1", Schedule: "not-a-duration", Type: db.TaskTypeInterval, Prompt: "x"},
 			wantErr: "calculating next run",
 		},
 		{
 			name:    "unknown type",
-			task:    &db.ScheduledTask{ChannelID: "ch1", Schedule: "", Type: db.TaskType("unknown")},
+			task:    &db.ScheduledTask{ChannelID: "ch1", Schedule: "", Type: db.TaskType("unknown"), Prompt: "x"},
 			wantErr: "calculating next run",
+		},
+		{
+			name:    "bash script",
+			task:    &db.ScheduledTask{ChannelID: "ch1", Schedule: "30m", Type: db.TaskTypeInterval, BashScript: "true"},
+			storeID: 4,
+		},
+		{
+			name:    "workflow",
+			task:    &db.ScheduledTask{ChannelID: "ch1", Schedule: "30m", Type: db.TaskTypeInterval, WorkflowName: "nightly"},
+			storeID: 5,
+		},
+		{
+			name:    "plugin action",
+			task:    &db.ScheduledTask{ChannelID: "ch1", Schedule: "30m", Type: db.TaskTypeInterval, PluginID: "p", PluginAction: "daily"},
+			storeID: 6,
+		},
+		{
+			name:    "nothing to run",
+			task:    &db.ScheduledTask{ChannelID: "ch1", Schedule: "30m", Type: db.TaskTypeInterval, Prompt: "  "},
+			wantErr: ErrNothingToRun.Error(),
 		},
 	}
 	for _, tc := range cases {
@@ -152,6 +172,7 @@ func (s *SchedulerSuite) TestAddTaskStoreError() {
 		ChannelID: "ch1",
 		Schedule:  "10m",
 		Type:      db.TaskTypeInterval,
+		Prompt:    "do stuff",
 	}
 
 	s.store.On("CreateScheduledTask", mock.Anything, mock.Anything).Return(int64(0), errors.New("db error"))
@@ -563,6 +584,7 @@ func (s *SchedulerSuite) TestCalculateNextRun() {
 	for _, tc := range cases {
 		s.Run(tc.name, func() {
 			next, err := calculateNextRun(tc.taskType, tc.schedule, tc.now)
+			require.Equal(s.T(), next, NextRun(tc.taskType, tc.schedule, tc.now))
 			if tc.errMsg != "" {
 				require.Error(s.T(), err)
 				require.Contains(s.T(), err.Error(), tc.errMsg)
@@ -943,6 +965,7 @@ func (s *SchedulerSuite) TestTaskRunCompletedEventBroadcast() {
 		RunID:     10,
 		Status:    string(db.RunStatusSuccess),
 		ChannelID: "ch1",
+		Kind:      events.TaskRunAgent,
 	}).Run(signal)
 
 	ts := NewTaskScheduler(s.store, s.executor, 10*time.Millisecond, s.logger)
@@ -965,8 +988,8 @@ func (s *SchedulerSuite) TestTaskRunCompletedEventBroadcast() {
 
 func (s *SchedulerSuite) TestTaskRunFailedEventBroadcast() {
 	task := &db.ScheduledTask{
-		ID: 2, ChannelID: "ch2", Schedule: "1h",
-		Type: db.TaskTypeInterval, Prompt: "fail", Enabled: true,
+		ID: 2, ChannelID: "ch2", ThreadID: "th2", Schedule: "1h",
+		Type: db.TaskTypeInterval, BashScript: "exit 1", Enabled: true,
 	}
 	done, signal := signalDone()
 
@@ -982,6 +1005,9 @@ func (s *SchedulerSuite) TestTaskRunFailedEventBroadcast() {
 		RunID:     20,
 		Status:    string(db.RunStatusFailed),
 		ChannelID: "ch2",
+		ThreadID:  "th2",
+		Kind:      events.TaskRunBash,
+		Error:     "exec failed",
 	}).Run(signal)
 
 	ts := NewTaskScheduler(s.store, s.executor, 10*time.Millisecond, s.logger)
@@ -1049,7 +1075,7 @@ func (s *SchedulerSuite) TestRunNowWithEventBroadcast() {
 
 	bc := new(mockTaskEventBroadcaster)
 	bc.On("BroadcastTaskRunCompleted", events.TaskRunEventData{
-		TaskID: 6, RunID: 60, Status: string(db.RunStatusSuccess), ChannelID: "ch2",
+		TaskID: 6, RunID: 60, Status: string(db.RunStatusSuccess), ChannelID: "ch2", Kind: events.TaskRunAgent,
 	}).Return()
 
 	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
@@ -1229,4 +1255,22 @@ func (s *SchedulerSuite) TestRunNowClaimError() {
 	require.Contains(s.T(), err.Error(), "db locked")
 
 	s.executor.AssertNotCalled(s.T(), "ExecuteTask", mock.Anything, mock.Anything)
+}
+
+func (s *SchedulerSuite) TestTaskRunKind() {
+	tests := []struct {
+		name string
+		task *db.ScheduledTask
+		want string
+	}{
+		{name: "agent", task: &db.ScheduledTask{Prompt: "hi"}, want: events.TaskRunAgent},
+		{name: "bash", task: &db.ScheduledTask{BashScript: "true"}, want: events.TaskRunBash},
+		{name: "plugin", task: &db.ScheduledTask{PluginID: "p", PluginAction: "a"}, want: events.TaskRunPlugin},
+		{name: "workflow", task: &db.ScheduledTask{WorkflowName: "w"}, want: events.TaskRunWorkflow},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			require.Equal(s.T(), tc.want, taskRunKind(tc.task))
+		})
+	}
 }

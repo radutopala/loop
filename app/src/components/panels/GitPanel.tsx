@@ -15,7 +15,8 @@ import { BranchesPanel } from "./BranchesPanel";
 import { CommitDiffView } from "./CommitDiffView";
 import { CommitHistory } from "./CommitHistory";
 import type { ParsedFile } from "./DiffViewer";
-import { DiffViewer, fileKey, parseUnifiedDiff } from "./DiffViewer";
+import { DiffViewer, fileKey } from "./DiffViewer";
+import { COMMITS_PAGE, type GitMode, type GitView, gitViewKey, loadGitView } from "./gitView";
 import { PaneRootSelect } from "./PaneRootSelect";
 import { WorktreesPanel } from "./WorktreesPanel";
 
@@ -101,7 +102,6 @@ export function GitPanel({
   const [loading, setLoading] = useState(false);
   const [fileContextMenu, setFileContextMenu] = useState<{ x: number; y: number; path: string } | null>(null);
   // Mode state
-  type GitMode = "uncommitted" | "branches" | "commits" | "worktrees" | "branchlist";
   const [gitMode, setGitMode] = useState<GitMode>("uncommitted");
   const [branches, setBranches] = useState<string[]>([]);
   const [sourceBranch, setSourceBranch] = useState<string>("");
@@ -112,7 +112,6 @@ export function GitPanel({
   const [commitsHasMore, setCommitsHasMore] = useState(true);
   // The commit whose diff replaces the list; null shows the list.
   const [selectedCommit, setSelectedCommit] = useState<CommitEntry | null>(null);
-  const COMMITS_PAGE = 50;
   const prevDiffRef = useRef<string>("");
   const [diffVersion, setDiffVersion] = useState(0);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -261,52 +260,36 @@ export function GitPanel({
       .finally(() => setCommitsLoading(false));
   }, [channelId, commitBranch, commitsLoading, commitsHasMore, commits.length, rootIndex]);
 
+  // The view on screen; loadGitView drops an answer for one that's gone.
+  const viewKey = channelId ? gitViewKey({ channelId, mode: gitMode, sourceBranch, targetBranch, commitBranch, rootIndex }) : "";
+  const viewKeyRef = useRef(viewKey);
+  viewKeyRef.current = viewKey;
+
   const load = useCallback(async () => {
     if (!channelId) return;
-    if (gitMode === "commits") {
-      if (!commitBranch) return;
-      setCommitsLoading(true);
-      setCommitsHasMore(true);
-      try {
-        const c = await fetchCommits(channelId, commitBranch, COMMITS_PAGE, 0, rootIndex);
+    const view: GitView = { channelId, mode: gitMode, sourceBranch, targetBranch, commitBranch, rootIndex };
+    const key = gitViewKey(view);
+    await loadGitView(view, { fetchCommits, fetchDiff }, () => viewKeyRef.current === key, {
+      commitsStarted: () => {
+        setCommitsLoading(true);
+        setCommitsHasMore(true);
+      },
+      commits: (c, hasMore) => {
         setCommits(c);
-        setCommitsHasMore(c.length >= COMMITS_PAGE);
-      } catch {
-        setCommits([]);
-        setCommitsHasMore(false);
-      } finally {
-        setCommitsLoading(false);
-      }
-      return;
-    }
-    // In branch mode, both branches must be selected
-    if (gitMode === "branches" && (!sourceBranch || !targetBranch)) return;
-    try {
-      const d = gitMode === "branches" ? await fetchDiff(channelId, sourceBranch, targetBranch, rootIndex) : await fetchDiff(channelId, undefined, undefined, rootIndex);
-      // If diff changed, bump version to reset DiffViewer internal state
-      if (d.diff !== prevDiffRef.current) {
-        prevDiffRef.current = d.diff;
-        setDiffVersion((v) => v + 1);
-      }
-      setData(d);
-      if (gitMode === "branches") {
-        // Branch-to-branch diff has no staged/unstaged distinction.
-        setParsedFiles(parseUnifiedDiff(d.diff));
-      } else {
-        // Uncommitted mode: parse each section with its known status so a
-        // partially-staged file produces two distinct ParsedFile entries.
-        setParsedFiles([
-          ...parseUnifiedDiff(d.staged_diff ?? "", "staged"),
-          ...parseUnifiedDiff(d.unstaged_diff ?? "", "unstaged"),
-          ...parseUnifiedDiff(d.conflict_diff ?? "", "conflict"),
-          ...parseUnifiedDiff(d.untracked_diff ?? "", "untracked"),
-        ]);
-      }
-    } catch {
-      /* ignore fetch errors — will retry on next poll */
-    } finally {
-      setLoading(false);
-    }
+        setCommitsHasMore(hasMore);
+      },
+      commitsDone: () => setCommitsLoading(false),
+      diff: (d, files) => {
+        // If diff changed, bump version to reset DiffViewer internal state
+        if (d.diff !== prevDiffRef.current) {
+          prevDiffRef.current = d.diff;
+          setDiffVersion((v) => v + 1);
+        }
+        setData(d);
+        setParsedFiles(files);
+      },
+      diffDone: () => setLoading(false),
+    });
   }, [channelId, gitMode, sourceBranch, targetBranch, commitBranch, rootIndex]);
 
   // Initial load + background polling fallback

@@ -1,4 +1,4 @@
-.PHONY: help build install test test-integration test-integration-browser test-component test-runner-build test-runner-push bdd-serve lint lint-go lint-app coverage coverage-check codeql-download codeql codeql-js docker-build docs-build docs-serve docs-capture run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-test app-install app-build-binary app-dist-linux app-icons _sync-loop-overrides
+.PHONY: help build build-linux install test test-integration test-integration-browser test-integration-plugin test-integration-pluginsdk test-component test-runner-build test-runner-push bdd-serve lint lint-go lint-app sdk-gen sdk-gen-check coverage coverage-check codeql-download codeql codeql-js docker-build docs-build docs-serve docs-capture run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-test app-install app-build-binary app-dist-linux app-icons _sync-loop-overrides
 .DEFAULT_GOAL := help
 
 # Strip gate-child env inheritance when invoking make from inside a
@@ -22,6 +22,11 @@ build: ## Build the loop binary
 	go generate ./internal/readme/
 	go build -ldflags "$(LDFLAGS)" -o bin/loop ./cmd/loop
 
+build-linux: ## Build a linux loop for plugins.gate_binary (GOARCH= defaults to the host's)
+	go generate ./internal/readme/
+	GOOS=linux GOARCH=$${GOARCH:-$$(go env GOARCH)} CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" \
+		-o bin/loop-linux-$${GOARCH:-$$(go env GOARCH)} ./cmd/loop
+
 install: ## Install loop to GOPATH/bin
 	go generate ./internal/readme/
 	go install -ldflags "$(LDFLAGS)" ./cmd/loop
@@ -29,6 +34,7 @@ install: ## Install loop to GOPATH/bin
 test: ## Run all tests
 	go generate ./internal/readme/
 	go test -race -count=1 -timeout 90s ./...
+	cd pluginsdk && go test -race -count=1 -timeout 90s ./...
 
 test-integration: ## Run integration tests (requires tokens in ~/.loop/config.integration.json)
 	go test -v -tags integration -race -count=1 -timeout 10m ./internal/slack/ ./internal/discord/
@@ -37,6 +43,13 @@ test-integration-browser: ## Run browser integration tests (requires Docker; bui
 	@docker image inspect loop-chrome:latest >/dev/null 2>&1 || \
 		docker build -t loop-chrome -f internal/container/image/chrome.Dockerfile internal/container/image/
 	go test -v -tags integration -race -count=1 -timeout 10m ./internal/browser/
+
+test-integration-plugin: ## Run plugin integration tests (requires Docker; builds the echo fixture plugin)
+	docker build -q -t loop-plugin-dev/echo:latest test/component/testdata/plugins/echo
+	go test -v -tags integration -race -count=1 -timeout 10m ./internal/plugin/
+
+test-integration-pluginsdk: ## Run the plugin SDK's integration tests (requires Chrome or Chromium)
+	cd pluginsdk && go test -v -tags integration -race -count=1 -timeout 5m ./pluginsdktest/
 
 # Documentation-capture scenarios are tagged @docs and excluded by default so
 # normal runs (and CI) stay fast and don't write assets. `make docs-capture`
@@ -160,14 +173,24 @@ test-runner-build: ## Build the test-runner Docker image
 test-runner-push: test-runner-build ## Build and push the test-runner Docker image
 	docker push $(TEST_RUNNER_IMAGE)
 
-lint: lint-go lint-app ## Run golangci-lint + biome/tsc (with auto-fix)
+lint: sdk-gen-check lint-go lint-app ## Check the SDK's generated types, run golangci-lint + biome/tsc (with auto-fix)
+
+sdk-gen: ## Generate the plugin SDK's types from its OpenAPI specs
+	cd pluginsdk && go generate .
+
+sdk-gen-check: ## Regenerate the plugin SDK's types, failing when they were out of date
+	@tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
+	cp -R pluginsdk/openapi "$$tmp/openapi" && \
+	$(MAKE) --no-print-directory sdk-gen && \
+	diff -r "$$tmp/openapi" pluginsdk/openapi || \
+	{ echo "error: the plugin SDK's generated types were out of date; make sdk-gen has regenerated them" >&2; exit 1; }
 
 lint-go: ## Run golangci-lint (with auto-fix)
 	@if [ -n "$$(docker ps --filter name=^loop-lint$$ --quiet)" ]; then \
 		echo "error: another loop-lint container is already running; aborting" >&2; \
 		exit 1; \
 	fi
-	docker run --rm --name loop-lint -v "$$(pwd)":/app -v /app/app/node_modules -w /app golangci/golangci-lint:v2.14.0 golangci-lint run -v --fix ./...
+	docker run --rm --name loop-lint -v "$$(pwd)":/app -v /app/app/node_modules -w /app golangci/golangci-lint:v2.14.0 sh -c 'golangci-lint run -v --fix ./... && cd pluginsdk && golangci-lint run -v --fix ./...'
 
 lint-app: ## Run biome (with auto-fix) + tsc typecheck on the app
 	@if [ -n "$$(docker ps --filter name=^loop-lint-biome$$ --quiet)" ]; then \
@@ -189,14 +212,16 @@ coverage: ## Generate HTML coverage report
 _coverage-check-run:
 	go generate ./internal/readme/
 	go test -race -count=1 -timeout 90s -coverpkg=./... -coverprofile=coverage.out ./...
+	@# The plugin SDK is its own module, so it has its own profile.
+	cd pluginsdk && go test -race -count=1 -timeout 90s -coverpkg=./... -coverprofile=../coverage-pluginsdk.out ./...
 	@# Counted from the raw profile: `go tool cover -func` rounds its total to
 	@# one decimal, so a handful of uncovered statements would still print 100.0%.
 	@# With -coverpkg a block repeats once per test binary; it is covered if any hit it.
-	@awk 'NR > 1 { split($$0, f, " "); n[f[1]] = f[2]; if (f[3] > 0) hit[f[1]] = 1 } \
+	@awk 'FNR > 1 { split($$0, f, " "); n[f[1]] = f[2]; if (f[3] > 0) hit[f[1]] = 1 } \
 		END { for (b in n) { total += n[b]; if (!(b in hit) && n[b] > 0) { miss += n[b]; print "uncovered: " b " (" n[b] " stmts)" | "sort" } } \
 		close("sort"); \
 		if (miss > 0) { printf "Coverage is %.4f%% (%d of %d statements uncovered), required 100%%\n", 100 * (total - miss) / total, miss, total; exit 1 } \
-		printf "Coverage: 100%% (%d statements)\n", total }' coverage.out
+		printf "Coverage: 100%% (%d statements)\n", total }' coverage.out coverage-pluginsdk.out
 
 coverage-check: ## Run tests and enforce 100% coverage (via Docker on host, directly in CI)
 	@if [ "$$CI" = "true" ] || [ -f /.dockerenv ]; then \

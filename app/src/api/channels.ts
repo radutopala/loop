@@ -1,4 +1,4 @@
-import type { AskUserQuestionData, Channel, ExitPlanModeData, Message, TimelineResponse } from "../types";
+import type { AskUserQuestionData, Channel, ExitPlanModeData, Message, PluginBadge, TimelineResponse } from "../types";
 import { apiFetch, getApiUrl, getWsUrl, wsProtocols } from "./api";
 
 /** Open a one-shot WebSocket to send a kill message for a channel's agent container. */
@@ -62,6 +62,7 @@ interface ChannelAPIResponse {
   description?: string;
   ticket_url?: string;
   trust_pending?: boolean;
+  plugin_badges?: PluginBadge[];
 }
 
 export async function fetchChannels(): Promise<Channel[]> {
@@ -101,6 +102,7 @@ export async function fetchChannels(): Promise<Channel[]> {
     description: c.description,
     ticket_url: c.ticket_url,
     trust_pending: c.trust_pending,
+    plugin_badges: c.plugin_badges,
   }));
 }
 

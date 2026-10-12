@@ -52,6 +52,7 @@ type projectConfig struct {
 	PlaygroundShare            *jsonPlaygroundShareConfig `json:"playground_share"`
 	Learn                      *jsonLearnConfig           `json:"learn"`
 	Explain                    *jsonExplainConfig         `json:"explain"`
+	Plugins                    *PluginsConfig             `json:"plugins"`
 }
 
 // LoadProjectConfig loads project-specific config from {workDir}/.loop/config.json
@@ -634,6 +635,32 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 		if pc.Explain.Prompt != "" {
 			merged.Explain.Prompt = pc.Explain.Prompt
 		}
+	}
+
+	// Plugins: a project turns each plugin on or off for itself and
+	// overrides its settings one by one; the plugins block's own keys are
+	// global only.
+	if pc.Plugins != nil && len(pc.Plugins.ByID) > 0 {
+		byID := maps.Clone(merged.Plugins.ByID)
+		if byID == nil {
+			byID = map[string]PluginConfig{}
+		}
+		for id, c := range pc.Plugins.ByID {
+			pl := byID[id]
+			if c.Enabled != nil {
+				pl.Enabled = c.Enabled
+			}
+			if len(c.Settings) > 0 {
+				settings := maps.Clone(pl.Settings)
+				if settings == nil {
+					settings = map[string]any{}
+				}
+				maps.Copy(settings, c.Settings)
+				pl.Settings = settings
+			}
+			byID[id] = pl
+		}
+		merged.Plugins.ByID = byID
 	}
 
 	return &merged, nil

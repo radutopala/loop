@@ -145,8 +145,10 @@ type Server struct {
 	threads                 ThreadEnsurer
 	removeMCPConfig         func(dirPath, channelID string) error // removes a deleted channel's MCP config files
 	configLocks             configLocks                           // serializes edits of each config.json
+	notifyLimit             notifyLimit                           // caps each plugin's notifications and cards
 	ui                      *uibridge.Bridge                      // the app windows the UI routes drive
 	uiStateWaitOverride     time.Duration                         // tests shorten GET /api/ui/state's wait
+	treeMaxOverride         int                                   // tests shorten GET /channel/tree's cap
 	history                 configHistory                         // records each config.json's revisions; see lockConfig
 	messages                MessageSender
 	memoryIndexer           MemoryIndexer
@@ -171,6 +173,11 @@ type Server struct {
 	interactionHandler      InteractionHandler
 	agentRegistry           *agentregistry.Registry
 	imageManager            ImageManager
+	plugins                 PluginManager
+	pluginRunner            PluginRunner
+	badges                  PluginBadgeStore
+	notifications           NotificationStore
+	deliverAsync            func(func()) // runs a plugin event's delivery or a notification's recording; go in production, inline in tests
 	server                  *http.Server
 	listener                net.Listener
 	stopErr                 error // if set, Stop returns this error (for testing)
@@ -316,6 +323,12 @@ func (s *Server) SetImageManager(im ImageManager) {
 	s.imageManager = im
 }
 
+// SetPluginManager configures the plugin installer for the /api/plugins
+// endpoints; left unset, plugins are disabled.
+func (s *Server) SetPluginManager(pm PluginManager) {
+	s.plugins = pm
+}
+
 // SetApprovalResolver wires the gate approval resolver used by the local
 // /api/gate/approvals/{id} endpoint. Typically backed by
 // agentgate.MultiManagerResolver so a single resolver multiplexes clicks
@@ -382,6 +395,7 @@ func NewServer(sched scheduler.Scheduler, channels ChannelEnsurer, threads Threa
 		threads:         threads,
 		messages:        messages,
 		removeMCPConfig: bot.RemoveMCPConfig,
+		deliverAsync:    func(f func()) { go f() },
 		worktreeCreator: &worktree.Creator{
 			Sys: sys,
 			Run: worktree.ExecCommandRunner,
@@ -654,6 +668,40 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/gate/approvals/{id}", s.handleResolveGateApproval)
 	mux.HandleFunc("POST /api/gate/container-approval", s.handleContainerApproval)
 	mux.HandleFunc("POST /api/builtins/restore", s.handleRestoreBuiltins)
+	mux.HandleFunc("GET /api/plugins", s.handleListPlugins)
+	mux.HandleFunc("POST /api/plugins/inspect", s.handleInspectPlugin)
+	mux.HandleFunc("POST /api/plugins", s.handleInstallPlugin)
+	mux.HandleFunc("DELETE /api/plugins/{id}", s.handleRemovePlugin)
+	mux.HandleFunc("POST /api/plugins/{plugin}/channels/{channel}/stop", s.handleStopPluginContainer)
+	mux.HandleFunc("GET /api/plugins/{plugin}/channels/{channel}/audit", s.handlePluginAudit)
+	mux.HandleFunc("GET /api/plugins/{plugin}/agent", s.handleGetPluginAgent)
+	mux.HandleFunc("POST /api/plugins/{plugin}/actions/{action}", s.handleRunPluginAction)
+	mux.HandleFunc("POST /api/plugins/{plugin}/tools/{tool}", s.handleCallPluginTool)
+	mux.HandleFunc("POST /api/plugins/{plugin}/notifications", s.handlePluginPageNotify)
+	mux.HandleFunc("/api/plugins/{plugin}/x/{path...}", s.handlePluginX)
+	mux.HandleFunc("POST /api/plugin/v1/runs", s.handleStartPluginRun)
+	mux.HandleFunc("GET /api/plugin/v1/runs/{run_id}", s.handleGetPluginRun)
+	mux.HandleFunc("DELETE /api/plugin/v1/runs/{run_id}", s.handleCancelPluginRun)
+	mux.HandleFunc("GET /api/plugin/v1/channel", s.handlePluginChannel)
+	mux.HandleFunc("GET /api/plugin/v1/channel/files", s.handlePluginFile)
+	mux.HandleFunc("GET /api/plugin/v1/channel/tree", s.handlePluginTree)
+	mux.HandleFunc("GET /api/plugin/v1/channel/git/recent", s.handlePluginGitRecent)
+	mux.HandleFunc("GET /api/plugin/v1/channel/git/head", s.handlePluginGitHead)
+	mux.HandleFunc("GET /api/plugin/v1/channel/quality/hotspots", s.handlePluginHotspots)
+	mux.HandleFunc("POST /api/plugin/v1/events", s.handlePluginEvent)
+	mux.HandleFunc("POST /api/plugin/v1/notify", s.handlePluginNotify)
+	mux.HandleFunc("PUT /api/plugin/v1/memory/{name}", s.handlePutPluginMemory)
+	mux.HandleFunc("DELETE /api/plugin/v1/memory/{name}", s.handleDeletePluginMemory)
+	mux.HandleFunc("POST /api/plugin/v1/ui/commands", s.handlePluginUICommand)
+	mux.HandleFunc("POST /api/plugin/v1/ui/open_file", s.handlePluginOpenFile)
+	mux.HandleFunc("PUT /api/plugin/v1/badge", s.handlePutPluginBadge)
+	mux.HandleFunc("DELETE /api/plugin/v1/badge", s.handleDeletePluginBadge)
+	mux.HandleFunc("POST /api/plugin/v1/cards", s.handlePostPluginCard)
+	mux.HandleFunc("GET /api/notifications", s.handleListNotifications)
+	mux.HandleFunc("GET /api/notifications/unread", s.handleUnreadNotifications)
+	mux.HandleFunc("POST /api/notifications/read", s.handleReadNotifications)
+	mux.HandleFunc("DELETE /api/notifications/{id}", s.handleDeleteNotification)
+	mux.HandleFunc("DELETE /api/notifications", s.handleClearNotifications)
 	mux.HandleFunc("GET /api/health", handleHealth)
 	mux.HandleFunc("POST /api/auth/rotate", s.handleRotateToken)
 	mux.HandleFunc("POST /api/content-caps", s.handleCreateContentCap)

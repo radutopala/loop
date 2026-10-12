@@ -68,6 +68,7 @@ type jsonConfig struct {
 	PlaygroundShare            *jsonPlaygroundShareConfig `json:"playground_share"`
 	Learn                      *jsonLearnConfig           `json:"learn"`
 	Explain                    *jsonExplainConfig         `json:"explain"`
+	Plugins                    *PluginsConfig             `json:"plugins"`
 }
 
 // jsonMemoryConfig is the JSON representation of the memory block.
@@ -434,6 +435,9 @@ func (l *Loader) parse() (*Config, error) {
 
 	if jc.GitHub != nil {
 		cfg.GitHub = *jc.GitHub
+	}
+	if jc.Plugins != nil {
+		cfg.Plugins = *jc.Plugins
 	}
 
 	if jc.Review != nil {

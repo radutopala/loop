@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"testing"
@@ -162,6 +163,23 @@ func (s *ConfigSuite) TestLoadGitHubConfig() {
 	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "radutopala", cfg.GitHub.GHUser)
+	require.False(s.T(), cfg.Plugins.Enabled, "plugins are off by default")
+}
+
+func (s *ConfigSuite) TestLoadPluginsConfig() {
+	s.loader.readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			"platforms": ["discord"],
+			"discord_token": "t",
+			"discord_app_id": "a",
+			"plugins": { "enabled": true, "gate_binary": "/opt/loop-linux" }
+		}`), nil
+	}
+
+	cfg, err := s.loader.load()
+	require.NoError(s.T(), err)
+	require.True(s.T(), cfg.Plugins.Enabled)
+	require.Equal(s.T(), "/opt/loop-linux", cfg.Plugins.GateBinary)
 }
 
 func (s *ConfigSuite) TestLoadBrowserEnabledExplicitFalse() {
@@ -659,4 +677,44 @@ func (s *ConfigSuite) TestTemplatesEmbedded() {
 	}
 	require.True(s.T(), names["heartbeat.md"])
 	require.True(s.T(), names["tk-auto-worker.md"])
+}
+
+func (s *ConfigSuite) TestLoadPluginsByID() {
+	s.loader.readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			"platforms": ["discord"],
+			"discord_token": "t",
+			"discord_app_id": "a",
+			"plugins": { "enabled": true, "daily_runs": 5, "echo": { "enabled": true }, "quiz": {} }
+		}`), nil
+	}
+
+	cfg, err := s.loader.load()
+	require.NoError(s.T(), err)
+	require.True(s.T(), cfg.Plugins.Enabled)
+	require.Equal(s.T(), 5, cfg.Plugins.DailyRunsFor())
+	require.Equal(s.T(), DefaultPluginDailyRuns, PluginsConfig{}.DailyRunsFor())
+	require.Len(s.T(), cfg.Plugins.ByID, 2)
+	require.True(s.T(), cfg.Plugins.EnabledFor("echo"))
+	require.False(s.T(), cfg.Plugins.EnabledFor("quiz"))
+	require.False(s.T(), cfg.Plugins.EnabledFor("missing"))
+}
+
+func (s *ConfigSuite) TestPluginsConfigUnmarshalErrors() {
+	tests := []struct {
+		name, data, want string
+	}{
+		{"not an object", `[]`, "cannot unmarshal array"},
+		{"bad own key", `{"enabled": "yes"}`, "cannot unmarshal string"},
+		{"bad plugin", `{"echo": {"enabled": "yes"}}`, "plugins.echo:"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			var p PluginsConfig
+			require.ErrorContains(s.T(), json.Unmarshal([]byte(tt.data), &p), tt.want)
+		})
+	}
+	require.True(s.T(), PluginIDReserved("enabled"))
+	require.True(s.T(), PluginIDReserved("gate_binary"))
+	require.False(s.T(), PluginIDReserved("echo"))
 }

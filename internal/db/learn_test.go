@@ -234,8 +234,13 @@ func (s *StoreSuite) TestLearnStoreErrors() {
 		require.ErrorIs(s.T(), err, boom)
 	})
 	s.Run("list hidden threads", func() {
-		s.mock.ExpectQuery(`FROM channels WHERE parent_id = \? AND kind IN`).WithArgs("c1").WillReturnError(boom)
+		s.mock.ExpectQuery(`FROM channels WHERE parent_id = \? AND \(kind IN`).WithArgs("c1").WillReturnError(boom)
 		_, err := s.store.ListHiddenThreads(ctx, "c1")
+		require.ErrorIs(s.T(), err, boom)
+	})
+	s.Run("list plugin threads", func() {
+		s.mock.ExpectQuery(`FROM channels WHERE kind = \?`).WithArgs(PluginKind("echo")).WillReturnError(boom)
+		_, err := s.store.ListPluginThreads(ctx, "echo")
 		require.ErrorIs(s.T(), err, boom)
 	})
 	s.Run("insert hidden thread", func() {

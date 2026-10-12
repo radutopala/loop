@@ -172,3 +172,27 @@ Feature: Explain a turn
     And the element "[data-testid='explain-request-error']" should contain text "no session"
     When I click on "[data-testid='explain-turn']"
     Then I wait for "[data-testid='explain-turn'][data-state='error']" to be visible
+
+  @explain-select
+  Scenario: A write-up's text can be selected, and the write-up copied
+    Given the turn has an explanation:
+      """
+      ### Summary
+
+      Added a lint target to the Makefile.
+      """
+    When I open the app in a browser
+    And I click on "bdd-explain" in the sidebar
+    And I wait for "[data-testid='explain-turn'][data-state='open']" to be visible
+    And I click on "[data-testid='explain-turn']"
+    Then I wait for "[data-testid='explanation-content']" to be visible
+    When I drag across the text of "[data-testid='explanation-content'] p"
+    Then the selected text should contain "lint target"
+    # The card's outline clears after 4s, rendering the pane again: the
+    # write-up mustn't be rebuilt under the selection.
+    When I wait "5s"
+    Then the selected text should contain "lint target"
+    When I record clipboard writes
+    And I click on "[data-testid='explanation-copy']"
+    Then the clipboard should contain "### Summary"
+    And the clipboard should contain "Added a lint target to the Makefile."

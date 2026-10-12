@@ -1,8 +1,10 @@
 /**
  * Shared formatting helpers for the scheduled-task panels (TasksPanel and
  * GlobalTasksPanel): relative timestamps for past runs, next-run countdown
- * labels, and the per-schedule-type accent colors.
+ * labels, the per-schedule-type accent colors and what a task runs.
  */
+
+import type { ScheduledTask } from "../api/tasks";
 
 export function timeAgo(dateStr: string): string {
   const d = new Date(dateStr);
@@ -121,4 +123,12 @@ export function datetimeLocalToRFC3339(local: string): string {
   const d = new Date(local);
   if (isNaN(d.getTime())) return "";
   return d.toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
+/** What a task runs, in a line. */
+export function taskSummary(task: ScheduledTask): string {
+  if (task.plugin_id) return `plugin: ${task.plugin_id} · ${task.plugin_action}`;
+  if (task.workflow_name) return `workflow: ${task.workflow_name}`;
+  if (task.bash_script) return `bash: ${task.bash_script}`;
+  return task.prompt;
 }

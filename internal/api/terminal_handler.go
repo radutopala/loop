@@ -949,8 +949,8 @@ func (t *terminalWSConn) handleKill(ctx context.Context, msg wsControlMessage) {
 
 	// Remove all containers for this channel.
 	for _, info := range t.containerRegistry.ListByChannel(msg.ChannelID) {
-		if info.Type == container.ContainerTypeChrome {
-			continue // handled separately via BrowserProvider
+		if info.Type == container.ContainerTypeChrome || info.Type == container.ContainerTypePlugin {
+			continue // handled separately via BrowserProvider and the plugin runtime
 		}
 		if err := t.containerRegistry.RemoveContainer(ctx, info.ContainerID); err != nil {
 			// Suppress benign race: another goroutine (e.g. scheduleRemove) already started removal.

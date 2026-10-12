@@ -1,0 +1,15 @@
+{
+  "id": "bad",
+  "name": "Bad",
+  "version": "1.0.0",
+  "api": "v1",
+  "capabilities": ["ui.panel"],
+  "ui": {
+    "panels": [
+      { "id": "inline", "label": "Inline", "entry": "ui/inline.html" },
+      { "id": "remote", "label": "Remote", "entry": "ui/remote.html" },
+      { "id": "throws", "label": "Throws", "entry": "ui/throws.html" },
+      { "id": "missing", "label": "Missing", "entry": "ui/missing.html" }
+    ]
+  }
+}

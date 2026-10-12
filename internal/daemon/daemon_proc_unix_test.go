@@ -5,11 +5,11 @@ package daemon
 import (
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 )
 
 func (s *DaemonSuite) TestRealSystemStartDetached() {
@@ -37,11 +37,9 @@ func (s *DaemonSuite) TestRealSystemStartDetachedOwnSession() {
 	pid, err := rs.StartDetached("sleep", []string{"30"}, logFile)
 	require.NoError(s.T(), err)
 
-	stat, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	sid, err := unix.Getsid(pid)
 	require.NoError(s.T(), err)
-	// Fields after the parenthesised comm: state ppid pgrp session ...
-	fields := strings.Fields(string(stat[strings.LastIndexByte(string(stat), ')')+1:]))
-	require.Equal(s.T(), strconv.Itoa(pid), fields[3], "process leads its own session")
+	require.Equal(s.T(), pid, sid, "process leads its own session")
 
 	require.NoError(s.T(), rs.Terminate(pid))
 }

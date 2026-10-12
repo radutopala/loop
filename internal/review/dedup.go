@@ -166,7 +166,7 @@ Rules:
 - "note": one or two sentences on what the dropped comments raise that the kept one does not, such as another consequence or another place the fix must cover. It is appended to the kept comment. Leave it empty when they add nothing.
 - Only [agent] comments may be dropped.
 - Comments about the same code path or behaviour that still need separate fixes, where fixing either one leaves the other standing, are related, not duplicates: list them under "related" with a reason. Nothing is dropped for them.
-- For every [agent] comment you don't drop, open its file with the Read tool around its line and decide whether the finding holds: "real" (the issue is there), "false_positive" (the code doesn't do what the comment says, or the behaviour is intended, handled elsewhere, or exactly what the pull request sets out to do), or "already_fixed" (it was real, but this checkout no longer has it). List it under "verdicts" with a one-sentence "reason" citing the file:line you read that decided it. A verdict deletes nothing. Verdicts and moves for a comment whose file you did not Read are discarded, so read before you judge; never judge from the comment text alone.
+- For every [agent] comment you don't drop, open its file with the Read tool around its line and decide whether the finding holds: "real" (the issue is there), "false_positive" (the code doesn't do what the comment says, or the behaviour is intended, handled elsewhere, or exactly what the pull request sets out to do), or "already_fixed" (it was real, but this checkout no longer has it). List it under "verdicts" with a one-sentence "reason" citing the file:line you read that decided it. A verdict deletes nothing. Verdicts and moves for a comment whose line none of your Read calls showed are discarded, and reading through Bash (cat, sed, grep) doesn't count, so Read the lines before you judge; never judge from the comment text alone.
 - The line numbers were often counted from diff hunks and can be a few lines off. For every [agent] comment you don't drop, read its file with line numbers (the Read tool shows them) and check that its line is the statement the finding is about. When it isn't, as when it sits on a blank line, a lone closing brace, or a neighbouring statement, list the right line in the same file under "moves".
 - A body longer than ` + fmt.Sprint(dedupBodyMax) + ` characters is cut and ends in "...". When the cut part matters to your call, read the full body with the get_review_comments tool (pass "path" to list one file's comments); the ids are the ones below.
 - You may read the files in your working directory. Do not change anything.
@@ -174,6 +174,7 @@ Rules:
 	if len(fresh) > 0 {
 		b.WriteString(`- The comments marked [agent, new] are what the latest review round added; an earlier pass already grouped the rest. Check every new comment against every other comment, the [github] ones included, and group it with the comment it repeats. Compare root causes, not wording: a new comment usually rewords an issue another comment already raised, often on another line or in another file. Only the new comments need their lines checked. You need not regroup the older comments among themselves, though you may when you spot a duplicate.
 - Verdicts go to the new comments and to the ones marked [agent, recheck]: earlier findings that still stand, while the code may have changed since they were judged. Read each again; one this checkout no longer has is "already_fixed". The other older comments keep their verdicts.
+- The comments marked [agent, false_positive] or [agent, already_fixed] were already checked and dismissed, for the reason after "Judged:". When a new comment repeats one of them, keep the dismissed comment and drop the new one into it. A false_positive one keeps its verdict, so the new one isn't checked and reported again. Before you judge a new comment, compare it with every [agent, false_positive] comment: when it rests on the claim one of them was dismissed for (the same behaviour, value or code path, however it is worded and wherever it is anchored), it is a repeat, so drop it into that comment instead of giving it a verdict. Mark it "real" only when it raises something the dismissed reason doesn't answer. An already_fixed one reported again may be back: read it again and give it a verdict.
 `)
 	}
 	b.WriteString(`
@@ -197,8 +198,14 @@ Comments, by file:
 			label = "agent, new"
 		case len(fresh) > 0 && standing(c):
 			label = "agent, recheck"
+		case settled(c, fresh):
+			label = "agent, " + c.Verdict
 		}
-		fmt.Fprintf(&b, "- id=%s [%s] L%d (%s): %s\n", c.ID, label, c.Line, effectiveSide(c.Side), oneLine(c.Body, dedupBodyMax))
+		fmt.Fprintf(&b, "- id=%s [%s] L%d (%s): %s", c.ID, label, c.Line, effectiveSide(c.Side), oneLine(c.Body, dedupBodyMax))
+		if settled(c, fresh) && c.VerdictReason != "" {
+			fmt.Fprintf(&b, " Judged: %s", oneLine(c.VerdictReason, dedupBodyMax))
+		}
+		b.WriteString("\n")
 	}
 	return b.String()
 }
@@ -234,8 +241,8 @@ func oneLine(body string, limit int) string {
 // non-empty body shorter than the one it replaces; a comment is trimmed
 // once, and a trimmed comment can't cover another trim, so two bundles
 // can't each cut the issue they share and lose it. A verdict counts only
-// for a kept agent comment (not, with fresh non-empty, a pushed one) and a
-// known Verdict value; the first one named
+// for a kept agent comment (not, with fresh non-empty, a pushed one or a
+// settled false positive) and a known Verdict value; the first one named
 // for an id wins. An error means the reply held no parseable JSON object.
 func ParseDedupReply(reply string, cands []*Comment, fresh map[string]bool) (DedupPlan, error) {
 	start, end := strings.Index(reply, "{"), strings.LastIndex(reply, "}")
@@ -249,6 +256,21 @@ func ParseDedupReply(reply string, cands []*Comment, fresh map[string]bool) (Ded
 	byID := make(map[string]*Comment, len(cands))
 	for _, c := range cands {
 		byID[c.ID] = c
+	}
+	// A group that drops a settled comment in favour of one that isn't is
+	// turned around: the settled comment keeps its verdict and the other is
+	// dropped into it. A [github] keeper stays, since it can't be dropped.
+	for i, cl := range parsed.Clusters {
+		k := byID[cl.Keep]
+		if k == nil || !droppable(k, fresh) || settled(k, fresh) {
+			continue
+		}
+		j := slices.IndexFunc(cl.Drop, func(id string) bool { return byID[id] != nil && settled(byID[id], fresh) })
+		if j < 0 {
+			continue
+		}
+		drop := slices.Concat(cl.Drop[:j], cl.Drop[j+1:], []string{cl.Keep})
+		parsed.Clusters[i].Keep, parsed.Clusters[i].Drop = cl.Drop[j], drop
 	}
 	keepers := map[string]bool{}
 	for _, cl := range parsed.Clusters {
@@ -318,7 +340,7 @@ func ParseDedupReply(reply string, cands []*Comment, fresh map[string]bool) (Ded
 	judged := map[string]bool{}
 	for _, v := range parsed.Verdicts {
 		c := byID[v.ID]
-		if c == nil || !droppable(c, fresh) || keeperOf[v.ID] != "" || judged[v.ID] || !knownVerdict(v.Verdict) {
+		if c == nil || !droppable(c, fresh) || (settled(c, fresh) && c.Verdict == VerdictFalsePositive) || keeperOf[v.ID] != "" || judged[v.ID] || !KnownVerdict(v.Verdict) {
 			continue
 		}
 		judged[v.ID] = true
@@ -336,8 +358,25 @@ func standing(c *Comment) bool {
 	return c.Verdict == "" || c.Verdict == VerdictReal
 }
 
-// knownVerdict reports whether v is one of the Verdict constants.
-func knownVerdict(v string) bool {
+// settled reports whether c is an earlier agent finding a pass already
+// dismissed, seen by a pass after a review run (fresh non-empty). Such a
+// pass keeps the comment over a new repeat of it. A false positive isn't
+// judged again, so it stays one across rounds; an already fixed one may
+// be, since a repeat can mean the fix was undone. A pass the user asks
+// for (fresh empty) checks everything again.
+func settled(c *Comment, fresh map[string]bool) bool {
+	return len(fresh) > 0 && !fresh[c.ID] && droppable(c, fresh) && Dismissed(c.Verdict)
+}
+
+// Dismissed reports whether verdict rules a comment out: a false positive,
+// or a finding the checkout no longer has. Such a comment isn't fixed,
+// addressed or pushed in bulk.
+func Dismissed(verdict string) bool {
+	return verdict == VerdictFalsePositive || verdict == VerdictAlreadyFixed
+}
+
+// KnownVerdict reports whether v is one of the Verdict constants.
+func KnownVerdict(v string) bool {
 	return v == VerdictReal || v == VerdictFalsePositive || v == VerdictAlreadyFixed
 }
 

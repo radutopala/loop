@@ -10,8 +10,25 @@ import { writeClipboard } from "../../utils/copyToClipboard";
  * Pass `html` to offer the copy as rich text too, so a paste target that
  * rebuilds tables (Slack, a spreadsheet, a doc) gets one. `icon` and `title`
  * distinguish buttons where one element offers more than one kind of copy.
+ * testId names the button for tests.
  */
-export function CopyButton({ text, html, icon, title, visible, style }: { text: string; html?: string; icon?: React.ReactNode; title?: string; visible: boolean; style?: React.CSSProperties }) {
+export function CopyButton({
+  text,
+  html,
+  icon,
+  title,
+  visible,
+  style,
+  testId,
+}: {
+  text: string;
+  html?: string;
+  icon?: React.ReactNode;
+  title?: string;
+  visible: boolean;
+  style?: React.CSSProperties;
+  testId?: string;
+}) {
   const { colors } = useTheme();
   const [copied, setCopied] = useState(false);
   const copy = useCallback(
@@ -31,6 +48,7 @@ export function CopyButton({ text, html, icon, title, visible, style }: { text: 
   );
   return (
     <button
+      data-testid={testId}
       onClick={copy}
       title={copied ? "Copied" : (title ?? "Copy")}
       aria-label={title ?? "Copy to clipboard"}

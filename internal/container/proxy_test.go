@@ -698,12 +698,11 @@ func (s *ProxySuite) TestRunProxyStripsUserDockerSockMount() {
 
 // --- SecurityOpt ---
 
-// TestRunGateEnabledSetsSeccompAndPtraceCap guards against the EPERM failure
-// when the in-container seccomp installer runs under Docker's default outer
-// profile, and against the separate EPERM from the gate failing to read the
-// traced child's memory. The runner must drop the outer seccomp profile AND
-// add SYS_PTRACE so process_vm_readv works across the root→agent uid drop.
-func (s *ProxySuite) TestRunGateEnabledSetsSeccompAndPtraceCap() {
+// TestRunGateEnabledAddsPtraceCap guards against the EPERM from the gate
+// failing to read the traced child's memory: the runner must add SYS_PTRACE
+// so process_vm_readv works across the root→agent uid drop. Docker's
+// seccomp profile stays on.
+func (s *ProxySuite) TestRunGateEnabledAddsPtraceCap() {
 	cfg := s.proxyRunCfg()
 	cfg.Gates.Agentgate.Enabled = true
 	s.installRunnerDefaults(cfg)
@@ -723,7 +722,7 @@ func (s *ProxySuite) TestRunGateEnabledSetsSeccompAndPtraceCap() {
 	_, err := s.runner.Run(ctx, &agent.AgentRequest{ChannelID: "ch-1"})
 	require.NoError(s.T(), err)
 	require.NotNil(s.T(), captured)
-	require.Equal(s.T(), []string{"seccomp=unconfined"}, captured.SecurityOpt)
+	require.Empty(s.T(), captured.SecurityOpt)
 	require.Equal(s.T(), []string{"SYS_PTRACE"}, captured.CapAdd)
 }
 
@@ -746,4 +745,12 @@ func (s *ProxySuite) TestRunGateDisabledLeavesSandboxUntouched() {
 	require.NotNil(s.T(), captured)
 	require.Empty(s.T(), captured.SecurityOpt)
 	require.Empty(s.T(), captured.CapAdd)
+}
+
+func (s *RunnerSuite) TestContainerRunning() {
+	ctx := context.Background()
+	s.client.On("ContainerRunning", ctx, "cid-1").Return(true, nil).Once()
+	running, err := s.runner.ContainerRunning(ctx, "cid-1")
+	require.NoError(s.T(), err)
+	require.True(s.T(), running)
 }

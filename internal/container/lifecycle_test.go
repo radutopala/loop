@@ -201,6 +201,7 @@ func (s *LifecycleSuite) TestRemoveImage_UnregistersContainers() {
 	reg := NewRegistry(nil)
 	reg.Register(&ContainerInfo{ContainerID: "c1", ChannelID: "ch-1", Type: ContainerTypeAgent})
 	reg.Register(&ContainerInfo{ContainerID: "c2", ChannelID: "ch-2", Type: ContainerTypeShell})
+	reg.Register(&ContainerInfo{ContainerID: "p1", ChannelID: "ch-1", Type: ContainerTypePlugin})
 	m.SetContainerRegistry(reg)
 
 	s.client.On("RemoveImageAndContainers", mock.Anything, s.imageName).Return(nil)
@@ -208,8 +209,10 @@ func (s *LifecycleSuite) TestRemoveImage_UnregistersContainers() {
 	err := m.RemoveImage(context.Background())
 	require.NoError(s.T(), err)
 
-	// Registry should be empty after image removal.
-	require.Empty(s.T(), reg.List())
+	// Only the plugin container, which runs another image, stays registered.
+	list := reg.List()
+	require.Len(s.T(), list, 1)
+	require.Equal(s.T(), "p1", list[0].ContainerID)
 }
 
 func (s *LifecycleSuite) TestRemoveImage_ErrorDoesNotUnregister() {

@@ -500,9 +500,12 @@ func (s *reviewService) handleReviewPushComment(w http.ResponseWriter, r *http.R
 // are accumulated rather than short-circuiting so a single bad comment
 // doesn't block the rest.
 type pushAllResult struct {
-	Pushed int      `json:"pushed"`
-	Failed int      `json:"failed"`
-	Errors []string `json:"errors,omitempty"`
+	Pushed int `json:"pushed"`
+	// Skipped counts the comments the dedup pass marked false_positive
+	// or already_fixed, which aren't pushed.
+	Skipped int      `json:"skipped"`
+	Failed  int      `json:"failed"`
+	Errors  []string `json:"errors,omitempty"`
 }
 
 // handleReviewIngestComments accepts agent-reported findings from the
@@ -588,6 +591,12 @@ func (s *reviewService) handleReviewPushAll(w http.ResponseWriter, r *http.Reque
 		if c.Pushed {
 			continue
 		}
+		// The dedup pass ruled it out; a push of that one comment still
+		// sends it.
+		if review.Dismissed(c.Verdict) {
+			result.Skipped++
+			continue
+		}
 		if err := s.pushOneComment(r.Context(), channelID, sess, c); err != nil {
 			if errors.Is(err, errReviewDisabled) {
 				http.Error(w, err.Error(), http.StatusForbidden)
@@ -651,24 +660,32 @@ func (s *reviewService) handleReviewDeleteComment(w http.ResponseWriter, r *http
 }
 
 // handleReviewUpdateComment replaces a comment's body, as when folding what
-// a duplicate added into the comment kept. Only an unpushed agent comment
-// can change: a GitHub comment isn't ours, and a pushed one would drift
-// from its copy on the PR. Answers the updated comment and broadcasts it.
+// a duplicate added into the comment kept, and records a verdict on it, as
+// when an agent checking the comments judges one. Only an unpushed agent
+// comment's body can change: a GitHub comment isn't ours, and a pushed one
+// would drift from its copy on the PR. A verdict goes on any agent comment.
+// Answers the updated comment and broadcasts it.
 func (s *reviewService) handleReviewUpdateComment(w http.ResponseWriter, r *http.Request) {
 	if s.sessions == nil {
 		http.Error(w, "review service not configured", http.StatusNotImplemented)
 		return
 	}
 	var body struct {
-		Body string `json:"body"`
+		Body    string `json:"body"`
+		Verdict string `json:"verdict"`
+		Reason  string `json:"verdict_reason"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	text := strings.TrimSpace(body.Body)
-	if text == "" {
-		http.Error(w, "body is required", http.StatusBadRequest)
+	if text == "" && body.Verdict == "" {
+		http.Error(w, "body or verdict is required", http.StatusBadRequest)
+		return
+	}
+	if body.Verdict != "" && !review.KnownVerdict(body.Verdict) {
+		http.Error(w, "verdict must be real, false_positive or already_fixed", http.StatusBadRequest)
 		return
 	}
 	channelID := r.PathValue("id")
@@ -682,10 +699,19 @@ func (s *reviewService) handleReviewUpdateComment(w http.ResponseWriter, r *http
 		http.Error(w, "comment not found", http.StatusNotFound)
 		return
 	}
-	updated := s.editComment(channelID, commentID, func(c *review.Comment) { c.Body = text })
-	if updated == nil {
-		http.Error(w, "only unpushed agent comments can be edited", http.StatusConflict)
-		return
+	updated := c
+	if text != "" {
+		if updated = s.editComment(channelID, commentID, func(c *review.Comment) { c.Body = text }); updated == nil {
+			http.Error(w, "only unpushed agent comments can be edited", http.StatusConflict)
+			return
+		}
+	}
+	if body.Verdict != "" {
+		v := review.DedupVerdict{ID: commentID, Verdict: body.Verdict, Reason: strings.TrimSpace(body.Reason)}
+		if updated = s.setVerdict(channelID, v); updated == nil {
+			http.Error(w, "only agent comments can take a verdict", http.StatusConflict)
+			return
+		}
 	}
 	writeHTTPJSON(w, http.StatusOK, updated, s.deps.logger)
 }
@@ -1103,29 +1129,39 @@ func (s *reviewService) runDedupPass(ctx context.Context, channelID, parentDirPa
 		}
 		res.Removed = append(res.Removed, out.Removed...)
 		if cl.Note != "" {
+			// The note adds what the group's dropped comments raised, and
+			// the group shares a root cause, so the keeper's verdict still
+			// stands: a dismissed one stays dismissed rather than going
+			// back to unjudged, as any other new body would.
+			kept, _ := s.sessions.FindComment(channelID, cl.Keep)
 			out.NoteAdded = s.editComment(channelID, cl.Keep, func(c *review.Comment) {
 				c.Body = review.WithDedupNote(c.Body, cl.Note)
 			}) != nil
+			if out.NoteAdded && kept.Verdict != "" {
+				s.setVerdict(channelID, review.DedupVerdict{ID: cl.Keep, Verdict: kept.Verdict, Reason: kept.VerdictReason})
+			}
 		}
 		res.Clusters = append(res.Clusters, out)
 	}
 	res.Related = append(res.Related, plan.Related...)
 	// A line move or a verdict is a claim about the code, so it only counts
-	// when the pass actually opened the comment's file; otherwise it is a
-	// guess from the comment text, and is dropped.
-	paths := make(map[string]string, len(cands))
+	// when one of the pass's reads showed the comment's line (and, for a
+	// move, the line it moves to); otherwise it is a guess from the comment
+	// text, and is dropped.
+	byID := make(map[string]*review.Comment, len(cands))
 	for _, c := range cands {
-		paths[c.ID] = c.Path
+		byID[c.ID] = c
 	}
-	unread := func(id, what string) bool {
-		if reads.has(sess.WorktreePath, paths[id]) {
+	unread := func(id, what string, lines ...int) bool {
+		c := byID[id]
+		if reads.has(sess.WorktreePath, c, lines...) {
 			return false
 		}
-		s.deps.logger.Info("review dedup: comment file not read, dropping claim", "claim", what, "channel_id", channelID, "comment_id", id, "path", paths[id])
+		s.deps.logger.Info("review dedup: comment line not read, dropping claim", "claim", what, "channel_id", channelID, "comment_id", id, "path", c.Path, "line", c.Line)
 		return true
 	}
 	for _, mv := range plan.Moves {
-		if unread(mv.ID, "move") {
+		if unread(mv.ID, "move", mv.Line) {
 			continue
 		}
 		from := 0
@@ -1173,29 +1209,36 @@ func (s *reviewService) handleReviewStop(w http.ResponseWriter, r *http.Request)
 	writeHTTPJSON(w, http.StatusAccepted, map[string]string{"status": "stopping"}, s.deps.logger)
 }
 
-// fileReads records the file_path of each Read tool call a dedup pass makes.
-// add runs on the agent's stream goroutine; has runs once the pass is over.
+// fileReads records each Read tool call a dedup pass makes. add runs on the
+// agent's stream goroutine; has runs once the pass is over.
 type fileReads struct {
 	mu    sync.Mutex
-	paths []string
+	reads []review.FileRead
 }
 
-func (f *fileReads) add(path string) {
+func (f *fileReads) add(r review.FileRead) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.paths = append(f.paths, path)
+	f.reads = append(f.reads, r)
 }
 
-// has reports whether a Read opened rel, a repo-relative comment path, in
-// the worktree at root. Read takes absolute paths, and the container mounts
-// the worktree at its host path, next to the parent checkout: a read of the
-// same file there is another revision of it, and doesn't count.
-func (f *fileReads) has(root, rel string) bool {
+// has reports whether a Read of c's file in the worktree at root showed c's
+// line and each of lines. Read takes absolute paths, and the container
+// mounts the worktree at its host path, next to the parent checkout: a read
+// of the same file there is another revision of it, and doesn't count. A
+// LEFT-side comment's line is in the base revision, which the worktree
+// doesn't have, so for one any read of the file counts.
+func (f *fileReads) has(root string, c *review.Comment, lines ...int) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	want := filepath.Join(root, rel)
-	return rel != "" && slices.ContainsFunc(f.paths, func(p string) bool {
-		return filepath.Clean(p) == want
+	want := filepath.Join(root, c.Path)
+	if c.Side != "LEFT" {
+		lines = append([]int{c.Line}, lines...)
+	} else {
+		lines = nil
+	}
+	return slices.ContainsFunc(f.reads, func(r review.FileRead) bool {
+		return filepath.Clean(r.Path) == want && !slices.ContainsFunc(lines, func(l int) bool { return !r.Covers(l) })
 	})
 }
 

@@ -936,6 +936,20 @@ func (s *OrchestratorSuite) TestDrainChannelSkipsWhenPlanned() {
 	store.AssertExpectations(s.T())
 }
 
+// TestDrainChannelSkipsWhenStopping verifies a drain claims nothing once
+// Stop has begun, leaving the queue for the next start to resume.
+func (s *OrchestratorSuite) TestDrainChannelSkipsWhenStopping() {
+	store := new(testutil.MockStore)
+	// No ClaimNextPending expectation — if the guard regresses, the mock
+	// call panics with "unexpected call".
+	orch := New(store, s.bot, s.runner, s.scheduler, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Config{}, nil)
+	orch.SetSynchronousDrain()
+	orch.delayStopOnce.Do(func() { close(orch.delayStop) })
+
+	orch.ResumeChannel(context.Background(), "ch1")
+	store.AssertNotCalled(s.T(), "ClaimNextPending")
+}
+
 // TestDrainChannelSkipsWhenAsked verifies the pause flag set by
 // AskUserQuestion short-circuits drainChannel: ClaimNextPending must NOT be
 // invoked while the flag is present.

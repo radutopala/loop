@@ -13,6 +13,9 @@ export interface SchemaProperty {
   description?: string;
   enum?: any[];
   default?: any;
+  minimum?: number;
+  maximum?: number;
+  pattern?: string;
   items?: SchemaProperty;
   properties?: Record<string, SchemaProperty>;
   additionalProperties?: SchemaProperty;

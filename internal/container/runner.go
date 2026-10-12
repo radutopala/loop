@@ -68,6 +68,7 @@ type DockerClient interface {
 	ContainerWait(ctx context.Context, containerID string) (<-chan WaitResponse, <-chan error)
 	ContainerRemove(ctx context.Context, containerID string) error
 	ContainerStop(ctx context.Context, containerID string) error
+	ContainerRunning(ctx context.Context, containerID string) (bool, error)
 	ImageList(ctx context.Context, image string) ([]string, error)
 	ImagePull(ctx context.Context, image string) error
 	ImageBuild(ctx context.Context, contextDir, tag string) error
@@ -290,6 +291,12 @@ func (r *DockerRunner) ContainerRemove(ctx context.Context, containerID string) 
 	return r.client.ContainerRemove(ctx, containerID)
 }
 
+// ContainerRunning reports whether a container is running; one that no
+// longer exists isn't.
+func (r *DockerRunner) ContainerRunning(ctx context.Context, containerID string) (bool, error) {
+	return r.client.ContainerRunning(ctx, containerID)
+}
+
 // currentConfig returns a fresh config by calling configLoad, falling back
 // to the last-known-good config on error or when configLoad is nil.
 func (r *DockerRunner) currentConfig() *config.Config {
@@ -490,7 +497,7 @@ func (r *DockerRunner) runWithRecovery(ctx context.Context, req *agent.AgentRequ
 // worktree's own .loop/config.json (which normally holds nothing but
 // extra_dirs) and the project's mounts, image, and gates are silently lost.
 func (r *DockerRunner) RunBash(ctx context.Context, script, channelID, dirPath, parentDirPath string) (string, error) {
-	containerID, ctrName, mcpConfigPath, keepMCP, err := r.createAndStartContainer(ctx, channelID, dirPath, "", parentDirPath, "",
+	containerID, ctrName, mcpConfigPath, keepMCP, err := r.createAndStartContainer(ctx, channelID, dirPath, "", parentDirPath, "", nil,
 		ContainerTypeAgent, nil,
 		func(_ *config.Config, _ string) []string {
 			return []string{"/bin/sh", "-c", script}
@@ -560,7 +567,7 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 		fresh.ResumeAt = ""
 		req = &fresh
 	}
-	containerID, ctrName, mcpConfigPath, keepMCP, err := r.createAndStartContainer(ctx, req.ChannelID, req.DirPath, req.AuthorID, req.ParentDirPath, req.AgentID,
+	containerID, ctrName, mcpConfigPath, keepMCP, err := r.createAndStartContainer(ctx, req.ChannelID, req.DirPath, req.AuthorID, req.ParentDirPath, req.AgentID, req.MCPArgs,
 		ContainerTypeAgent, req.OnActivity,
 		func(cfg *config.Config, mcpConfigPath string) []string {
 			return buildClaudeCmd(cfg, mcpConfigPath, req)
@@ -638,6 +645,7 @@ func (r *DockerRunner) resolveWorkDir(channelID, dirPath string) string {
 func (r *DockerRunner) createAndStartContainer(
 	ctx context.Context,
 	channelID, dirPath, authorID, parentDirPath, agentID string,
+	mcpArgs []string,
 	cType ContainerType,
 	onActivity func(activity, detail string),
 	buildCmd func(cfg *config.Config, mcpConfigPath string) []string,
@@ -660,7 +668,7 @@ func (r *DockerRunner) createAndStartContainer(
 		return "", "", "", false, err
 	}
 
-	apiURL := agentAPIBase(cfg)
+	apiURL := AgentAPIBase(cfg)
 
 	env, err := r.buildContainerEnv(cfg, channelID, apiURL)
 	if err != nil {
@@ -830,42 +838,36 @@ func (r *DockerRunner) createAndStartContainer(
 		_, _ = r.sys.ExecCommandOutput("git", "init", workDir)
 	}
 
-	mcpConfigPath, err = r.writeMCPConfig(workDir, channelID, apiURL, authorID, agentID, cfg)
+	mcpConfigPath, err = r.writeMCPConfig(workDir, channelID, apiURL, authorID, agentID, mcpArgs, cfg)
 	if err != nil {
 		return "", "", "", false, err
 	}
 
 	cmd := buildCmd(cfg, mcpConfigPath)
 
-	// The seccomp gate needs two things Docker's default sandbox denies:
-	//   - seccomp=unconfined: the gate calls seccomp(2) with NEW_LISTENER,
-	//     which the default outer profile gates behind CAP_SYS_ADMIN. Drop
-	//     the outer profile so the install can run; the inner gate is the
-	//     real defense once it's up.
-	//   - CAP_SYS_PTRACE: the gate-server (root) reads the traced child's
-	//     memory via process_vm_readv to inspect argv / paths before making
-	//     a decision. Default caps lack SYS_PTRACE, and the child's dumpable
-	//     bit is cleared by the setuid drop, so without this cap every trap
-	//     fails closed with EPERM — which bubbles back out of execve.
-	var securityOpt, capAdd []string
+	// The gate-server (root) reads the traced child's memory via
+	// process_vm_readv to inspect argv / paths before making a decision.
+	// Default caps lack SYS_PTRACE, and the child's dumpable bit is cleared
+	// by the setuid drop, so without it every trap fails closed with EPERM,
+	// which bubbles back out of execve. Docker's seccomp profile stays: the
+	// gate's filter stacks on top of it.
+	var capAdd []string
 	if cfg.Gates.Agentgate.Enabled {
-		securityOpt = []string{"seccomp=unconfined"}
 		capAdd = []string{"SYS_PTRACE"}
 	}
 
 	containerCfg := &ContainerConfig{
-		Image:       cfg.ContainerImage,
-		MemoryMB:    cfg.ContainerMemoryMB,
-		CPUs:        cfg.ContainerCPUs,
-		Env:         env,
-		Cmd:         cmd,
-		Binds:       binds,
-		WorkingDir:  workDir,
-		Labels:      map[string]string{ChannelLabelKey: channelID, ContainerTypeKey: string(cType), InstanceLabelKey: r.instanceID},
-		SecurityOpt: securityOpt,
-		CapAdd:      capAdd,
-		Volumes:     volumes,
-		Masks:       masks,
+		Image:      cfg.ContainerImage,
+		MemoryMB:   cfg.ContainerMemoryMB,
+		CPUs:       cfg.ContainerCPUs,
+		Env:        env,
+		Cmd:        cmd,
+		Binds:      binds,
+		WorkingDir: workDir,
+		Labels:     map[string]string{ChannelLabelKey: channelID, ContainerTypeKey: string(cType), InstanceLabelKey: r.instanceID},
+		CapAdd:     capAdd,
+		Volumes:    volumes,
+		Masks:      masks,
 	}
 
 	containerID, err = r.client.ContainerCreate(ctx, containerCfg, containerName)
@@ -995,7 +997,7 @@ func (r *DockerRunner) waitForExit(ctx context.Context, containerID string) (int
 // Unlike Run, the container runs "sleep infinity" instead of Claude CLI and is
 // not auto-removed — it persists until explicitly stopped.
 func (r *DockerRunner) CreateShellContainer(ctx context.Context, channelID, dirPath, parentDirPath string) (string, error) {
-	containerID, ctrName, _, _, err := r.createAndStartContainer(ctx, channelID, dirPath, "", parentDirPath, "",
+	containerID, ctrName, _, _, err := r.createAndStartContainer(ctx, channelID, dirPath, "", parentDirPath, "", nil,
 		ContainerTypeShell, nil,
 		func(*config.Config, string) []string {
 			return []string{"sleep", "infinity"}

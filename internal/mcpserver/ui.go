@@ -19,17 +19,18 @@ type uiRunInput struct {
 // uiRunStep is a step of ui_run, as the app's window runs it. Pointers keep
 // a false or 0 the agent gives.
 type uiRunStep struct {
-	Op        string `json:"op" jsonschema:"select_channel {channel_id}, set_tab {tab}, create_tab {tab?}, rename_tab {tab, name}, remove_tab {tab}, replace_pane {pane, panel, open_mode?, item?, scope?}, add_pane {panel, next_to?, direction?, side?, open_mode?, item?, scope?}, remove_pane {pane}, maximize_pane {pane}, restore_pane, open_file {path, line?}, send_input {pane, text, submit?}, read_output {pane, lines?}, wait_for {pane, match?, quiet_ms?, lines?}"`
+	Op        string `json:"op" jsonschema:"select_channel {channel_id}, set_tab {tab}, create_tab {tab?, canvas?}, rename_tab {tab, name}, remove_tab {tab}, replace_pane {pane, panel, open_mode?, item?, scope?}, add_pane {panel, next_to?, direction?, side?, open_mode?, item?, scope?}, remove_pane {pane}, maximize_pane {pane}, restore_pane, open_file {path, line?}, send_input {pane, text, submit?}, read_output {pane, lines?}, wait_for {pane, match?, quiet_ms?, lines?}"`
 	ChannelID string `json:"channel_id,omitempty" jsonschema:"select_channel: a channel, thread or worktree thread of this project"`
 	Tab       string `json:"tab,omitempty" jsonschema:"set_tab, rename_tab, remove_tab: a layout tab (from ui_state); create_tab: the new tab's name (default the next Layout N)"`
 	Name      string `json:"name,omitempty" jsonschema:"rename_tab: the tab's new name"`
-	Pane      string `json:"pane,omitempty" jsonschema:"A pane id (from ui_state), or a panel type for its first pane"`
+	Canvas    *bool  `json:"canvas,omitempty" jsonschema:"create_tab: a canvas tab, whose panes are free-floating tiles (default false, a split tab)"`
+	Pane      string `json:"pane,omitempty" jsonschema:"A pane id (from ui_state), or a panel type for its first pane; on a canvas tab the panes are its tiles"`
 	Panel     string `json:"panel,omitempty" jsonschema:"replace_pane, add_pane: the new pane's panel"`
 	OpenMode  string `json:"open_mode,omitempty" jsonschema:"replace_pane, add_pane of a docker-agent: resume the channel's session, fork it (the default) or start fresh"`
-	NextTo    string `json:"next_to,omitempty" jsonschema:"add_pane: the pane (id or panel type) the new one goes beside; without it, the new pane spans the tab's edge"`
+	NextTo    string `json:"next_to,omitempty" jsonschema:"add_pane: the pane (id or panel type) the new one goes beside; without it, the new pane spans the tab's edge (on a canvas, its tile goes beside all the tiles)"`
 	Direction string `json:"direction,omitempty" jsonschema:"add_pane: horizontal makes a column, vertical a row (default horizontal); beside a pane in a row of columns (or a column of rows) it joins that row with an equal share"`
 	Side      string `json:"side,omitempty" jsonschema:"add_pane: after puts the new pane right of or below next_to (or the tab), before left of or above it (default after)"`
-	Item      string `json:"item,omitempty" jsonschema:"replace_pane, add_pane of a playground: the playground it shows"`
+	Item      string `json:"item,omitempty" jsonschema:"replace_pane, add_pane of a playground: the playground it shows; of a plugin: its panel, as plugin/panel, or the plugin's id when it has one panel"`
 	Scope     string `json:"scope,omitempty" jsonschema:"With item: the playground's scope, when both have one by that name"`
 	Path      string `json:"path,omitempty" jsonschema:"open_file: a path in one of the channel's roots"`
 	Line      *int   `json:"line,omitempty" jsonschema:"open_file: the line to show, from 1"`
@@ -41,8 +42,8 @@ type uiRunStep struct {
 }
 
 // uiOps are the ops of a ui_run step; uiPanels are the panels a pane step
-// makes. Keep them in sync with the app's executor and PANEL_OPTIONS
-// (app/src/uiBridge/schemaSync.test.ts checks).
+// makes. Keep them in sync with the app's executor and PANEL_OPTIONS, plus
+// "plugin" (app/src/uiBridge/schemaSync.test.ts checks).
 var (
 	uiOps = []any{
 		"select_channel", "set_tab", "create_tab", "rename_tab", "remove_tab",
@@ -52,7 +53,7 @@ var (
 	uiPanels = []any{
 		"chat", "editor", "file-tree", "memory", "git", "docker-agent", "docker-shell", "host-shell",
 		"docker-browser", "host-browser", "sessions", "playground", "notes", "tasks", "kanban",
-		"workflows", "audit", "quality", "review",
+		"workflows", "audit", "quality", "review", "plugin",
 	}
 )
 

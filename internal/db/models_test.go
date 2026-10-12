@@ -97,7 +97,35 @@ func (s *ModelsSuite) TestChannelLearnEnabled() {
 }
 
 func (s *ModelsSuite) TestIsHiddenKind() {
-	require.True(s.T(), IsHiddenKind(ChannelKindLearn))
-	require.True(s.T(), IsHiddenKind(ChannelKindExplain))
-	require.False(s.T(), IsHiddenKind(""))
+	for _, tc := range []struct {
+		kind string
+		want bool
+	}{
+		{ChannelKindLearn, true},
+		{ChannelKindExplain, true},
+		{PluginKind("cogtest"), true},
+		{ChannelKindPluginPrefix, false},
+		{"plugin", false},
+		{"", false},
+	} {
+		require.Equal(s.T(), tc.want, IsHiddenKind(tc.kind), "kind %q", tc.kind)
+	}
+}
+
+func (s *ModelsSuite) TestPluginOfKind() {
+	for _, tc := range []struct {
+		kind   string
+		wantID string
+		wantOK bool
+	}{
+		{"plugin:cogtest", "cogtest", true},
+		{PluginKind("echo"), "echo", true},
+		{"plugin:", "", false},
+		{ChannelKindLearn, "", false},
+		{"", "", false},
+	} {
+		id, ok := PluginOfKind(tc.kind)
+		require.Equal(s.T(), tc.wantOK, ok, "kind %q", tc.kind)
+		require.Equal(s.T(), tc.wantID, id, "kind %q", tc.kind)
+	}
 }

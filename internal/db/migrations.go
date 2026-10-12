@@ -476,6 +476,99 @@ var migrations = []migration{
 		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`),
 	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_config_revisions_path ON config_revisions(path, id)`),
+	// An api token's kind is who it was issued to: an agent container, or a
+	// plugin's container, whose plugin plugin_id names.
+	sqlMigration(`ALTER TABLE api_tokens ADD COLUMN kind TEXT NOT NULL DEFAULT 'agent'`),
+	sqlMigration(`ALTER TABLE api_tokens ADD COLUMN plugin_id TEXT NOT NULL DEFAULT ''`),
+	// plugin_state holds each installed plugin: the image digest it's pinned
+	// to and the capabilities the owner approved (see PluginState).
+	sqlMigration(`CREATE TABLE IF NOT EXISTS plugin_state (
+		plugin_id       TEXT PRIMARY KEY,
+		image           TEXT NOT NULL,
+		digest          TEXT NOT NULL DEFAULT '',
+		version         TEXT NOT NULL,
+		api             TEXT NOT NULL,
+		approved_caps   TEXT NOT NULL DEFAULT '[]',
+		dev             INTEGER NOT NULL DEFAULT 0,
+		status          TEXT NOT NULL,
+		verified_key_id TEXT NOT NULL DEFAULT '',
+		installed_at    DATETIME NOT NULL,
+		updated_at      DATETIME NOT NULL
+	)`),
+	// plugin_containers holds a plugin's container in each channel it runs
+	// in (see PluginContainer).
+	sqlMigration(`CREATE TABLE IF NOT EXISTS plugin_containers (
+		plugin_id    TEXT NOT NULL,
+		channel_id   TEXT NOT NULL,
+		container_id TEXT NOT NULL DEFAULT '',
+		host_port    INTEGER NOT NULL DEFAULT 0,
+		status       TEXT NOT NULL,
+		last_error   TEXT NOT NULL DEFAULT '',
+		updated_at   DATETIME NOT NULL,
+		PRIMARY KEY (plugin_id, channel_id)
+	)`),
+	// A plugin's scheduled task runs action plugin_action of plugin
+	// plugin_id; plugin_paused marks one Loop turned off because the
+	// channel's project stopped enabling the plugin.
+	sqlMigration(`ALTER TABLE scheduled_tasks ADD COLUMN plugin_id TEXT NOT NULL DEFAULT ''`),
+	sqlMigration(`ALTER TABLE scheduled_tasks ADD COLUMN plugin_action TEXT NOT NULL DEFAULT ''`),
+	sqlMigration(`ALTER TABLE scheduled_tasks ADD COLUMN plugin_paused INTEGER NOT NULL DEFAULT 0`),
+	// plugin_schedules holds each scheduled task Loop created for a plugin
+	// action in a channel, so one the owner deletes isn't created again.
+	sqlMigration(`CREATE TABLE IF NOT EXISTS plugin_schedules (
+		plugin_id  TEXT NOT NULL,
+		channel_id TEXT NOT NULL,
+		action     TEXT NOT NULL,
+		PRIMARY KEY (plugin_id, channel_id, action)
+	)`),
+	// plugin_runs holds each plugin agent run from when it's queued until it
+	// ends (see PluginRun).
+	sqlMigration(`CREATE TABLE IF NOT EXISTS plugin_runs (
+		run_id     TEXT PRIMARY KEY,
+		plugin_id  TEXT NOT NULL,
+		agent      TEXT NOT NULL,
+		read_only  INTEGER NOT NULL DEFAULT 0,
+		prompt     TEXT NOT NULL,
+		model      TEXT NOT NULL DEFAULT '',
+		effort     TEXT NOT NULL DEFAULT '',
+		tools      TEXT NOT NULL DEFAULT '[]',
+		thread_id  TEXT NOT NULL,
+		channel_id TEXT NOT NULL,
+		created_at DATETIME NOT NULL
+	)`),
+	// done marks a plugin run that ended well as Loop stopped: its plugin is
+	// told once Loop is back.
+	sqlMigration(`ALTER TABLE plugin_runs ADD COLUMN done INTEGER NOT NULL DEFAULT 0`),
+	// plugin_badges holds the label a plugin shows on a channel's sidebar
+	// row (see PluginBadge).
+	sqlMigration(`CREATE TABLE IF NOT EXISTS plugin_badges (
+		plugin_id  TEXT NOT NULL,
+		channel_id TEXT NOT NULL,
+		text       TEXT NOT NULL,
+		title      TEXT NOT NULL DEFAULT '',
+		updated_at DATETIME NOT NULL,
+		PRIMARY KEY (plugin_id, channel_id)
+	)`),
+	// notifications holds what Loop and the plugins tell the owner, shown
+	// in each channel's notification drawer (see Notification).
+	sqlMigration(`CREATE TABLE IF NOT EXISTS notifications (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		plugin_id  TEXT NOT NULL DEFAULT '',
+		kind       TEXT NOT NULL,
+		channel_id TEXT NOT NULL DEFAULT '',
+		title      TEXT NOT NULL DEFAULT '',
+		body       TEXT NOT NULL DEFAULT '',
+		card       TEXT NOT NULL DEFAULT '',
+		data       TEXT NOT NULL DEFAULT 'null',
+		read       INTEGER NOT NULL DEFAULT 0,
+		created_at DATETIME NOT NULL
+	)`),
+	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_notifications_plugin ON notifications(plugin_id, id)`),
+	// The drawer lists a channel's notifications.
+	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_notifications_channel ON notifications(channel_id, id)`),
+	// data is a plugin tool node's structured result, a JSON object, which
+	// later nodes read as {{.NodeData.<node id>}}.
+	sqlMigration(`ALTER TABLE workflow_node_runs ADD COLUMN data TEXT NOT NULL DEFAULT ''`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the

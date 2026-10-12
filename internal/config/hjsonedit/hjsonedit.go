@@ -40,6 +40,31 @@ func AppendData(fsys FS, configPath string, path []string, item any) (before, af
 	if err != nil {
 		return nil, nil, err
 	}
+	return write(fsys, configPath, before, after)
+}
+
+// Appended is AppendData without the write: the file content it reads (nil
+// for a missing file) and the content Append would write, for showing the
+// edit before making it.
+func Appended(fsys FS, configPath string, path []string, item any) (before, after []byte, err error) {
+	return edited(fsys, configPath, path, func(v *hujson.Value) (patchOp, error) { return appendOp(v, path, item) })
+}
+
+// SetData sets the value at path (object keys from the top level down) in
+// the config file at configPath to value, replacing what's there. A missing
+// file and missing objects along path are created. It returns the file
+// content it read (nil for a missing file) and the content it wrote. The
+// write is atomic.
+func SetData(fsys FS, configPath string, path []string, value any) (before, after []byte, err error) {
+	before, after, err = edited(fsys, configPath, path, func(v *hujson.Value) (patchOp, error) { return setOp(v, path, value) })
+	if err != nil {
+		return nil, nil, err
+	}
+	return write(fsys, configPath, before, after)
+}
+
+// write writes after to configPath, creating its dir.
+func write(fsys FS, configPath string, before, after []byte) ([]byte, []byte, error) {
 	if err := fsys.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		return nil, nil, fmt.Errorf("creating %s: %w", filepath.Dir(configPath), err)
 	}
@@ -49,10 +74,9 @@ func AppendData(fsys FS, configPath string, path []string, item any) (before, af
 	return before, after, nil
 }
 
-// Appended is AppendData without the write: the file content it reads (nil
-// for a missing file) and the content Append would write, for showing the
-// edit before making it.
-func Appended(fsys FS, configPath string, path []string, item any) (before, after []byte, err error) {
+// edited returns the content of the config file at configPath (nil for a
+// missing file) and that content with the patch op makes applied.
+func edited(fsys FS, configPath string, path []string, op func(*hujson.Value) (patchOp, error)) (before, after []byte, err error) {
 	if len(path) == 0 {
 		return nil, nil, errors.New("empty path")
 	}
@@ -68,19 +92,21 @@ func Appended(fsys FS, configPath string, path []string, item any) (before, afte
 	if err != nil {
 		return nil, nil, fmt.Errorf("parsing %s: %w", configPath, err)
 	}
-	op, err := appendOp(&v, path, item)
+	patch, err := op(&v)
 	if err != nil {
 		return nil, nil, err
 	}
 	rootLines := multiline(&v)
-	ops, err := json.Marshal([]any{op})
+	ops, err := json.Marshal([]any{patch})
 	if err == nil {
 		err = v.Patch(ops)
 	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("editing %s: %w", configPath, err)
 	}
-	indentAdded(&v, path, op, rootLines)
+	if patch.Op == "add" {
+		indentAdded(&v, path, patch, rootLines)
+	}
 	return before, v.Pack(), nil
 }
 
@@ -115,6 +141,28 @@ func appendOp(v *hujson.Value, path []string, item any) (patchOp, error) {
 		return patchOp{}, fmt.Errorf("%s is not an array", describe(path))
 	}
 	return patchOp{Op: "add", Path: pointer(path) + "/-", Value: item}, nil
+}
+
+// setOp returns the patch that sets path in v to value: "replace" when it
+// exists, else "add" of the first missing key with the rest of path built
+// around value.
+func setOp(v *hujson.Value, path []string, value any) (patchOp, error) {
+	cur := v
+	for i, key := range path {
+		obj, ok := cur.Value.(*hujson.Object)
+		if !ok {
+			return patchOp{}, fmt.Errorf("%s is not an object", describe(path[:i]))
+		}
+		member := findMember(obj, key)
+		if member == nil {
+			for j := len(path) - 1; j > i; j-- {
+				value = map[string]any{path[j]: value}
+			}
+			return patchOp{Op: "add", Path: pointer(path[:i+1]), Value: value}, nil
+		}
+		cur = member
+	}
+	return patchOp{Op: "replace", Path: pointer(path), Value: value}, nil
 }
 
 // indentAdded lays out what op added to v like the container it went into.

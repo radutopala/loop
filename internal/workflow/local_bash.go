@@ -73,7 +73,9 @@ func (r *LocalBashRunner) RunBash(ctx context.Context, script, channelID, dirPat
 
 // renderBashScript renders a bash node's script template against a defensive
 // copy of runCtx in which every user-controllable string value (Inputs,
-// NodeOutputs, ChannelID, Review.CommentsJSON) is shell-quoted via shellQuote.
+// NodeOutputs, ChannelID, Review.CommentsJSON) is shell-quoted via shellQuote,
+// and NodeData prints quoted too (see bashValue), with bashFuncs. A value
+// that's missing prints as an empty quoted string (see parseBashTemplate).
 // The rendered output is fed to /bin/sh via stdin (see LocalBashRunner.RunBash),
 // so unquoted templates like `echo {{.Inputs.foo}}` previously allowed a foo
 // value of `; rm -rf ~` to execute arbitrary commands. After quoting the same
@@ -87,7 +89,12 @@ func renderBashScript(tmplStr string, data *RunContext) (string, error) {
 	safe.NodeOutputs = shellQuoteMap(data.NodeOutputs)
 	safe.ChannelID = shellQuote(data.ChannelID)
 	safe.Review.CommentsJSON = shellQuote(data.Review.CommentsJSON)
-	return renderTemplate(tmplStr, &safe)
+	safe.NodeData = bashData(data.NodeData)
+	tmpl, err := parseBashTemplate(tmplStr)
+	if err != nil {
+		return "", err
+	}
+	return execute(tmpl, &safe)
 }
 
 // shellQuote wraps s in single quotes, escaping any embedded single quotes

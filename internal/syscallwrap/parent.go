@@ -45,11 +45,7 @@ func (a *app) runParent() error {
 	if policyFile == "" {
 		return errors.New(envPolicyFile + " is required")
 	}
-	apiURL := a.getenv(envAPIURL)
-	if apiURL == "" {
-		return errors.New(envAPIURL + " is required")
-	}
-	token, err := httpapprover.ReadToken(a.readFile, a.tokenFile)
+	baseApprover, err := a.resolveApprover()
 	if err != nil {
 		return err
 	}
@@ -145,7 +141,7 @@ func (a *app) runParent() error {
 	// exiting until the SIGKILL that follows the stop timeout.
 	approvals, cancelApprovals := context.WithCancel(context.Background())
 	defer cancelApprovals()
-	approver := shutdownApprover{Approver: a.newApprover(apiURL, token), shutdown: approvals}
+	approver := shutdownApprover{Approver: baseApprover, shutdown: approvals}
 	srv := a.newGateServer(policy, approver, auditor, a.peerSource, channelID, notifyFD)
 
 	if err := a.sendAck(uc); err != nil {
@@ -229,6 +225,36 @@ func (a *app) runParent() error {
 	return nil
 }
 
+// resolveApprover builds the approver LOOP_GATE_APPROVER names. The HTTP
+// one needs the API URL and the root-only gate token; the deny-only one
+// needs neither.
+func (a *app) resolveApprover() (agentgate.Approver, error) {
+	switch mode := a.getenv(envApprover); mode {
+	case "", approverHTTP:
+		apiURL := a.getenv(envAPIURL)
+		if apiURL == "" {
+			return nil, errors.New(envAPIURL + " is required")
+		}
+		token, err := httpapprover.ReadToken(a.readFile, a.tokenFile)
+		if err != nil {
+			return nil, err
+		}
+		return a.newApprover(apiURL, token), nil
+	case approverDeny:
+		return denyApprover{}, nil
+	default:
+		return nil, fmt.Errorf("%s=%q: want %q or %q", envApprover, mode, approverHTTP, approverDeny)
+	}
+}
+
+// denyApprover denies every trap the policy sends for approval, without
+// asking anyone.
+type denyApprover struct{}
+
+func (denyApprover) Request(context.Context, string, agentgate.ApprovalRequest) agentgate.Outcome {
+	return agentgate.Outcome{Decision: types.DecisionDeny, Reason: "deny-only"}
+}
+
 // childProcessEnv returns the env the child process should see: the current
 // environ with LOOP_SYSCALLWRAP_MODE=child appended (and any caller-provided
 // LOOP_SYSCALLWRAP_MODE stripped — we don't want a double-parent loop if a
@@ -280,9 +306,13 @@ type gateConfigJSON struct {
 }
 
 // defaultLookupUser resolves LOOP_HOST_USER into the agent's numeric uid/gid.
-// entrypoint.sh already creates this user before we're invoked, so the
-// lookup hits /etc/passwd.
+// A name is looked up in /etc/passwd, where entrypoint.sh created it before
+// we're invoked. A numeric "uid" or "uid:gid" (gid defaulting to uid) is
+// taken as is, for images that have no passwd entry for their user.
 func defaultLookupUser(name string) (int, int, error) {
+	if uidStr, gidStr, ok := numericUser(name); ok {
+		return parseUIDGID(uidStr, gidStr)
+	}
 	u, err := user.Lookup(name)
 	if err != nil {
 		return 0, 0, err
@@ -290,19 +320,35 @@ func defaultLookupUser(name string) (int, int, error) {
 	return parseUIDGID(u.Uid, u.Gid)
 }
 
-// parseUIDGID converts the string uid/gid fields from os/user into ints.
-// Split out from defaultLookupUser so tests can exercise the error paths
-// without needing to mint a synthetic /etc/passwd entry.
+// numericUser splits a LOOP_HOST_USER of the form "uid" or "uid:gid" into
+// its parts, the gid defaulting to the uid. ok is false for anything that
+// starts with something other than a digit, which is taken as a name.
+func numericUser(name string) (uidStr, gidStr string, ok bool) {
+	if name == "" || name[0] < '0' || name[0] > '9' {
+		return "", "", false
+	}
+	uidStr, gidStr, found := strings.Cut(name, ":")
+	if !found {
+		gidStr = uidStr
+	}
+	return uidStr, gidStr, true
+}
+
+// parseUIDGID converts uid/gid strings, from os/user or a numeric
+// LOOP_HOST_USER, into ints. Only plain digits parse: no sign, no empty
+// part, and nothing over 2^31-1, so the ints fit on any platform. Split out
+// from defaultLookupUser so tests can exercise the error paths without
+// needing to mint a synthetic /etc/passwd entry.
 func parseUIDGID(uidStr, gidStr string) (int, int, error) {
-	uid, err := strconv.Atoi(uidStr)
+	uid, err := strconv.ParseUint(uidStr, 10, 31)
 	if err != nil {
 		return 0, 0, fmt.Errorf("parse uid %q: %w", uidStr, err)
 	}
-	gid, err := strconv.Atoi(gidStr)
+	gid, err := strconv.ParseUint(gidStr, 10, 31)
 	if err != nil {
 		return 0, 0, fmt.Errorf("parse gid %q: %w", gidStr, err)
 	}
-	return uid, gid, nil
+	return int(uid), int(gid), nil
 }
 
 // defaultSocketpair creates a connected AF_UNIX/SOCK_STREAM pair. Returns

@@ -5,6 +5,10 @@ import { ShortcutsVersionContext } from "../../hooks/shortcutsVersion";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { TerminalTarget } from "../../types";
+import { ContinueIcon } from "../chat/ContinueIcon";
+import { HoverTip } from "../chat/HoverTip";
+
+const CONTINUE_TIP = 'Continue\nTypes "continue" into the agent and presses Enter, so it carries on where it stopped.';
 
 interface TerminalShortcutsProps {
   channelId: string;
@@ -18,6 +22,9 @@ interface TerminalShortcutsProps {
    *  to true for `target === "agent"`. The Docker shell pane runs raw bash in
    *  the agent container and passes false so only $ bash shortcuts surface. */
   showPrompts?: boolean;
+  /** Set on a pane running Claude while its session is up: shows the
+   *  Continue button, which calls it. */
+  onContinue?: () => void;
 }
 
 type MenuKind = "prompt" | "bash";
@@ -25,9 +32,10 @@ type MenuKind = "prompt" | "bash";
 /**
  * Footer bar rendered below the xterm content. Shows a `#` button for prompt
  * shortcuts (agent only) and a `$` button for bash shortcuts (both targets).
- * Each opens a dropdown popping upward.
+ * Each opens a dropdown popping upward. With onContinue it also shows the
+ * Continue button, as the chat composer does.
  */
-export function TerminalShortcuts({ channelId, leafId, onPick, target = "agent", showPrompts }: TerminalShortcutsProps) {
+export function TerminalShortcuts({ channelId, leafId, onPick, target = "agent", showPrompts, onContinue }: TerminalShortcutsProps) {
   const promptsEnabled = showPrompts ?? target === "agent";
   const { colors } = useTheme();
   const [prompts, setPrompts] = useState<PromptShortcut[]>([]);
@@ -104,7 +112,7 @@ export function TerminalShortcuts({ channelId, leafId, onPick, target = "agent",
   const showPromptBtn = promptsEnabled && prompts.length > 0;
   const showBashBtn = !promptsEnabled && bash.length > 0;
 
-  if (!showPromptBtn && !showBashBtn) return null;
+  if (!showPromptBtn && !showBashBtn && !onContinue) return null;
 
   const items: { name: string; description: string; text: string }[] =
     openKind === "prompt"
@@ -181,6 +189,26 @@ export function TerminalShortcuts({ channelId, leafId, onPick, target = "agent",
         >
           $
         </button>
+      )}
+      {onContinue && (
+        <HoverTip text={CONTINUE_TIP}>
+          <button
+            onClick={onContinue}
+            aria-label="Continue"
+            data-testid={`terminal-continue-${leafId}`}
+            style={pickerBtnStyle(colors)}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = colors.hoverBg;
+              e.currentTarget.style.color = colors.textLight;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = "transparent";
+              e.currentTarget.style.color = colors.textDim;
+            }}
+          >
+            <ContinueIcon size={14} />
+          </button>
+        </HoverTip>
       )}
       {openKind !== null &&
         createPortal(

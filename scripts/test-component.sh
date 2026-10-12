@@ -205,6 +205,11 @@ LOOP_STDERR="$LOOP_DIR/serve-stderr.log"
 # The daemon writes its owner API token under the user config dir; pin that
 # dir so the tests (and the browser, via #loop_token=) can read the token.
 export LOOP_API_TOKEN_FILE="$LOOP_HOME/.config/loop/api-token"
+# Agent containers get LOOP_HOST_USER from the daemon's USER, and an
+# interactive exec under the seccomp gate exits without it, ending a Docker
+# Agent pane's session as soon as it starts. The test-runner image leaves
+# USER unset.
+export USER="${USER:-agent}"
 HOME="$LOOP_HOME" XDG_CONFIG_HOME="$LOOP_HOME/.config" bin/loop serve 2>"$LOOP_STDERR" &
 LOOP_PID=$!
 echo "loop started with PID: $LOOP_PID"

@@ -25,6 +25,10 @@ Paste an image into any terminal pane (⌘/Ctrl-V). Loop saves it under the work
 
 ![Pasting an image into the Docker Agent terminal drops the saved file path into the prompt](static/images/features/terminal-image-paste.png)
 
+### Continue
+
+While a Docker Agent pane's session is running, its footer has the same **»** button as the chat composer, next to the `#` prompt-shortcut picker. Clicking it types `continue` into the agent and presses Enter, so it carries on where it stopped. Shell panes don't run Claude, so they don't get it.
+
 ---
 
 ## WebSocket Protocol

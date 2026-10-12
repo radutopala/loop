@@ -198,3 +198,30 @@ func (s *TaskExecutorSuite) TestExecuteWorkflowTaskInvalidInputs() {
 	require.Contains(s.T(), err.Error(), "parsing workflow inputs")
 	require.Empty(s.T(), resp)
 }
+
+// --- Scheduled plugin action tests ---
+
+func (s *TaskExecutorSuite) TestExecutePluginTask() {
+	task := &db.ScheduledTask{ID: 5, ChannelID: "ch1", PluginID: "quiz", PluginAction: "daily"}
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/work/project"}, nil)
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.EqualError(s.T(), err, "plugins are disabled")
+	require.Empty(s.T(), resp)
+
+	var got []any
+	fail := errors.New("not enabled")
+	s.executor.SetPluginActions(func(ctx context.Context, pluginID, action, channelID, dirPath string, taskID int64) error {
+		got = []any{pluginID, action, channelID, dirPath, taskID}
+		return fail
+	})
+	_, err = s.executor.ExecuteTask(s.ctx, task)
+	require.ErrorIs(s.T(), err, fail)
+	require.EqualError(s.T(), err, "running the quiz plugin's daily action: not enabled")
+	require.Equal(s.T(), []any{"quiz", "daily", "ch1", "/work/project", int64(5)}, got)
+
+	fail = nil
+	resp, err = s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "quiz plugin's daily action started", resp)
+}

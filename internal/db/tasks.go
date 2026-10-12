@@ -24,11 +24,19 @@ type TaskMove struct {
 }
 
 func (s *SQLiteStore) CreateScheduledTask(ctx context.Context, task *ScheduledTask) (int64, error) {
-	now := s.nowFunc()
-	result, err := s.db.ExecContext(ctx,
-		`INSERT INTO scheduled_tasks (channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec, thread_id, worktree, origin_branch, update_before_run, workflow_name, workflow_inputs, bash_script)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		task.ChannelID, task.GuildID, task.Schedule, string(task.Type), task.Prompt, boolToInt(task.Enabled), task.NextRunAt, now, now, task.TemplateName, task.AutoDeleteSec, task.ThreadID, boolToInt(task.Worktree), task.OriginBranch, boolToInt(task.UpdateBeforeRun), task.WorkflowName, task.WorkflowInputs, task.BashScript,
+	return insertScheduledTask(ctx, s.db, s.nowFunc(), task)
+}
+
+// execer runs a statement, on the database or in a transaction.
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+func insertScheduledTask(ctx context.Context, db execer, now time.Time, task *ScheduledTask) (int64, error) {
+	result, err := db.ExecContext(ctx,
+		`INSERT INTO scheduled_tasks (channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec, thread_id, worktree, origin_branch, update_before_run, workflow_name, workflow_inputs, bash_script, plugin_id, plugin_action)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		task.ChannelID, task.GuildID, task.Schedule, string(task.Type), task.Prompt, boolToInt(task.Enabled), task.NextRunAt, now, now, task.TemplateName, task.AutoDeleteSec, task.ThreadID, boolToInt(task.Worktree), task.OriginBranch, boolToInt(task.UpdateBeforeRun), task.WorkflowName, task.WorkflowInputs, task.BashScript, task.PluginID, task.PluginAction,
 	)
 	if err != nil {
 		return 0, err
@@ -258,7 +266,7 @@ func (s *SQLiteStore) GetScheduledTask(ctx context.Context, id int64) (*Schedule
 		&taskType, &task.Prompt, &enabled, &task.NextRunAt,
 		&task.CreatedAt, &task.UpdatedAt, &task.TemplateName, &task.AutoDeleteSec, &task.ThreadID, &worktree,
 		&task.OriginBranch, &updateBeforeRun, &running,
-		&task.WorkflowName, &task.WorkflowInputs, &task.BashScript)
+		&task.WorkflowName, &task.WorkflowInputs, &task.BashScript, &task.PluginID, &task.PluginAction)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -284,7 +292,7 @@ func (s *SQLiteStore) GetScheduledTaskByTemplateName(ctx context.Context, channe
 		&taskType, &task.Prompt, &enabled, &task.NextRunAt,
 		&task.CreatedAt, &task.UpdatedAt, &task.TemplateName, &task.AutoDeleteSec, &task.ThreadID, &worktree,
 		&task.OriginBranch, &updateBeforeRun, &running,
-		&task.WorkflowName, &task.WorkflowInputs, &task.BashScript)
+		&task.WorkflowName, &task.WorkflowInputs, &task.BashScript, &task.PluginID, &task.PluginAction)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

@@ -74,16 +74,16 @@ Owner only. Writes a new owner token and switches to it. Returns `204 No Content
 
 ### `POST /api/content-caps`
 
-Owner only. Iframes, images, video and `<base href>` can't send an `Authorization` header, so the UI loads them through a short-lived signed link instead. Returns a base URL that serves one channel root's files or one playground.
+Owner only. Iframes, images, video and `<base href>` can't send an `Authorization` header, so the UI loads them through a short-lived signed link instead. Returns a base URL that serves one channel root's files, one playground or one plugin's panels.
 
 **Request body:**
 
 | Field | Type | Description |
 |---|---|---|
-| `kind` | string | `raw` (a channel root's files) or `playground` |
+| `kind` | string | `raw` (a channel root's files), `playground` or `plugin` (a plugin's panel bundle) |
 | `channel_id` | string | `raw`: the channel (required). `playground`: set for a project playground, empty for a global one |
 | `root` | int | `raw`: the channel root index |
-| `name` | string | `playground`: its name (required) |
+| `name` | string | `playground`: its name (required). `plugin`: the plugin's id (required) |
 
 **Response (200):**
 ```json
@@ -95,6 +95,8 @@ The link is signed with a key that lives only in the running daemon, so links st
 ### `GET /c/{cap}/{path...}`
 
 Serves `path` under what the link names, like `GET /api/channels/{id}/raw/{root}/{path...}` and the playground routes do, with the same path checks: a path that leaves the root, symlinks included, gets 400. A bad or expired link gets `403 link expired or invalid`. Playground pages are sent with `Content-Security-Policy: sandbox allow-scripts allow-forms allow-modals allow-popups allow-downloads`, which gives them an opaque origin: agent-written JavaScript can't read the UI's storage even when both are served from the same origin.
+
+A `plugin` link serves the files under the plugin's `/loop-plugin/ui/`, so `path` starts with `ui/`, as a panel's `entry` does. It answers `403` unless the plugin may run and the owner approved `ui.panel`. Files are sent with `Cache-Control: no-store` and a policy that sandboxes the page the same way and lets it load scripts, styles, images, fonts and `fetch`es only from the link itself (plus `data:`/`blob:` for images, fonts and media), with no inline scripts, frames or form submission.
 
 ---
 
@@ -161,6 +163,7 @@ List all channels with optional filtering. Enriches each channel with container 
 - `description` is what the channel or thread is for, set via [`POST /api/channels/{id}/description`](#post-apichannelsiddescription). Omitted when empty.
 - `ticket_url` is the URL of the channel or thread's ticket, set via [`POST /api/channels/{id}/ticket`](#post-apichannelsidticket). Omitted when unset.
 - `trust_pending` is `true` when the project config's host-reaching fields changed since you last trusted them, so they don't apply yet (see [`GET /api/config/project/trust`](#get-apiconfigprojecttrust)). For a worktree chain it's the root checkout's config. Omitted otherwise, and when the config can't be read.
+- `plugin_badges` are the badges plugins set on the row with [`PUT /api/plugin/v1/badge`](#plugin-api-v1), as `[{"plugin_id", "text", "title"?}]` in plugin id order. Omitted when there are none, when plugins are off, or when the lookup fails. The sidebar patches them live from `plugin.badge` events.
 - `task_id` is set on a thread a scheduled task created for its output: the id of that task. Omitted on every other channel and thread, including ones that host tasks. The sidebar's hide-task-threads toggle filters on it.
 - `locked` is true when the channel/thread is guarded against accidental deletion (toggle via [`PATCH /api/channels/{id}/lock`](#patch-apichannelsidlock)). `DELETE /api/channels/{id}` and `DELETE /api/threads/{id}` return `409 Conflict` while a row is locked.
 - Hidden learn and explain threads (`kind: "learn"` or `"explain"`, see [Learn](#learn) and [Explain](#explain)) are left out of the list.
@@ -537,11 +540,11 @@ Remove a waiting user message from a channel's queue before the orchestrator dis
 **Response:** `204 No Content`
 
 **Behavior notes:**
-- Only deletes rows where `is_bot = 0 AND is_processed = 0` — bot replies and already-processed history can never be removed through this endpoint.
+- Only deletes rows where `is_bot = 0 AND is_processed = 0 AND is_running = 0` — bot replies, already-processed history and a message an agent has already claimed can never be removed through this endpoint.
 - On success, broadcasts a [`message.deleted`](events.md#messagedeleted) WebSocket event so connected clients remove the message from their local state.
 - A queued row deleted while another run is in progress simply never gets claimed: `ClaimNextPending` only sees `is_processed=0 AND is_triggered=1 AND is_running=0` rows, so the atomic claim transaction can never hand the deleted row to an agent.
 
-**Errors:** `400` if `channel_id` is missing. `404` if no matching deletable row exists (message missing, already processed, or is a bot message). `500` on database error. `501` if message deletion is not configured.
+**Errors:** `400` if `channel_id` is missing. `404` if no matching deletable row exists (message missing, already processed or running, or is a bot message). `500` on database error. `501` if message deletion is not configured.
 
 ---
 
@@ -1425,7 +1428,7 @@ Create a new scheduled task.
 | `channel_id`       | string | yes      | Channel to run the task in |
 | `schedule`         | string | yes      | Cron expression, Go duration, or RFC3339 timestamp |
 | `type`             | string | yes      | `cron`, `interval`, or `once` |
-| `prompt`           | string | no       | Prompt text for the agent (required unless `workflow_name` is set) |
+| `prompt`           | string | no       | Prompt text for the agent (required unless `workflow_name` or `bash_script` is set; a task with none of them is a `400`) |
 | `template_name`    | string | no       | Template identifier for deduplication |
 | `auto_delete_sec`  | int    | no       | Auto-delete thread after N seconds |
 | `worktree`         | bool   | no       | Run the agent in an isolated git worktree |
@@ -1476,7 +1479,7 @@ List tasks for a channel.
 ]
 ```
 
-The `running` field indicates whether the task is currently being executed. It is set atomically when execution begins and cleared when it finishes. When `workflow_name` is set, the task triggers a workflow run instead of an agent prompt.
+The `running` field indicates whether the task is currently being executed. It is set atomically when execution begins and cleared when it finishes. When `workflow_name` is set, the task triggers a workflow run instead of an agent prompt. `plugin_id` and `plugin_action`, omitted otherwise, are set on a task Loop created for a [plugin action](plugins.md#scheduled-actions): it asks the plugin's container in the channel to run the action.
 
 **Errors:** `400` if `channel_id` is missing.
 
@@ -2460,9 +2463,10 @@ rewritten to the ones no other comment covers; `covered_by` is the comment
 that reports the part cut out. Each is broadcast as `review.comment_updated`. `verdicts`
 lists the kept agent findings the model checked against the code: `real`,
 `false_positive` or `already_fixed`, with a one-sentence `reason`. A move or
-a verdict counts only when the pass opened that comment's file in the PR
-worktree with the Read tool (the parent checkout's copy doesn't count); the
-others are dropped. Each verdict is
+a verdict counts only when a Read tool call of the pass showed that
+comment's line, and for a move the line it moves to, in the PR worktree (the
+parent checkout's copy doesn't count; for a LEFT-side comment any read of
+the file does); the others are dropped. Each verdict is
 stored on the comment as `verdict` and `verdict_reason` (pushed findings
 included; nothing is deleted for a verdict) and broadcast as
 `review.comment_updated`. `checked` is the number of comments shown to the model
@@ -2542,15 +2546,19 @@ the review service is not configured.
 
 ### `PATCH /api/channels/{id}/review/comments/{cid}`
 
-Replace a comment's body, e.g. to fold in what a duplicate adds. Body:
-`{"body": "..."}`. Only an unpushed agent comment can change. Broadcasts
-`review.comment_updated`.
+Replace a comment's body, e.g. to fold in what a duplicate adds, and/or
+record a verdict on it, replacing the dedup pass's. Body:
+`{"body": "...", "verdict": "false_positive", "verdict_reason": "..."}`;
+give `body`, `verdict` or both. `verdict` is `real`, `false_positive` or
+`already_fixed`. Only an unpushed agent comment's body can change; a verdict
+goes on any agent comment. Broadcasts `review.comment_updated`.
 
 Response: the updated comment.
 
-**Errors:** `400` on invalid JSON or an empty body. `404` if session or
-comment id is unknown. `409` for a pushed or GitHub comment. `501` if the
-review service is not configured.
+**Errors:** `400` on invalid JSON, an unknown verdict, or neither a body nor
+a verdict. `404` if session or comment id is unknown. `409` for a GitHub
+comment, or a body for a pushed one. `501` if the review service is not
+configured.
 
 ### `POST /api/channels/{id}/review/comments/{cid}/push`
 
@@ -2562,10 +2570,12 @@ Response: `{"pushed": true}` (or `{"pushed": true, "already": true}` if already 
 
 ### `POST /api/channels/{id}/review/push-all`
 
-Push every unpushed comment in the session. Errors are accumulated rather
-than short-circuiting — one bad comment does not block the rest.
+Push every unpushed comment in the session, except those the dedup pass
+marked `false_positive` or `already_fixed`; `skipped` counts them. Errors
+are accumulated rather than short-circuiting — one bad comment does not
+block the rest.
 
-Response: `{"pushed": N, "failed": M, "errors": ["id: msg", ...]}`.
+Response: `{"pushed": N, "skipped": S, "failed": M, "errors": ["id: msg", ...]}`.
 
 ---
 
@@ -2728,7 +2738,8 @@ The connected windows and what each shows.
         "canvas": false,
         "panes": [
           {"id": "chat", "panel": "chat"},
-          {"id": "docker-agent-0", "panel": "docker-agent", "open_mode": "fresh", "status": "running", "busy": true}
+          {"id": "docker-agent-0", "panel": "docker-agent", "open_mode": "fresh", "status": "running", "busy": true},
+          {"id": "plugin-1", "panel": "plugin", "plugin": "cogtest/quiz"}
         ],
         "maximized": "docker-agent-0"
       }
@@ -2737,7 +2748,7 @@ The connected windows and what each shows.
 }
 ```
 
-`busy` is an agent terminal that printed in the last 1.5s, e.g. the Claude TUI at work. `status` is `connecting`, `running`, `completed` or `failed`.
+`plugin` is the panel a `plugin` pane shows, as `plugin/panel`. `busy` is an agent terminal that printed in the last 1.5s, e.g. the Claude TUI at work. `status` is `connecting`, `running`, `completed` or `failed`.
 
 **Errors:** `400` invalid `after`.
 
@@ -2769,7 +2780,7 @@ Runs steps in a window, in order, until one fails.
 |----|--------|------|
 | `select_channel` | `channel_id` | Opens the channel |
 | `set_tab` | `tab` | Switches the layout tab |
-| `create_tab` | `tab?` | Opens a new, empty split tab named `tab` (default the next `Layout N`); the result has its `tab` |
+| `create_tab` | `tab?`, `canvas?` | Opens a new, empty split tab named `tab` (default the next `Layout N`), or with `canvas` a canvas tab (default the next `Canvas N`); the result has its `tab` |
 | `rename_tab` | `tab`, `name` | Renames the tab; the result has its new `tab` |
 | `remove_tab` | `tab` | Removes the tab, closing its terminals if it's the open one; the last tab stays |
 | `replace_pane` | `pane`, `panel`, `open_mode?`, `item?`, `scope?` | Puts a new pane in the pane's place |
@@ -2782,7 +2793,9 @@ Runs steps in a window, in order, until one fails.
 | `read_output` | `pane`, `lines?` | The terminal's last `lines` (default 50, at most 2000) |
 | `wait_for` | `pane`, `match?`, `quiet_ms?`, `lines?` | Waits until the last `lines` match the regular expression `match` (multiline, [RE2 syntax](https://github.com/google/re2/wiki/Syntax), so no lookarounds or backreferences), or, without it, until the terminal is quiet for `quiet_ms` (default 2000). After a `send_input` to that pane in the same command, only output since counts. A session that ended counts as done |
 
-`open_mode` is for `docker-agent` panes. `item` names the playground of a `playground` pane, and `scope` (`global` or `project`) picks it when both scopes have one by that name.
+On a canvas tab the panes are its tiles, and `canvas` in the state is `true`. `add_pane` puts the tile beside `next_to`'s tile, or beside all the tiles, on the side `direction` and `side` give, nudged off the others; `replace_pane` keeps the tile's place and size; `maximize_pane` makes the tile fill the canvas's view.
+
+`open_mode` is for `docker-agent` panes. `item` names the playground of a `playground` pane, and `scope` (`global` or `project`) picks it when both scopes have one by that name. For a `plugin` pane, `item` names the plugin panel as `plugin/panel`, or as the plugin's id when it has one panel; it must be a panel of an installed plugin the project enables.
 
 Terminal steps (`send_input`, `read_output`, `wait_for`) work only on `docker-agent` and `docker-shell` panes, which run in containers. A host shell is refused, by the daemon and again by the window.
 
@@ -2979,6 +2992,255 @@ List all tracked containers across all channels. Returns containers sorted with 
 **Errors:** `503` if the container registry is not configured.
 
 ---
+
+## Plugins
+
+Owner only, except the run and tool routes below. Every route answers `501` while `plugins.enabled` is off in the global config.
+
+### `GET /api/plugins`
+
+List the installed plugins.
+
+**Response:** `200 OK`
+
+```json
+{
+  "plugins": [
+    {
+      "id": "echo",
+      "name": "Echo",
+      "image": "ghcr.io/acme/loop-plugin-echo@sha256:…",
+      "digest": "sha256:…",
+      "version": "1.0.0",
+      "api": "1",
+      "capabilities": ["ui.panel", "ui.notification.card"],
+      "dev": false,
+      "status": "installed",
+      "installed_at": "2026-10-10T09:00:00Z",
+      "updated_at": "2026-10-10T09:00:00Z",
+      "panels": [{"id": "main", "label": "Echo", "entry": "ui/main/index.html", "singleton": true}],
+      "cards": [{"id": "score", "entry": "ui/score.html"}]
+    }
+  ]
+}
+```
+
+`capabilities` are the ones the owner approved. `digest` is empty for a dev install. `name`, `panels` and `cards` come from the manifest of a plugin that may run; `panels` only when the owner approved `ui.panel`, `cards` only for `ui.notification.card`. `settings_schema` is the manifest's settings, and `global_settings` the global config's `plugins.<id>.settings`. With `channel_id`, `project_settings` are that channel's project config's own values, `settings` what the plugin runs with there (each default, then the global, then the project values) and `settings_problems` the values left out for no such setting or a value the schema refuses.
+
+### `POST /api/plugins/inspect`
+
+Pull an image, extract and validate its `/loop-plugin` dir, and return what it asks for. Installs nothing.
+
+**Request:** `{"image": "ghcr.io/acme/loop-plugin-echo:1.0.0", "dev": false}`. With `dev`, a local image is used as is, unpulled and unpinned.
+
+**Response:** `200 OK`
+
+```json
+{
+  "id": "echo",
+  "name": "Echo",
+  "version": "1.1.0",
+  "api": "1",
+  "image": "ghcr.io/acme/loop-plugin-echo@sha256:…",
+  "digest": "sha256:…",
+  "dev": false,
+  "capabilities": ["ui.panel", "files.read"],
+  "new_capabilities": ["files.read"],
+  "previous_version": "1.0.0"
+}
+```
+
+`new_capabilities` are the ones the installed version wasn't approved for (all of them on a first install). `previous_version` is set when the plugin is already installed.
+
+**Errors:** `400` without an image; `422` if the pull fails or the image isn't a valid plugin.
+
+### `POST /api/plugins`
+
+Install, or upgrade to, an image. Upgrading stops the plugin's containers; they start on the new image when next used.
+
+**Request:**
+
+```json
+{"image": "ghcr.io/acme/loop-plugin-echo:1.1.0", "digest": "sha256:…", "approve": ["ui.panel", "files.read"]}
+```
+
+`approve` must list every capability the plugin asks for. `digest`, from the inspect the owner reviewed, refuses the install if the image changed since. `dev` works as for inspect.
+
+**Response:** `200 OK`, the same body as inspect.
+
+**Errors:** `400` without an image or with a capability not approved; `409` if the image's digest isn't `digest`; `422` as for inspect.
+
+### `DELETE /api/plugins/{id}`
+
+Remove a plugin: its containers in every channel, its extracted files and its record. `?purge=true` also removes its data dirs, its gate audit logs and the hidden threads its agent runs went in, with their messages and sessions.
+
+**Response:** `204 No Content`
+
+**Errors:** `404` if the plugin isn't installed.
+
+### `POST /api/plugins/{plugin}/actions/{action}`
+
+Run a plugin action by hand in a channel, thread or worktree thread. The plugin's container for it starts first if it isn't running. The plugin answers once it has taken the action, so the run itself goes on after the response.
+
+**Request body:**
+
+```json
+{"channel_id": "ch-1"}
+```
+
+**Response:** `202 Accepted`
+
+```json
+{"channel_id": "ch-1"}
+```
+
+`channel_id` is the channel the action ran in.
+
+**Errors:** `400` without `channel_id`; `404` if the channel or plugin doesn't exist, or the plugin has no such action; `409` if the plugin isn't runnable; `502` if its container doesn't start or the plugin refuses the action; `503` while the plugin isn't answering (see [Plugins](plugins.md#when-a-plugin-stops-answering)).
+
+### `POST /api/plugin/v1/runs`
+
+Called by a plugin, with the token in its `LOOP_PLUGIN_TOKEN_FILE`, to start a run of one of its agents in the channel its container serves. The run goes in the channel's hidden `plugin:<id>` thread, with a fresh session each time, and gets the agent's tools as `plugin_<tool>` MCP tools. A read-only agent runs read-only. The plugin must have been approved for `agent.readonly`, or `agent.write` for an agent that writes.
+
+**Request body:**
+
+```json
+{"agent": "say", "prompt": "Call plugin_echo with the text hi.", "model": "", "effort": ""}
+```
+
+`model` and `effort` are optional and fall back to the channel's.
+
+**Response:** `202 Accepted`
+
+```json
+{"run_id": "ask-…", "thread_id": "…"}
+```
+
+Loop then sends [`plugin.run_started`](events.md#pluginrun_started) to the channel.
+
+**Errors:** `400` without `agent` or `prompt`; `403` for any caller but a plugin, or without the capability; `404` if the agent or the channel doesn't exist; `409` if the plugin isn't runnable.
+
+### `GET /api/plugins/{plugin}/agent?channel_id=`
+
+The plugin's agent runs in the channel, thread or worktree thread, for the agent chat beside its panels.
+
+**Response:** `200 OK`
+
+```json
+{"thread_id": "plugin:cogtest-a1b2c3", "running": true}
+```
+
+`thread_id` is the hidden thread the plugin's runs go in, omitted until the plugin starts one there. `running` is whether one runs now.
+
+**Errors:** `400` without `channel_id`; `404` if the channel doesn't exist.
+
+### `POST /api/plugins/{plugin}/tools/{tool}`
+
+Called by a plugin agent's MCP server when the agent calls one of the plugin's tools. Only a run of that plugin's own agent, in its `plugin:<id>` thread, may call it. Loop checks the tool is the agent's and the input against the tool's `input_schema`, then sends `{"run_id", "agent", "thread_id", "input"}` to the plugin's `POST /tools/{tool}`.
+
+**Request body:**
+
+```json
+{"input": {"text": "hi"}}
+```
+
+**Response:** `200 OK`
+
+```json
+{"content": "hi", "is_error": false}
+```
+
+An unknown tool, an input the schema rejects, or a plugin that isn't answering comes back as `is_error: true`, so the agent sees why.
+
+**Errors:** `403` for any caller but the plugin's own agent run; `404` if the thread or its channel is gone; `502` if the container doesn't start or the plugin fails the call.
+
+### `POST /api/plugins/{plugin}/notifications`
+
+A notification from one of the plugin's panel or card pages (the bridge's `ui.notification.notify`), which the app sends on its behalf. It's kept as a `notify` [notification](#notifications) in the channel's drawer, like one from the plugin's container, and shares its limit.
+
+**Request body:**
+
+```json
+{"channel_id": "ch-1", "title": "Quiz ready", "body": "3 questions"}
+```
+
+**Response:** `204 No Content`
+
+**Errors:** `400` without `channel_id` or `title`; `403` if the plugin isn't enabled in the channel or wasn't approved for `ui.notification.notify`; `404` if the channel doesn't exist; `429` with `Retry-After` past five a minute.
+
+### `ANY /api/plugins/{plugin}/x/{path...}?channel_id=`
+
+The plugin's own API for its panels. Loop sends the method, the query (without `channel_id`), the body (up to 8 MB) and its `Content-Type` to the plugin's `/x/{path}` in the container of the channel, thread or worktree thread, starting it if needed, and answers with the plugin's status, body and `Content-Type`.
+
+**Errors:** `400` without `channel_id`; `404` if the channel or plugin doesn't exist; `409` if the plugin isn't runnable; `413` for a larger body; `502` if the container doesn't start or the call fails; `503` while the plugin isn't answering.
+
+### Plugin API v1
+
+Called by a plugin's container with the token in its `LOOP_PLUGIN_TOKEN_FILE`; that token can call nothing else, and it's held to the channel the container serves. Every route answers `403` for any other caller or without the capability the route needs, `409` if the plugin isn't runnable and `404` if its channel is gone.
+
+| Route | Capability | Answer |
+|---|---|---|
+| `GET /api/plugin/v1/channel` | | `{"id", "name", "dir_path", "platform", "model", "effort", "settings"}`; `settings` are the plugin's settings in the channel's project |
+| `GET /api/plugin/v1/channel/files?path=&start=&end=` | `files.read` | `{"path", "content", "start", "end", "total_lines"}`; lines 1-based and inclusive, both optional; `.git/` refused, and files agentgate denies the channel's agents (`403`); `404` if missing, `400` for a directory or a range past the end, `413` over the size limit |
+| `GET /api/plugin/v1/channel/tree?glob=` | `files.read` | `{"files", "truncated"?}`: the files git tracks, or every file outside `.git/` without git, less those agentgate denies the channel's agents; the glob matches the path or its base name; at most 50,000 |
+| `GET /api/plugin/v1/channel/git/recent?days=` | `git.read` | `{"commits": [{"sha", "subject", "author", "time"}], "files": [{"path", "commits"}]}`; `days` defaults to 14, at most 365; the last 500 non-merge commits; `409` without git |
+| `GET /api/plugin/v1/channel/git/head` | `git.read` | `{"sha", "subject", "author", "time", "branch"}` for HEAD; `branch` is empty when it's detached; `409` without git or without commits |
+| `GET /api/plugin/v1/runs/{run_id}` | `agent.readonly` or `agent.write` | `{"run_id", "thread_id", "status"}` with `status` `queued` or `running`, for the plugin's run in the channel; `404` once it ended |
+| `DELETE /api/plugin/v1/runs/{run_id}` | `agent.readonly` or `agent.write` | cancels the run if it's running, or deletes its queued message → `204`; the plugin's `/runs/{run_id}/done` then gets `failed`. `404` once it ended, `409` while it's being claimed from the queue |
+| `GET /api/plugin/v1/channel/quality/hotspots?limit=&offset=` | `quality.read` | as `GET /api/channels/{id}/quality/complexity`; `503` before the first scan |
+| `POST /api/plugin/v1/events` | | body `{"type", "data"}` (up to 64 KB) → `204`; broadcast as a `plugin.event` event with `{"plugin_id", "type", "data"}` for the channel |
+| `POST /api/plugin/v1/notify` | `ui.notification.notify` | body `{"title", "body"}` → `204`; kept as a `notify` [notification](#notifications); there's no desktop notification. At most five a minute per plugin, cards included: past that `429` with `Retry-After` in seconds |
+| `PUT /api/plugin/v1/memory/{name}` | `memory.write` | body `{"content"}` (up to 256 KB) → `204`; writes `plugin-<plugin>-<name>.md` in `~/.claude/projects/<encoded dir>/memory/` for the channel's dir, which `search_memory` indexes. `name` matches `^[a-z0-9][a-z0-9-]{0,63}$` (`400` otherwise); `409` when the channel has no dir |
+| `DELETE /api/plugin/v1/memory/{name}` | `memory.write` | removes that file → `204`, also when it's already gone |
+| `PUT /api/plugin/v1/badge` | `ui.badge` | body `{"text", "title"?}` → `204`; keeps the plugin's badge on the channel's sidebar row (see `plugin_badges` in [`GET /api/channels`](#get-apichannels)) and broadcasts a `plugin.badge` event with `{"plugin_id", "text", "title"?}` to every window. `text` is trimmed and must be 1 to 16 characters on one line, `title` at most 200 (`400` otherwise) |
+| `DELETE /api/plugin/v1/badge` | `ui.badge` | removes the plugin's badge → `204`, also when there was none; broadcasts `plugin.badge` with an empty `text` |
+| `POST /api/plugin/v1/cards` | `ui.notification.card` | body `{"card", "title"?, "data"?}` (up to 64 KB) → `201 {"id"}`; keeps a `card` [notification](#notifications) for the channel with `data` and broadcasts `notifications.changed`. `title` is cut to one line of 120 characters. Shares notify's limit (`429`). `400` for a card the manifest doesn't declare (`ui.cards`) and on Slack or Discord |
+| `POST /api/plugin/v1/ui/commands` | `ui.run` | as [`POST /api/ui/commands`](#post-apiuicommands), held to the channel: the first step is `select_channel`, and each `select_channel` names the channel or one of its threads that isn't hidden (`403` otherwise) |
+| `POST /api/plugin/v1/ui/open_file` | `ui.open_file` | body `{"path", "line"?}`; runs `select_channel` for the channel, then the `open_file` step, and answers as `POST /api/ui/commands`. `400` for an empty, absolute or `..` path, or a negative line |
+
+---
+
+## Notifications
+
+What Loop and the plugins tell the owner about a channel or thread, listed in the desktop app's notification drawer of that channel. Owner only; every route answers `501` when the store isn't configured. Each change broadcasts a global `notifications.changed` event with no data; the app refetches the counts and the open drawer's list.
+
+Loop keeps a notification for a run the owner started that failed (not a scheduled one, learn, explain or a plugin's agent) and for a scheduled plugin action that failed (in the task's thread, if it has one). Loop's own scheduled tasks and workflows make none; their threads and run history show how they went. A plugin adds one with [`POST /api/plugin/v1/notify`](#plugin-api-v1) or [`POST /api/plugin/v1/cards`](#plugin-api-v1). Loop's own and each plugin's are capped at the newest 200. Deleting a channel drops its notifications; removing a plugin drops the plugin's.
+
+### `GET /api/notifications?channel_id=`
+
+The channel's newest 200, newest first, and how many of them are unread. `channel_id` is required (`400`); a thread's are its own, not its parent's.
+
+```json
+{
+  "notifications": [
+    {"id": 12, "plugin_id": "quiz", "kind": "card", "channel_id": "4bc8…", "title": "Quiz results", "card": "score", "data": {"score": 3}, "read": false, "created_at": "2026-10-12T09:00:00Z"},
+    {"id": 11, "kind": "run", "channel_id": "4bc8…", "title": "Scheduled run finished", "body": "in 42s", "read": true, "created_at": "2026-10-12T08:00:00Z"}
+  ],
+  "unread": 1
+}
+```
+
+`kind` is `run`, `workflow`, `notify` or `card`. `plugin_id` is omitted for Loop's own; `card` and `data` come with a card only.
+
+### `GET /api/notifications/unread`
+
+How many unread notifications each channel or thread has, for the sidebar; the ones with none are left out.
+
+```json
+{"unread": {"4bc8…": 2, "038852d2f1ae": 1}}
+```
+
+### `POST /api/notifications/read`
+
+Body `{"channel_id": "4bc8…", "up_to": 12}`: marks the channel's notifications up to that id read → `204`. `channel_id` is required (`400`).
+
+### `DELETE /api/notifications/{id}`
+
+Dismisses one → `204`; `404` if there's no such notification, `400` for an id that isn't a number.
+
+### `DELETE /api/notifications?channel_id=`
+
+Dismisses the channel's → `204`. `channel_id` is required (`400`).
 
 ## Agent Registry
 
@@ -3950,7 +4212,7 @@ Add, update, or delete a workflow definition in the global or project config fil
 
 **Response:** `204 No Content`
 
-**Errors:** `400` invalid request, `404` workflow not found (update/delete), `409` duplicate name (add).
+**Errors:** `400` invalid request or workflow definition (for example a `plugin` node without exactly one of `action` and `tool`), `404` workflow not found (update/delete), `409` duplicate name (add).
 
 ### `POST /api/workflows/runs`
 
@@ -4039,6 +4301,8 @@ Get a workflow run with all node statuses and outputs.
 }
 ```
 
+A plugin tool node's run also has `data`, the tool's `structured_content`, when the tool answered with one.
+
 **Errors:** `404` if the run does not exist. `501` if the workflow engine is not configured.
 
 ### `POST /api/workflows/runs/{id}/resume`
@@ -4057,7 +4321,7 @@ Resume a paused workflow run (e.g. after an approval node). The response text be
 
 **Response:** `204` No Content on success.
 
-**Errors:** `400` if request body is invalid JSON. `500` if no pending approval exists for the run. `501` if the workflow engine is not configured.
+**Errors:** `400` if request body is invalid JSON. `404` if the run does not exist. `500` if no pending approval exists for the run. `501` if the workflow engine is not configured.
 
 ### `POST /api/workflows/runs/{id}/cancel`
 
@@ -4065,7 +4329,7 @@ Cancel a running workflow. Cancels the context for all active nodes.
 
 **Response:** `204` No Content on success.
 
-**Errors:** `500` on engine errors. `501` if the workflow engine is not configured.
+**Errors:** `404` if the run does not exist. `500` on engine errors. `501` if the workflow engine is not configured.
 
 ### `POST /api/workflows/runs/{id}/retry`
 
@@ -4078,7 +4342,7 @@ Retry a completed, failed, or cancelled workflow run. Creates a new run with the
 }
 ```
 
-**Errors:** `500` on engine errors (run not found, run still active, workflow definition not found, etc.). `501` if the workflow engine is not configured.
+**Errors:** `404` if the run does not exist. `500` on engine errors (run still active, workflow definition not found, etc.). `501` if the workflow engine is not configured.
 
 ### `DELETE /api/workflows/runs/{id}`
 
@@ -4086,4 +4350,4 @@ Delete a workflow run. If the run is active (running or paused), it is cancelled
 
 **Response:** `204` No Content on success.
 
-**Errors:** `500` on engine errors. `501` if the workflow engine is not configured.
+**Errors:** `404` if the run does not exist. `500` on engine errors. `501` if the workflow engine is not configured.

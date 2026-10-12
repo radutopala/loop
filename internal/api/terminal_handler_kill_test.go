@@ -40,6 +40,7 @@ func (s *TerminalHandlerSuite) TestKillAlsoStopsBrowser() {
 		byChannel: []*container.ContainerInfo{
 			{ContainerID: "ctr-kill", ChannelID: "ch-kill-br", Type: container.ContainerTypeShell},
 			{ContainerID: "chrome-skip", ChannelID: "ch-kill-br", Type: container.ContainerTypeChrome}, // skipped
+			{ContainerID: "plugin-skip", ChannelID: "ch-kill-br", Type: container.ContainerTypePlugin}, // skipped
 		},
 	}
 	reg.On("RemoveContainer", mock.Anything, "ctr-kill").Return(nil)

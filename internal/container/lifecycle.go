@@ -254,8 +254,9 @@ func (m *ImageLifecycleManager) Versions() ImageVersions {
 }
 
 // RemoveImage removes the current image and all containers using it.
-// If a registry is configured, all tracked containers are unregistered
-// since RemoveImageAndContainers force-removes them from Docker.
+// If a registry is configured, all tracked containers but plugin ones, which
+// run other images, are unregistered since RemoveImageAndContainers
+// force-removes them from Docker.
 func (m *ImageLifecycleManager) RemoveImage(ctx context.Context) error {
 	err := m.client.RemoveImageAndContainers(ctx, m.imageName)
 	if err != nil {
@@ -263,6 +264,9 @@ func (m *ImageLifecycleManager) RemoveImage(ctx context.Context) error {
 	}
 	if m.registry != nil {
 		for _, info := range m.registry.List() {
+			if info.Type == ContainerTypePlugin {
+				continue
+			}
 			m.registry.Unregister(info.ContainerID)
 		}
 	}

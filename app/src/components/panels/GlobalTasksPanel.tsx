@@ -5,7 +5,7 @@ import { useTheme } from "../../ThemeContext";
 import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
 import type { Channel } from "../../types";
-import { defaultScheduleForType, nextRunLabel, TYPE_COLORS, timeAgo } from "../../utils/taskUtils";
+import { defaultScheduleForType, nextRunLabel, TYPE_COLORS, taskSummary, timeAgo } from "../../utils/taskUtils";
 import { ChannelHeaderInfo } from "../layout/ChannelHeaderInfo";
 import { TaskScheduleField, type TaskType } from "./TaskScheduleField";
 
@@ -372,7 +372,7 @@ export function GlobalTasksPanel({ channel, sidebarOpen, onOpenPalette, onClose,
               flex: 1,
             }}
           >
-            {task.workflow_name ? `workflow: ${task.workflow_name}` : task.bash_script ? `bash: ${task.bash_script}` : task.prompt}
+            {taskSummary(task)}
           </span>
         </div>
         {task.dir_path && <div style={{ color: colors.textDim, fontSize: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{task.dir_path}</div>}
@@ -577,7 +577,11 @@ export function GlobalTasksPanel({ channel, sidebarOpen, onOpenPalette, onClose,
           </div>
           <div style={{ color: colors.textLight, fontSize: 12, fontFamily: "monospace" }}>{selectedTask.type === "manual" ? "on demand (run manually)" : selectedTask.schedule}</div>
           {selectedTask.dir_path && <div style={{ color: colors.textDim, fontSize: 11, fontFamily: "monospace" }}>{selectedTask.dir_path}</div>}
-          {selectedTask.workflow_name ? (
+          {selectedTask.plugin_id ? (
+            <div data-testid="task-detail-plugin" style={{ color: colors.text, fontSize: 12 }}>
+              <span style={{ color: colors.active, fontWeight: 600 }}>Plugin:</span> {selectedTask.plugin_id}'s {selectedTask.plugin_action} action
+            </div>
+          ) : selectedTask.workflow_name ? (
             <>
               <div style={{ color: colors.text, fontSize: 12 }}>
                 <span style={{ color: colors.active, fontWeight: 600 }}>Workflow:</span> {selectedTask.workflow_name}

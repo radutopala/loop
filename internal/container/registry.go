@@ -16,6 +16,10 @@ const (
 	ContainerTypeAgent  ContainerType = "agent"
 	ContainerTypeShell  ContainerType = "shell"
 	ContainerTypeChrome ContainerType = "chrome"
+	// ContainerTypePlugin is a plugin's container in a channel. The plugin
+	// runtime registers and unregisters it; the registry only lists it, so
+	// nothing else removes it or counts it as the channel's work.
+	ContainerTypePlugin ContainerType = "plugin"
 )
 
 // Docker label keys and values used to identify and classify Loop containers.
@@ -91,9 +95,11 @@ type containerRemover interface {
 	ContainerRemove(ctx context.Context, containerID string) error
 }
 
-// shellCreator creates shell containers on-demand for terminal access.
+// shellCreator creates shell containers on-demand for terminal access, and
+// checks a registered one is still running.
 type shellCreator interface {
 	CreateShellContainer(ctx context.Context, channelID, dirPath, parentDirPath string) (string, error)
+	ContainerRunning(ctx context.Context, containerID string) (bool, error)
 }
 
 // Registry is a thread-safe, in-memory container registry.
@@ -359,7 +365,7 @@ func (r *Registry) RunningChannelIDs(_ context.Context) map[string]struct{} {
 
 	result := make(map[string]struct{})
 	for _, info := range r.containers {
-		if info.Status == ContainerStatusRunning {
+		if info.Status == ContainerStatusRunning && info.Type != ContainerTypePlugin {
 			result[info.ChannelID] = struct{}{}
 		}
 	}
@@ -368,12 +374,13 @@ func (r *Registry) RunningChannelIDs(_ context.Context) map[string]struct{} {
 
 // Reconcile removes registry entries for containers that no longer exist in Docker.
 // It compares tracked container IDs against the provided set of live IDs and
-// unregisters any that are missing. Returns the IDs of removed entries.
+// unregisters any that are missing, leaving plugin containers to the plugin
+// runtime. Returns the IDs of removed entries.
 func (r *Registry) Reconcile(liveIDs map[string]struct{}) []string {
 	r.mu.RLock()
 	var stale []string
-	for id := range r.containers {
-		if _, alive := liveIDs[id]; !alive {
+	for id, info := range r.containers {
+		if _, alive := liveIDs[id]; !alive && info.Type != ContainerTypePlugin {
 			stale = append(stale, id)
 		}
 	}
@@ -465,8 +472,8 @@ func (r *Registry) cancelTimer(containerID string) {
 // terminal panes connect simultaneously.
 func (r *Registry) FindOrCreateShell(ctx context.Context, channelID, dirPath, parentDirPath string) (string, error) {
 	// Fast path: check for an existing shell container.
-	if info := r.FindByChannelAndType(channelID, ContainerTypeShell); info != nil {
-		return info.ContainerID, nil
+	if id := r.liveShell(ctx, channelID); id != "" {
+		return id, nil
 	}
 
 	if r.creator == nil {
@@ -487,11 +494,13 @@ func (r *Registry) FindOrCreateShell(ctx context.Context, channelID, dirPath, pa
 	defer chMu.Unlock()
 
 	// Double-check after acquiring the per-channel lock.
-	if info := r.FindByChannelAndType(channelID, ContainerTypeShell); info != nil {
-		return info.ContainerID, nil
+	if id := r.liveShell(ctx, channelID); id != "" {
+		return id, nil
 	}
 	if id := r.reclaimShell(channelID); id != "" {
-		return id, nil
+		if r.shellRunning(ctx, id) {
+			return id, nil
+		}
 	}
 
 	id, err := r.creator.CreateShellContainer(ctx, channelID, dirPath, parentDirPath)
@@ -499,6 +508,39 @@ func (r *Registry) FindOrCreateShell(ctx context.Context, channelID, dirPath, pa
 		return "", fmt.Errorf("creating shell container: %w", err)
 	}
 	return id, nil
+}
+
+// liveShell returns the channel's registered shell container, or "" when
+// it has none or the one it has is no longer running.
+func (r *Registry) liveShell(ctx context.Context, channelID string) string {
+	info := r.FindByChannelAndType(channelID, ContainerTypeShell)
+	if info == nil || !r.shellRunning(ctx, info.ContainerID) {
+		return ""
+	}
+	return info.ContainerID
+}
+
+// shellRunning reports whether a registered shell container is still
+// running. One removed or stopped outside Loop is removed and unregistered,
+// so the caller creates a new one instead of exec'ing into it. Without a
+// creator, or when Docker can't say, the container is assumed to be running.
+func (r *Registry) shellRunning(ctx context.Context, containerID string) bool {
+	if r.creator == nil {
+		return true
+	}
+	running, err := r.creator.ContainerRunning(ctx, containerID)
+	if err != nil || running {
+		return true
+	}
+	if r.logger != nil {
+		r.logger.Info("shell container is no longer running; replacing it", "container_id", containerID)
+	}
+	r.cancelTimer(containerID)
+	if r.remover != nil {
+		_ = r.remover.ContainerRemove(ctx, containerID)
+	}
+	r.Unregister(containerID)
+	return false
 }
 
 // reclaimShell takes back the channel's shell container while its removal

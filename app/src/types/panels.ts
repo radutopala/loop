@@ -20,7 +20,8 @@ export type PanelType =
   | "workflows"
   | "audit"
   | "quality"
-  | "review";
+  | "review"
+  | "plugin";
 export const SINGLETON_PANELS: PanelType[] = [
   "chat",
   "editor",
@@ -65,8 +66,29 @@ export const PANEL_OPTIONS: { panel: PanelType; label: string }[] = [
   { panel: "review", label: "Review" },
 ];
 
-/** Display labels for panel headers and tiles. */
-export const PANEL_LABELS: Record<PanelType, string> = Object.fromEntries(PANEL_OPTIONS.map(({ panel, label }) => [panel, label])) as Record<PanelType, string>;
+/** Display labels for panel headers and tiles. Plugin panes aren't in
+ *  PANEL_OPTIONS: the installed plugins' panels are offered instead. */
+export const PANEL_LABELS: Record<PanelType, string> = { ...Object.fromEntries(PANEL_OPTIONS.map(({ panel, label }) => [panel, label])), plugin: "Plugin" } as Record<PanelType, string>;
+
+/** The plugin panel a "plugin" pane shows. */
+export interface PluginPaneRef {
+  /** The plugin's id. */
+  id: string;
+  /** The panel's id in the plugin's manifest. */
+  panel: string;
+  label: string;
+}
+
+/** What a new pane needs besides its panel type. */
+export interface PaneMeta {
+  openMode?: AgentOpenMode;
+  plugin?: PluginPaneRef;
+}
+
+/** The header label of a pane: a plugin pane's own label, else its panel's. */
+export function paneLabel(panel: PanelType, plugin?: PluginPaneRef): string {
+  return (panel === "plugin" && plugin?.label) || PANEL_LABELS[panel];
+}
 
 /** How a docker-agent terminal should boot Claude relative to the channel's stored session.
  *  - "resume": reuse the channel session in place (writes back to it).
@@ -89,6 +111,8 @@ export interface LeafNode {
   /** For docker-agent panes: how to handle the Claude session at boot.
    *  Undefined on legacy persisted layouts → treated as "fork" (the historical default). */
   openMode?: AgentOpenMode;
+  /** For plugin panes: the plugin panel shown. */
+  plugin?: PluginPaneRef;
 }
 
 export interface SplitNode {

@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
 import { autoUpdater } from "electron-updater";
+import { allowFrameNavigation } from "./pluginFrameGuard";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -413,6 +414,16 @@ function createWindow(hash?: string): BrowserWindow {
     if (isAppEntryURL(url, appEntryURL)) return;
     event.preventDefault();
     if (isExternalURL(url)) shell.openExternal(url);
+  });
+
+  // A plugin's panel or card frame may move around its own bundle but not
+  // leave it: CSP can't stop a frame navigating itself, and a page left
+  // that way could carry what the bridge gave it out in the URL. The app
+  // itself (the top frame) still points frames at fresh links.
+  win.webContents.on("will-frame-navigate", (details) => {
+    if (details.isMainFrame || !details.frame) return;
+    if (details.initiator && details.initiator.parent === null) return;
+    if (!allowFrameNavigation(details.frame.url, details.url)) details.preventDefault();
   });
 
   return win;

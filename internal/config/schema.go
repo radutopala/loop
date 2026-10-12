@@ -9,6 +9,9 @@ type SchemaProperty struct {
 	Description          string                     `json:"description,omitempty"`
 	Enum                 []any                      `json:"enum,omitempty"`
 	Default              any                        `json:"default,omitempty"`
+	Minimum              *float64                   `json:"minimum,omitempty"`
+	Maximum              *float64                   `json:"maximum,omitempty"`
+	Pattern              string                     `json:"pattern,omitempty"`
 	Items                *SchemaProperty            `json:"items,omitempty"`
 	Properties           map[string]*SchemaProperty `json:"properties,omitempty"`
 	AdditionalProperties *SchemaProperty            `json:"additionalProperties,omitempty"`
@@ -747,7 +750,7 @@ func buildSchema() *ConfigSchema {
 								Type: "object",
 								Properties: map[string]*SchemaProperty{
 									"id":             {Type: "string", Title: "ID"},
-									"type":           {Type: "string", Title: "Type", Enum: []any{"prompt", "bash", "loop", "approval"}},
+									"type":           {Type: "string", Title: "Type", Enum: []any{"prompt", "bash", "loop", "approval", "plugin"}},
 									"depends_on":     {Type: "array", Title: "Depends On", Items: &SchemaProperty{Type: "string"}},
 									"when":           {Type: "string", Title: "When Condition"},
 									"trigger_rule":   {Type: "string", Title: "Trigger Rule", Enum: []any{"all_success", "all_done", "one_success"}},
@@ -760,6 +763,9 @@ func buildSchema() *ConfigSchema {
 									"condition":      {Type: "string", Title: "Loop Condition"},
 									"message":        {Type: "string", Title: "Approval Message"},
 									"timeout":        {Type: "string", Title: "Timeout"},
+									"plugin":         {Type: "string", Title: "Plugin", Description: "Plugin id, for plugin nodes"},
+									"action":         {Type: "string", Title: "Plugin Action", Description: "Set this or Plugin Tool"},
+									"tool":           {Type: "string", Title: "Plugin Tool", Description: "Set this or Plugin Action; edit its input in the config file"},
 									"retry": {
 										Type:  "object",
 										Title: "Retry",
@@ -904,6 +910,34 @@ func buildSchema() *ConfigSchema {
 						Type:        "string",
 						Title:       "gh CLI User",
 						Description: "Named gh CLI account to use for PR lookups (see `gh auth status`). Per-project override goes in .loop/config.json. Empty uses gh's currently-active account.",
+					},
+				},
+			},
+
+			// ── Plugins section ──
+			"plugins": {
+				Type:     "object",
+				XSection: "Plugins",
+				Properties: map[string]*SchemaProperty{
+					"enabled": {
+						Type:        "boolean",
+						Title:       "Enabled",
+						Description: "Let the daemon install and run plugins.",
+						Default:     false,
+						XGlobalOnly: true,
+					},
+					"gate_binary": {
+						Type:        "string",
+						Title:       "Gate Binary",
+						XGlobalOnly: true,
+						Description: "A linux build of loop (make build-linux) that plugin containers run agentgate from. Empty downloads the release matching the daemon's version; a dev build needs this set.",
+					},
+					"daily_runs": {
+						Type:        "integer",
+						Title:       "Daily Agent Runs",
+						Description: "How many agent runs each plugin may start in 24 hours; past it, its run requests are refused.",
+						Default:     DefaultPluginDailyRuns,
+						XGlobalOnly: true,
 					},
 				},
 			},

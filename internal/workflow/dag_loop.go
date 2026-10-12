@@ -112,8 +112,7 @@ func (e *defaultEngine) executeLoopNode(ctx context.Context, run *db.WorkflowRun
 			result, tmplErr := renderTemplate(node.Condition, runCtx)
 			mu.Unlock()
 			if tmplErr != nil {
-				e.logger.Warn("workflow: loop condition failed", "node_id", node.ID, "error", tmplErr)
-				continue
+				return lastOutput, fmt.Errorf("rendering loop condition: %w", tmplErr)
 			}
 			if result == "true" {
 				break
@@ -250,8 +249,10 @@ func (e *defaultEngine) runBodyChild(ctx context.Context, run *db.WorkflowRun, c
 			return e.executePromptNode(attemptCtx, run, child, runCtx, mu)
 		case config.NodeTypeBash:
 			return e.executeBashNode(attemptCtx, run, child, runCtx, mu)
+		case config.NodeTypePlugin:
+			return e.executePluginNode(attemptCtx, run, child, runCtx, mu)
 		default:
-			// validateWorkflowDef rejects this at StartRun, but
+			// ValidateWorkflowDef rejects this at StartRun, but
 			// executeDAGFromCheckpoint resumes from the DB-pinned definition
 			// without re-validating — a stored workflow with an unsupported
 			// body-child type (manual DB edit, pre-validator definition)
@@ -312,6 +313,7 @@ func (e *defaultEngine) persistBodyChildEnd(run *db.WorkflowRun, child *config.N
 		Input:     res.input,
 		SessionID: res.sessionID,
 		Output:    res.output,
+		Data:      res.data,
 		Attempt:   attempt,
 		// StartedAt is carried into the UPSERT so that, if the running-row
 		// INSERT failed silently in runBodyChild (we only log + swallow),
@@ -424,7 +426,7 @@ func parseReviewOutput(stdout string, runCtx *RunContext) {
 	// fixed in the checkout, isn't a finding: the fix step doesn't get it,
 	// and a round that leaves only those has nothing to fix.
 	parsed.Comments = slices.DeleteFunc(parsed.Comments, func(c ReviewComment) bool {
-		return c.Verdict == review.VerdictFalsePositive || c.Verdict == review.VerdictAlreadyFixed
+		return review.Dismissed(c.Verdict)
 	})
 	runCtx.Review.Comments = parsed.Comments
 	runCtx.Review.NoComments = parsed.NoComments || len(parsed.Comments) == 0

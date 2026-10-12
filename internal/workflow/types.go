@@ -5,7 +5,10 @@ package workflow
 type RunContext struct {
 	Inputs      map[string]string // user-provided inputs keyed by name
 	NodeOutputs map[string]string // node_id → output text
-	RunMeta     RunMeta
+	// NodeData maps a plugin tool node's id to its structured result, a
+	// decoded JSON object, so a template reads {{.NodeData.check.score}}.
+	NodeData map[string]any
+	RunMeta  RunMeta
 	// ChannelID is the channel that owns the run, exposed to templates as
 	// {{.ChannelID}}. Seeded review/review-fix loops embed this in their
 	// bash commands.

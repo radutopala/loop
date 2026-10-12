@@ -19,25 +19,29 @@ const (
 	KindOwner Kind = "owner"
 	// KindAgent is an agent container.
 	KindAgent Kind = "agent"
+	// KindPlugin is a plugin's container.
+	KindPlugin Kind = "plugin"
 )
 
 // Principal is an authenticated caller. The container, channel and dir are
-// set for agents only: the ones its token was issued for.
+// set for agents and plugins only: the ones its token was issued for.
+// PluginID names a plugin's plugin.
 type Principal struct {
 	Kind        Kind
+	PluginID    string
 	ContainerID string
 	ChannelID   string
 	DirPath     string
 }
 
-// Store persists issued agent tokens, by hash.
+// Store persists issued agent and plugin tokens, by hash.
 type Store interface {
 	InsertAPIToken(ctx context.Context, t *db.APIToken) error
 	DeleteAPITokens(ctx context.Context, containerID string) error
 	ListAPITokens(ctx context.Context) ([]*db.APIToken, error)
 }
 
-// Registry issues agent tokens and looks them up. Tokens are kept by hash,
+// Registry issues agent and plugin tokens and looks them up. Tokens are kept by hash,
 // in memory and, when there's a store, in the database, so containers keep
 // working across a daemon restart.
 type Registry struct {
@@ -70,7 +74,7 @@ func (r *Registry) Load(ctx context.Context, alive func(containerID string) bool
 			gone[t.ContainerID] = true
 			continue
 		}
-		r.byHash[t.Hash] = Principal{Kind: KindAgent, ContainerID: t.ContainerID, ChannelID: t.ChannelID, DirPath: t.DirPath}
+		r.byHash[t.Hash] = Principal{Kind: Kind(t.Kind), PluginID: t.PluginID, ContainerID: t.ContainerID, ChannelID: t.ChannelID, DirPath: t.DirPath}
 	}
 	for id := range gone {
 		if err := r.store.DeleteAPITokens(ctx, id); err != nil {
@@ -82,18 +86,29 @@ func (r *Registry) Load(ctx context.Context, alive func(containerID string) bool
 
 // Issue returns a new token for an agent container.
 func (r *Registry) Issue(containerID, channelID, dirPath string) (string, error) {
+	return r.issue(Principal{Kind: KindAgent, ContainerID: containerID, ChannelID: channelID, DirPath: dirPath})
+}
+
+// IssuePlugin returns a new token for plugin pluginID's container in a
+// channel.
+func (r *Registry) IssuePlugin(containerID, channelID, dirPath, pluginID string) (string, error) {
+	return r.issue(Principal{Kind: KindPlugin, PluginID: pluginID, ContainerID: containerID, ChannelID: channelID, DirPath: dirPath})
+}
+
+func (r *Registry) issue(p Principal) (string, error) {
 	tok, err := newToken(r.readRand)
 	if err != nil {
 		return "", err
 	}
 	h := hashToken(tok)
 	if r.store != nil {
-		if err := r.store.InsertAPIToken(context.Background(), &db.APIToken{Hash: h, ContainerID: containerID, ChannelID: channelID, DirPath: dirPath}); err != nil {
+		t := &db.APIToken{Hash: h, Kind: string(p.Kind), PluginID: p.PluginID, ContainerID: p.ContainerID, ChannelID: p.ChannelID, DirPath: p.DirPath}
+		if err := r.store.InsertAPIToken(context.Background(), t); err != nil {
 			return "", fmt.Errorf("storing api token: %w", err)
 		}
 	}
 	r.mu.Lock()
-	r.byHash[h] = Principal{Kind: KindAgent, ContainerID: containerID, ChannelID: channelID, DirPath: dirPath}
+	r.byHash[h] = p
 	r.mu.Unlock()
 	return tok, nil
 }
@@ -113,7 +128,7 @@ func (r *Registry) Revoke(containerID string) error {
 	return r.store.DeleteAPITokens(context.Background(), containerID)
 }
 
-// Lookup returns the agent a token was issued to.
+// Lookup returns the agent or plugin a token was issued to.
 func (r *Registry) Lookup(token string) (Principal, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

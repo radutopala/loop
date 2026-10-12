@@ -3,6 +3,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -49,6 +50,7 @@ const (
 	NodeTypeBash     NodeType = "bash"
 	NodeTypeLoop     NodeType = "loop"
 	NodeTypeApproval NodeType = "approval"
+	NodeTypePlugin   NodeType = "plugin"
 )
 
 // WorkflowInput defines a workflow input parameter.
@@ -67,22 +69,26 @@ type RetryConfig struct {
 
 // NodeDef defines a single node in a workflow DAG.
 type NodeDef struct {
-	ID            string       `json:"id" jsonschema:"required,Unique node identifier within the workflow"`
-	Type          NodeType     `json:"type" jsonschema:"required,Node type: 'prompt' (AI agent), 'bash' (shell script), 'loop' (prompt repeated until condition), or 'approval' (human decision)"`
-	DependsOn     []string     `json:"depends_on,omitempty" jsonschema:"IDs of nodes that must complete before this one starts"`
-	When          string       `json:"when,omitempty" jsonschema:"Go template expression; node is skipped when it renders 'false'"`
-	TriggerRule   string       `json:"trigger_rule,omitempty" jsonschema:"How dependencies gate this node: 'all_success' (default), 'all_done', or 'one_success'"`
-	Prompt        string       `json:"prompt,omitempty" jsonschema:"Inline prompt text for 'prompt'/'loop' nodes. Supports Go text/template. Mutually exclusive with prompt_path."`
-	PromptPath    string       `json:"prompt_path,omitempty" jsonschema:"Path to a prompt file, resolved as {loopDir}/workflows/{prompt_path}. Mutually exclusive with prompt."`
-	SystemPrompt  string       `json:"system_prompt,omitempty" jsonschema:"Optional system prompt for 'prompt' nodes; supports templates"`
-	Model         string       `json:"model,omitempty" jsonschema:"Optional Claude model override (e.g. 'claude-sonnet-4-6')"`
-	Script        string       `json:"script,omitempty" jsonschema:"Shell command(s) for 'bash' nodes, passed to /bin/sh -c. Any sh-compatible content works: a one-liner, a multi-line script, pipelines, heredocs. To execute a script file on disk, just invoke it (e.g. 'bash workflows/build.sh') — the bash container shares the same mounts as agent containers. Supports Go text/template rendering against workflow inputs and upstream node outputs."`
-	MaxIterations int          `json:"max_iterations,omitempty" jsonschema:"Maximum iterations for 'loop' nodes (default 10)"`
-	Condition     string       `json:"condition,omitempty" jsonschema:"Go template evaluated after each 'loop' iteration; stops when it renders 'true'"`
-	Body          []*NodeDef   `json:"body,omitempty" jsonschema:"Child nodes executed in order per iteration. For 'loop' nodes only. Empty body keeps the legacy self-prompt behavior."`
-	Message       string       `json:"message,omitempty" jsonschema:"Approval message shown to the human for 'approval' nodes; supports templates"`
-	Timeout       string       `json:"timeout,omitempty" jsonschema:"Per-node timeout as a Go time.Duration (e.g. '5m'). For 'approval' nodes: deadline for human response."`
-	Retry         *RetryConfig `json:"retry,omitempty" jsonschema:"Optional retry policy for transient failures"`
+	ID            string          `json:"id" jsonschema:"required,Unique node identifier within the workflow"`
+	Type          NodeType        `json:"type" jsonschema:"required,Node type: 'prompt' (AI agent), 'bash' (shell script), 'loop' (prompt repeated until condition), 'approval' (human decision), or 'plugin' (a plugin's action or tool)"`
+	DependsOn     []string        `json:"depends_on,omitempty" jsonschema:"IDs of nodes that must complete before this one starts"`
+	When          string          `json:"when,omitempty" jsonschema:"Go template expression; node is skipped when it renders 'false'"`
+	TriggerRule   string          `json:"trigger_rule,omitempty" jsonschema:"How dependencies gate this node: 'all_success' (default), 'all_done', or 'one_success'"`
+	Prompt        string          `json:"prompt,omitempty" jsonschema:"Inline prompt text for 'prompt'/'loop' nodes. Supports Go text/template. Mutually exclusive with prompt_path."`
+	PromptPath    string          `json:"prompt_path,omitempty" jsonschema:"Path to a prompt file, resolved as {loopDir}/workflows/{prompt_path}. Mutually exclusive with prompt."`
+	SystemPrompt  string          `json:"system_prompt,omitempty" jsonschema:"Optional system prompt for 'prompt' nodes; supports templates"`
+	Model         string          `json:"model,omitempty" jsonschema:"Optional Claude model override (e.g. 'claude-sonnet-4-6')"`
+	Script        string          `json:"script,omitempty" jsonschema:"Shell command(s) for 'bash' nodes, passed to /bin/sh -c. Any sh-compatible content works: a one-liner, a multi-line script, pipelines, heredocs. To execute a script file on disk, just invoke it (e.g. 'bash workflows/build.sh') — the bash container shares the same mounts as agent containers. Supports Go text/template rendering against workflow inputs and upstream node outputs."`
+	MaxIterations int             `json:"max_iterations,omitempty" jsonschema:"Maximum iterations for 'loop' nodes (default 10)"`
+	Condition     string          `json:"condition,omitempty" jsonschema:"Go template evaluated after each 'loop' iteration; stops when it renders 'true'"`
+	Body          []*NodeDef      `json:"body,omitempty" jsonschema:"Child nodes executed in order per iteration. For 'loop' nodes only. Empty body keeps the legacy self-prompt behavior."`
+	Message       string          `json:"message,omitempty" jsonschema:"Approval message shown to the human for 'approval' nodes; supports templates"`
+	Plugin        string          `json:"plugin,omitempty" jsonschema:"Installed plugin id for 'plugin' nodes"`
+	Action        string          `json:"action,omitempty" jsonschema:"Action id from the plugin's manifest for 'plugin' nodes. Mutually exclusive with tool."`
+	Tool          string          `json:"tool,omitempty" jsonschema:"Tool name from the plugin's manifest for 'plugin' nodes. Mutually exclusive with action."`
+	Input         json.RawMessage `json:"input,omitempty" jsonschema:"JSON object passed as a 'plugin' node's tool or action input; every string in it supports templates"`
+	Timeout       string          `json:"timeout,omitempty" jsonschema:"Per-node timeout as a Go time.Duration (e.g. '5m'). For 'approval' nodes: deadline for human response."`
+	Retry         *RetryConfig    `json:"retry,omitempty" jsonschema:"Optional retry policy for transient failures"`
 }
 
 // ResolvePrompt returns the prompt text for the node.
@@ -529,6 +535,93 @@ type Config struct {
 	PlaygroundShare            PlaygroundShareConfig
 	Learn                      LearnConfig
 	Explain                    ExplainConfig
+	Plugins                    PluginsConfig
+}
+
+// PluginsConfig configures plugins. Enabled lets the daemon install and run
+// them; it's global only, since installing a plugin is the owner's call.
+type PluginsConfig struct {
+	Enabled bool `json:"enabled"`
+	// GateBinary is a linux build of loop that plugin containers run
+	// agentgate from. Unset, the release matching the daemon's version is
+	// downloaded; a dev build has none, so it needs this set.
+	GateBinary string `json:"gate_binary"`
+	// DailyRuns caps the agent runs each plugin starts in 24 hours; 0 uses
+	// DefaultPluginDailyRuns.
+	DailyRuns int `json:"daily_runs"`
+	// ByID configures each installed plugin, keyed by its id: every key of
+	// the plugins block but the ones above.
+	ByID map[string]PluginConfig `json:"-"`
+}
+
+// PluginConfig configures one plugin.
+type PluginConfig struct {
+	// Enabled turns the plugin on. The global value is every project's
+	// default; a project's own value overrides it.
+	Enabled *bool `json:"enabled,omitempty"`
+	// Settings are the plugin's settings, as its manifest declares them. A
+	// project's values override the global ones, setting by setting.
+	Settings map[string]any `json:"settings,omitempty"`
+}
+
+// pluginsReserved are the plugins block's own keys, which no plugin id
+// can be.
+var pluginsReserved = []string{"enabled", "gate_binary", "daily_runs"}
+
+// DefaultPluginDailyRuns is the agent runs each plugin starts in 24 hours
+// when plugins.daily_runs is unset.
+const DefaultPluginDailyRuns = 50
+
+// DailyRunsFor returns how many agent runs each plugin starts in 24 hours.
+func (p PluginsConfig) DailyRunsFor() int {
+	if p.DailyRuns > 0 {
+		return p.DailyRuns
+	}
+	return DefaultPluginDailyRuns
+}
+
+// PluginIDReserved reports whether id is one of the plugins block's own
+// keys, so a plugin can't be configured by it.
+func PluginIDReserved(id string) bool {
+	return slices.Contains(pluginsReserved, id)
+}
+
+// EnabledFor reports whether the plugin id is enabled.
+func (p PluginsConfig) EnabledFor(id string) bool {
+	e := p.ByID[id].Enabled
+	return e != nil && *e
+}
+
+// UnmarshalJSON reads the plugins block: its own keys, and each plugin's
+// config under the plugin's id.
+func (p *PluginsConfig) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	var own struct {
+		Enabled    bool   `json:"enabled"`
+		GateBinary string `json:"gate_binary"`
+		DailyRuns  int    `json:"daily_runs"`
+	}
+	if err := json.Unmarshal(data, &own); err != nil {
+		return err
+	}
+	p.Enabled, p.GateBinary, p.DailyRuns, p.ByID = own.Enabled, own.GateBinary, own.DailyRuns, nil
+	for id, v := range raw {
+		if PluginIDReserved(id) {
+			continue
+		}
+		var c PluginConfig
+		if err := json.Unmarshal(v, &c); err != nil {
+			return fmt.Errorf("plugins.%s: %w", id, err)
+		}
+		if p.ByID == nil {
+			p.ByID = map[string]PluginConfig{}
+		}
+		p.ByID[id] = c
+	}
+	return nil
 }
 
 // GitHubConfig holds GitHub integration settings. GHUser names a `gh` CLI

@@ -17,25 +17,28 @@ const (
 	WSTokenPrefix = "loop.token."
 )
 
-// AgentLookup finds the agent a token was issued to.
+// AgentLookup finds the agent or plugin a token was issued to.
 type AgentLookup interface {
 	Lookup(token string) (Principal, bool)
 }
 
-// Authenticator lets through requests that carry the owner token, and
-// requests that carry an agent token to a route agents may call.
+// Authenticator lets through requests that carry the owner token, requests
+// that carry an agent token to a route agents may call, and requests that
+// carry a plugin token to a route plugins may call.
 type Authenticator struct {
-	mu          sync.RWMutex
-	owner       string
-	agents      AgentLookup
-	agentRoutes *RouteSet
-	public      *RouteSet
+	mu           sync.RWMutex
+	owner        string
+	agents       AgentLookup
+	agentRoutes  *RouteSet
+	pluginRoutes *RouteSet
+	public       *RouteSet
 }
 
 // NewAuthenticator returns an Authenticator. public routes need no token;
-// agentRoutes are the ones an agent token may call.
-func NewAuthenticator(owner string, agents AgentLookup, agentRoutes, public *RouteSet) *Authenticator {
-	return &Authenticator{owner: owner, agents: agents, agentRoutes: agentRoutes, public: public}
+// agentRoutes are the ones an agent token may call and pluginRoutes the
+// ones a plugin token may call. Neither kind of token reaches the other's.
+func NewAuthenticator(owner string, agents AgentLookup, agentRoutes, pluginRoutes, public *RouteSet) *Authenticator {
+	return &Authenticator{owner: owner, agents: agents, agentRoutes: agentRoutes, pluginRoutes: pluginRoutes, public: public}
 }
 
 // SetOwnerToken replaces the owner token, after a rotation.
@@ -94,7 +97,12 @@ func (a *Authenticator) Wrap(next http.Handler) http.Handler {
 			http.Error(w, "invalid API token", http.StatusUnauthorized)
 			return
 		}
-		if !a.agentRoutes.Allows(r) {
+		if p.Kind == KindPlugin {
+			if !a.pluginRoutes.Allows(r) {
+				http.Error(w, "not available to plugins", http.StatusForbidden)
+				return
+			}
+		} else if !a.agentRoutes.Allows(r) {
 			http.Error(w, "not available to agents", http.StatusForbidden)
 			return
 		}

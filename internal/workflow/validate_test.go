@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -27,7 +28,7 @@ func (s *ValidateSuite) TestLoopBodyAcceptsPromptAndBash() {
 			},
 		}},
 	}
-	require.NoError(s.T(), validateWorkflowDef(wf))
+	require.NoError(s.T(), ValidateWorkflowDef(wf))
 }
 
 func (s *ValidateSuite) TestLoopBodyRejectsNestedLoop() {
@@ -41,7 +42,7 @@ func (s *ValidateSuite) TestLoopBodyRejectsNestedLoop() {
 			},
 		}},
 	}
-	err := validateWorkflowDef(wf)
+	err := ValidateWorkflowDef(wf)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "nested loop")
 }
@@ -57,7 +58,7 @@ func (s *ValidateSuite) TestLoopBodyRejectsApproval() {
 			},
 		}},
 	}
-	err := validateWorkflowDef(wf)
+	err := ValidateWorkflowDef(wf)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "approval")
 }
@@ -73,7 +74,7 @@ func (s *ValidateSuite) TestLoopBodyRejectsUnknownType() {
 			},
 		}},
 	}
-	err := validateWorkflowDef(wf)
+	err := ValidateWorkflowDef(wf)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "wat")
 }
@@ -92,7 +93,7 @@ func (s *ValidateSuite) TestLoopBodyChildSameIDAsParentLoopIsRejected() {
 			},
 		}},
 	}
-	err := validateWorkflowDef(wf)
+	err := ValidateWorkflowDef(wf)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "collides")
 }
@@ -114,7 +115,7 @@ func (s *ValidateSuite) TestLoopBodyChildIDClashesWithSiblingTopLevelNode() {
 			},
 		},
 	}
-	err := validateWorkflowDef(wf)
+	err := ValidateWorkflowDef(wf)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "collides")
 	require.Contains(s.T(), err.Error(), "shared")
@@ -135,7 +136,7 @@ func (s *ValidateSuite) TestLoopBodyRejectsDuplicateIDWithinSameLoop() {
 			},
 		}},
 	}
-	err := validateWorkflowDef(wf)
+	err := ValidateWorkflowDef(wf)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "appears twice")
 	require.Contains(s.T(), err.Error(), "dup")
@@ -164,7 +165,7 @@ func (s *ValidateSuite) TestLoopBodyRejectsDuplicateIDAcrossLoops() {
 			},
 		},
 	}
-	err := validateWorkflowDef(wf)
+	err := ValidateWorkflowDef(wf)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "already used by loop")
 	require.Contains(s.T(), err.Error(), "loopA")
@@ -193,7 +194,7 @@ func (s *ValidateSuite) TestLoopBodyAcceptsSameIDInDifferentNonOverlappingLoops(
 			},
 		},
 	}
-	require.NoError(s.T(), validateWorkflowDef(wf))
+	require.NoError(s.T(), ValidateWorkflowDef(wf))
 }
 
 func (s *ValidateSuite) TestNonLoopNodeBodyIgnored() {
@@ -204,7 +205,7 @@ func (s *ValidateSuite) TestNonLoopNodeBodyIgnored() {
 			Type: config.NodeTypePrompt,
 		}},
 	}
-	require.NoError(s.T(), validateWorkflowDef(wf))
+	require.NoError(s.T(), ValidateWorkflowDef(wf))
 }
 
 func (s *ValidateSuite) TestLoopBodyRejectsNilChildEntry() {
@@ -219,7 +220,7 @@ func (s *ValidateSuite) TestLoopBodyRejectsNilChildEntry() {
 			Body: []*config.NodeDef{nil},
 		}},
 	}
-	err := validateWorkflowDef(wf)
+	err := ValidateWorkflowDef(wf)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "nil child entry")
 }
@@ -240,8 +241,90 @@ func (s *ValidateSuite) TestLoopBodyRejectsForwardDependsOn() {
 			},
 		}},
 	}
-	err := validateWorkflowDef(wf)
+	err := ValidateWorkflowDef(wf)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "depends_on")
 	require.Contains(s.T(), err.Error(), "second")
+}
+
+func (s *ValidateSuite) TestPluginNode() {
+	plugin := func(n config.NodeDef) config.NodeDef {
+		n.ID = "n"
+		n.Type = config.NodeTypePlugin
+		return n
+	}
+	tests := []struct {
+		name    string
+		node    config.NodeDef
+		wantErr string
+	}{
+		{name: "action", node: plugin(config.NodeDef{Plugin: "quiz", Action: "daily"})},
+		{name: "action with empty input", node: plugin(config.NodeDef{Plugin: "quiz", Action: "daily", Input: json.RawMessage(`{}`)})},
+		{name: "action with null input", node: plugin(config.NodeDef{Plugin: "quiz", Action: "daily", Input: json.RawMessage(`null`)})},
+		{name: "tool", node: plugin(config.NodeDef{Plugin: "quiz", Tool: "ask"})},
+		{name: "tool with input", node: plugin(config.NodeDef{Plugin: "quiz", Tool: "ask", Input: json.RawMessage(`{"topic":"{{.Inputs.t}}"}`)})},
+		{name: "no plugin", node: plugin(config.NodeDef{Tool: "ask"}), wantErr: `plugin node "n": plugin is required`},
+		{name: "neither", node: plugin(config.NodeDef{Plugin: "quiz"}), wantErr: `plugin node "n": set exactly one of action and tool`},
+		{name: "both", node: plugin(config.NodeDef{Plugin: "quiz", Action: "daily", Tool: "ask"}), wantErr: `plugin node "n": set exactly one of action and tool`},
+		{name: "input not an object", node: plugin(config.NodeDef{Plugin: "quiz", Tool: "ask", Input: json.RawMessage(`"x"`)}), wantErr: `plugin node "n": input must be a JSON object`},
+		{name: "input not JSON", node: plugin(config.NodeDef{Plugin: "quiz", Tool: "ask", Input: json.RawMessage(`{`)}), wantErr: `plugin node "n": input must be a JSON object: `},
+		{name: "action with input", node: plugin(config.NodeDef{Plugin: "quiz", Action: "daily", Input: json.RawMessage(`{"a":"{{.Inputs.a}}"}`)})},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			err := ValidateWorkflowDef(&config.WorkflowDef{Name: "wf", Nodes: []config.NodeDef{tt.node}})
+			if tt.wantErr == "" {
+				require.NoError(s.T(), err)
+				return
+			}
+			require.ErrorContains(s.T(), err, tt.wantErr)
+		})
+	}
+}
+
+func (s *ValidateSuite) TestLoopBodyPluginChild() {
+	body := func(child *config.NodeDef) *config.WorkflowDef {
+		return &config.WorkflowDef{Name: "wf", Nodes: []config.NodeDef{{
+			ID: "loop", Type: config.NodeTypeLoop, Body: []*config.NodeDef{child},
+		}}}
+	}
+	require.NoError(s.T(), ValidateWorkflowDef(body(&config.NodeDef{ID: "p", Type: config.NodeTypePlugin, Plugin: "quiz", Tool: "ask"})))
+	err := ValidateWorkflowDef(body(&config.NodeDef{ID: "p", Type: config.NodeTypePlugin, Plugin: "quiz"}))
+	require.EqualError(s.T(), err, `loop "loop": plugin node "p": set exactly one of action and tool`)
+}
+
+func (s *ValidateSuite) TestTemplates() {
+	tests := []struct {
+		name    string
+		node    config.NodeDef
+		wantErr string
+	}{
+		{name: "helpers", node: config.NodeDef{ID: "n", Type: config.NodeTypeBash, Script: "true", When: `{{if contains .NodeOutputs.a "LGTM"}}true{{end}}`}},
+		{name: "when", node: config.NodeDef{ID: "n", Type: config.NodeTypeBash, Script: "true", When: `{{if nope .X}}true{{end}}`}, wantErr: `node "n": when: template: :1: function "nope" not defined`},
+		{name: "prompt", node: config.NodeDef{ID: "n", Type: config.NodeTypePrompt, Prompt: "{{.Bad"}, wantErr: `node "n": prompt: `},
+		{name: "system prompt", node: config.NodeDef{ID: "n", Type: config.NodeTypePrompt, Prompt: "hi", SystemPrompt: "{{.Bad"}, wantErr: `node "n": system_prompt: `},
+		{name: "script", node: config.NodeDef{ID: "n", Type: config.NodeTypeBash, Script: "{{.Bad"}, wantErr: `node "n": script: `},
+		{name: "condition", node: config.NodeDef{ID: "n", Type: config.NodeTypeLoop, Prompt: "hi", Condition: "{{.Bad"}, wantErr: `node "n": condition: `},
+		{name: "message", node: config.NodeDef{ID: "n", Type: config.NodeTypeApproval, Message: "{{.Bad"}, wantErr: `node "n": message: `},
+		{name: "input string", node: config.NodeDef{ID: "n", Type: config.NodeTypePlugin, Plugin: "quiz", Tool: "ask", Input: json.RawMessage(`{"a":{"b":["ok","{{.Bad"]}}`)}, wantErr: `node "n": input: `},
+		{name: "input in a list", node: config.NodeDef{ID: "n", Type: config.NodeTypePlugin, Plugin: "quiz", Tool: "ask", Input: json.RawMessage(`{"a":["{{.Bad"]}`)}, wantErr: `node "n": input: `},
+		{name: "input ok", node: config.NodeDef{ID: "n", Type: config.NodeTypePlugin, Plugin: "quiz", Tool: "ask", Input: json.RawMessage(`{"a":["{{.Inputs.x}}",1,{"b":"{{upper .Inputs.y}}"}]}`)}},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			err := ValidateWorkflowDef(&config.WorkflowDef{Name: "wf", Nodes: []config.NodeDef{tt.node}})
+			if tt.wantErr == "" {
+				require.NoError(s.T(), err)
+				return
+			}
+			require.ErrorContains(s.T(), err, tt.wantErr)
+		})
+	}
+}
+
+func (s *ValidateSuite) TestLoopBodyTemplates() {
+	err := ValidateWorkflowDef(&config.WorkflowDef{Name: "wf", Nodes: []config.NodeDef{{
+		ID: "loop", Type: config.NodeTypeLoop, Body: []*config.NodeDef{{ID: "b", Type: config.NodeTypeBash, Script: "{{.Bad"}},
+	}}})
+	require.ErrorContains(s.T(), err, `loop "loop": node "b": script: `)
 }

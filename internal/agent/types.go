@@ -10,6 +10,15 @@ import (
 // channel messages and scheduled tasks.
 const ChatAgentID = "chat"
 
+// PluginAgentPrefix starts the agent ID of a run a plugin asked for (see
+// PluginAgentID).
+const PluginAgentPrefix = "plugin-"
+
+// PluginAgentID is the agent ID of a run of the plugin pluginID's agent.
+func PluginAgentID(pluginID, agentID string) string {
+	return PluginAgentPrefix + pluginID + "-" + agentID
+}
+
 type AgentRequest struct {
 	SessionID   string `json:"session_id"`
 	ForkSession bool   `json:"fork_session,omitempty"`
@@ -59,6 +68,9 @@ type AgentRequest struct {
 	// changes state is denied, so the run can only look (and a learn pass
 	// propose).
 	ReadOnly bool `json:"read_only,omitempty"`
+	// MCPArgs are added to the built-in loop MCP server's args; a plugin's
+	// agent run gets the plugin's tools through them.
+	MCPArgs []string `json:"mcp_args,omitempty"`
 	// OnTurn is called for each assistant turn's text content during streaming,
 	// with where that text sits in the session's transcript (see TurnRef).
 	// When set, the runner follows container logs in real-time instead of waiting

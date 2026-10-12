@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { datetimeLocalToRFC3339, defaultScheduleForType, intervalPartsToString, nextRunLabel, parseIntervalToParts, rfc3339ToDatetimeLocal, TYPE_COLORS, timeAgo } from "./taskUtils";
+import type { ScheduledTask } from "../api/tasks";
+import { datetimeLocalToRFC3339, defaultScheduleForType, intervalPartsToString, nextRunLabel, parseIntervalToParts, rfc3339ToDatetimeLocal, TYPE_COLORS, taskSummary, timeAgo } from "./taskUtils";
 
 const NOW = new Date("2026-06-10T12:00:00Z");
 
@@ -136,5 +137,16 @@ describe("interval parts", () => {
       const { value, unit } = parseIntervalToParts(dur);
       expect(parseIntervalToParts(intervalPartsToString(value, unit))).toEqual({ value, unit });
     }
+  });
+});
+
+describe("taskSummary", () => {
+  const task = (over: Partial<ScheduledTask>) => ({ prompt: "check the build", ...over }) as ScheduledTask;
+
+  it("says what the task runs", () => {
+    expect(taskSummary(task({}))).toBe("check the build");
+    expect(taskSummary(task({ bash_script: "df -h" }))).toBe("bash: df -h");
+    expect(taskSummary(task({ workflow_name: "fix-issue", bash_script: "df -h" }))).toBe("workflow: fix-issue");
+    expect(taskSummary(task({ plugin_id: "quiz", plugin_action: "daily" }))).toBe("plugin: quiz · daily");
   });
 });

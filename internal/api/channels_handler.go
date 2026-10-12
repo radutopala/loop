@@ -80,6 +80,8 @@ type channelResponse struct {
 	// TrustPending is set when the channel's project config has fields
 	// waiting for the owner's trust: they don't apply until then.
 	TrustPending bool `json:"trust_pending,omitempty"`
+	// PluginBadges are the labels plugins show on the row.
+	PluginBadges []pluginBadge `json:"plugin_badges,omitempty"`
 }
 
 func (s *Server) handleEnsureChannel(w http.ResponseWriter, r *http.Request) {
@@ -170,6 +172,7 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	reviews := s.reviewSummaries()
+	badges := s.pluginBadgesByChannel(r.Context())
 
 	query := r.URL.Query().Get("query")
 	platformFilter := r.URL.Query().Get("platform")
@@ -286,6 +289,7 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 			TicketURL:        ch.TicketURL,
 			LastActivityAt:   lastActivity,
 			TrustPending:     trustPendingFor(trustDir),
+			PluginBadges:     badges[ch.ChannelID],
 		})
 	}
 
@@ -432,14 +436,15 @@ func (s *Server) removeMCPConfigs(owner *db.Channel, chs []*db.Channel) {
 }
 
 // removeAgentContainers removes a channel's agent and shell containers;
-// its Chrome container is left to the BrowserProvider.
+// its Chrome container is left to the BrowserProvider and its plugin ones
+// to the plugin runtime.
 func (s *Server) removeAgentContainers(ctx context.Context, channelID string) {
 	if s.containerRegistry == nil {
 		return
 	}
 	for _, info := range s.containerRegistry.ListByChannel(channelID) {
-		if info.Type == container.ContainerTypeChrome {
-			continue // handled separately via BrowserProvider
+		if info.Type == container.ContainerTypeChrome || info.Type == container.ContainerTypePlugin {
+			continue // handled separately via BrowserProvider and the plugin runtime
 		}
 		if err := s.containerRegistry.RemoveContainer(ctx, info.ContainerID); err != nil {
 			s.logger.Warn("channel cleanup: container remove failed",
@@ -454,13 +459,26 @@ func (s *Server) removeAgentContainers(ctx context.Context, channelID string) {
 // cleanupChannelContainers cleans up after a deleted channel or thread so
 // its containers aren't orphaned: its agent and shell containers are marked
 // for removal after the keep-alive, leaving their `docker logs` to read
-// meanwhile, and its Chrome container and profile volume, which can't go
-// while the container is there, are removed now.
+// meanwhile, its Chrome container and profile volume, which can't go while
+// the container is there, are removed now, and its plugin containers are
+// removed, keeping their data. Its notifications and badges go too.
 func (s *Server) cleanupChannelContainers(ctx context.Context, channelID string) {
+	s.dropChannelNotifications(ctx, channelID)
+	s.prunePluginBadges(ctx)
+	if s.plugins != nil {
+		removed, err := s.plugins.RemoveChannel(ctx, channelID)
+		if err != nil {
+			s.logger.Warn("removing the plugin containers of a deleted channel", "channel_id", channelID, "error", err)
+		}
+		if removed {
+			s.PluginsChanged()
+		}
+	}
 	if s.containerRegistry != nil {
 		for _, info := range s.containerRegistry.ListByChannel(channelID) {
-			// Chrome is the BrowserProvider's; a pending removal is already on its way.
-			if info.Type != container.ContainerTypeChrome && info.Status != container.ContainerStatusPendingRemoval {
+			// Chrome is the BrowserProvider's and a plugin's the plugin
+			// runtime's; a pending removal is already on its way.
+			if info.Type != container.ContainerTypeChrome && info.Type != container.ContainerTypePlugin && info.Status != container.ContainerStatusPendingRemoval {
 				s.containerRegistry.ScheduleRemove(info.ContainerID, s.containerKeepAlive)
 			}
 		}
