@@ -17,8 +17,11 @@ Feature: Continue button in the Docker Agent terminal
     When I rest the pointer on the element "button[data-testid^='terminal-continue-docker-agent-']"
     Then I wait for "[data-testid='hover-tip']" to be visible
     And the element "[data-testid='hover-tip']" should contain text "carries on where it stopped"
-    # Without Claude auth the test env's claude exits and leaves the pane's
-    # shell, so the typed "continue" reaches bash, which answers it.
+    # Without Claude auth the test env's claude exits with 1, and the pane
+    # relaunches it twice, a second after each exit. Once those are done
+    # the typed "continue" reaches bash, which answers it.
+    And I wait up to "30s" for text "__LOOP_CLAUDE_EXIT:1" to appear
+    And I wait "6s"
     When I click on "button[data-testid^='terminal-continue-docker-agent-']"
     Then I wait up to "15s" for text "only meaningful in a" to appear
 
