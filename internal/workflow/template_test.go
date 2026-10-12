@@ -101,6 +101,16 @@ func (s *TemplateSuite) TestRenderBashScript() {
 		{name: "toJSON quotes", tmpl: `echo {{toJSON .NodeData.check.tags}}`, want: `echo '["a","b"]'`},
 		{name: "toJSON fails", tmpl: `{{toJSON (fromJSON "1e400")}}`, wantErr: "toJSON: json: unsupported value"},
 		{name: "inputs stay quoted", tmpl: `echo {{.Inputs.s}}`, want: `echo 'Hello World'`},
+		{name: "missing data key", tmpl: `echo {{.NodeData.check.nope}} {{.NodeData.nope}}`, want: `echo '' ''`},
+		{name: "missing input", tmpl: `echo {{.Inputs.nope}}`, want: `echo ''`},
+		{name: "missing key in if", tmpl: `{{if .NodeData.check.ok}}echo {{.NodeData.check.nope}}{{else}}no{{end}}`, want: `echo ''`},
+		{name: "missing key in else", tmpl: `{{if .NodeData.check.nope}}yes{{else}}echo {{.NodeData.check.nope}}{{end}}`, want: `echo ''`},
+		{name: "missing key in range", tmpl: `{{range .NodeData.check.tags}}{{.}}{{$.NodeData.nope}} {{else}}none{{end}}`, want: `'a''' 'b''' `},
+		{name: "missing key in with", tmpl: `{{with .NodeData.check}}echo {{.nope}}{{else}}no{{end}}`, want: `echo ''`},
+		{name: "variable", tmpl: `{{$v := .NodeData.check.name}}echo {{$v}}`, want: `echo ' Ana '`},
+		{name: "defined template", tmpl: `{{define "x"}}{{.nope}}{{end}}echo {{template "x" .NodeData.check}}`, want: `echo ''`},
+		{name: "iteration", tmpl: `echo {{.Iteration}}`, want: `echo 0`},
+		{name: "bad template", tmpl: "echo {{", wantErr: "unclosed action"},
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
@@ -115,11 +125,12 @@ func (s *TemplateSuite) TestRenderBashScript() {
 	}
 }
 
-// TestRenderBashScriptNoData renders a run without node data.
+// TestRenderBashScriptNoData renders a run without node data or inputs:
+// what's missing prints as an empty quoted string.
 func (s *TemplateSuite) TestRenderBashScriptNoData() {
-	got, err := renderBashScript(`echo {{.NodeData.x}}`, &RunContext{})
+	got, err := renderBashScript(`echo {{.NodeData.x}} {{.Inputs.x}}`, &RunContext{})
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), "echo <no value>", got)
+	require.Equal(s.T(), "echo '' ''", got)
 }
 
 // TestRenderBashScriptInjection runs a script whose node data tries to

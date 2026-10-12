@@ -97,7 +97,7 @@ Besides `text/template`'s builtins (`eq`, `not`, `and`, `or`, `gt`, `len`, `inde
 | `fromJSON s` | Decodes JSON text, e.g. `{{(fromJSON .NodeOutputs.check).score}}`; whole numbers decode as integers, so `{{gt (fromJSON .NodeOutputs.n) 5}}` works |
 | `toJSON v` | Encodes `v` as JSON text |
 
-`save_workflow`, `POST /api/workflows` and starting a run reject a template that doesn't parse, or that calls an unknown function, naming the node and field. A field of `NodeData` the tool didn't return renders as `<no value>`.
+`save_workflow`, `POST /api/workflows` and starting a run reject a template that doesn't parse, or that calls an unknown function, naming the node and field. A field of `NodeData` the tool didn't return renders as `<no value>`, except in a bash script (see [Bash Node](#bash-node-type-bash)).
 
 ---
 
@@ -124,7 +124,7 @@ Runs a shell script in a Docker container using the same mounts and environment 
 |---|---|
 | `script` | Shell command(s) piped to `/bin/sh` on stdin. Accepts any sh-compatible content — a one-liner, multi-line scripts, pipelines, heredocs. To execute a script file on disk, just invoke it (e.g. `bash workflows/build.sh`); the bash container shares the same mounts as agent containers. Supports Go `text/template` rendering against workflow inputs and upstream node outputs. |
 
-User-controllable template values — `Inputs`, `NodeOutputs`, `ChannelID`, and `Review.CommentsJSON` — are POSIX shell-quoted at render time, so an unquoted spread like `echo {{.Inputs.foo}}` is safe even if `foo` contains shell metacharacters. `NodeData` prints quoted too: a string as itself, an object or a list as its JSON, and numbers and booleans as they are. Its strings still compare as their raw text (`{{if eq .NodeData.check.verdict "ok"}}`), `trim`, `lower`, `upper`, `fromJSON` and `toJSON` keep their results quoted, and a `{{range}}` over an object skips keys that aren't plain words (letters, digits, `_`, `.`, `-`). `Inputs`, `NodeOutputs` and `ChannelID` are already quoted text in a script, so test them with the string functions in `when` rather than in `script`. The fully-rendered script is piped to `/bin/sh` via stdin rather than passed on the command line, so the script body never appears in the spawned process's argv.
+User-controllable template values — `Inputs`, `NodeOutputs`, `ChannelID`, and `Review.CommentsJSON` — are POSIX shell-quoted at render time, so an unquoted spread like `echo {{.Inputs.foo}}` is safe even if `foo` contains shell metacharacters. `NodeData` prints quoted too: a string as itself, an object or a list as its JSON, and numbers and booleans as they are. Its strings still compare as their raw text (`{{if eq .NodeData.check.verdict "ok"}}`), `trim`, `lower`, `upper`, `fromJSON` and `toJSON` keep their results quoted, and a `{{range}}` over an object skips keys that aren't plain words (letters, digits, `_`, `.`, `-`). A value that's missing, like a field the tool didn't return or an input nobody set, prints as `''` rather than `<no value>`, which the shell would read as a redirect. `Inputs`, `NodeOutputs` and `ChannelID` are already quoted text in a script, so test them with the string functions in `when` rather than in `script`. The fully-rendered script is piped to `/bin/sh` via stdin rather than passed on the command line, so the script body never appears in the spawned process's argv.
 
 Stdout becomes the node output. A non-zero exit code fails the node.
 

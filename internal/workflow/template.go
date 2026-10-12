@@ -102,18 +102,18 @@ func parseTemplate(tmplStr string) (*template.Template, error) {
 
 // renderTemplate renders a Go text/template string with the given RunContext.
 func renderTemplate(tmplStr string, data *RunContext) (string, error) {
-	return renderTemplateWith(tmplStr, data, templateFuncs)
-}
-
-// renderTemplateWith renders tmplStr against data with the helpers funcs.
-func renderTemplateWith(tmplStr string, data *RunContext, funcs template.FuncMap) (string, error) {
 	if tmplStr == "" {
 		return "", nil
 	}
-	tmpl, err := template.New("").Funcs(funcs).Parse(tmplStr)
+	tmpl, err := parseTemplate(tmplStr)
 	if err != nil {
 		return "", err
 	}
+	return execute(tmpl, data)
+}
+
+// execute renders tmpl against data.
+func execute(tmpl *template.Template, data *RunContext) (string, error) {
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {
 		return "", err

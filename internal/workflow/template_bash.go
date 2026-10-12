@@ -2,10 +2,12 @@ package workflow
 
 import (
 	"encoding/json"
+	"fmt"
 	"maps"
 	"regexp"
 	"strings"
 	"text/template"
+	"text/template/parse"
 )
 
 // bashFuncs are templateFuncs for a bash script, whose output must stay
@@ -24,8 +26,65 @@ var bashFuncs = func() template.FuncMap {
 		s, err := toJSON(v)
 		return bashString(s), err
 	}
+	funcs[bashOut] = func(v any) string {
+		if v == nil {
+			return "''"
+		}
+		return fmt.Sprint(v)
+	}
 	return funcs
 }()
+
+// bashOut is the helper parseBashTemplate ends every printed pipeline
+// with.
+const bashOut = "bashOut"
+
+// parseBashTemplate parses a bash script's template with bashFuncs, and
+// ends every pipeline it prints with bashOut, so a value that's missing (a
+// field a tool didn't return, an input nobody set) prints as an empty
+// quoted string rather than as "<no value>", which the shell reads as a
+// redirect.
+func parseBashTemplate(tmplStr string) (*template.Template, error) {
+	tmpl, err := template.New("").Funcs(bashFuncs).Parse(tmplStr)
+	if err != nil {
+		return nil, err
+	}
+	for _, t := range tmpl.Templates() {
+		bashWrap(t.Root)
+	}
+	return tmpl, nil
+}
+
+// bashWrap appends bashOut to every printing action under n.
+func bashWrap(n parse.Node) {
+	switch n := n.(type) {
+	case *parse.ListNode:
+		if n == nil {
+			return
+		}
+		for _, c := range n.Nodes {
+			bashWrap(c)
+		}
+	case *parse.ActionNode:
+		// {{$x := …}} prints nothing.
+		if len(n.Pipe.Decl) == 0 {
+			n.Pipe.Cmds = append(n.Pipe.Cmds, &parse.CommandNode{
+				NodeType: parse.NodeCommand,
+				Pos:      n.Pos,
+				Args:     []parse.Node{parse.NewIdentifier(bashOut).SetPos(n.Pos)},
+			})
+		}
+	case *parse.IfNode:
+		bashWrap(n.List)
+		bashWrap(n.ElseList)
+	case *parse.RangeNode:
+		bashWrap(n.List)
+		bashWrap(n.ElseList)
+	case *parse.WithNode:
+		bashWrap(n.List)
+		bashWrap(n.ElseList)
+	}
+}
 
 // bashText makes f, a string helper, keep a quoted value quoted.
 func bashText(f func(string) string) func(any) any {
