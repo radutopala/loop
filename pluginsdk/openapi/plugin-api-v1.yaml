@@ -467,8 +467,8 @@ paths:
       summary: Post a card to the notification drawer
       description: |
         Posts one of the cards the manifest declares under ui.cards to the
-        desktop app's notification drawer, as a notification about the
-        plugin's channel, or the thread it serves. The app draws the card's
+        notification drawer of the plugin's channel, or of the thread it
+        serves, in the desktop app. The app draws the card's
         page in a sandboxed frame; the page reads data with the bridge's
         context.get. Cards show in the desktop app only, so a channel on
         another platform refuses them. Cards share notify's limit of five a

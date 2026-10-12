@@ -143,7 +143,7 @@ type Panel struct {
 	Singleton bool   `json:"singleton,omitempty"`
 }
 
-// Card is what the plugin posts to the app's notification drawer with
+// Card is what the plugin posts to its channel's notification drawer with
 // PostCard: a page from its bundle, drawn with the data it was posted with.
 type Card struct {
 	ID string `json:"id"`

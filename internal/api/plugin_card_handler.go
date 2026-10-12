@@ -24,8 +24,8 @@ type pluginCardResponse struct {
 	ID int64 `json:"id"`
 }
 
-// handlePostPluginCard posts one of the calling plugin's cards to the
-// app's notification drawer, which draws it with the card's page from the
+// handlePostPluginCard posts one of the calling plugin's cards to its
+// channel's notification drawer, which draws it with the card's page from the
 // plugin's bundle and the data it was posted with.
 func (s *Server) handlePostPluginCard(w http.ResponseWriter, r *http.Request) {
 	p, ch, ok := s.pluginCaller(w, r, plugin.CapUICard)

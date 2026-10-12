@@ -30,6 +30,7 @@ import {
   saveLayout,
   saveLayoutType,
 } from "../../layouts/persistence";
+import { NotificationButton, NotificationDrawer } from "../../notifications/NotificationDrawer";
 import { PluginPanel } from "../../plugins/PluginPanel";
 import { PluginPanelsProvider, pluginPaneKey, pluginPaneOptions, shownPluginPanes, useInstalledPlugins, usePluginPanelsValue } from "../../plugins/PluginPanelsContext";
 import { EmptyLayoutPicker } from "../../splitPane/AddPanelButton";
@@ -442,6 +443,9 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   const statusMapRef = useRef(new Map<string, SessionStatus>());
   const [agentState, setAgentState] = useState<AgentState>("none");
   const [showLayoutMenu, setShowLayoutMenu] = useState(false);
+  // The channel's notification drawer, opened from the layout bar's bell.
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const closeNotifications = useCallback(() => setNotificationsOpen(false), []);
   const [showNewLayoutMenu, setShowNewLayoutMenu] = useState(false);
   const [maximizedLeafId, setMaximizedLeafId] = useState<string | null>(null);
   // A chat component opened across its pane. The pane is maximized while it
@@ -1922,6 +1926,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             )}
           </div>
         )}
+        <NotificationButton channelId={channelId} open={notificationsOpen} onToggle={() => setNotificationsOpen((v) => !v)} />
       </div>
 
       {/* Layout content. Its shortcut pickers (the composers', the
@@ -2043,6 +2048,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                 learnPane={learnPane}
               />
             )}
+            {notificationsOpen && <NotificationDrawer channelId={channelId} channelName={channel.name} dirPath={dirPath} onClose={closeNotifications} />}
           </div>
           {chatHostPlaced && portalLeafId && createPortal(renderChat(portalLeafId), chatHost)}
           {pluginLeaves.map((leaf) =>

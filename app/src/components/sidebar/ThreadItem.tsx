@@ -1,5 +1,7 @@
 import { useRef, useState } from "react";
 import { forkThread } from "../../api/channels";
+import { unreadLabel, unreadTitle } from "../../notifications/notifications";
+import { useNotificationsState } from "../../notifications/useNotifications";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { Channel } from "../../types";
@@ -81,7 +83,8 @@ export function ThreadItem({
   const activePills = SIDEBAR_PILLS.filter((p) => pillsRef?.current?.get(p.kind)?.has(thread.id));
   const reviewing = !!thread.review_running;
   const badges = thread.plugin_badges ?? [];
-  const hasAnyPill = activePills.length > 0 || reviewing || badges.length > 0;
+  const notes = useNotificationsState().unread[thread.id] ?? 0;
+  const hasAnyPill = activePills.length > 0 || reviewing || badges.length > 0 || notes > 0;
   const displayName = sessionName(thread);
 
   return (
@@ -271,6 +274,14 @@ export function ThreadItem({
               marginLeft={isUnread || activePills.length > 0 || reviewing || i > 0 || thread.diff_additions > 0 || thread.diff_deletions > 0 ? 4 : "auto"}
             />
           ))}
+          {notes > 0 && (
+            <StatusPill
+              label={unreadLabel(notes)}
+              color={colors.error}
+              title={unreadTitle(notes)}
+              marginLeft={isUnread || activePills.length > 0 || reviewing || badges.length > 0 || thread.diff_additions > 0 || thread.diff_deletions > 0 ? 4 : "auto"}
+            />
+          )}
           {(thread.container_running || thread.agent_running || isRunningMapRef?.current?.get(thread.id) || reviewing) && (
             <span
               style={{

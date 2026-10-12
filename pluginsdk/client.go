@@ -319,8 +319,8 @@ func (c *Client) ClearBadge(ctx context.Context) error {
 	return c.do(ctx, http.MethodDelete, "/badge", nil, nil, nil)
 }
 
-// PostCard posts the manifest's card, under title, to the desktop app's
-// notification drawer, and returns the notification's id. The card's page
+// PostCard posts the manifest's card, under title, to the notification
+// drawer of the plugin's channel in the desktop app, and returns the notification's id. The card's page
 // gets data, at most 64 KB of JSON, from the bridge's context.get. Cards
 // share Notify's rate limit and show in the desktop app only. Needs
 // ui.card.

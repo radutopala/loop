@@ -1,12 +1,13 @@
 import { apiFetch, getApiUrl } from "./api";
 
-/** Something Loop or a plugin told the owner, as the drawer lists it. */
+/** Something Loop or a plugin told the owner about a channel, as its
+ *  drawer lists it. */
 export interface NotificationInfo {
   id: number;
   /** Empty for Loop's own. */
   plugin_id?: string;
   kind: "run" | "workflow" | "notify" | "card" | string;
-  /** The channel or thread it's about, if any. */
+  /** The channel or thread it's about. */
   channel_id?: string;
   title?: string;
   body?: string;
@@ -33,20 +34,30 @@ async function check(res: Response, what: string): Promise<void> {
   throw new Error(`Failed to ${what}: ${body || res.statusText}`);
 }
 
-/** The newest notifications, newest first; none while they're off. */
-export async function fetchNotifications(): Promise<NotificationList> {
-  const res = await apiFetch(base());
+/** A channel's newest notifications, newest first; none while they're off. */
+export async function fetchNotifications(channelId: string): Promise<NotificationList> {
+  const res = await apiFetch(`${base()}?channel_id=${encodeURIComponent(channelId)}`);
   if (res.status === 501) return { notifications: [], unread: 0 };
   await check(res, "list notifications");
   return res.json();
 }
 
-/** Marks the notifications up to id read. */
-export async function markNotificationsRead(upTo: number): Promise<void> {
+/** How many unread notifications each channel has; the channels with none
+ *  are left out. */
+export async function fetchUnreadNotifications(): Promise<Record<string, number>> {
+  const res = await apiFetch(`${base()}/unread`);
+  if (res.status === 501) return {};
+  await check(res, "count unread notifications");
+  const body: { unread: Record<string, number> | null } = await res.json();
+  return body.unread ?? {};
+}
+
+/** Marks a channel's notifications up to id read. */
+export async function markNotificationsRead(channelId: string, upTo: number): Promise<void> {
   const res = await apiFetch(`${base()}/read`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ up_to: upTo }),
+    body: JSON.stringify({ channel_id: channelId, up_to: upTo }),
   });
   await check(res, "mark notifications read");
 }
@@ -58,8 +69,8 @@ export async function deleteNotification(id: number): Promise<void> {
   await check(res, "dismiss the notification");
 }
 
-/** Dismisses every notification. */
-export async function clearNotifications(): Promise<void> {
-  const res = await apiFetch(base(), { method: "DELETE" });
+/** Dismisses a channel's notifications. */
+export async function clearNotifications(channelId: string): Promise<void> {
+  const res = await apiFetch(`${base()}?channel_id=${encodeURIComponent(channelId)}`, { method: "DELETE" });
   await check(res, "clear notifications");
 }

@@ -16,16 +16,17 @@ import (
 // was added, read or removed.
 const EventNotificationsChanged = "notifications.changed"
 
-// notificationsShown is how many notifications the drawer lists.
+// notificationsShown is how many of a channel's notifications the drawer
+// lists.
 const notificationsShown = 200
 
 // NotificationStore keeps what Loop and the plugins tell the owner.
 type NotificationStore interface {
 	InsertNotification(ctx context.Context, n *db.Notification) error
-	ListNotifications(ctx context.Context, limit int) ([]*db.Notification, error)
-	MarkNotificationsRead(ctx context.Context, upTo int64) error
+	ListNotifications(ctx context.Context, channelID string, limit int) ([]*db.Notification, error)
+	UnreadNotificationCounts(ctx context.Context) (map[string]int, error)
+	MarkNotificationsRead(ctx context.Context, channelID string, upTo int64) error
 	DeleteNotification(ctx context.Context, id int64) (bool, error)
-	DeleteNotifications(ctx context.Context) error
 	DeleteChannelNotifications(ctx context.Context, channelID string) (bool, error)
 }
 
@@ -54,13 +55,17 @@ type notificationsResponse struct {
 	Unread        int            `json:"unread"`
 }
 
-// handleListNotifications returns the newest notifications and how many of
-// them are unread.
+// handleListNotifications returns a channel's newest notifications and how
+// many of them are unread.
 func (s *Server) handleListNotifications(w http.ResponseWriter, r *http.Request) {
 	if !requireConfigured(w, s.notifications, "notifications not configured") {
 		return
 	}
-	list, err := s.notifications.ListNotifications(r.Context(), notificationsShown)
+	channelID, ok := notificationsChannel(w, r.URL.Query().Get("channel_id"))
+	if !ok {
+		return
+	}
+	list, err := s.notifications.ListNotifications(r.Context(), channelID, notificationsShown)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -82,11 +87,32 @@ func (s *Server) handleListNotifications(w http.ResponseWriter, r *http.Request)
 	writeHTTPJSON(w, http.StatusOK, out, s.logger)
 }
 
-type notificationsReadRequest struct {
-	UpTo int64 `json:"up_to"`
+type unreadNotificationsResponse struct {
+	// Unread is how many unread notifications each channel has; the
+	// channels with none are left out.
+	Unread map[string]int `json:"unread"`
 }
 
-// handleReadNotifications marks the notifications up to an id read.
+// handleUnreadNotifications returns how many unread notifications each
+// channel has.
+func (s *Server) handleUnreadNotifications(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.notifications, "notifications not configured") {
+		return
+	}
+	counts, err := s.notifications.UnreadNotificationCounts(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeHTTPJSON(w, http.StatusOK, unreadNotificationsResponse{Unread: counts}, s.logger)
+}
+
+type notificationsReadRequest struct {
+	ChannelID string `json:"channel_id"`
+	UpTo      int64  `json:"up_to"`
+}
+
+// handleReadNotifications marks a channel's notifications up to an id read.
 func (s *Server) handleReadNotifications(w http.ResponseWriter, r *http.Request) {
 	if !requireConfigured(w, s.notifications, "notifications not configured") {
 		return
@@ -95,7 +121,10 @@ func (s *Server) handleReadNotifications(w http.ResponseWriter, r *http.Request)
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if err := s.notifications.MarkNotificationsRead(r.Context(), req.UpTo); err != nil {
+	if _, ok := notificationsChannel(w, req.ChannelID); !ok {
+		return
+	}
+	if err := s.notifications.MarkNotificationsRead(r.Context(), req.ChannelID, req.UpTo); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -126,17 +155,31 @@ func (s *Server) handleDeleteNotification(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleClearNotifications dismisses every notification.
+// handleClearNotifications dismisses a channel's notifications.
 func (s *Server) handleClearNotifications(w http.ResponseWriter, r *http.Request) {
 	if !requireConfigured(w, s.notifications, "notifications not configured") {
 		return
 	}
-	if err := s.notifications.DeleteNotifications(r.Context()); err != nil {
+	channelID, ok := notificationsChannel(w, r.URL.Query().Get("channel_id"))
+	if !ok {
+		return
+	}
+	if _, err := s.notifications.DeleteChannelNotifications(r.Context(), channelID); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.notificationsChanged()
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// notificationsChannel is the channel a notification route acts on, which
+// it requires.
+func notificationsChannel(w http.ResponseWriter, channelID string) (string, bool) {
+	if channelID == "" {
+		http.Error(w, "channel_id is required", http.StatusBadRequest)
+		return "", false
+	}
+	return channelID, true
 }
 
 // notificationsChanged tells every window the notifications changed.
@@ -173,7 +216,7 @@ func (s *Server) dropChannelNotifications(ctx context.Context, channelID string)
 
 // RecordNotifications stores, in the background, the notification an event
 // of Loop's makes, if any: a scheduled run that ended, a run that failed, a
-// workflow run that ended or paused.
+// workflow run in a channel that ended or paused.
 func (s *Server) RecordNotifications(evt Event) {
 	if s.notifications == nil {
 		return
@@ -200,6 +243,10 @@ func loopNotification(evt Event) *db.Notification {
 		case evt.Type == EventWorkflowRunCompleted && (d.Status == "completed" || d.Status == "failed"):
 		default:
 			// Started, or cancelled or deleted by the owner.
+			return nil
+		}
+		if d.ChannelID == "" {
+			// No channel's drawer would list it.
 			return nil
 		}
 		n := &db.Notification{Kind: db.NotificationWorkflow, ChannelID: d.ChannelID, Body: d.Error}

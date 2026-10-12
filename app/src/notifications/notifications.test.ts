@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { NotificationInfo } from "../api/notifications";
 import type { PluginInfo } from "../api/plugins";
-import type { Channel } from "../types";
-import { cardChannels, channelLabel, newestId, notificationHeading, notificationSource, unreadLabel } from "./notifications";
+import { newestId, notificationHeading, notificationSource, unreadLabel, unreadTitle } from "./notifications";
 
 const note = (over: Partial<NotificationInfo>): NotificationInfo => ({ id: 1, kind: "run", read: false, created_at: "", ...over });
 const plugin = (id: string, name?: string): PluginInfo => ({ id, name, version: "1", capabilities: [], status: "ok" });
-const channel = (id: string, name: string, parent_id = ""): Channel => ({ id, name, parent_id }) as Channel;
 
 describe("notificationSource", () => {
   it.each([
@@ -30,19 +28,6 @@ describe("notificationHeading", () => {
   });
 });
 
-describe("channelLabel", () => {
-  const channels = [channel("c1", "loop"), channel("t1", "updates", "c1"), channel("t2", "orphan", "gone")];
-  it.each([
-    ["none", undefined, ""],
-    ["a channel", "c1", "loop"],
-    ["a thread", "t1", "loop › updates"],
-    ["a thread whose parent is gone", "t2", "orphan"],
-    ["a deleted channel", "x", ""],
-  ])("%s", (_, id, want) => {
-    expect(channelLabel(id, channels)).toBe(want);
-  });
-});
-
 describe("newestId", () => {
   it("is the largest id, 0 for none", () => {
     expect(newestId([])).toBe(0);
@@ -62,15 +47,11 @@ describe("unreadLabel", () => {
   });
 });
 
-describe("cardChannels", () => {
-  it("lists the cards' channels once each", () => {
-    const list = [
-      note({ kind: "card", channel_id: "a" }),
-      note({ kind: "run", channel_id: "b" }),
-      note({ kind: "card", channel_id: "c" }),
-      note({ kind: "card", channel_id: "a" }),
-      note({ kind: "card" }),
-    ];
-    expect(cardChannels(list)).toEqual(["a", "c"]);
+describe("unreadTitle", () => {
+  it.each([
+    [1, "1 unread notification"],
+    [3, "3 unread notifications"],
+  ])("%i", (n, want) => {
+    expect(unreadTitle(n)).toBe(want);
   });
 });

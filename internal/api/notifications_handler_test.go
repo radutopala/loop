@@ -17,51 +17,72 @@ import (
 // and returns it with the events they broadcast.
 func (s *ServerSuite) notificationRoutes() (*db.SQLiteStore, *[]Event) {
 	s.mux.HandleFunc("GET /api/notifications", s.srv.handleListNotifications)
+	s.mux.HandleFunc("GET /api/notifications/unread", s.srv.handleUnreadNotifications)
 	s.mux.HandleFunc("POST /api/notifications/read", s.srv.handleReadNotifications)
 	s.mux.HandleFunc("DELETE /api/notifications/{id}", s.srv.handleDeleteNotification)
 	s.mux.HandleFunc("DELETE /api/notifications", s.srv.handleClearNotifications)
 	return s.notificationStore()
 }
 
-func (s *ServerSuite) listNotifications() notificationsResponse {
-	rec := s.testRequest("GET", "/api/notifications", "")
+func (s *ServerSuite) listNotifications(channelID string) notificationsResponse {
+	rec := s.testRequest("GET", "/api/notifications?channel_id="+channelID, "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 	var resp notificationsResponse
 	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
 	return resp
 }
 
+func (s *ServerSuite) unreadNotifications() map[string]int {
+	rec := s.testRequest("GET", "/api/notifications/unread", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	var resp unreadNotificationsResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	return resp.Unread
+}
+
 func (s *ServerSuite) TestNotifications() {
 	store, sent := s.notificationRoutes()
 	ctx := context.Background()
-	require.Equal(s.T(), notificationsResponse{Notifications: []notification{}}, s.listNotifications())
+	require.Equal(s.T(), notificationsResponse{Notifications: []notification{}}, s.listNotifications("ch-1"))
+	require.Empty(s.T(), s.unreadNotifications())
 
 	run := &db.Notification{Kind: db.NotificationRun, ChannelID: "ch-1", Title: "Run failed", Body: "boom"}
 	require.NoError(s.T(), store.InsertNotification(ctx, run))
 	card := &db.Notification{PluginID: "echo", Kind: db.NotificationCard, ChannelID: "ch-1", Card: "score", Data: `{"score":3}`}
 	require.NoError(s.T(), store.InsertNotification(ctx, card))
+	other := &db.Notification{Kind: db.NotificationRun, ChannelID: "ch-2", Title: "Run failed"}
+	require.NoError(s.T(), store.InsertNotification(ctx, other))
 
-	got := s.listNotifications()
+	got := s.listNotifications("ch-1")
 	require.Equal(s.T(), 2, got.Unread)
 	require.Equal(s.T(), []notification{
 		{ID: card.ID, PluginID: "echo", Kind: db.NotificationCard, ChannelID: "ch-1", Card: "score", Data: json.RawMessage(`{"score":3}`), CreatedAt: card.CreatedAt},
 		{ID: run.ID, Kind: db.NotificationRun, ChannelID: "ch-1", Title: "Run failed", Body: "boom", CreatedAt: run.CreatedAt},
 	}, got.Notifications)
+	require.Equal(s.T(), map[string]int{"ch-1": 2, "ch-2": 1}, s.unreadNotifications())
 
-	require.Equal(s.T(), http.StatusNoContent, s.testRequest("POST", "/api/notifications/read", `{"up_to":`+strconv.FormatInt(run.ID, 10)+`}`).Code)
-	got = s.listNotifications()
-	require.Equal(s.T(), 1, got.Unread)
-	require.True(s.T(), got.Notifications[1].Read)
+	require.Equal(s.T(), http.StatusNoContent, s.testRequest("POST", "/api/notifications/read", `{"channel_id":"ch-1","up_to":`+strconv.FormatInt(other.ID, 10)+`}`).Code)
+	got = s.listNotifications("ch-1")
+	require.Zero(s.T(), got.Unread)
+	require.Equal(s.T(), map[string]int{"ch-2": 1}, s.unreadNotifications(), "another channel's stay unread")
 
 	require.Equal(s.T(), http.StatusNoContent, s.testRequest("DELETE", "/api/notifications/"+strconv.FormatInt(run.ID, 10), "").Code)
 	require.Equal(s.T(), http.StatusNotFound, s.testRequest("DELETE", "/api/notifications/"+strconv.FormatInt(run.ID, 10), "").Code)
 	require.Equal(s.T(), http.StatusBadRequest, s.testRequest("DELETE", "/api/notifications/x", "").Code)
-	require.Len(s.T(), s.listNotifications().Notifications, 1)
+	require.Len(s.T(), s.listNotifications("ch-1").Notifications, 1)
 
-	require.Equal(s.T(), http.StatusNoContent, s.testRequest("DELETE", "/api/notifications", "").Code)
-	require.Empty(s.T(), s.listNotifications().Notifications)
+	require.Equal(s.T(), http.StatusNoContent, s.testRequest("DELETE", "/api/notifications?channel_id=ch-1", "").Code)
+	require.Empty(s.T(), s.listNotifications("ch-1").Notifications)
+	require.Len(s.T(), s.listNotifications("ch-2").Notifications, 1, "another channel's are kept")
 
-	require.Equal(s.T(), http.StatusBadRequest, s.testRequest("POST", "/api/notifications/read", `{`).Code)
+	for _, tc := range []struct{ method, path, body string }{
+		{"POST", "/api/notifications/read", `{`},
+		{"POST", "/api/notifications/read", `{"up_to":1}`},
+		{"GET", "/api/notifications", ""},
+		{"DELETE", "/api/notifications", ""},
+	} {
+		require.Equal(s.T(), http.StatusBadRequest, s.testRequest(tc.method, tc.path, tc.body).Code, tc.method+" "+tc.path+" "+tc.body)
+	}
 
 	require.Len(s.T(), *sent, 3, "read, removed, cleared")
 	for _, e := range *sent {
@@ -74,10 +95,11 @@ func (s *ServerSuite) TestNotificationsStoreFails() {
 	store, sent := s.notificationRoutes()
 	require.NoError(s.T(), store.Close())
 	for _, tc := range []struct{ method, path, body string }{
-		{"GET", "/api/notifications", ""},
-		{"POST", "/api/notifications/read", `{"up_to":1}`},
+		{"GET", "/api/notifications?channel_id=ch-1", ""},
+		{"GET", "/api/notifications/unread", ""},
+		{"POST", "/api/notifications/read", `{"channel_id":"ch-1","up_to":1}`},
 		{"DELETE", "/api/notifications/1", ""},
-		{"DELETE", "/api/notifications", ""},
+		{"DELETE", "/api/notifications?channel_id=ch-1", ""},
 	} {
 		rec := s.testRequest(tc.method, tc.path, tc.body)
 		require.Equal(s.T(), http.StatusInternalServerError, rec.Code, tc.method+" "+tc.path)
@@ -87,11 +109,13 @@ func (s *ServerSuite) TestNotificationsStoreFails() {
 
 func (s *ServerSuite) TestNotificationsNotConfigured() {
 	s.mux.HandleFunc("GET /api/notifications", s.srv.handleListNotifications)
+	s.mux.HandleFunc("GET /api/notifications/unread", s.srv.handleUnreadNotifications)
 	s.mux.HandleFunc("POST /api/notifications/read", s.srv.handleReadNotifications)
 	s.mux.HandleFunc("DELETE /api/notifications/{id}", s.srv.handleDeleteNotification)
 	s.mux.HandleFunc("DELETE /api/notifications", s.srv.handleClearNotifications)
 	for _, tc := range []struct{ method, path string }{
 		{"GET", "/api/notifications"},
+		{"GET", "/api/notifications/unread"},
 		{"POST", "/api/notifications/read"},
 		{"DELETE", "/api/notifications/1"},
 		{"DELETE", "/api/notifications"},
@@ -110,10 +134,12 @@ func (s *ServerSuite) TestDropChannelNotifications() {
 	require.NoError(s.T(), store.InsertNotification(ctx, &db.Notification{Kind: db.NotificationRun, ChannelID: "ch-2"}))
 
 	s.srv.dropChannelNotifications(ctx, "ch-1")
-	list, err := store.ListNotifications(ctx, 10)
+	list, err := store.ListNotifications(ctx, "ch-1", 10)
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), list)
+	list, err = store.ListNotifications(ctx, "ch-2", 10)
 	require.NoError(s.T(), err)
 	require.Len(s.T(), list, 1)
-	require.Equal(s.T(), "ch-2", list[0].ChannelID)
 	require.Len(s.T(), *sent, 1)
 
 	s.srv.dropChannelNotifications(ctx, "ch-1")
@@ -131,7 +157,7 @@ func (s *ServerSuite) TestRecordNotifications() {
 
 	s.srv.RecordNotifications(Event{Type: EventAgentStatus, ChannelID: "ch-1", Data: events.AgentStatusEventData{Status: "running"}})
 	s.srv.RecordNotifications(Event{Type: EventAgentStatus, ChannelID: "ch-1", Data: events.AgentStatusEventData{Status: "error", Error: "boom"}})
-	list, err := store.ListNotifications(ctx, 10)
+	list, err := store.ListNotifications(ctx, "ch-1", 10)
 	require.NoError(s.T(), err)
 	require.Len(s.T(), list, 1)
 	require.Equal(s.T(), "Run failed", list[0].Title)
@@ -184,6 +210,8 @@ func (s *ServerSuite) TestLoopNotification() {
 			evt: Event{Type: EventWorkflowRunCompleted, Data: events.WorkflowRunEventData{WorkflowName: "nightly", Status: "cancelled"}}},
 		{name: "workflow deleted",
 			evt: Event{Type: EventWorkflowRunCompleted, Data: events.WorkflowRunEventData{WorkflowName: "nightly", Status: "deleted"}}},
+		{name: "workflow in no channel",
+			evt: Event{Type: EventWorkflowRunCompleted, Data: events.WorkflowRunEventData{WorkflowName: "nightly", Status: "failed"}}},
 		{name: "workflow started",
 			evt: Event{Type: EventWorkflowRunStarted, Data: wf}},
 		{name: "anything else",
@@ -203,7 +231,7 @@ func (s *ServerSuite) TestPluginNotifyRecorded() {
 
 	rec := s.requestAs(echoPlugin, "POST", "/api/plugin/v1/notify", `{"title":"Quiz due","body":"3 cards"}`)
 	require.Equal(s.T(), http.StatusNoContent, rec.Code)
-	list, err := store.ListNotifications(ctx, 10)
+	list, err := store.ListNotifications(ctx, "ch-1", 10)
 	require.NoError(s.T(), err)
 	require.Len(s.T(), list, 1)
 	require.Equal(s.T(), db.Notification{ID: list[0].ID, PluginID: "echo", Kind: db.NotificationNotify, ChannelID: "ch-1", Title: "Quiz due", Body: "3 cards", Data: "null", CreatedAt: list[0].CreatedAt}, *list[0])

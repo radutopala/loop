@@ -692,6 +692,7 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/plugin/v1/badge", s.handleDeletePluginBadge)
 	mux.HandleFunc("POST /api/plugin/v1/cards", s.handlePostPluginCard)
 	mux.HandleFunc("GET /api/notifications", s.handleListNotifications)
+	mux.HandleFunc("GET /api/notifications/unread", s.handleUnreadNotifications)
 	mux.HandleFunc("POST /api/notifications/read", s.handleReadNotifications)
 	mux.HandleFunc("DELETE /api/notifications/{id}", s.handleDeleteNotification)
 	mux.HandleFunc("DELETE /api/notifications", s.handleClearNotifications)

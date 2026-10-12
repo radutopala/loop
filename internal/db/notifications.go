@@ -23,9 +23,9 @@ const (
 	NotificationCard = "card"
 )
 
-// Notification is something Loop or a plugin tells the owner, shown in the
-// app's notification drawer. PluginID is empty for Loop's own; ChannelID,
-// when set, is the channel or thread it's about. Card and Data are a
+// Notification is something Loop or a plugin tells the owner about a
+// channel or thread, ChannelID, shown in its notification drawer in the
+// app. PluginID is empty for Loop's own. Card and Data are a
 // card's id and its JSON data.
 type Notification struct {
 	ID        int64
@@ -67,10 +67,11 @@ func (s *SQLiteStore) InsertNotification(ctx context.Context, n *Notification) e
 	})
 }
 
-// ListNotifications returns the newest notifications, up to limit.
-func (s *SQLiteStore) ListNotifications(ctx context.Context, limit int) ([]*Notification, error) {
+// ListNotifications returns a channel's newest notifications, up to limit.
+func (s *SQLiteStore) ListNotifications(ctx context.Context, channelID string, limit int) ([]*Notification, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, plugin_id, kind, channel_id, title, body, card, data, read, created_at FROM notifications ORDER BY id DESC LIMIT ?`, limit)
+		`SELECT id, plugin_id, kind, channel_id, title, body, card, data, read, created_at FROM notifications
+		 WHERE channel_id = ? ORDER BY id DESC LIMIT ?`, channelID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -86,9 +87,30 @@ func (s *SQLiteStore) ListNotifications(ctx context.Context, limit int) ([]*Noti
 	return out, rows.Err()
 }
 
-// MarkNotificationsRead marks the notifications up to id read.
-func (s *SQLiteStore) MarkNotificationsRead(ctx context.Context, upTo int64) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE notifications SET read = 1 WHERE id <= ? AND read = 0`, upTo)
+// UnreadNotificationCounts returns how many unread notifications each
+// channel has, leaving out the channels with none.
+func (s *SQLiteStore) UnreadNotificationCounts(ctx context.Context) (map[string]int, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT channel_id, COUNT(*) FROM notifications WHERE read = 0 GROUP BY channel_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var channelID string
+		var n int
+		if err := rows.Scan(&channelID, &n); err != nil {
+			return nil, err
+		}
+		out[channelID] = n
+	}
+	return out, rows.Err()
+}
+
+// MarkNotificationsRead marks a channel's notifications up to id read.
+func (s *SQLiteStore) MarkNotificationsRead(ctx context.Context, channelID string, upTo int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE notifications SET read = 1 WHERE channel_id = ? AND id <= ? AND read = 0`, channelID, upTo)
 	return err
 }
 
@@ -101,12 +123,6 @@ func (s *SQLiteStore) DeleteNotification(ctx context.Context, id int64) (bool, e
 	}
 	n, err := res.RowsAffected()
 	return n > 0, err
-}
-
-// DeleteNotifications removes every notification.
-func (s *SQLiteStore) DeleteNotifications(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM notifications`)
-	return err
 }
 
 // DeleteChannelNotifications removes a channel's notifications, reporting

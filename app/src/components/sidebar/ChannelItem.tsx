@@ -1,4 +1,6 @@
 import { useRef, useState } from "react";
+import { unreadLabel, unreadTitle } from "../../notifications/notifications";
+import { useNotificationsState } from "../../notifications/useNotifications";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { Channel } from "../../types";
@@ -64,6 +66,7 @@ export function ChannelItem({
   pillsRef,
 }: ChannelItemProps) {
   const { colors } = useTheme();
+  const notes = useNotificationsState().unread[channel.id] ?? 0;
   const [creating, setCreating] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [hovered, setHovered] = useState(false);
@@ -202,6 +205,7 @@ export function ChannelItem({
           {channel.plugin_badges?.map((b) => (
             <StatusPill key={`plugin:${b.plugin_id}`} label={b.text} color={colors.textMuted} title={pluginBadgeTitle(b)} />
           ))}
+          {notes > 0 && <StatusPill label={unreadLabel(notes)} color={colors.error} title={unreadTitle(notes)} />}
           {(channel.container_running || channel.agent_running || isRunningMapRef?.current?.get(channel.id) || channel.review_running) && (
             <span
               style={{

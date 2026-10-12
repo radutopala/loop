@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestNotifications inserts, lists, marks read and deletes notifications
-// against a real SQLite; each source keeps its newest NotificationsKept,
+// TestNotifications inserts, lists, counts, marks read and deletes a
+// channel's notifications against a real SQLite; each source keeps its newest NotificationsKept,
 // and removing a plugin drops its notifications.
 func (s *IntegrationSuite) TestNotifications() {
 	store, err := NewSQLiteStore(filepath.Join(s.T().TempDir(), "loop.db"))
@@ -21,32 +21,45 @@ func (s *IntegrationSuite) TestNotifications() {
 	now := time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC)
 	store.nowFunc = func() time.Time { return now }
 
-	none, err := store.ListNotifications(ctx, 10)
+	none, err := store.ListNotifications(ctx, "ch1", 10)
 	require.NoError(s.T(), err)
 	require.Empty(s.T(), none)
+	counts, err := store.UnreadNotificationCounts(ctx)
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), counts)
 
 	run := &Notification{Kind: NotificationRun, ChannelID: "ch1", Title: "Task done", Body: "in 3s"}
 	require.NoError(s.T(), store.InsertNotification(ctx, run))
 	require.NotZero(s.T(), run.ID)
 	require.Equal(s.T(), now, run.CreatedAt)
-	card := &Notification{PluginID: "quiz", Kind: NotificationCard, ChannelID: "ch2", Card: "score", Data: `{"score":3}`}
+	card := &Notification{PluginID: "quiz", Kind: NotificationCard, ChannelID: "ch1", Card: "score", Data: `{"score":3}`}
 	require.NoError(s.T(), store.InsertNotification(ctx, card))
+	other := &Notification{Kind: NotificationWorkflow, ChannelID: "ch2", Title: "Workflow w completed"}
+	require.NoError(s.T(), store.InsertNotification(ctx, other))
 
-	got, err := store.ListNotifications(ctx, 10)
+	got, err := store.ListNotifications(ctx, "ch1", 10)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), []*Notification{
-		{ID: card.ID, PluginID: "quiz", Kind: NotificationCard, ChannelID: "ch2", Card: "score", Data: `{"score":3}`, CreatedAt: now},
+		{ID: card.ID, PluginID: "quiz", Kind: NotificationCard, ChannelID: "ch1", Card: "score", Data: `{"score":3}`, CreatedAt: now},
 		{ID: run.ID, Kind: NotificationRun, ChannelID: "ch1", Title: "Task done", Body: "in 3s", Data: "null", CreatedAt: now},
-	}, got)
-	got, err = store.ListNotifications(ctx, 1)
+	}, got, "only the channel's, newest first")
+	got, err = store.ListNotifications(ctx, "ch1", 1)
 	require.NoError(s.T(), err)
 	require.Len(s.T(), got, 1, "up to the limit")
+	counts, err = store.UnreadNotificationCounts(ctx)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), map[string]int{"ch1": 2, "ch2": 1}, counts)
 
-	require.NoError(s.T(), store.MarkNotificationsRead(ctx, run.ID))
-	got, err = store.ListNotifications(ctx, 10)
+	// Marking read reaches only the channel's, up to the id.
+	require.NoError(s.T(), store.MarkNotificationsRead(ctx, "ch1", run.ID))
+	got, err = store.ListNotifications(ctx, "ch1", 10)
 	require.NoError(s.T(), err)
 	require.False(s.T(), got[0].Read)
 	require.True(s.T(), got[1].Read)
+	require.NoError(s.T(), store.MarkNotificationsRead(ctx, "ch1", other.ID))
+	counts, err = store.UnreadNotificationCounts(ctx)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), map[string]int{"ch2": 1}, counts)
 
 	found, err := store.DeleteNotification(ctx, run.ID)
 	require.NoError(s.T(), err)
@@ -55,33 +68,31 @@ func (s *IntegrationSuite) TestNotifications() {
 	require.NoError(s.T(), err)
 	require.False(s.T(), found)
 
-	found, err = store.DeleteChannelNotifications(ctx, "ch2")
+	found, err = store.DeleteChannelNotifications(ctx, "ch1")
 	require.NoError(s.T(), err)
 	require.True(s.T(), found)
-	found, err = store.DeleteChannelNotifications(ctx, "ch2")
+	found, err = store.DeleteChannelNotifications(ctx, "ch1")
 	require.NoError(s.T(), err)
 	require.False(s.T(), found)
+	got, err = store.ListNotifications(ctx, "ch2", 10)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), got, 1, "other channels keep theirs")
 
 	// Each source keeps its newest NotificationsKept.
 	for range NotificationsKept + 2 {
-		require.NoError(s.T(), store.InsertNotification(ctx, &Notification{PluginID: "quiz", Kind: NotificationNotify}))
+		require.NoError(s.T(), store.InsertNotification(ctx, &Notification{PluginID: "quiz", Kind: NotificationNotify, ChannelID: "ch1"}))
 	}
-	loop := &Notification{Kind: NotificationWorkflow}
+	loop := &Notification{Kind: NotificationWorkflow, ChannelID: "ch1"}
 	require.NoError(s.T(), store.InsertNotification(ctx, loop))
-	got, err = store.ListNotifications(ctx, 1000)
+	got, err = store.ListNotifications(ctx, "ch1", 1000)
 	require.NoError(s.T(), err)
 	require.Len(s.T(), got, NotificationsKept+1)
 	require.Equal(s.T(), loop.ID, got[0].ID)
 
 	require.NoError(s.T(), store.DeletePluginState(ctx, "quiz"))
-	got, err = store.ListNotifications(ctx, 1000)
+	got, err = store.ListNotifications(ctx, "ch1", 1000)
 	require.NoError(s.T(), err)
 	require.Len(s.T(), got, 1, "removing a plugin drops its notifications")
-
-	require.NoError(s.T(), store.DeleteNotifications(ctx))
-	got, err = store.ListNotifications(ctx, 10)
-	require.NoError(s.T(), err)
-	require.Empty(s.T(), got)
 }
 
 func (s *StoreSuite) TestNotificationsErrors() {
@@ -114,22 +125,22 @@ func (s *StoreSuite) TestNotificationsErrors() {
 		}},
 		{"list query", false, func() error {
 			s.mock.ExpectQuery(`FROM notifications`).WillReturnError(boom)
-			_, err := s.store.ListNotifications(ctx, 10)
+			_, err := s.store.ListNotifications(ctx, "ch", 10)
 			return err
 		}},
 		{"list scan", true, func() error {
 			s.mock.ExpectQuery(`FROM notifications`).WillReturnRows(sqlmock.NewRows(cols).AddRow(1, "", "run", "", "", "", "", "null", false, "not a time"))
-			_, err := s.store.ListNotifications(ctx, 10)
+			_, err := s.store.ListNotifications(ctx, "ch", 10)
 			return err
 		}},
 		{"list rows", false, func() error {
 			s.mock.ExpectQuery(`FROM notifications`).WillReturnRows(sqlmock.NewRows(cols).AddRow(1, "", "run", "", "", "", "", "null", false, time.Now()).RowError(0, boom))
-			_, err := s.store.ListNotifications(ctx, 10)
+			_, err := s.store.ListNotifications(ctx, "ch", 10)
 			return err
 		}},
 		{"mark read", false, func() error {
 			s.mock.ExpectExec(`UPDATE notifications SET read`).WillReturnError(boom)
-			return s.store.MarkNotificationsRead(ctx, 1)
+			return s.store.MarkNotificationsRead(ctx, "ch", 1)
 		}},
 		{"delete", false, func() error {
 			s.mock.ExpectExec(`DELETE FROM notifications WHERE id`).WillReturnError(boom)
@@ -141,9 +152,20 @@ func (s *StoreSuite) TestNotificationsErrors() {
 			_, err := s.store.DeleteNotification(ctx, 1)
 			return err
 		}},
-		{"delete all", false, func() error {
-			s.mock.ExpectExec(`DELETE FROM notifications`).WillReturnError(boom)
-			return s.store.DeleteNotifications(ctx)
+		{"unread query", false, func() error {
+			s.mock.ExpectQuery(`SELECT channel_id, COUNT`).WillReturnError(boom)
+			_, err := s.store.UnreadNotificationCounts(ctx)
+			return err
+		}},
+		{"unread scan", true, func() error {
+			s.mock.ExpectQuery(`SELECT channel_id, COUNT`).WillReturnRows(sqlmock.NewRows([]string{"channel_id", "n"}).AddRow("ch", "many"))
+			_, err := s.store.UnreadNotificationCounts(ctx)
+			return err
+		}},
+		{"unread rows", false, func() error {
+			s.mock.ExpectQuery(`SELECT channel_id, COUNT`).WillReturnRows(sqlmock.NewRows([]string{"channel_id", "n"}).AddRow("ch", 1).RowError(0, boom))
+			_, err := s.store.UnreadNotificationCounts(ctx)
+			return err
 		}},
 		{"delete channel", false, func() error {
 			s.mock.ExpectExec(`DELETE FROM notifications WHERE channel_id`).WillReturnError(boom)

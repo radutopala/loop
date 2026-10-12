@@ -3177,13 +3177,13 @@ Called by a plugin's container with the token in its `LOOP_PLUGIN_TOKEN_FILE`; t
 
 ## Notifications
 
-What Loop and the plugins tell the owner, listed in the desktop app's notification drawer. Owner only; every route answers `501` when the store isn't configured. Each change broadcasts a global `notifications.changed` event with no data; the app refetches the list.
+What Loop and the plugins tell the owner about a channel or thread, listed in the desktop app's notification drawer of that channel. Owner only; every route answers `501` when the store isn't configured. Each change broadcasts a global `notifications.changed` event with no data; the app refetches the counts and the open drawer's list.
 
-Loop keeps a notification for a scheduled run that finished or failed, any other run that failed (except learn, explain and a plugin's agent), and a workflow run that ended or paused for input. A plugin adds one with [`POST /api/plugin/v1/notify`](#plugin-api-v1) or [`POST /api/plugin/v1/cards`](#plugin-api-v1). Loop's own and each plugin's are capped at the newest 200. Deleting a channel drops its notifications; removing a plugin drops the plugin's.
+Loop keeps a notification for a scheduled run that finished or failed, any other run that failed (except learn, explain and a plugin's agent), and a workflow run in a channel that ended or paused for input; not for a workflow run the owner cancelled or deleted. A plugin adds one with [`POST /api/plugin/v1/notify`](#plugin-api-v1) or [`POST /api/plugin/v1/cards`](#plugin-api-v1). Loop's own and each plugin's are capped at the newest 200. Deleting a channel drops its notifications; removing a plugin drops the plugin's.
 
-### `GET /api/notifications`
+### `GET /api/notifications?channel_id=`
 
-The newest 200, newest first, and how many of them are unread.
+The channel's newest 200, newest first, and how many of them are unread. `channel_id` is required (`400`); a thread's are its own, not its parent's.
 
 ```json
 {
@@ -3195,19 +3195,27 @@ The newest 200, newest first, and how many of them are unread.
 }
 ```
 
-`kind` is `run`, `workflow`, `notify` or `card`. `plugin_id` is omitted for Loop's own, `channel_id` when it's about no channel; `card` and `data` come with a card only.
+`kind` is `run`, `workflow`, `notify` or `card`. `plugin_id` is omitted for Loop's own; `card` and `data` come with a card only.
+
+### `GET /api/notifications/unread`
+
+How many unread notifications each channel or thread has, for the sidebar; the ones with none are left out.
+
+```json
+{"unread": {"4bc8…": 2, "038852d2f1ae": 1}}
+```
 
 ### `POST /api/notifications/read`
 
-Body `{"up_to": 12}`: marks the notifications up to that id read → `204`.
+Body `{"channel_id": "4bc8…", "up_to": 12}`: marks the channel's notifications up to that id read → `204`. `channel_id` is required (`400`).
 
 ### `DELETE /api/notifications/{id}`
 
 Dismisses one → `204`; `404` if there's no such notification, `400` for an id that isn't a number.
 
-### `DELETE /api/notifications`
+### `DELETE /api/notifications?channel_id=`
 
-Dismisses them all → `204`.
+Dismisses the channel's → `204`. `channel_id` is required (`400`).
 
 ## Agent Registry
 

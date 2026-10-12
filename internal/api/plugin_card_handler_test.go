@@ -56,7 +56,7 @@ func (s *ServerSuite) TestPostPluginCard() {
 			rec := s.requestAs(echoPlugin, "POST", "/api/plugin/v1/cards", tt.body)
 
 			require.Equal(s.T(), http.StatusCreated, rec.Code, rec.Body.String())
-			list, err := store.ListNotifications(context.Background(), 10)
+			list, err := store.ListNotifications(context.Background(), "ch-1", 10)
 			require.NoError(s.T(), err)
 			require.Len(s.T(), list, 1)
 			n := list[0]
