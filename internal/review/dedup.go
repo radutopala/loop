@@ -174,6 +174,7 @@ Rules:
 	if len(fresh) > 0 {
 		b.WriteString(`- The comments marked [agent, new] are what the latest review round added; an earlier pass already grouped the rest. Check every new comment against every other comment, the [github] ones included, and group it with the comment it repeats. Compare root causes, not wording: a new comment usually rewords an issue another comment already raised, often on another line or in another file. Only the new comments need their lines checked. You need not regroup the older comments among themselves, though you may when you spot a duplicate.
 - Verdicts go to the new comments and to the ones marked [agent, recheck]: earlier findings that still stand, while the code may have changed since they were judged. Read each again; one this checkout no longer has is "already_fixed". The other older comments keep their verdicts.
+- The comments marked [agent, false_positive] or [agent, already_fixed] were already checked and dismissed, for the reason after "Judged:". When a new comment repeats one of them, keep the dismissed comment and drop the new one into it, so the new one isn't checked and reported again.
 `)
 	}
 	b.WriteString(`
@@ -197,8 +198,14 @@ Comments, by file:
 			label = "agent, new"
 		case len(fresh) > 0 && standing(c):
 			label = "agent, recheck"
+		case settled(c, fresh):
+			label = "agent, " + c.Verdict
 		}
-		fmt.Fprintf(&b, "- id=%s [%s] L%d (%s): %s\n", c.ID, label, c.Line, effectiveSide(c.Side), oneLine(c.Body, dedupBodyMax))
+		fmt.Fprintf(&b, "- id=%s [%s] L%d (%s): %s", c.ID, label, c.Line, effectiveSide(c.Side), oneLine(c.Body, dedupBodyMax))
+		if settled(c, fresh) && c.VerdictReason != "" {
+			fmt.Fprintf(&b, " Judged: %s", oneLine(c.VerdictReason, dedupBodyMax))
+		}
+		b.WriteString("\n")
 	}
 	return b.String()
 }
@@ -234,8 +241,8 @@ func oneLine(body string, limit int) string {
 // non-empty body shorter than the one it replaces; a comment is trimmed
 // once, and a trimmed comment can't cover another trim, so two bundles
 // can't each cut the issue they share and lose it. A verdict counts only
-// for a kept agent comment (not, with fresh non-empty, a pushed one) and a
-// known Verdict value; the first one named
+// for a kept agent comment (not, with fresh non-empty, a pushed or settled
+// one) and a known Verdict value; the first one named
 // for an id wins. An error means the reply held no parseable JSON object.
 func ParseDedupReply(reply string, cands []*Comment, fresh map[string]bool) (DedupPlan, error) {
 	start, end := strings.Index(reply, "{"), strings.LastIndex(reply, "}")
@@ -249,6 +256,21 @@ func ParseDedupReply(reply string, cands []*Comment, fresh map[string]bool) (Ded
 	byID := make(map[string]*Comment, len(cands))
 	for _, c := range cands {
 		byID[c.ID] = c
+	}
+	// A group that drops a settled comment in favour of one that isn't is
+	// turned around: the settled comment keeps its verdict and the other is
+	// dropped into it. A [github] keeper stays, since it can't be dropped.
+	for i, cl := range parsed.Clusters {
+		k := byID[cl.Keep]
+		if k == nil || !droppable(k, fresh) || settled(k, fresh) {
+			continue
+		}
+		j := slices.IndexFunc(cl.Drop, func(id string) bool { return byID[id] != nil && settled(byID[id], fresh) })
+		if j < 0 {
+			continue
+		}
+		drop := slices.Concat(cl.Drop[:j], cl.Drop[j+1:], []string{cl.Keep})
+		parsed.Clusters[i].Keep, parsed.Clusters[i].Drop = cl.Drop[j], drop
 	}
 	keepers := map[string]bool{}
 	for _, cl := range parsed.Clusters {
@@ -318,7 +340,7 @@ func ParseDedupReply(reply string, cands []*Comment, fresh map[string]bool) (Ded
 	judged := map[string]bool{}
 	for _, v := range parsed.Verdicts {
 		c := byID[v.ID]
-		if c == nil || !droppable(c, fresh) || keeperOf[v.ID] != "" || judged[v.ID] || !KnownVerdict(v.Verdict) {
+		if c == nil || !droppable(c, fresh) || settled(c, fresh) || keeperOf[v.ID] != "" || judged[v.ID] || !KnownVerdict(v.Verdict) {
 			continue
 		}
 		judged[v.ID] = true
@@ -334,6 +356,15 @@ func ParseDedupReply(reply string, cands []*Comment, fresh map[string]bool) (Ded
 // fix step after.
 func standing(c *Comment) bool {
 	return c.Verdict == "" || c.Verdict == VerdictReal
+}
+
+// settled reports whether c is an earlier agent finding a pass already
+// dismissed, seen by a pass after a review run (fresh non-empty). Such a
+// pass keeps its verdict: it keeps the comment over a new repeat of it and
+// doesn't judge it again, so a false positive stays one across rounds. A
+// pass the user asks for (fresh empty) checks everything again.
+func settled(c *Comment, fresh map[string]bool) bool {
+	return len(fresh) > 0 && !fresh[c.ID] && droppable(c, fresh) && Dismissed(c.Verdict)
 }
 
 // Dismissed reports whether verdict rules a comment out: a false positive,

@@ -106,7 +106,7 @@ func (s *DedupSuite) TestBuildDedupPrompt() {
 
 func (s *DedupSuite) TestBuildDedupPromptMarksFresh() {
 	cands := []*Comment{
-		{ID: "old", Path: "x.go", Line: 3, Source: "agent", Body: "old finding", Verdict: VerdictFalsePositive},
+		{ID: "old", Path: "x.go", Line: 3, Source: "agent", Body: "old finding", Verdict: VerdictFalsePositive, VerdictReason: "x.go:3 checks it"},
 		{ID: "real", Path: "x.go", Line: 4, Source: "agent", Body: "real finding", Verdict: VerdictReal},
 		{ID: "unjudged", Path: "x.go", Line: 4, Source: "agent", Body: "unjudged finding"},
 		{ID: "fixed", Path: "x.go", Line: 4, Source: "agent", Body: "fixed finding", Verdict: VerdictAlreadyFixed},
@@ -116,16 +116,18 @@ func (s *DedupSuite) TestBuildDedupPromptMarksFresh() {
 	}
 	got := BuildDedupPrompt(cands, DedupFresh(cands, map[string]bool{"old": true, "real": true, "unjudged": true, "fixed": true, "ours": true}))
 	// A pushed agent comment is shown as [github]: an unasked-for pass keeps it off the PR's delete list.
-	// An earlier finding that still stands is checked again; a settled one isn't.
-	require.Contains(s.T(), got, "\n## x.go\n- id=old [agent] L3 (RIGHT): old finding\n"+
-		"- id=real [agent, recheck] L4 (RIGHT): real finding\n- id=unjudged [agent, recheck] L4 (RIGHT): unjudged finding\n- id=fixed [agent] L4 (RIGHT): fixed finding\n"+
+	// An earlier finding that still stands is checked again; a settled one
+	// isn't, and shows its verdict and why.
+	require.Contains(s.T(), got, "\n## x.go\n- id=old [agent, false_positive] L3 (RIGHT): old finding Judged: x.go:3 checks it\n"+
+		"- id=real [agent, recheck] L4 (RIGHT): real finding\n- id=unjudged [agent, recheck] L4 (RIGHT): unjudged finding\n- id=fixed [agent, already_fixed] L4 (RIGHT): fixed finding\n"+
 		"- id=new [agent, new] L5 (RIGHT): new finding\n- id=gh-1 [github] L9 (RIGHT): pushed\n- id=ours [github] L12 (RIGHT): ours, pushed\n")
 	require.Contains(s.T(), got, "Check every new comment against every other comment, the [github] ones included")
 	require.Contains(s.T(), got, "You need not regroup the older comments among themselves")
 	require.Contains(s.T(), got, "Only the new comments need their lines checked.")
 	require.Contains(s.T(), got, `one this checkout no longer has is "already_fixed"`)
 	require.Contains(s.T(), got, "Do not change anything.\n- The comments marked [agent, new]")
-	require.Contains(s.T(), got, "The other older comments keep their verdicts.\n\nReply with only")
+	require.Contains(s.T(), got, "The other older comments keep their verdicts.\n- The comments marked [agent, false_positive] or [agent, already_fixed] were already checked and dismissed")
+	require.Contains(s.T(), got, "keep the dismissed comment and drop the new one into it, so the new one isn't checked and reported again.\n\nReply with only")
 }
 
 func (s *DedupSuite) TestDedupFresh() {
@@ -422,6 +424,69 @@ func (s *DedupSuite) TestParseDedupReplyPushedOnlyJudgedWhenAsked() {
 			got, err := ParseDedupReply(reply, cands, tc.fresh)
 			require.NoError(s.T(), err)
 			require.Equal(s.T(), tc.want, got.Verdicts)
+		})
+	}
+}
+
+func (s *DedupSuite) TestParseDedupReplySettledKeepsVerdict() {
+	cands := []*Comment{
+		{ID: "fp", Path: "x.go", Line: 3, Source: "agent", Verdict: VerdictFalsePositive},
+		{ID: "fixed", Path: "x.go", Line: 4, Source: "agent", Verdict: VerdictAlreadyFixed},
+		{ID: "new", Path: "x.go", Line: 5, Source: "agent"},
+		{ID: "new2", Path: "x.go", Line: 6, Source: "agent"},
+		{ID: "gh-1", Path: "x.go", Line: 9, Source: "github"},
+	}
+	fresh := map[string]bool{"new": true, "new2": true}
+	tests := []struct {
+		name     string
+		fresh    map[string]bool
+		reply    string
+		clusters []DedupCluster
+		verdicts []DedupVerdict
+	}{
+		{
+			name:     "a new repeat dropping a settled comment is turned around",
+			fresh:    fresh,
+			reply:    `{"clusters":[{"keep":"new","drop":["fp"],"reason":"same"}]}`,
+			clusters: []DedupCluster{{Keep: "fp", Drop: []string{"new"}, Reason: "same"}},
+		},
+		{
+			name:     "the first settled drop becomes the keeper",
+			fresh:    fresh,
+			reply:    `{"clusters":[{"keep":"new","drop":["new2","fixed","fp"]}]}`,
+			clusters: []DedupCluster{{Keep: "fixed", Drop: []string{"new2", "fp", "new"}}},
+		},
+		{
+			name:     "a github keeper stays",
+			fresh:    fresh,
+			reply:    `{"clusters":[{"keep":"gh-1","drop":["fp","new"]}]}`,
+			clusters: []DedupCluster{{Keep: "gh-1", Drop: []string{"fp", "new"}}},
+		},
+		{
+			name:     "a settled keeper stays",
+			fresh:    fresh,
+			reply:    `{"clusters":[{"keep":"fp","drop":["fixed","new"]}]}`,
+			clusters: []DedupCluster{{Keep: "fp", Drop: []string{"fixed", "new"}}},
+		},
+		{
+			name:     "a settled comment isn't judged again",
+			fresh:    fresh,
+			reply:    `{"verdicts":[{"id":"fp","verdict":"real"},{"id":"new","verdict":"real"}]}`,
+			verdicts: []DedupVerdict{{ID: "new", Verdict: VerdictReal}},
+		},
+		{
+			name:     "a pass the user asks for judges and drops everything again",
+			reply:    `{"clusters":[{"keep":"new","drop":["fp"]}],"verdicts":[{"id":"fixed","verdict":"real"}]}`,
+			clusters: []DedupCluster{{Keep: "new", Drop: []string{"fp"}}},
+			verdicts: []DedupVerdict{{ID: "fixed", Verdict: VerdictReal}},
+		},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			plan, err := ParseDedupReply(tt.reply, cands, tt.fresh)
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tt.clusters, plan.Clusters)
+			require.Equal(s.T(), tt.verdicts, plan.Verdicts)
 		})
 	}
 }

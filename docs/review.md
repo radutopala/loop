@@ -96,7 +96,12 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
    just one finding, that means the new findings plus the earlier ones
    still standing (judged `real`, or not judged yet), since the run may
    follow a fix: a fixed one becomes `already_fixed`, and a review-fix
-   loop stops handing it to the fix step. The verdicts are `real`, `false_positive` (the code doesn't do what the comment
+   loop stops handing it to the fix step. An earlier finding already
+   marked `false_positive` or `already_fixed` keeps that verdict: the
+   pass sees it with its verdict and reason, and when the run reports it
+   again, the earlier finding is kept and the new repeat is folded into
+   it, so a dismissed finding stays dismissed across rounds. A dedup pass
+   you start yourself checks everything again. The verdicts are `real`, `false_positive` (the code doesn't do what the comment
    says, or the behaviour is intended, handled elsewhere or what the PR
    sets out to do) or `already_fixed`, with a one-sentence reason citing
    the line it read. Moves and verdicts are claims about the code, so
