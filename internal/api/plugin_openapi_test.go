@@ -122,9 +122,12 @@ func (s *ServerSuite) TestPluginAPISpecResponses() {
 		"GET /channel/files":            reflect.TypeFor[pluginFileResponse](),
 		"GET /channel/tree":             reflect.TypeFor[pluginTreeResponse](),
 		"GET /channel/git/recent":       reflect.TypeFor[pluginRecentResponse](),
+		"GET /channel/git/head":         reflect.TypeFor[pluginHeadResponse](),
 		"GET /channel/quality/hotspots": reflect.TypeFor[QualityComplexityResponse](),
 		"POST /runs":                    reflect.TypeFor[pluginRunResponse](),
+		"GET /runs/{run_id}":            reflect.TypeFor[pluginRunStateResponse](),
 		"POST /ui/commands":             reflect.TypeFor[uibridge.Reply](),
+		"POST /ui/open_file":            reflect.TypeFor[uibridge.Reply](),
 		"POST /cards":                   reflect.TypeFor[pluginCardResponse](),
 	}
 	spec := loadSpecSchemas(s.T(), pluginAPISpec)

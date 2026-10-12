@@ -140,14 +140,14 @@ Capabilities are approved by the owner at install and checked on every call:
 | Capability | Grants |
 |---|---|
 | `files.read` | `GET /channel/files`, `GET /channel/tree` |
-| `git.read` | `GET /channel/git/recent` |
+| `git.read` | `GET /channel/git/recent`, `GET /channel/git/head` |
 | `quality.read` | `GET /channel/quality/hotspots` |
-| `agent.readonly` | runs of read-only agents |
-| `agent.write` | runs of any agent |
+| `agent.readonly` | runs of read-only agents; `GET` and `DELETE /runs/{run_id}` |
+| `agent.write` | runs of any agent; `GET` and `DELETE /runs/{run_id}` |
 | `schedule` | actions' `default_schedule` tasks |
 | `ui.panel` | panels |
 | `ui.notification.notify` | `POST /notify`, the bridge's `ui.notification.notify` |
-| `ui.open_file` | the bridge's `ui.open_file` |
+| `ui.open_file` | `POST /ui/open_file`, the bridge's `ui.open_file` |
 | `ui.copy` | the bridge's `ui.copy` |
 | `memory.write` | `PUT /memory/{name}`, `DELETE /memory/{name}` |
 | `events.subscribe` | the manifest's `events`, sent to `POST /events` |
@@ -283,13 +283,17 @@ channel id. A route needing a capability the owner didn't approve answers `403`.
 | `GET /channel/files?path=&start=&end=` | `files.read` | `{"path", "content", "start", "end", "total_lines"}`; lines are 1-based and inclusive, both optional (without them `content` is the whole file); `.git/` is refused, and so is a file the channel's agents may not read under agentgate (`403`); `404` if missing, `400` for a directory or a range past the end, `413` over the size limit |
 | `GET /channel/tree?glob=` | `files.read` | `{"files": ["a/b.go", …], "truncated": true}`: the files git tracks (or every file outside `.git/` without git), leaving out files agentgate keeps from the channel's agents, optionally filtered by a glob matched against the path or its base name; at most 50,000, with `truncated` set when there were more |
 | `GET /channel/git/recent?days=` | `git.read` | `{"commits": [{"sha", "subject", "author", "time"}], "files": [{"path", "commits"}]}`; files most-changed first; `days` defaults to 14, at most 365; the last 500 commits; `409` when the dir isn't a git repository |
+| `GET /channel/git/head` | `git.read` | `{"sha", "subject", "author", "time", "branch"}`: the commit checked out; `branch` is empty when HEAD is detached; `409` when the dir isn't a git repository or has no commits |
 | `GET /channel/quality/hotspots?limit=&offset=` | `quality.read` | a page of the latest quality scan's functions, worst first: `{"score", "raw", "total_functions", "over_threshold", "histogram", "functions": [{"path", "name", "start_line", "cyclomatic", "cognitive", "max_nesting", "param_count", "loc", "score"}], "offset", "limit", "returned"}`; `limit` defaults to 50, at most 100; `503` before the first scan |
 | `POST /runs` | `agent.readonly` / `agent.write` | body `{"agent", "prompt", "model"?, "effort"?}` → `202 {"run_id", "thread_id"}`; see below |
+| `GET /runs/{run_id}` | `agent.readonly` / `agent.write` | `{"run_id", "thread_id", "status"}` while the plugin's run in the channel is `queued` or `running`; `404` once it ended, or for a run that isn't the plugin's |
+| `DELETE /runs/{run_id}` | `agent.readonly` / `agent.write` | `204`; stops the run, or takes it out of the thread's queue, and Loop calls `POST /runs/{run_id}/done` with `failed`. `404` when it already ended, `409` while it's moving from the queue to running (try again) |
 | `POST /events` | | body `{"type", "data"}` → `204`; sent to the plugin's panels in the channel as `type` |
 | `POST /notify` | `ui.notification.notify` | body `{"title", "body"}` → `204`; kept in the notification drawer of the plugin's channel, or of the thread its container serves. There's no desktop notification. Five a minute per plugin, cards included; past that `429` with `Retry-After` |
 | `PUT /memory/{name}` | `memory.write` | body `{"content"}` (up to 256 KB) → `204`; writes `plugin-<id>-<name>.md` into the auto-memory dir of the channel's dir, where the channel's agents find it with `search_memory` once memory is on. `name` is lowercase letters, digits and dashes, at most 64 (`400` otherwise); `409` when the channel has no dir |
 | `DELETE /memory/{name}` | `memory.write` | `204`, also when there was no such file |
 | `POST /ui/commands` | `ui.run` | body `{"steps", "client_id"?, "timeout"?}` → `200 {"client_id", "results", "error"?}`; an app window runs the [UI bridge steps](api.md#post-apiuicommands) and Loop answers when it's done, up to `timeout` (a Go duration, `1m` by default, at most `10m`). The first step is `select_channel`, and each `select_channel` opens the plugin's channel or one of its threads (`403` otherwise); terminal steps work only on the agent and shell panes. `404` when no window is open, `502` when it goes away, `504` when it doesn't answer in time |
+| `POST /ui/open_file` | `ui.open_file` | body `{"path", "line"?}` → `200 {"client_id", "results", "error"?}`; an app window opens the plugin's channel and `path`, relative to the channel's dir, in its editor, at `line` when given. `400` for an empty, absolute or outside path, or a negative line; otherwise answers as `POST /ui/commands` with its default timeout |
 | `PUT /badge` | `ui.badge` | body `{"text", "title"?}` → `204`; shows `text` (trimmed, 1 to 16 characters on one line) on the sidebar row of the plugin's channel, or of the thread its container serves, with `title` (at most 200 characters) as its tooltip. It replaces the plugin's badge there and stays until the plugin clears it, is removed or loses `ui.badge`, the channel is deleted, or its project stops enabling the plugin; every open window drops it at once |
 | `DELETE /badge` | `ui.badge` | `204`, also when there was no badge |
 | `POST /cards` | `ui.notification.card` | body `{"card", "title"?, "data"?}` (up to 64 KB) → `201 {"id"}`; posts one of the manifest's cards to the notification drawer of the plugin's channel, or of the thread its container serves, with `data` for its page (see [Cards](#cards)). Shares `/notify`'s five a minute (`429`). `400` for a card the manifest doesn't declare, and outside the desktop app |

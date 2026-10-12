@@ -40,6 +40,9 @@ type Config struct {
 	// Git is GET /channel/git/recent's answer; nil answers 409, as for a
 	// dir that isn't a git repository.
 	Git *pluginsdk.GitRecent
+	// GitHead is GET /channel/git/head's answer; nil answers 409, as for a
+	// dir that isn't a git repository.
+	GitHead *pluginsdk.GitHead
 	// Hotspots are the latest quality scan's functions, worst first, which
 	// GET /channel/quality/hotspots pages through; nil answers 503, as
 	// before the first quality scan.
@@ -78,10 +81,13 @@ type Card struct {
 	Data  json.RawMessage
 }
 
-// StartedRun is an agent run the plugin started.
+// StartedRun is an agent run the plugin started. The fake runs no agent:
+// a run stays queued until the plugin cancels it.
 type StartedRun struct {
 	pluginsdk.RunRequest
 	pluginsdk.Run
+	// Cancelled is set once the plugin cancelled the run.
+	Cancelled bool
 }
 
 // FakeLoop serves the Plugin API v1 from memory and records what the plugin
@@ -118,13 +124,17 @@ func NewFakeLoop(t testing.TB, cfg Config) *FakeLoop {
 	mux.HandleFunc("GET /api/plugin/v1/channel/files", f.allow(pluginsdk.CapFilesRead, f.file))
 	mux.HandleFunc("GET /api/plugin/v1/channel/tree", f.allow(pluginsdk.CapFilesRead, f.tree))
 	mux.HandleFunc("GET /api/plugin/v1/channel/git/recent", f.allow(pluginsdk.CapGitRead, f.git))
+	mux.HandleFunc("GET /api/plugin/v1/channel/git/head", f.allow(pluginsdk.CapGitRead, f.gitHead))
 	mux.HandleFunc("GET /api/plugin/v1/channel/quality/hotspots", f.allow(pluginsdk.CapQualityRead, f.hotspots))
 	mux.HandleFunc("POST /api/plugin/v1/runs", f.startRun)
+	mux.HandleFunc("GET /api/plugin/v1/runs/{run_id}", f.allowRuns(f.getRun))
+	mux.HandleFunc("DELETE /api/plugin/v1/runs/{run_id}", f.allowRuns(f.cancelRun))
 	mux.HandleFunc("POST /api/plugin/v1/events", f.event)
 	mux.HandleFunc("POST /api/plugin/v1/notify", f.allow(pluginsdk.CapUINotify, f.notify))
 	mux.HandleFunc("PUT /api/plugin/v1/memory/{name}", f.allow(pluginsdk.CapMemoryWrite, f.putMemory))
 	mux.HandleFunc("DELETE /api/plugin/v1/memory/{name}", f.allow(pluginsdk.CapMemoryWrite, f.deleteMemory))
 	mux.HandleFunc("POST /api/plugin/v1/ui/commands", f.allow(pluginsdk.CapUIRun, f.runUI))
+	mux.HandleFunc("POST /api/plugin/v1/ui/open_file", f.allow(pluginsdk.CapUIOpenFile, f.openFile))
 	mux.HandleFunc("PUT /api/plugin/v1/badge", f.allow(pluginsdk.CapUIBadge, f.setBadge))
 	mux.HandleFunc("DELETE /api/plugin/v1/badge", f.allow(pluginsdk.CapUIBadge, f.clearBadge))
 	mux.HandleFunc("POST /api/plugin/v1/cards", f.allow(pluginsdk.CapUICard, f.postCard))
@@ -214,6 +224,18 @@ func (f *FakeLoop) allow(capability string, h http.HandlerFunc) http.HandlerFunc
 	}
 }
 
+// allowRuns lets h answer when the plugin may run agents: either agent
+// capability lets it read and cancel its runs.
+func (f *FakeLoop) allowRuns(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !f.approved(pluginsdk.CapAgentReadOnly) && !f.approved(pluginsdk.CapAgentWrite) {
+			http.Error(w, "the plugin may not run agents", http.StatusForbidden)
+			return
+		}
+		h(w, r)
+	}
+}
+
 func (f *FakeLoop) channel(w http.ResponseWriter, _ *http.Request) {
 	pluginsdk.WriteJSON(w, http.StatusOK, f.cfg.Channel)
 }
@@ -296,6 +318,14 @@ func (f *FakeLoop) git(w http.ResponseWriter, _ *http.Request) {
 	pluginsdk.WriteJSON(w, http.StatusOK, f.cfg.Git)
 }
 
+func (f *FakeLoop) gitHead(w http.ResponseWriter, _ *http.Request) {
+	if f.cfg.GitHead == nil {
+		http.Error(w, "not a git repository", http.StatusConflict)
+		return
+	}
+	pluginsdk.WriteJSON(w, http.StatusOK, f.cfg.GitHead)
+}
+
 // Loop's default and largest page of hotspots.
 const (
 	hotspotsLimit    = 50
@@ -369,6 +399,44 @@ func (f *FakeLoop) startRun(w http.ResponseWriter, r *http.Request) {
 	f.runs = append(f.runs, StartedRun{RunRequest: req, Run: run})
 	f.mu.Unlock()
 	pluginsdk.WriteJSON(w, http.StatusAccepted, run)
+}
+
+// errRunGone is Loop's answer for a run that ended or isn't the plugin's.
+const errRunGone = "no queued or running run of the plugin with that id"
+
+// queuedRun returns the index of the plugin's run id while it's queued, or
+// -1. Call it with f.mu held.
+func (f *FakeLoop) queuedRun(id string) int {
+	return slices.IndexFunc(f.runs, func(r StartedRun) bool { return r.RunID == id && !r.Cancelled })
+}
+
+func (f *FakeLoop) getRun(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	i := f.queuedRun(r.PathValue("run_id"))
+	var run StartedRun
+	if i >= 0 {
+		run = f.runs[i]
+	}
+	f.mu.Unlock()
+	if i < 0 {
+		http.Error(w, errRunGone, http.StatusNotFound)
+		return
+	}
+	pluginsdk.WriteJSON(w, http.StatusOK, pluginsdk.RunState{RunID: run.RunID, ThreadID: run.ThreadID, Status: pluginsdk.RunQueued})
+}
+
+func (f *FakeLoop) cancelRun(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	i := f.queuedRun(r.PathValue("run_id"))
+	if i >= 0 {
+		f.runs[i].Cancelled = true
+	}
+	f.mu.Unlock()
+	if i < 0 {
+		http.Error(w, errRunGone, http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (f *FakeLoop) event(w http.ResponseWriter, r *http.Request) {
@@ -528,6 +596,35 @@ func (f *FakeLoop) runUI(w http.ResponseWriter, r *http.Request) {
 	f.mu.Unlock()
 	clientID := cmp.Or(req.ClientID, "window")
 	pluginsdk.WriteJSON(w, http.StatusOK, pluginsdk.UIReply{ClientID: clientID, Results: results})
+}
+
+// openFile checks the path as Loop does, records the two steps Loop sends
+// the window, and answers that the window ran them.
+func (f *FakeLoop) openFile(w http.ResponseWriter, r *http.Request) {
+	var req pluginsdk.OpenFile
+	if !pluginsdk.DecodeJSON(w, r, &req) {
+		return
+	}
+	rel := path.Clean(req.Path)
+	if req.Path == "" || path.IsAbs(rel) || rel == "." || rel == ".." || strings.HasPrefix(rel, "../") {
+		http.Error(w, "path must name a file inside the channel's dir, relative to it", http.StatusBadRequest)
+		return
+	}
+	if req.Line < 0 {
+		http.Error(w, "line must be a whole number from 1", http.StatusBadRequest)
+		return
+	}
+	open := pluginsdk.UIStep{"op": "open_file", "path": rel}
+	if req.Line > 0 {
+		open["line"] = req.Line
+	}
+	cmd := pluginsdk.UICommand{Steps: []pluginsdk.UIStep{{"op": "select_channel", "channel_id": f.cfg.Channel.ID}, open}}
+	f.mu.Lock()
+	f.uiCommands = append(f.uiCommands, cmd)
+	f.mu.Unlock()
+	pluginsdk.WriteJSON(w, http.StatusOK, pluginsdk.UIReply{ClientID: "window", Results: []map[string]any{
+		{"op": "select_channel", "ok": true}, {"op": "open_file", "ok": true},
+	}})
 }
 
 // uiRefusal returns why Loop would refuse steps, or "" when it runs them.

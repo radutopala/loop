@@ -87,3 +87,69 @@ func (s *ServerSuite) TestPluginUICommandNeedsTheCapability() {
 	rec := s.requestAs(echoPlugin, http.MethodPost, "/api/plugin/v1/ui/commands", `{"steps":[{"op":"select_channel","channel_id":"ch-1"}]}`)
 	require.Equal(s.T(), http.StatusForbidden, rec.Code)
 }
+
+// TestPluginOpenFile covers a plugin opening a file of its channel: the
+// path stays inside the channel's dir, and the window gets one open_file
+// step in the channel.
+func (s *ServerSuite) TestPluginOpenFile() {
+	refused := []struct {
+		name     string
+		body     string
+		wantBody string
+	}{
+		{name: "bad body", body: `{`},
+		{name: "no path", body: `{}`, wantBody: "path must name a file"},
+		{name: "absolute", body: `{"path":"/etc/passwd"}`, wantBody: "path must name a file"},
+		{name: "outside the dir", body: `{"path":"src/../../secret"}`, wantBody: "path must name a file"},
+		{name: "the parent dir", body: `{"path":".."}`, wantBody: "path must name a file"},
+		{name: "the dir itself", body: `{"path":"./"}`, wantBody: "path must name a file"},
+		{name: "a bad line", body: `{"path":"a.go","line":-1}`, wantBody: "line must be"},
+	}
+	for _, tt := range refused {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			s.pluginAPIRoutes(plugin.CapUIOpenFile, "/src/app")
+			rec := s.requestAs(echoPlugin, http.MethodPost, "/api/plugin/v1/ui/open_file", tt.body)
+			require.Equal(s.T(), http.StatusBadRequest, rec.Code, rec.Body.String())
+			require.Contains(s.T(), rec.Body.String(), tt.wantBody)
+		})
+	}
+
+	s.Run("not approved", func() {
+		s.SetupTest()
+		pm := s.pluginAPIRoutes(plugin.CapUIRun, "/src/app")
+		pm.On("Allows", mock.Anything, "echo", plugin.CapUIOpenFile).Return(install.ErrNotApproved).Once()
+		rec := s.requestAs(echoPlugin, http.MethodPost, "/api/plugin/v1/ui/open_file", `{"path":"a.go"}`)
+		require.Equal(s.T(), http.StatusForbidden, rec.Code, rec.Body.String())
+	})
+
+	opened := []struct {
+		name      string
+		body      string
+		wantSteps string
+	}{
+		{name: "a file", body: `{"path":"./src//a.go"}`,
+			wantSteps: `[{"op":"select_channel","channel_id":"ch-1"},{"op":"open_file","path":"src/a.go"}]`},
+		{name: "a file at a line", body: `{"path":"a.go","line":12}`,
+			wantSteps: `[{"op":"select_channel","channel_id":"ch-1"},{"op":"open_file","path":"a.go","line":12}]`},
+	}
+	for _, tt := range opened {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			s.pluginAPIRoutes(plugin.CapUIOpenFile, "/src/app")
+			var steps json.RawMessage
+			detach := s.srv.ui.Attach("w1", func(data []byte) error {
+				var cmd uibridge.Message
+				require.NoError(s.T(), json.Unmarshal(data, &cmd))
+				steps = cmd.Steps
+				go s.srv.ui.Handle("w1", uibridge.Message{Type: uibridge.MsgResult, ID: cmd.ID, Results: json.RawMessage(`[{"op":"select_channel","ok":true},{"op":"open_file","ok":true}]`)})
+				return nil
+			})
+			defer detach()
+			rec := s.requestAs(echoPlugin, http.MethodPost, "/api/plugin/v1/ui/open_file", tt.body)
+			require.Equal(s.T(), http.StatusOK, rec.Code, rec.Body.String())
+			require.JSONEq(s.T(), tt.wantSteps, string(steps))
+			require.Contains(s.T(), rec.Body.String(), `"op":"open_file","ok":true`)
+		})
+	}
+}

@@ -49,16 +49,7 @@ func (s *Server) pluginCaller(w http.ResponseWriter, r *http.Request, c plugin.C
 		http.Error(w, "only a plugin calls the plugin API", http.StatusForbidden)
 		return p, nil, false
 	}
-	err := s.plugins.Allows(r.Context(), p.PluginID, c)
-	switch {
-	case errors.Is(err, install.ErrNotApproved), errors.Is(err, install.ErrNotInstalled):
-		http.Error(w, err.Error(), http.StatusForbidden)
-		return p, nil, false
-	case errors.Is(err, install.ErrNotRunnable):
-		http.Error(w, err.Error(), http.StatusConflict)
-		return p, nil, false
-	case err != nil:
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if !pluginAllowed(w, s.plugins.Allows(r.Context(), p.PluginID, c)) {
 		return p, nil, false
 	}
 	ch, err := s.store.GetChannel(r.Context(), p.ChannelID)
@@ -71,6 +62,22 @@ func (s *Server) pluginCaller(w http.ResponseWriter, r *http.Request, c plugin.C
 		return p, nil, false
 	}
 	return p, ch, true
+}
+
+// pluginAllowed answers the request and returns false when err, from the
+// plugin service's Allows, refuses the plugin.
+func pluginAllowed(w http.ResponseWriter, err error) bool {
+	switch {
+	case errors.Is(err, install.ErrNotApproved), errors.Is(err, install.ErrNotInstalled):
+		http.Error(w, err.Error(), http.StatusForbidden)
+	case errors.Is(err, install.ErrNotRunnable):
+		http.Error(w, err.Error(), http.StatusConflict)
+	case err != nil:
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	default:
+		return true
+	}
+	return false
 }
 
 // pluginReadable returns whether the channel's agents may read a file of
@@ -346,6 +353,47 @@ func (s *Server) handlePluginGitRecent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeHTTPJSON(w, http.StatusOK, parseRecentLog(string(out)), s.logger)
+}
+
+type pluginHeadResponse struct {
+	SHA     string `json:"sha"`
+	Subject string `json:"subject"`
+	Author  string `json:"author"`
+	Time    string `json:"time"`
+	// Branch is the branch checked out, "" when HEAD is detached.
+	Branch string `json:"branch"`
+}
+
+// handlePluginGitHead describes the commit checked out in the channel's
+// repo, and its branch.
+func (s *Server) handlePluginGitHead(w http.ResponseWriter, r *http.Request) {
+	_, ch, ok := s.pluginCaller(w, r, plugin.CapGitRead)
+	if !ok {
+		return
+	}
+	cmd := gitutil.Command(r.Context(), ch.DirPath, "log", "-1", "--format=%H%x1f%s%x1f%an%x1f%aI%x1f%D")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("git log: %s", strings.TrimSpace(stderr.String())), http.StatusConflict)
+		return
+	}
+	writeHTTPJSON(w, http.StatusOK, parseHeadLog(string(out)), s.logger)
+}
+
+// parseHeadLog parses the git log handlePluginGitHead runs. Its last field
+// lists the refs at HEAD, as in "HEAD -> main, tag: v1".
+func parseHeadLog(out string) pluginHeadResponse {
+	fields := strings.SplitN(strings.TrimSuffix(out, "\n"), "\x1f", 5)
+	fields = append(fields, make([]string, 5-len(fields))...)
+	res := pluginHeadResponse{SHA: fields[0], Subject: fields[1], Author: fields[2], Time: fields[3]}
+	for ref := range strings.SplitSeq(fields[4], ", ") {
+		if b, ok := strings.CutPrefix(ref, "HEAD -> "); ok {
+			res.Branch = b
+		}
+	}
+	return res
 }
 
 // parseRecentLog parses the git log handlePluginGitRecent runs.

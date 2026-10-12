@@ -175,6 +175,32 @@ paths:
           content: { text/plain: { schema: { type: string } } }
         "500": { $ref: "#/components/responses/InternalError" }
         "501": { $ref: "#/components/responses/PluginsDisabled" }
+  /channel/git/head:
+    get:
+      operationId: getGitHead
+      tags: [channel]
+      summary: The commit checked out
+      description: |
+        The commit HEAD points at in the channel's repository, and the
+        branch checked out.
+      x-loop-capabilities: [git.read]
+      responses:
+        "200":
+          description: The commit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GitHead"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/ChannelNotFound" }
+        "409":
+          description: |
+            git log failed, for instance because the dir isn't a git
+            repository or has no commits, or the plugin can't run.
+          content: { text/plain: { schema: { type: string } } }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { $ref: "#/components/responses/PluginsDisabled" }
   /channel/quality/hotspots:
     get:
       operationId: getHotspots
@@ -254,6 +280,63 @@ paths:
         "409": { $ref: "#/components/responses/NotRunnable" }
         "429":
           description: The plugin used up its daily runs.
+          content: { text/plain: { schema: { type: string } } }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { $ref: "#/components/responses/PluginsDisabled" }
+  /runs/{run_id}:
+    parameters:
+      - name: run_id
+        in: path
+        required: true
+        description: The run's id, as POST /runs returned it.
+        schema: { type: string }
+    get:
+      operationId: getRun
+      tags: [runs]
+      summary: Where an agent run stands
+      description: |
+        Whether one of the plugin's agent runs in the channel is queued or
+        running. Once it ends it is gone: its end comes to the plugin's
+        `POST /runs/{run_id}/done`.
+      x-loop-capabilities: [agent.readonly, agent.write]
+      responses:
+        "200":
+          description: The run.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunState"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: The caller isn't a plugin, or neither agent capability is approved.
+          content: { text/plain: { schema: { type: string } } }
+        "404":
+          description: The plugin has no queued or running run with that id in the channel.
+          content: { text/plain: { schema: { type: string } } }
+        "409": { $ref: "#/components/responses/NotRunnable" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { $ref: "#/components/responses/PluginsDisabled" }
+    delete:
+      operationId: cancelRun
+      tags: [runs]
+      summary: Cancel an agent run
+      description: |
+        Stops one of the plugin's agent runs in the channel: a running one
+        is stopped, a queued one leaves the queue. Loop then calls the
+        plugin's `POST /runs/{run_id}/done` with status failed.
+      x-loop-capabilities: [agent.readonly, agent.write]
+      responses:
+        "204":
+          description: The run was cancelled.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: The caller isn't a plugin, or neither agent capability is approved.
+          content: { text/plain: { schema: { type: string } } }
+        "404":
+          description: The plugin has no queued or running run with that id in the channel.
+          content: { text/plain: { schema: { type: string } } }
+        "409":
+          description: The run is leaving its queue to start; try again. Or the plugin can't run.
           content: { text/plain: { schema: { type: string } } }
         "500": { $ref: "#/components/responses/InternalError" }
         "501": { $ref: "#/components/responses/PluginsDisabled" }
@@ -417,6 +500,47 @@ paths:
           content: { text/plain: { schema: { type: string } } }
         "504":
           description: The window didn't answer within the timeout.
+          content: { text/plain: { schema: { type: string } } }
+  /ui/open_file:
+    post:
+      operationId: openFile
+      tags: [ui]
+      summary: Open a file in the editor
+      description: |
+        Opens a file of the channel's dir in an app window's editor, at a
+        line when one is given: the window opens the channel, then the
+        file. The path is relative to the channel's dir and stays inside
+        it. The answer comes when the window has opened it.
+      x-loop-capabilities: [ui.open_file]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OpenFile"
+      responses:
+        "200":
+          description: The window ran the steps; a failed step, such as a file that isn't there, has ok false and an error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UIReply"
+        "400":
+          description: The body isn't JSON, the path is absolute or leaves the channel's dir, or the line is negative.
+          content: { text/plain: { schema: { type: string } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: The channel is gone, or no app window is open.
+          content: { text/plain: { schema: { type: string } } }
+        "409": { $ref: "#/components/responses/NotRunnable" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { $ref: "#/components/responses/PluginsDisabled" }
+        "502":
+          description: The window went away before it answered.
+          content: { text/plain: { schema: { type: string } } }
+        "504":
+          description: The window didn't answer within a minute.
           content: { text/plain: { schema: { type: string } } }
   /badge:
     put:
@@ -614,6 +738,20 @@ components:
         files:
           type: array
           items: { $ref: "#/components/schemas/FileChurn" }
+    GitHead:
+      type: object
+      required: [sha, subject, author, time, branch]
+      properties:
+        sha: { type: string }
+        subject: { type: string }
+        author: { type: string }
+        time:
+          type: string
+          format: date-time
+          description: The author date.
+        branch:
+          type: string
+          description: The branch checked out; empty when HEAD is detached.
     Hotspot:
       type: object
       required: [path, name, start_line, cyclomatic, cognitive, max_nesting, param_count, loc, score]
@@ -673,6 +811,17 @@ components:
         thread_id:
           type: string
           description: The hidden thread the run runs in.
+    RunState:
+      type: object
+      required: [run_id, thread_id, status]
+      properties:
+        run_id: { type: string }
+        thread_id:
+          type: string
+          description: The hidden thread the run runs in.
+        status:
+          type: string
+          enum: [queued, running]
     Event:
       type: object
       required: [type]
@@ -711,6 +860,17 @@ components:
             properties:
               op: { type: string, minLength: 1 }
             additionalProperties: true
+    OpenFile:
+      type: object
+      required: [path]
+      properties:
+        path:
+          type: string
+          description: The file, relative to the channel's dir.
+        line:
+          type: integer
+          minimum: 1
+          description: The line to show; missing opens the file at its top.
     UIReply:
       type: object
       required: [client_id, results]

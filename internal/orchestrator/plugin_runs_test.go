@@ -15,6 +15,7 @@ import (
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/plugin"
 	"github.com/radutopala/loop/internal/plugin/proxy"
 	"github.com/radutopala/loop/internal/plugin/runtime"
@@ -466,4 +467,151 @@ func (s *OrchestratorSuite) TestRecoverPluginRuns() {
 			require.False(s.T(), ok, id)
 		}
 	})
+}
+
+// TestPluginRunState covers a plugin reading where its runs stand, and only
+// its own runs in its channel.
+func (s *OrchestratorSuite) TestPluginRunState() {
+	parent := &db.Channel{ChannelID: "ch1"}
+	tests := []struct {
+		name      string
+		run       *PluginRun // registered under run-1
+		active    bool
+		pluginID  string
+		channelID string
+		want      PluginRunState
+		wantOK    bool
+	}{
+		{name: "no such run", pluginID: "echo", channelID: "ch1"},
+		{name: "another plugin's run", run: &PluginRun{PluginID: "other", threadID: "plugin-1", parent: parent}, pluginID: "echo", channelID: "ch1"},
+		{name: "a run in another channel", run: &PluginRun{PluginID: "echo", threadID: "plugin-1", parent: parent}, pluginID: "echo", channelID: "ch2"},
+		{name: "a run whose channel is gone", run: &PluginRun{PluginID: "echo", threadID: "plugin-1"}, pluginID: "echo", channelID: "ch1"},
+		{
+			name: "queued", run: &PluginRun{PluginID: "echo", threadID: "plugin-1", parent: parent}, pluginID: "echo", channelID: "ch1",
+			want: PluginRunState{ThreadID: "plugin-1", Status: PluginRunQueued}, wantOK: true,
+		},
+		{
+			name: "running", run: &PluginRun{PluginID: "echo", threadID: "plugin-1", parent: parent}, active: true, pluginID: "echo", channelID: "ch1",
+			want: PluginRunState{ThreadID: "plugin-1", Status: PluginRunRunning}, wantOK: true,
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			if tc.run != nil {
+				s.orch.pluginRuns.Store("run-1", tc.run)
+			}
+			// Another run of the thread is running.
+			s.orch.activePluginRuns.Store("plugin-1", ActivePluginRun{ID: "run-0"})
+			if tc.active {
+				s.orch.activePluginRuns.Store("plugin-1", ActivePluginRun{ID: "run-1"})
+			}
+			got, ok := s.orch.PluginRunState(tc.pluginID, tc.channelID, "run-1")
+			require.Equal(s.T(), tc.wantOK, ok)
+			require.Equal(s.T(), tc.want, got)
+		})
+	}
+}
+
+// TestCancelPluginRun covers a plugin cancelling its run: a running one is
+// stopped, a queued one leaves the queue and the plugin is told it failed.
+func (s *OrchestratorSuite) TestCancelPluginRun() {
+	parent := &db.Channel{ChannelID: "ch1", DirPath: "/project"}
+	newRun := func() *PluginRun { return &PluginRun{PluginID: "echo", threadID: "plugin-1", parent: parent} }
+
+	s.Run("another plugin's run", func() {
+		s.SetupTest()
+		s.orch.pluginRuns.Store("run-1", newRun())
+		ok, err := s.orch.CancelPluginRun(s.ctx, "other", "ch1", "run-1")
+		require.NoError(s.T(), err)
+		require.False(s.T(), ok)
+	})
+	s.Run("running", func() {
+		s.SetupTest()
+		s.orch.pluginRuns.Store("run-1", newRun())
+		s.orch.activePluginRuns.Store("plugin-1", ActivePluginRun{ID: "run-1"})
+		ctx, cancel := context.WithCancel(s.ctx)
+		s.orch.activeRuns.Store("plugin-1", cancel)
+		ok, err := s.orch.CancelPluginRun(s.ctx, "echo", "ch1", "run-1")
+		require.NoError(s.T(), err)
+		require.True(s.T(), ok)
+		require.ErrorIs(s.T(), ctx.Err(), context.Canceled)
+		s.store.AssertNotCalled(s.T(), "DeleteQueuedMessage", mock.Anything, mock.Anything, mock.Anything)
+	})
+	s.Run("the queue fails", func() {
+		s.SetupTest()
+		s.orch.pluginRuns.Store("run-1", newRun())
+		s.store.On("DeleteQueuedMessage", s.ctx, "plugin-1", "run-1").Return(false, errors.New("db down"))
+		ok, err := s.orch.CancelPluginRun(s.ctx, "echo", "ch1", "run-1")
+		require.EqualError(s.T(), err, "db down")
+		require.False(s.T(), ok)
+	})
+	for _, withEvents := range []bool{false, true} {
+		s.Run(fmt.Sprintf("queued, events %v", withEvents), func() {
+			s.SetupTest()
+			s.orch.pluginRuns.Store("run-1", newRun())
+			s.store.On("DeleteQueuedMessage", s.ctx, "plugin-1", "run-1").Return(true, nil)
+			eb := new(MockEventBroadcaster)
+			if withEvents {
+				eb.On("BroadcastMessageDeleted", "plugin-1", events.MessageDeletedData{MsgID: "run-1"}).Return().Once()
+				s.orch.SetEventBroadcaster(eb)
+			}
+			n := &mockPluginRunNotifier{called: make(chan struct{})}
+			n.On("RunDone", mock.Anything, "echo", runtime.Channel{ID: "ch1", DirPath: "/project"}, "run-1",
+				proxy.RunDoneRequest{Status: proxy.RunStatusFailed, Error: "the plugin cancelled the run"}).Return(nil).Once()
+			s.orch.SetPluginRunNotifier(n)
+
+			ok, err := s.orch.CancelPluginRun(s.ctx, "echo", "ch1", "run-1")
+
+			require.NoError(s.T(), err)
+			require.True(s.T(), ok)
+			<-n.called
+			n.AssertExpectations(s.T())
+			eb.AssertExpectations(s.T())
+			_, ok = s.orch.pluginRuns.Load("run-1")
+			require.False(s.T(), ok)
+		})
+	}
+	s.Run("queued, and ended meanwhile", func() {
+		s.SetupTest()
+		s.orch.pluginRuns.Store("run-1", newRun())
+		s.store.On("DeleteQueuedMessage", s.ctx, "plugin-1", "run-1").Run(func(mock.Arguments) {
+			s.orch.pluginRuns.Delete("run-1")
+		}).Return(true, nil)
+		n := &mockPluginRunNotifier{called: make(chan struct{})}
+		s.orch.SetPluginRunNotifier(n)
+		ok, err := s.orch.CancelPluginRun(s.ctx, "echo", "ch1", "run-1")
+		require.NoError(s.T(), err)
+		require.True(s.T(), ok)
+		n.AssertNotCalled(s.T(), "RunDone", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	})
+
+	// The run left the queue between the checks.
+	left := []struct {
+		name     string
+		meantime func(cancel context.CancelFunc)
+		wantOK   bool
+		wantErr  error
+	}{
+		{name: "now running", meantime: func(cancel context.CancelFunc) {
+			s.orch.activePluginRuns.Store("plugin-1", ActivePluginRun{ID: "run-1"})
+			s.orch.activeRuns.Store("plugin-1", cancel)
+		}, wantOK: true},
+		{name: "now ended", meantime: func(context.CancelFunc) { s.orch.pluginRuns.Delete("run-1") }},
+		{name: "starting", meantime: func(context.CancelFunc) {}, wantErr: ErrPluginRunStarting},
+	}
+	for _, tc := range left {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			s.orch.pluginRuns.Store("run-1", newRun())
+			_, cancel := context.WithCancel(s.ctx)
+			defer cancel()
+			s.store.On("DeleteQueuedMessage", s.ctx, "plugin-1", "run-1").Run(func(mock.Arguments) {
+				tc.meantime(cancel)
+			}).Return(false, nil)
+			ok, err := s.orch.CancelPluginRun(s.ctx, "echo", "ch1", "run-1")
+			require.ErrorIs(s.T(), err, tc.wantErr)
+			require.Equal(s.T(), tc.wantOK, ok)
+		})
+	}
 }

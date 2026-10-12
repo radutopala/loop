@@ -315,6 +315,81 @@ func (s *FakeLoopSuite) TestCards() {
 	require.True(s.T(), pluginsdk.HasStatus(err, http.StatusForbidden))
 }
 
+func (s *FakeLoopSuite) TestGitHead() {
+	_, err := NewFakeLoop(s.T(), Config{}).Client().GitHead(s.ctx)
+	require.True(s.T(), pluginsdk.HasStatus(err, http.StatusConflict))
+
+	head := &pluginsdk.GitHead{SHA: "abc", Branch: "main"}
+	got, err := NewFakeLoop(s.T(), Config{GitHead: head}).Client().GitHead(s.ctx)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), head, got)
+}
+
+func (s *FakeLoopSuite) TestRunStateAndCancel() {
+	f := NewFakeLoop(s.T(), Config{})
+	c := f.Client()
+	run, err := c.StartRun(s.ctx, pluginsdk.RunRequest{Agent: "any", Prompt: "go"})
+	require.NoError(s.T(), err)
+
+	st, err := c.RunState(s.ctx, run.RunID)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), &pluginsdk.RunState{RunID: run.RunID, ThreadID: run.ThreadID, Status: pluginsdk.RunQueued}, st)
+	require.NoError(s.T(), c.CancelRun(s.ctx, run.RunID))
+	require.True(s.T(), f.Runs()[0].Cancelled)
+
+	for _, tt := range []struct {
+		name string
+		call func() error
+	}{
+		{"state of a cancelled run", func() error { _, err := c.RunState(s.ctx, run.RunID); return err }},
+		{"cancelling it again", func() error { return c.CancelRun(s.ctx, run.RunID) }},
+		{"state of an unknown run", func() error { _, err := c.RunState(s.ctx, "nope"); return err }},
+	} {
+		s.Run(tt.name, func() {
+			require.True(s.T(), pluginsdk.HasStatus(tt.call(), http.StatusNotFound))
+		})
+	}
+
+	denied := NewFakeLoop(s.T(), Config{Manifest: &pluginsdk.Manifest{}})
+	_, err = denied.Client().RunState(s.ctx, "run-1")
+	require.True(s.T(), pluginsdk.HasStatus(err, http.StatusForbidden))
+}
+
+func (s *FakeLoopSuite) TestOpenFile() {
+	f := NewFakeLoop(s.T(), Config{Manifest: &pluginsdk.Manifest{Capabilities: []string{pluginsdk.CapUIOpenFile}},
+		Channel: pluginsdk.Channel{ID: "ch1"}})
+	c := f.Client()
+	reply, err := c.OpenFile(s.ctx, "./src/a.go", 12)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "window", reply.ClientID)
+	_, err = c.OpenFile(s.ctx, "b.go", 0)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []pluginsdk.UICommand{
+		{Steps: []pluginsdk.UIStep{{"op": "select_channel", "channel_id": "ch1"}, {"op": "open_file", "path": "src/a.go", "line": 12}}},
+		{Steps: []pluginsdk.UIStep{{"op": "select_channel", "channel_id": "ch1"}, {"op": "open_file", "path": "b.go"}}},
+	}, f.UICommands())
+
+	for _, tt := range []struct {
+		name string
+		body string
+	}{
+		{"bad JSON", "{"},
+		{"no path", `{}`},
+		{"an absolute path", `{"path":"/etc/passwd"}`},
+		{"the dir itself", `{"path":"."}`},
+		{"outside the dir", `{"path":"../x"}`},
+		{"a negative line", `{"path":"a.go","line":-1}`},
+	} {
+		s.Run(tt.name, func() {
+			require.Equal(s.T(), http.StatusBadRequest, s.raw(f, http.MethodPost, "/ui/open_file", tt.body))
+		})
+	}
+	require.Len(s.T(), f.UICommands(), 2)
+
+	_, err = NewFakeLoop(s.T(), Config{Manifest: &pluginsdk.Manifest{}}).Client().OpenFile(s.ctx, "a.go", 1)
+	require.True(s.T(), pluginsdk.HasStatus(err, http.StatusForbidden))
+}
+
 func (s *FakeLoopSuite) TestRunUI() {
 	f := NewFakeLoop(s.T(), Config{Manifest: &pluginsdk.Manifest{Capabilities: []string{pluginsdk.CapUIRun}}, Threads: []string{"th1"}})
 	c := f.Client()

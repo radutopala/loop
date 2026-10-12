@@ -9,6 +9,7 @@ import (
 	"github.com/radutopala/loop/internal/apiauth"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/orchestrator"
+	"github.com/radutopala/loop/internal/plugin"
 	"github.com/radutopala/loop/internal/plugin/install"
 	"github.com/radutopala/loop/internal/plugin/proxy"
 )
@@ -18,6 +19,8 @@ import (
 type PluginRunner interface {
 	StartPluginRun(ctx context.Context, parent *db.Channel, run orchestrator.PluginRun) (runID, threadID string, err error)
 	ActivePluginRun(threadID string) (orchestrator.ActivePluginRun, bool)
+	PluginRunState(pluginID, channelID, runID string) (orchestrator.PluginRunState, bool)
+	CancelPluginRun(ctx context.Context, pluginID, channelID, runID string) (bool, error)
 }
 
 // SetPluginRunner configures what runs the agents plugins ask for; left
@@ -104,6 +107,75 @@ func (s *Server) handleStartPluginRun(w http.ResponseWriter, r *http.Request) {
 type pluginRunResponse struct {
 	RunID    string `json:"run_id"`
 	ThreadID string `json:"thread_id"`
+}
+
+// pluginRunCaller returns the calling plugin when it may run and the owner
+// approved either agent capability for it: those grant reading and
+// cancelling its own agent runs. Otherwise it answers the request and
+// returns false.
+func (s *Server) pluginRunCaller(w http.ResponseWriter, r *http.Request) (apiauth.Principal, bool) {
+	if !requireConfigured(w, s.plugins, pluginsDisabled) || !requireConfigured(w, s.pluginRunner, pluginsDisabled) {
+		return apiauth.Principal{}, false
+	}
+	p, _ := apiauth.PrincipalFrom(r.Context())
+	if p.Kind != apiauth.KindPlugin {
+		http.Error(w, "only a plugin reads its agent runs", http.StatusForbidden)
+		return p, false
+	}
+	err := s.plugins.Allows(r.Context(), p.PluginID, plugin.CapAgentReadOnly)
+	if errors.Is(err, install.ErrNotApproved) {
+		err = s.plugins.Allows(r.Context(), p.PluginID, plugin.CapAgentWrite)
+	}
+	return p, pluginAllowed(w, err)
+}
+
+// pluginRunStateResponse is where a plugin's agent run not yet ended
+// stands.
+type pluginRunStateResponse struct {
+	RunID    string `json:"run_id"`
+	ThreadID string `json:"thread_id"`
+	// Status is "queued" or "running".
+	Status string `json:"status"`
+}
+
+// errPluginRunGone answers for a run that ended, or was never the caller's:
+// an ended run's end came to the plugin's POST /runs/{run_id}/done.
+const errPluginRunGone = "no queued or running run of the plugin with that id"
+
+// handleGetPluginRun answers where one of the calling plugin's agent runs
+// in its channel stands, while it hasn't ended.
+func (s *Server) handleGetPluginRun(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.pluginRunCaller(w, r)
+	if !ok {
+		return
+	}
+	runID := r.PathValue("run_id")
+	state, ok := s.pluginRunner.PluginRunState(p.PluginID, p.ChannelID, runID)
+	if !ok {
+		http.Error(w, errPluginRunGone, http.StatusNotFound)
+		return
+	}
+	writeHTTPJSON(w, http.StatusOK, pluginRunStateResponse{RunID: runID, ThreadID: state.ThreadID, Status: state.Status}, s.logger)
+}
+
+// handleCancelPluginRun stops one of the calling plugin's agent runs in its
+// channel, running or queued. The plugin is told it failed.
+func (s *Server) handleCancelPluginRun(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.pluginRunCaller(w, r)
+	if !ok {
+		return
+	}
+	cancelled, err := s.pluginRunner.CancelPluginRun(r.Context(), p.PluginID, p.ChannelID, r.PathValue("run_id"))
+	switch {
+	case errors.Is(err, orchestrator.ErrPluginRunStarting):
+		http.Error(w, err.Error(), http.StatusConflict)
+	case err != nil:
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	case !cancelled:
+		http.Error(w, errPluginRunGone, http.StatusNotFound)
+	default:
+		w.WriteHeader(http.StatusNoContent)
+	}
 }
 
 // pluginAgentResponse is a plugin's hidden thread in a channel, where its

@@ -3184,6 +3184,9 @@ Called by a plugin's container with the token in its `LOOP_PLUGIN_TOKEN_FILE`; t
 | `GET /api/plugin/v1/channel/files?path=&start=&end=` | `files.read` | `{"path", "content", "start", "end", "total_lines"}`; lines 1-based and inclusive, both optional; `.git/` refused, and files agentgate denies the channel's agents (`403`); `404` if missing, `400` for a directory or a range past the end, `413` over the size limit |
 | `GET /api/plugin/v1/channel/tree?glob=` | `files.read` | `{"files", "truncated"?}`: the files git tracks, or every file outside `.git/` without git, less those agentgate denies the channel's agents; the glob matches the path or its base name; at most 50,000 |
 | `GET /api/plugin/v1/channel/git/recent?days=` | `git.read` | `{"commits": [{"sha", "subject", "author", "time"}], "files": [{"path", "commits"}]}`; `days` defaults to 14, at most 365; the last 500 non-merge commits; `409` without git |
+| `GET /api/plugin/v1/channel/git/head` | `git.read` | `{"sha", "subject", "author", "time", "branch"}` for HEAD; `branch` is empty when it's detached; `409` without git or without commits |
+| `GET /api/plugin/v1/runs/{run_id}` | `agent.readonly` or `agent.write` | `{"run_id", "thread_id", "status"}` with `status` `queued` or `running`, for the plugin's run in the channel; `404` once it ended |
+| `DELETE /api/plugin/v1/runs/{run_id}` | `agent.readonly` or `agent.write` | cancels the run if it's running, or deletes its queued message → `204`; the plugin's `/runs/{run_id}/done` then gets `failed`. `404` once it ended, `409` while it's being claimed from the queue |
 | `GET /api/plugin/v1/channel/quality/hotspots?limit=&offset=` | `quality.read` | as `GET /api/channels/{id}/quality/complexity`; `503` before the first scan |
 | `POST /api/plugin/v1/events` | | body `{"type", "data"}` (up to 64 KB) → `204`; broadcast as a `plugin.event` event with `{"plugin_id", "type", "data"}` for the channel |
 | `POST /api/plugin/v1/notify` | `ui.notification.notify` | body `{"title", "body"}` → `204`; kept as a `notify` [notification](#notifications); there's no desktop notification. At most five a minute per plugin, cards included: past that `429` with `Retry-After` in seconds |
@@ -3193,6 +3196,7 @@ Called by a plugin's container with the token in its `LOOP_PLUGIN_TOKEN_FILE`; t
 | `DELETE /api/plugin/v1/badge` | `ui.badge` | removes the plugin's badge → `204`, also when there was none; broadcasts `plugin.badge` with an empty `text` |
 | `POST /api/plugin/v1/cards` | `ui.notification.card` | body `{"card", "title"?, "data"?}` (up to 64 KB) → `201 {"id"}`; keeps a `card` [notification](#notifications) for the channel with `data` and broadcasts `notifications.changed`. `title` is cut to one line of 120 characters. Shares notify's limit (`429`). `400` for a card the manifest doesn't declare (`ui.cards`) and on Slack or Discord |
 | `POST /api/plugin/v1/ui/commands` | `ui.run` | as [`POST /api/ui/commands`](#post-apiuicommands), held to the channel: the first step is `select_channel`, and each `select_channel` names the channel or one of its threads that isn't hidden (`403` otherwise) |
+| `POST /api/plugin/v1/ui/open_file` | `ui.open_file` | body `{"path", "line"?}`; runs `select_channel` for the channel, then the `open_file` step, and answers as `POST /api/ui/commands`. `400` for an empty, absolute or `..` path, or a negative line |
 
 ---
 

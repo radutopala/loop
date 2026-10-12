@@ -33,12 +33,14 @@ func (s *ServerSuite) pluginAPIRoutes(c plugin.Capability, dir string) *MockPlug
 	s.mux.HandleFunc("GET /api/plugin/v1/channel/files", s.srv.handlePluginFile)
 	s.mux.HandleFunc("GET /api/plugin/v1/channel/tree", s.srv.handlePluginTree)
 	s.mux.HandleFunc("GET /api/plugin/v1/channel/git/recent", s.srv.handlePluginGitRecent)
+	s.mux.HandleFunc("GET /api/plugin/v1/channel/git/head", s.srv.handlePluginGitHead)
 	s.mux.HandleFunc("GET /api/plugin/v1/channel/quality/hotspots", s.srv.handlePluginHotspots)
 	s.mux.HandleFunc("POST /api/plugin/v1/events", s.srv.handlePluginEvent)
 	s.mux.HandleFunc("POST /api/plugin/v1/notify", s.srv.handlePluginNotify)
 	s.mux.HandleFunc("PUT /api/plugin/v1/memory/{name}", s.srv.handlePutPluginMemory)
 	s.mux.HandleFunc("DELETE /api/plugin/v1/memory/{name}", s.srv.handleDeletePluginMemory)
 	s.mux.HandleFunc("POST /api/plugin/v1/ui/commands", s.srv.handlePluginUICommand)
+	s.mux.HandleFunc("POST /api/plugin/v1/ui/open_file", s.srv.handlePluginOpenFile)
 	s.mux.HandleFunc("PUT /api/plugin/v1/badge", s.srv.handlePutPluginBadge)
 	s.mux.HandleFunc("DELETE /api/plugin/v1/badge", s.srv.handleDeletePluginBadge)
 	s.mux.HandleFunc("POST /api/plugin/v1/cards", s.srv.handlePostPluginCard)
@@ -380,6 +382,44 @@ func (s *ServerSuite) TestPluginTreeTruncated() {
 	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &out))
 	require.Len(s.T(), out.Files, pluginTreeMax)
 	require.True(s.T(), out.Truncated)
+}
+
+func (s *ServerSuite) TestPluginGitHead() {
+	repo := initGitRepo(s.T())
+	gitRun(s.T(), repo, "commit", "--allow-empty", "-m", "second")
+	gitRun(s.T(), repo, "tag", "v1")
+
+	check := func(wantBranch string) {
+		rec := s.requestAs(echoPlugin, "GET", "/api/plugin/v1/channel/git/head", "")
+		require.Equal(s.T(), http.StatusOK, rec.Code, rec.Body.String())
+		var out pluginHeadResponse
+		require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &out))
+		require.Equal(s.T(), "second", out.Subject)
+		require.Equal(s.T(), "Test", out.Author)
+		require.Len(s.T(), out.SHA, 40)
+		_, err := time.Parse(time.RFC3339, out.Time)
+		require.NoError(s.T(), err)
+		require.Equal(s.T(), wantBranch, out.Branch)
+	}
+	s.Run("on a branch", func() {
+		s.SetupTest()
+		s.pluginAPIRoutes(plugin.CapGitRead, repo)
+		gitRun(s.T(), repo, "checkout", "-q", "-b", "feat/x")
+		check("feat/x")
+	})
+	s.Run("detached", func() {
+		s.SetupTest()
+		s.pluginAPIRoutes(plugin.CapGitRead, repo)
+		gitRun(s.T(), repo, "checkout", "-q", "--detach")
+		check("")
+	})
+	s.Run("not a repo", func() {
+		s.SetupTest()
+		s.pluginAPIRoutes(plugin.CapGitRead, s.T().TempDir())
+		rec := s.requestAs(echoPlugin, "GET", "/api/plugin/v1/channel/git/head", "")
+		require.Equal(s.T(), http.StatusConflict, rec.Code)
+		require.Contains(s.T(), rec.Body.String(), "git log")
+	})
 }
 
 func (s *ServerSuite) TestPluginGitRecent() {

@@ -36,6 +36,9 @@ type FileChurn = pluginapi.FileChurn
 // GitRecent is the channel's recent git history.
 type GitRecent = pluginapi.GitRecent
 
+// GitHead is the commit checked out in the channel's repo, and its branch.
+type GitHead = pluginapi.GitHead
+
 // Hotspot is a function from the latest quality scan.
 type Hotspot = pluginapi.Hotspot
 
@@ -48,6 +51,18 @@ type RunRequest = pluginapi.RunRequest
 
 // Run is a started agent run.
 type Run = pluginapi.Run
+
+// RunState is where an agent run not yet ended stands.
+type RunState = pluginapi.RunState
+
+// The statuses of RunState.
+const (
+	RunQueued  = pluginapi.Queued
+	RunRunning = pluginapi.Running
+)
+
+// OpenFile is a file of the channel to open in the editor.
+type OpenFile = pluginapi.OpenFile
 
 // UIStep is a UI bridge step: its op and the op's fields, as Loop's API
 // docs list them.
@@ -75,14 +90,18 @@ type API interface {
 	File(ctx context.Context, path string, start, end int) (*File, error)
 	Tree(ctx context.Context, glob string) (*Tree, error)
 	GitRecent(ctx context.Context, days int) (*GitRecent, error)
+	GitHead(ctx context.Context) (*GitHead, error)
 	Hotspots(ctx context.Context, limit int) ([]Hotspot, error)
 	HotspotsPage(ctx context.Context, limit, offset int) (*Hotspots, error)
 	StartRun(ctx context.Context, req RunRequest) (*Run, error)
+	RunState(ctx context.Context, runID string) (*RunState, error)
+	CancelRun(ctx context.Context, runID string) error
 	Event(ctx context.Context, typ string, data any) error
 	Notify(ctx context.Context, title, body string) error
 	WriteMemory(ctx context.Context, name, content string) error
 	DeleteMemory(ctx context.Context, name string) error
 	RunUI(ctx context.Context, cmd UICommand) (*UIReply, error)
+	OpenFile(ctx context.Context, path string, line int) (*UIReply, error)
 	SetBadge(ctx context.Context, text, title string) error
 	ClearBadge(ctx context.Context) error
 	PostCard(ctx context.Context, card, title string, data any) (int64, error)
@@ -250,6 +269,15 @@ func (c *Client) GitRecent(ctx context.Context, days int) (*GitRecent, error) {
 	return &g, nil
 }
 
+// GitHead returns the commit checked out and its branch. Needs git.read.
+func (c *Client) GitHead(ctx context.Context) (*GitHead, error) {
+	var g GitHead
+	if err := c.do(ctx, http.MethodGet, "/channel/git/head", nil, nil, &g); err != nil {
+		return nil, err
+	}
+	return &g, nil
+}
+
 // Hotspots returns up to limit functions of the latest quality scan, worst
 // first; zero is Loop's default. Needs quality.read.
 func (c *Client) Hotspots(ctx context.Context, limit int) ([]Hotspot, error) {
@@ -283,6 +311,24 @@ func (c *Client) StartRun(ctx context.Context, req RunRequest) (*Run, error) {
 		return nil, errors.New("POST /runs: Loop answered without a run_id")
 	}
 	return &run, nil
+}
+
+// RunState returns where the plugin's agent run runID stands while it's
+// queued or running; once it ends, Loop answers 404. Needs agent.readonly
+// or agent.write.
+func (c *Client) RunState(ctx context.Context, runID string) (*RunState, error) {
+	var st RunState
+	if err := c.do(ctx, http.MethodGet, "/runs/"+url.PathEscape(runID), nil, nil, &st); err != nil {
+		return nil, err
+	}
+	return &st, nil
+}
+
+// CancelRun stops the plugin's agent run runID, running or queued. Loop
+// then calls the plugin's /runs/{run_id}/done with status failed. Needs
+// agent.readonly or agent.write.
+func (c *Client) CancelRun(ctx context.Context, runID string) error {
+	return c.do(ctx, http.MethodDelete, "/runs/"+url.PathEscape(runID), nil, nil, nil)
 }
 
 // Event sends an event to the plugin's panels in the channel.
@@ -355,6 +401,21 @@ func (c *Client) RunUI(ctx context.Context, cmd UICommand) (*UIReply, error) {
 	}
 	var reply UIReply
 	if err := c.doFor(ctx, timeout, http.MethodPost, "/ui/commands", nil, body, &reply); err != nil {
+		return nil, err
+	}
+	return &reply, nil
+}
+
+// OpenFile has an app window open path, relative to the channel's dir, in
+// its editor, at line when it's positive. It waits for the window, up to a
+// minute. Needs ui.open_file.
+func (c *Client) OpenFile(ctx context.Context, path string, line int) (*UIReply, error) {
+	timeout := c.Timeout
+	if timeout > 0 {
+		timeout = max(timeout, time.Minute+uiGrace)
+	}
+	var reply UIReply
+	if err := c.doFor(ctx, timeout, http.MethodPost, "/ui/open_file", nil, OpenFile{Path: path, Line: max(line, 0)}, &reply); err != nil {
 		return nil, err
 	}
 	return &reply, nil

@@ -283,6 +283,27 @@ func (s *ClientSuite) TestErrors() {
 			wantErr: "Loop answered without a run_id",
 		},
 		{
+			name:    "no git repository",
+			setup:   func() { s.answer(http.StatusConflict, "not a git repository") },
+			call:    func() error { _, err := s.client.GitHead(ctx); return err },
+			wantErr: "GET /channel/git/head: Loop answered 409: not a git repository",
+			status:  http.StatusConflict,
+		},
+		{
+			name:    "run gone",
+			setup:   func() { s.answer(http.StatusNotFound, "no queued or running run") },
+			call:    func() error { _, err := s.client.RunState(ctx, "r1"); return err },
+			wantErr: "GET /runs/r1: Loop answered 404: no queued or running run",
+			status:  http.StatusNotFound,
+		},
+		{
+			name:    "open file refused",
+			setup:   func() { s.answer(http.StatusForbidden, "no ui.open_file") },
+			call:    func() error { _, err := s.client.OpenFile(ctx, "a.go", 0); return err },
+			wantErr: "POST /ui/open_file: Loop answered 403: no ui.open_file",
+			status:  http.StatusForbidden,
+		},
+		{
 			name:    "ui refused",
 			setup:   func() { s.answer(http.StatusForbidden, "no ui.run") },
 			call:    func() error { _, err := s.client.RunUI(ctx, UICommand{}); return err },

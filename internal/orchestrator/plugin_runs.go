@@ -11,6 +11,7 @@ import (
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/plugin"
 	"github.com/radutopala/loop/internal/plugin/proxy"
 	"github.com/radutopala/loop/internal/plugin/runtime"
@@ -148,6 +149,94 @@ func (o *Orchestrator) ActivePluginRun(threadID string) (ActivePluginRun, bool) 
 		return ActivePluginRun{}, false
 	}
 	return v.(ActivePluginRun), true
+}
+
+// The states of a plugin run not yet ended.
+const (
+	PluginRunQueued  = "queued"
+	PluginRunRunning = "running"
+)
+
+// PluginRunState is where a plugin run not yet ended stands.
+type PluginRunState struct {
+	ThreadID string
+	// Status is PluginRunQueued or PluginRunRunning.
+	Status string
+}
+
+// pluginRunOf returns the run runID plugin pluginID started in channel
+// channelID, while it hasn't ended.
+func (o *Orchestrator) pluginRunOf(pluginID, channelID, runID string) (*PluginRun, bool) {
+	v, ok := o.pluginRuns.Load(runID)
+	if !ok {
+		return nil, false
+	}
+	run := v.(*PluginRun)
+	if run.PluginID != pluginID || run.parent == nil || run.parent.ChannelID != channelID {
+		return nil, false
+	}
+	return run, true
+}
+
+// PluginRunState returns where the run runID plugin pluginID started in
+// channel channelID stands, or false once it has ended or when it's
+// another's.
+func (o *Orchestrator) PluginRunState(pluginID, channelID, runID string) (PluginRunState, bool) {
+	run, ok := o.pluginRunOf(pluginID, channelID, runID)
+	if !ok {
+		return PluginRunState{}, false
+	}
+	state := PluginRunState{ThreadID: run.threadID, Status: PluginRunQueued}
+	if a, active := o.ActivePluginRun(run.threadID); active && a.ID == runID {
+		state.Status = PluginRunRunning
+	}
+	return state, true
+}
+
+// ErrPluginRunStarting refuses to cancel a plugin run in the moment it
+// leaves its queue, before it is running.
+var ErrPluginRunStarting = errors.New("the run is starting; try again")
+
+// errPluginRunCancelled fails the plugin runs their plugin cancelled.
+var errPluginRunCancelled = errors.New("the plugin cancelled the run")
+
+// CancelPluginRun stops the run runID plugin pluginID started in channel
+// channelID: a running one is stopped, a queued one leaves the queue. The
+// plugin is told the run failed, as of any run that ends. It returns false
+// once the run has ended or when it's another's.
+func (o *Orchestrator) CancelPluginRun(ctx context.Context, pluginID, channelID, runID string) (bool, error) {
+	run, ok := o.pluginRunOf(pluginID, channelID, runID)
+	if !ok {
+		return false, nil
+	}
+	cancelActive := func() bool {
+		a, active := o.ActivePluginRun(run.threadID)
+		return active && a.ID == runID && o.CancelActiveRun(run.threadID)
+	}
+	if cancelActive() {
+		return true, nil
+	}
+	deleted, err := o.store.DeleteQueuedMessage(ctx, run.threadID, runID)
+	if err != nil {
+		return false, err
+	}
+	if !deleted {
+		// It left the queue since the check above.
+		if cancelActive() {
+			return true, nil
+		}
+		if _, ok := o.pluginRuns.Load(runID); !ok {
+			return false, nil
+		}
+		return false, ErrPluginRunStarting
+	}
+	if o.events != nil {
+		o.events.BroadcastMessageDeleted(run.threadID, events.MessageDeletedData{MsgID: runID})
+	}
+	if _, ok := o.pluginRuns.LoadAndDelete(runID); ok {
+		o.endPluginRun(ctx, runID, run, errPluginRunCancelled)
+	}
+	return true, nil
 }
 
 // admitPluginRun refuses a message in plugin thread threadID that isn't a

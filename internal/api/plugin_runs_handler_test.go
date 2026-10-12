@@ -34,6 +34,16 @@ func (m *MockPluginRunner) ActivePluginRun(threadID string) (orchestrator.Active
 	return args.Get(0).(orchestrator.ActivePluginRun), args.Bool(1)
 }
 
+func (m *MockPluginRunner) PluginRunState(pluginID, channelID, runID string) (orchestrator.PluginRunState, bool) {
+	args := m.Called(pluginID, channelID, runID)
+	return args.Get(0).(orchestrator.PluginRunState), args.Bool(1)
+}
+
+func (m *MockPluginRunner) CancelPluginRun(ctx context.Context, pluginID, channelID, runID string) (bool, error) {
+	args := m.Called(ctx, pluginID, channelID, runID)
+	return args.Bool(0), args.Error(1)
+}
+
 // pluginRunRoutes registers the plugin agent run routes with a plugin
 // manager and runner.
 func (s *ServerSuite) pluginRunRoutes() (*MockPluginManager, *MockPluginRunner) {
@@ -41,6 +51,8 @@ func (s *ServerSuite) pluginRunRoutes() (*MockPluginManager, *MockPluginRunner) 
 	pr := new(MockPluginRunner)
 	s.srv.SetPluginRunner(pr)
 	s.mux.HandleFunc("POST /api/plugin/v1/runs", s.srv.handleStartPluginRun)
+	s.mux.HandleFunc("GET /api/plugin/v1/runs/{run_id}", s.srv.handleGetPluginRun)
+	s.mux.HandleFunc("DELETE /api/plugin/v1/runs/{run_id}", s.srv.handleCancelPluginRun)
 	s.mux.HandleFunc("POST /api/plugins/{plugin}/tools/{tool}", s.srv.handleCallPluginTool)
 	s.mux.HandleFunc("GET /api/plugins/{plugin}/agent", s.srv.handleGetPluginAgent)
 	s.T().Cleanup(func() { pr.AssertExpectations(s.T()) })
@@ -298,4 +310,75 @@ func (s *ServerSuite) TestGetPluginAgent() {
 			require.Contains(s.T(), rec.Body.String(), tt.wantBody)
 		})
 	}
+}
+
+// TestPluginRunStateAndCancel covers a plugin reading where its agent runs
+// stand and cancelling them.
+func (s *ServerSuite) TestPluginRunStateAndCancel() {
+	echo := apiauth.Principal{Kind: apiauth.KindPlugin, PluginID: "echo", ChannelID: "ch-1"}
+	allow := func(readOnly, write error) func(pm *MockPluginManager) {
+		return func(pm *MockPluginManager) {
+			pm.On("Allows", mock.Anything, "echo", plugin.CapAgentReadOnly).Return(readOnly).Once()
+			if errors.Is(readOnly, install.ErrNotApproved) {
+				pm.On("Allows", mock.Anything, "echo", plugin.CapAgentWrite).Return(write).Once()
+			}
+		}
+	}
+	tests := []struct {
+		name     string
+		method   string
+		as       apiauth.Principal
+		allow    func(pm *MockPluginManager)
+		setup    func(pr *MockPluginRunner)
+		wantCode int
+		wantBody string
+	}{
+		{name: "not a plugin", method: "GET", as: apiauth.Principal{Kind: apiauth.KindOwner}, wantCode: http.StatusForbidden, wantBody: "only a plugin"},
+		{name: "no agent capability", method: "GET", as: echo, allow: allow(install.ErrNotApproved, install.ErrNotApproved), wantCode: http.StatusForbidden},
+		{name: "disabled", method: "DELETE", as: echo, allow: allow(install.ErrNotRunnable, nil), wantCode: http.StatusConflict},
+		{name: "queued", method: "GET", as: echo, allow: allow(nil, nil), setup: func(pr *MockPluginRunner) {
+			pr.On("PluginRunState", "echo", "ch-1", "ask-1").Return(orchestrator.PluginRunState{ThreadID: "th-1", Status: orchestrator.PluginRunQueued}, true).Once()
+		}, wantCode: http.StatusOK, wantBody: `{"run_id":"ask-1","thread_id":"th-1","status":"queued"}`},
+		{name: "running, with agent.write", method: "GET", as: echo, allow: allow(install.ErrNotApproved, nil), setup: func(pr *MockPluginRunner) {
+			pr.On("PluginRunState", "echo", "ch-1", "ask-1").Return(orchestrator.PluginRunState{ThreadID: "th-1", Status: orchestrator.PluginRunRunning}, true).Once()
+		}, wantCode: http.StatusOK, wantBody: `"status":"running"`},
+		{name: "ended", method: "GET", as: echo, allow: allow(nil, nil), setup: func(pr *MockPluginRunner) {
+			pr.On("PluginRunState", "echo", "ch-1", "ask-1").Return(orchestrator.PluginRunState{}, false).Once()
+		}, wantCode: http.StatusNotFound, wantBody: "no queued or running run"},
+		{name: "cancelled", method: "DELETE", as: echo, allow: allow(nil, nil), setup: func(pr *MockPluginRunner) {
+			pr.On("CancelPluginRun", mock.Anything, "echo", "ch-1", "ask-1").Return(true, nil).Once()
+		}, wantCode: http.StatusNoContent},
+		{name: "cancel an ended run", method: "DELETE", as: echo, allow: allow(nil, nil), setup: func(pr *MockPluginRunner) {
+			pr.On("CancelPluginRun", mock.Anything, "echo", "ch-1", "ask-1").Return(false, nil).Once()
+		}, wantCode: http.StatusNotFound, wantBody: "no queued or running run"},
+		{name: "cancel a starting run", method: "DELETE", as: echo, allow: allow(nil, nil), setup: func(pr *MockPluginRunner) {
+			pr.On("CancelPluginRun", mock.Anything, "echo", "ch-1", "ask-1").Return(false, orchestrator.ErrPluginRunStarting).Once()
+		}, wantCode: http.StatusConflict, wantBody: "try again"},
+		{name: "cancel fails", method: "DELETE", as: echo, allow: allow(nil, nil), setup: func(pr *MockPluginRunner) {
+			pr.On("CancelPluginRun", mock.Anything, "echo", "ch-1", "ask-1").Return(false, errors.New("db down")).Once()
+		}, wantCode: http.StatusInternalServerError, wantBody: "db down"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			pm, pr := s.pluginRunRoutes()
+			if tt.allow != nil {
+				tt.allow(pm)
+			}
+			if tt.setup != nil {
+				tt.setup(pr)
+			}
+			rec := s.requestAs(tt.as, tt.method, "/api/plugin/v1/runs/ask-1", "")
+			require.Equal(s.T(), tt.wantCode, rec.Code, rec.Body.String())
+			require.Contains(s.T(), rec.Body.String(), tt.wantBody)
+			pm.AssertExpectations(s.T())
+		})
+	}
+
+	s.Run("plugins off", func() {
+		s.SetupTest()
+		s.mux.HandleFunc("GET /api/plugin/v1/runs/{run_id}", s.srv.handleGetPluginRun)
+		rec := s.requestAs(echo, "GET", "/api/plugin/v1/runs/ask-1", "")
+		require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
+	})
 }
