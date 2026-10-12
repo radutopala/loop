@@ -21,11 +21,12 @@ func (s *ServerSuite) TestPluginEventTypes() {
 
 func (s *ServerSuite) TestForwardToPlugins() {
 	parent := &db.Channel{ChannelID: "ch-1", DirPath: "/src/app"}
-	thread := &db.Channel{ChannelID: "th-1", ParentID: "ch-1"}
+	thread := &db.Channel{ChannelID: "th-1", ParentID: "ch-1", DirPath: "/src/app/.worktrees/th-1"}
 	tests := []struct {
 		name    string
 		evt     Event
 		setup   func(pm *MockPluginManager)
+		thread  *runtime.Channel
 		want    *proxy.Event
 		wantErr error
 	}{
@@ -38,13 +39,14 @@ func (s *ServerSuite) TestForwardToPlugins() {
 			want: &proxy.Event{Type: EventMessageCreated, ChannelID: "ch-1", Data: "hi", Timestamp: 7},
 		},
 		{
-			name: "thread event goes to the parent",
+			name: "thread event names the thread",
 			evt:  Event{Type: EventAgentStatus, ChannelID: "th-1"},
 			setup: func(*MockPluginManager) {
 				s.store.On("GetChannel", mock.Anything, "th-1").Return(thread, nil).Once()
 				s.store.On("GetChannel", mock.Anything, "ch-1").Return(parent, nil).Once()
 			},
-			want: &proxy.Event{Type: EventAgentStatus, ChannelID: "ch-1", ThreadID: "th-1"},
+			thread: &runtime.Channel{ID: "th-1", DirPath: "/src/app/.worktrees/th-1"},
+			want:   &proxy.Event{Type: EventAgentStatus, ChannelID: "ch-1", ThreadID: "th-1"},
 		},
 		{
 			name: "delivery fails",
@@ -91,7 +93,7 @@ func (s *ServerSuite) TestForwardToPlugins() {
 				tt.setup(pm)
 			}
 			if tt.want != nil {
-				pm.On("Deliver", mock.Anything, runtime.Channel{ID: "ch-1", DirPath: "/src/app"}, *tt.want).Return(tt.wantErr).Once()
+				pm.On("Deliver", mock.Anything, runtime.Channel{ID: "ch-1", DirPath: "/src/app"}, tt.thread, *tt.want).Return(tt.wantErr).Once()
 			}
 			s.srv.ForwardToPlugins(tt.evt)
 			require.Equal(s.T(), tt.setup != nil, ran == 1)
@@ -111,7 +113,7 @@ func (s *ServerSuite) TestForwardToPluginsInTheBackground() {
 	s.srv.plugins = pm
 	done := make(chan struct{})
 	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1"}, nil).Once()
-	pm.On("Deliver", mock.Anything, runtime.Channel{ID: "ch-1"}, proxy.Event{Type: EventMessageCreated, ChannelID: "ch-1"}).
+	pm.On("Deliver", mock.Anything, runtime.Channel{ID: "ch-1"}, (*runtime.Channel)(nil), proxy.Event{Type: EventMessageCreated, ChannelID: "ch-1"}).
 		Run(func(mock.Arguments) { close(done) }).Return(nil).Once()
 	s.srv.ForwardToPlugins(Event{Type: EventMessageCreated, ChannelID: "ch-1"})
 	<-done

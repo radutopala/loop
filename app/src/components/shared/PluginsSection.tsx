@@ -393,8 +393,8 @@ export function GlobalPluginsSection({ colors, onConfigChanged }: { colors: Colo
   return (
     <div data-testid="plugins-section" style={{ marginTop: 16 }}>
       <Note colors={colors}>
-        A plugin runs in its own container, one per channel, and only in projects that enable it: <Code>plugins.&lt;id&gt;.enabled</Code> in the project's <Code>.loop/config.json</Code>, or here in
-        the global config for every project that doesn't set it. Threads and worktree threads use their channel's container.
+        A plugin runs in its own container, one per channel, thread and worktree thread, and only in projects that enable it: <Code>plugins.&lt;id&gt;.enabled</Code> in the project's{" "}
+        <Code>.loop/config.json</Code>, or here in the global config for every project that doesn't set it.
       </Note>
       {error && <div style={{ color: colors.error, fontSize: 12, marginBottom: 12 }}>{error}</div>}
       {list?.off ? (
@@ -443,8 +443,8 @@ export function ProjectPluginsSection({ colors, channelId, onConfigChanged }: { 
   return (
     <div data-testid="project-plugins-section">
       <Note colors={colors}>
-        Enabling a plugin here sets <Code>plugins.&lt;id&gt;.enabled</Code> in this project's <Code>.loop/config.json</Code>; unset, the project follows the plugin's global default. Threads and
-        worktree threads use this channel's container.
+        Enabling a plugin here sets <Code>plugins.&lt;id&gt;.enabled</Code> in this project's <Code>.loop/config.json</Code>; unset, the project follows the plugin's global default. Its threads and
+        worktree threads follow it too.
       </Note>
       {list.plugins.length === 0 && <div style={{ color: colors.textDim, fontSize: 12 }}>No plugins installed. Install them under Global → Plugins.</div>}
       {toggleError && <div style={{ color: colors.error, fontSize: 12, marginBottom: 12 }}>{toggleError}</div>}

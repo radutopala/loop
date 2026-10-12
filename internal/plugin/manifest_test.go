@@ -207,6 +207,10 @@ func (s *ManifestSuite) TestValidate() {
 		{name: "events with the capability", edit: func(m *Manifest) {
 			m.Capabilities = []Capability{CapEventsSub}
 			m.Events = slices.Clone(Events)
+			m.ThreadEvents = ThreadEventsBoth
+		}},
+		{name: "thread events", edit: func(m *Manifest) { m.ThreadEvents = "parent" }, wantErr: []string{
+			`thread_events: "parent" is not one of thread, channel, both`,
 		}},
 		{name: "resources", edit: func(m *Manifest) { m.Resources = &Resources{Memory: "lots", CPUs: -1} },
 			wantErr: []string{`resources.memory "lots" is not a size like 256m`, "resources.cpus must not be negative"}},
@@ -263,6 +267,25 @@ func (s *ManifestSuite) TestToolValidateInput() {
 				return
 			}
 			require.ErrorContains(s.T(), err, tt.wantErr)
+		})
+	}
+}
+
+func (s *ManifestSuite) TestThreadEventsTo() {
+	tests := []struct {
+		value           string
+		thread, channel bool
+	}{
+		{value: "", thread: true},
+		{value: ThreadEventsThread, thread: true},
+		{value: ThreadEventsChannel, channel: true},
+		{value: ThreadEventsBoth, thread: true, channel: true},
+	}
+	for _, tt := range tests {
+		s.Run(tt.value, func() {
+			thread, channel := (&Manifest{ThreadEvents: tt.value}).ThreadEventsTo()
+			require.Equal(s.T(), tt.thread, thread)
+			require.Equal(s.T(), tt.channel, channel)
 		})
 	}
 }

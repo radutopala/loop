@@ -358,8 +358,8 @@ func (m *MockPluginManager) X(ctx context.Context, pluginID string, ch runtime.C
 	return v, args.Error(1)
 }
 
-func (m *MockPluginManager) Deliver(ctx context.Context, ch runtime.Channel, evt proxy.Event) error {
-	return m.Called(ctx, ch, evt).Error(0)
+func (m *MockPluginManager) Deliver(ctx context.Context, ch runtime.Channel, thread *runtime.Channel, evt proxy.Event) error {
+	return m.Called(ctx, ch, thread, evt).Error(0)
 }
 
 func (m *MockPluginManager) UI(ctx context.Context, pluginID string) (string, *plugin.Manifest, error) {

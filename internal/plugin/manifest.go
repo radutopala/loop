@@ -70,6 +70,28 @@ var Capabilities = []Capability{
 // channel, as the app's events WebSocket names them.
 var Events = []string{"message.created", "agent.status", "quality.scanned"}
 
+// Where a manifest's thread_events sends an event in a channel's thread.
+const (
+	ThreadEventsThread  = "thread"
+	ThreadEventsChannel = "channel"
+	ThreadEventsBoth    = "both"
+)
+
+var threadEventTargets = []string{ThreadEventsThread, ThreadEventsChannel, ThreadEventsBoth}
+
+// ThreadEventsTo reports whether an event in one of a channel's threads
+// goes to the thread's container and to the channel's.
+func (m *Manifest) ThreadEventsTo() (thread, channel bool) {
+	switch m.ThreadEvents {
+	case ThreadEventsChannel:
+		return false, true
+	case ThreadEventsBoth:
+		return true, true
+	default:
+		return true, false
+	}
+}
+
 // Manifest is a plugin's plugin.json: who it is, what it may do and what it
 // contributes to Loop.
 type Manifest struct {
@@ -89,9 +111,13 @@ type Manifest struct {
 	Tools    []Tool                            `json:"tools,omitempty"`
 	Actions  []Action                          `json:"actions,omitempty"`
 	// Events are the Loop events Loop sends to the plugin's POST /events.
-	Events    []string   `json:"events,omitempty"`
-	UI        *UI        `json:"ui,omitempty"`
-	Resources *Resources `json:"resources,omitempty"`
+	Events []string `json:"events,omitempty"`
+	// ThreadEvents is which container gets an event in a channel's thread:
+	// the thread's own (ThreadEventsThread, the default), the channel's
+	// (ThreadEventsChannel), or both.
+	ThreadEvents string     `json:"thread_events,omitempty"`
+	UI           *UI        `json:"ui,omitempty"`
+	Resources    *Resources `json:"resources,omitempty"`
 }
 
 // Gate is a plugin's agentgate rules.
@@ -384,6 +410,9 @@ func (m *Manifest) validateActions(add func(string, ...any)) {
 func (m *Manifest) validateEvents(add func(string, ...any)) {
 	if len(m.Events) > 0 && !m.Has(CapEventsSub) {
 		add("events needs capability %q", CapEventsSub)
+	}
+	if m.ThreadEvents != "" && !slices.Contains(threadEventTargets, m.ThreadEvents) {
+		add("thread_events: %q is not one of %s", m.ThreadEvents, strings.Join(threadEventTargets, ", "))
 	}
 	seen := map[string]bool{}
 	for i, e := range m.Events {

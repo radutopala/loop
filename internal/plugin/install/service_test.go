@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -863,7 +864,7 @@ func (s *ServiceSuite) TestDeliver() {
 			if e.Type == "" {
 				e = evt
 			}
-			err := s.svc.Deliver(s.ctx, ch, e)
+			err := s.svc.Deliver(s.ctx, ch, nil, e)
 			if tt.wantErr == "" {
 				require.NoError(s.T(), err)
 				return
@@ -876,8 +877,51 @@ func (s *ServiceSuite) TestDeliver() {
 		s.SetupTest()
 		defer s.TearDownTest()
 		s.store.On("ListPluginStates", s.ctx).Return(nil, errors.New("boom")).Once()
-		require.EqualError(s.T(), s.svc.Deliver(s.ctx, ch, evt), "listing plugins: boom")
+		require.EqualError(s.T(), s.svc.Deliver(s.ctx, ch, nil, evt), "listing plugins: boom")
 	})
+}
+
+func (s *ServiceSuite) TestDeliverThreadEvent() {
+	ch := runtime.Channel{ID: "ch1", DirPath: "/src"}
+	thread := runtime.Channel{ID: "th1", DirPath: "/src/.worktrees/th1"}
+	threadEP := runtime.Endpoint{URL: "http://127.0.0.1:1234", Secret: "t"}
+	channelEP := runtime.Endpoint{URL: "http://127.0.0.1:1235", Secret: "c"}
+	evt := proxy.Event{Type: "message.created", ChannelID: "ch1", ThreadID: "th1"}
+	tests := []struct {
+		name         string
+		threadEvents string
+		toThread     bool
+		toChannel    bool
+	}{
+		{name: "default", toThread: true},
+		{name: "thread", threadEvents: plugin.ThreadEventsThread, toThread: true},
+		{name: "channel", threadEvents: plugin.ThreadEventsChannel, toChannel: true},
+		{name: "both", threadEvents: plugin.ThreadEventsBoth, toThread: true, toChannel: true},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			defer s.TearDownTest()
+			st := s.installed(db.PluginStatusInstalled)
+			manifest := strings.Replace(eventsManifest, `"events"`, fmt.Sprintf(`"thread_events": %q, "events"`, tt.threadEvents), 1)
+			require.NoError(s.T(), os.WriteFile(filepath.Join(s.in.Dir(st), "plugin.json"), []byte(manifest), 0o644))
+			st.ApprovedCaps = []string{string(plugin.CapEventsSub)}
+			s.store.On("ListPluginStates", s.ctx).Return([]*db.PluginState{st}, nil).Once()
+			if tt.toThread {
+				s.runtime.On("Ensure", s.ctx, mock.Anything, thread).Return(threadEP, nil).Once()
+				s.caller.On("Event", s.ctx, threadEP, evt).Return(nil).Once()
+			}
+			if tt.toChannel {
+				s.runtime.On("Ensure", s.ctx, mock.Anything, ch).Return(channelEP, errors.New("unhealthy")).Once()
+			}
+			err := s.svc.Deliver(s.ctx, ch, &thread, evt)
+			if tt.toChannel {
+				require.EqualError(s.T(), err, "echo: starting the plugin: unhealthy")
+				return
+			}
+			require.NoError(s.T(), err)
+		})
+	}
 }
 
 func (s *ServiceSuite) TestUI() {

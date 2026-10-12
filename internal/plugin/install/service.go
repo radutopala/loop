@@ -471,11 +471,13 @@ func (s *Service) X(ctx context.Context, pluginID string, ch runtime.Channel, re
 	return s.caller.X(ctx, ep, req)
 }
 
-// Deliver hands evt, a Loop event in ch, to each plugin that subscribes to
-// its type, has events.subscribe approved and is enabled by ch's project,
-// starting its container in ch if it isn't running. It returns each
-// plugin's failure.
-func (s *Service) Deliver(ctx context.Context, ch runtime.Channel, evt proxy.Event) error {
+// Deliver hands evt, a Loop event in ch or, when thread is set, in that
+// thread of ch, to each plugin that subscribes to its type, has
+// events.subscribe approved and is enabled by the project, starting its
+// container if it isn't running. A thread's event goes to the thread's
+// container, the channel's or both, as the plugin's thread_events says. It
+// returns each plugin's failure.
+func (s *Service) Deliver(ctx context.Context, ch runtime.Channel, thread *runtime.Channel, evt proxy.Event) error {
 	states, err := s.store.ListPluginStates(ctx)
 	if err != nil {
 		return fmt.Errorf("listing plugins: %w", err)
@@ -493,18 +495,37 @@ func (s *Service) Deliver(ctx context.Context, ch runtime.Channel, evt proxy.Eve
 		if !slices.Contains(m.Events, evt.Type) {
 			continue
 		}
-		ep, err := s.start(ctx, st, m, ch)
-		if errors.Is(err, ErrNotEnabled) {
-			continue
+		targets := []runtime.Channel{ch}
+		if thread != nil {
+			toThread, toChannel := m.ThreadEventsTo()
+			targets = targets[:0]
+			if toThread {
+				targets = append(targets, *thread)
+			}
+			if toChannel {
+				targets = append(targets, ch)
+			}
 		}
-		if err == nil {
-			err = s.caller.Event(ctx, ep, evt)
-		}
-		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", st.PluginID, err))
+		for _, target := range targets {
+			if err := s.deliver(ctx, st, m, target, evt); err != nil {
+				errs = append(errs, fmt.Errorf("%s: %w", st.PluginID, err))
+			}
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// deliver hands evt to the plugin st's container in ch, unless ch's
+// project doesn't enable it.
+func (s *Service) deliver(ctx context.Context, st *db.PluginState, m *plugin.Manifest, ch runtime.Channel, evt proxy.Event) error {
+	ep, err := s.start(ctx, st, m, ch)
+	if errors.Is(err, ErrNotEnabled) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return s.caller.Event(ctx, ep, evt)
 }
 
 // UI returns the dir the plugin's image was extracted to, which holds its

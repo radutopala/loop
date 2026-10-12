@@ -31,7 +31,7 @@ type PluginManager interface {
 	Allows(ctx context.Context, pluginID string, c plugin.Capability) error
 	RunDone(ctx context.Context, pluginID string, ch runtime.Channel, runID string, req proxy.RunDoneRequest) error
 	X(ctx context.Context, pluginID string, ch runtime.Channel, req proxy.XRequest) (*proxy.XResponse, error)
-	Deliver(ctx context.Context, ch runtime.Channel, evt proxy.Event) error
+	Deliver(ctx context.Context, ch runtime.Channel, thread *runtime.Channel, evt proxy.Event) error
 	UI(ctx context.Context, pluginID string) (string, *plugin.Manifest, error)
 	Containers(ctx context.Context, pluginID string) ([]*db.PluginContainer, error)
 	Stop(ctx context.Context, pluginID, channelID string)
@@ -289,9 +289,9 @@ type pluginActionRequest struct {
 	ChannelID string `json:"channel_id"`
 }
 
-// handleRunPluginAction runs a plugin action by hand in a channel, starting
-// the plugin's container there first if it isn't running. A thread runs it
-// in its parent channel, since a plugin runs per channel.
+// handleRunPluginAction runs a plugin action by hand in a channel, thread
+// or worktree thread, starting the plugin's container there first if it
+// isn't running.
 func (s *Server) handleRunPluginAction(w http.ResponseWriter, r *http.Request) {
 	if !requireConfigured(w, s.plugins, pluginsDisabled) {
 		return

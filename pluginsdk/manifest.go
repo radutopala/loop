@@ -58,6 +58,9 @@ type Manifest struct {
 	// Events are the Loop events Loop sends to the plugin's POST /events;
 	// they need CapEventsSub.
 	Events []string `json:"events,omitempty"`
+	// ThreadEvents is where an event in a channel's thread goes: "thread"
+	// (the thread's container, the default), "channel" or "both".
+	ThreadEvents string `json:"thread_events,omitempty"`
 }
 
 // Gate is the agentgate rules a plugin asks for on top of Loop's baseline.

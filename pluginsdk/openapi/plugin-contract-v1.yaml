@@ -151,8 +151,10 @@ paths:
         Sent for each Loop event of a type in the manifest's `events`, when
         the owner approved events.subscribe and the channel's project
         enables the plugin. Loop starts the container to deliver it. An
-        event in one of the channel's threads carries thread_id; events in
-        hidden threads, such as the plugin's own agent runs, aren't sent.
+        event in one of the channel's threads carries thread_id and goes to
+        the thread's container, or as the manifest's thread_events says to
+        the channel's or both; events in hidden threads, such as the
+        plugin's own agent runs, aren't sent.
         Delivery is best effort: an event is sent once, in no set order, and
         dropped when the plugin doesn't take it. Loop takes any 2xx as
         received.

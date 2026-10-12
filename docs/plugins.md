@@ -115,9 +115,11 @@ Each setting is a schema: `type` (`string`, `integer`, `number`, `boolean`, `arr
 `"events": ["message.created", "agent.status", "quality.scanned"]` subscribes the plugin to those
 Loop events, and needs `events.subscribe`. Loop sends each one to `POST /events` on the
 container of the channel it happened in, starting the container if it isn't running, when the
-channel's project enables the plugin. An event in one of the channel's threads goes to the
-channel's container with the thread's id; events in hidden threads, such as the plugin's own
-agent runs, aren't sent. Delivery is best effort: each event is sent once, in no set order, and
+channel's project enables the plugin. An event in one of the channel's threads or worktree
+threads carries the thread's id and goes to the thread's own container; `"thread_events":
+"channel"` sends it to the channel's container instead, for a plugin that keeps one view of the
+whole project, and `"both"` to both. Events in hidden threads, such as the plugin's own agent
+runs, aren't sent. Delivery is best effort: each event is sent once, in no set order, and
 dropped when the plugin doesn't take it.
 
 ### Scheduled actions
