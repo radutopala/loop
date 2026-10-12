@@ -74,7 +74,7 @@ daemon stops on its own; open panes and Settings → Plugins list the plugins ag
 ```
 
 The image carries the label `dev.loop.plugin=1`, runs as a non-root `USER` (a numeric
-`uid:gid` works) and serves HTTP on `$LOOP_PLUGIN_PORT`. `/loop-plugin` may hold at most 25 MB;
+`uid:gid` works) and serves HTTP on `$LOOP_PLUGIN_PORT`. `/loop-plugin` may hold at most 50 MB;
 install refuses a bigger one. See
 `test/component/testdata/plugins/echo` for the smallest working plugin.
 

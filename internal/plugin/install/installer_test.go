@@ -323,7 +323,7 @@ func (s *InstallerSuite) TestInspectFailures() {
 		}, "creating the plugins dir"},
 		{"garbled tar", extracting(io.NopCloser(strings.NewReader(strings.Repeat("x", 1024)))), "extracting /loop-plugin"},
 		{"symlink", extracting(tarOf(entry{name: "loop-plugin/plugin.json", link: "/etc/passwd"})), "plugin.json is not a plain file or dir"},
-		{"too big", extracting(tarOf(entry{name: "loop-plugin/big", body: str(""), size: maxExtract + 1})), "it is over 25 MB"},
+		{"too big", extracting(tarOf(entry{name: "loop-plugin/big", body: str(""), size: maxExtract + 1})), "it is over 50 MB"},
 		{"truncated file", extracting(tarOf(entry{name: "loop-plugin/plugin.json", body: str("{"), size: 10})), "unexpected EOF"},
 		{"dir over a file", extracting(tarOf(entry{name: "loop-plugin/a", body: str("")}, entry{name: "loop-plugin/a/"})), "extracting /loop-plugin"},
 		{"file under a file", extracting(tarOf(entry{name: "loop-plugin/a", body: str("")}, entry{name: "loop-plugin/a/b", body: str("")})), "extracting /loop-plugin"},
