@@ -359,7 +359,7 @@ func (s *EngineSuite) TestCancelRunNotFound() {
 	s.store.On("GetWorkflowRun", mock.Anything, "missing").Return(nil, nil)
 
 	err := s.engine.CancelRun(context.Background(), "missing")
-	require.ErrorContains(s.T(), err, "workflow run not found")
+	require.ErrorIs(s.T(), err, ErrRunNotFound)
 }
 
 func (s *EngineSuite) TestCancelRunAlreadyCompleted() {

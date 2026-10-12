@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -15,6 +16,9 @@ import (
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/events"
 )
+
+// ErrRunNotFound is returned for a run that doesn't exist.
+var ErrRunNotFound = errors.New("workflow run not found")
 
 // Runner executes agent requests (prompt nodes) in Docker containers.
 type Runner interface {
@@ -239,7 +243,7 @@ func (e *defaultEngine) ResumeRun(ctx context.Context, runID, response string) e
 		return fmt.Errorf("looking up run: %w", err)
 	}
 	if run == nil {
-		return fmt.Errorf("workflow run not found: %s", runID)
+		return fmt.Errorf("%w: %s", ErrRunNotFound, runID)
 	}
 	if run.PausedNodeID == "" {
 		return fmt.Errorf("no pending approval for run: %s", runID)
@@ -272,7 +276,7 @@ func (e *defaultEngine) CancelRun(ctx context.Context, runID string) error {
 		return err
 	}
 	if run == nil {
-		return fmt.Errorf("workflow run not found: %s", runID)
+		return fmt.Errorf("%w: %s", ErrRunNotFound, runID)
 	}
 	if run.Status != db.WorkflowRunStatusRunning && run.Status != db.WorkflowRunStatusPaused {
 		return nil // already terminal
@@ -293,7 +297,7 @@ func (e *defaultEngine) DeleteRun(ctx context.Context, runID string) error {
 		return err
 	}
 	if run == nil {
-		return fmt.Errorf("workflow run not found: %s", runID)
+		return fmt.Errorf("%w: %s", ErrRunNotFound, runID)
 	}
 	// Cancel if still active.
 	if run.Status == db.WorkflowRunStatusRunning || run.Status == db.WorkflowRunStatusPaused {
@@ -319,7 +323,7 @@ func (e *defaultEngine) RetryRun(ctx context.Context, runID string) (string, err
 		return "", fmt.Errorf("looking up run: %w", err)
 	}
 	if run == nil {
-		return "", fmt.Errorf("workflow run not found: %s", runID)
+		return "", fmt.Errorf("%w: %s", ErrRunNotFound, runID)
 	}
 	if run.Status == db.WorkflowRunStatusRunning || run.Status == db.WorkflowRunStatusPaused {
 		return "", fmt.Errorf("cannot retry a run that is still %s", run.Status)

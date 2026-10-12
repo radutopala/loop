@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1032,4 +1033,42 @@ func (s *ServerSuite) TestStartWorkflowRun_ChannelResolutionError() {
 
 	rec := s.testRequest("POST", "/api/workflows/runs", `{"workflow_name":"wf","channel_id":"bad-ch"}`)
 	require.Equal(s.T(), http.StatusCreated, rec.Code)
+}
+
+// TestWorkflowRunActions_NotFound answers 404 for an action on a run that
+// doesn't exist.
+func (s *ServerSuite) TestWorkflowRunActions_NotFound() {
+	notFound := fmt.Errorf("%w: wfr-1", workflow.ErrRunNotFound)
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+		setup  func(*MockWorkflowEngine)
+	}{
+		{name: "cancel", method: "POST", path: "/api/workflows/runs/wfr-1/cancel", setup: func(m *MockWorkflowEngine) {
+			m.On("CancelRun", mock.Anything, "wfr-1").Return(notFound)
+		}},
+		{name: "resume", method: "POST", path: "/api/workflows/runs/wfr-1/resume", body: `{"response":""}`, setup: func(m *MockWorkflowEngine) {
+			m.On("ResumeRun", mock.Anything, "wfr-1", "").Return(notFound)
+		}},
+		{name: "delete", method: "DELETE", path: "/api/workflows/runs/wfr-1", setup: func(m *MockWorkflowEngine) {
+			m.On("DeleteRun", mock.Anything, "wfr-1").Return(notFound)
+		}},
+		{name: "retry", method: "POST", path: "/api/workflows/runs/wfr-1/retry", setup: func(m *MockWorkflowEngine) {
+			m.On("RetryRun", mock.Anything, "wfr-1").Return("", notFound)
+		}},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			wfe := new(MockWorkflowEngine)
+			tt.setup(wfe)
+			s.srv.SetWorkflowEngine(wfe)
+			defer func() { s.srv.workflowEngine = nil }()
+
+			rec := s.testRequest(tt.method, tt.path, tt.body)
+			require.Equal(s.T(), http.StatusNotFound, rec.Code)
+			require.Contains(s.T(), rec.Body.String(), "workflow run not found: wfr-1")
+		})
+	}
 }

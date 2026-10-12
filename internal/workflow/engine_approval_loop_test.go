@@ -144,7 +144,7 @@ func (s *EngineSuite) TestResumeRunNotFound() {
 	s.store.On("GetWorkflowRun", mock.Anything, "missing").Return(nil, nil)
 
 	err := s.engine.ResumeRun(context.Background(), "missing", "ok")
-	require.ErrorContains(s.T(), err, "workflow run not found")
+	require.ErrorIs(s.T(), err, ErrRunNotFound)
 }
 
 func (s *EngineSuite) TestResumeRunGetError() {

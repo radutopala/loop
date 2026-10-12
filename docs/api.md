@@ -3065,7 +3065,7 @@ Install, or upgrade to, an image. Upgrading stops the plugin's containers; they 
 
 ### `DELETE /api/plugins/{id}`
 
-Remove a plugin: its containers in every channel, its extracted files and its record. `?purge=true` also removes its data dirs and gate audit logs.
+Remove a plugin: its containers in every channel, its extracted files and its record. `?purge=true` also removes its data dirs, its gate audit logs and the hidden threads its agent runs went in, with their messages and sessions.
 
 **Response:** `204 No Content`
 
@@ -4310,7 +4310,7 @@ Resume a paused workflow run (e.g. after an approval node). The response text be
 
 **Response:** `204` No Content on success.
 
-**Errors:** `400` if request body is invalid JSON. `500` if no pending approval exists for the run. `501` if the workflow engine is not configured.
+**Errors:** `400` if request body is invalid JSON. `404` if the run does not exist. `500` if no pending approval exists for the run. `501` if the workflow engine is not configured.
 
 ### `POST /api/workflows/runs/{id}/cancel`
 
@@ -4318,7 +4318,7 @@ Cancel a running workflow. Cancels the context for all active nodes.
 
 **Response:** `204` No Content on success.
 
-**Errors:** `500` on engine errors. `501` if the workflow engine is not configured.
+**Errors:** `404` if the run does not exist. `500` on engine errors. `501` if the workflow engine is not configured.
 
 ### `POST /api/workflows/runs/{id}/retry`
 
@@ -4331,7 +4331,7 @@ Retry a completed, failed, or cancelled workflow run. Creates a new run with the
 }
 ```
 
-**Errors:** `500` on engine errors (run not found, run still active, workflow definition not found, etc.). `501` if the workflow engine is not configured.
+**Errors:** `404` if the run does not exist. `500` on engine errors (run still active, workflow definition not found, etc.). `501` if the workflow engine is not configured.
 
 ### `DELETE /api/workflows/runs/{id}`
 
@@ -4339,4 +4339,4 @@ Delete a workflow run. If the run is active (running or paused), it is cancelled
 
 **Response:** `204` No Content on success.
 
-**Errors:** `500` on engine errors. `501` if the workflow engine is not configured.
+**Errors:** `404` if the run does not exist. `500` on engine errors. `501` if the workflow engine is not configured.
