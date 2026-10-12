@@ -1155,7 +1155,10 @@ func (s *ReviewHandlerSuite) TestUpdateComment() {
 		wantMsg string
 	}{
 		{name: "bad json", target: "/api/channels/ch1/review/comments/a", body: `{`, want: http.StatusBadRequest, wantMsg: "invalid JSON body"},
-		{name: "empty body", target: "/api/channels/ch1/review/comments/a", body: `{"body":"  "}`, want: http.StatusBadRequest, wantMsg: "body is required"},
+		{name: "empty body", target: "/api/channels/ch1/review/comments/a", body: `{"body":"  "}`, want: http.StatusBadRequest, wantMsg: "body or verdict is required"},
+		{name: "unknown verdict", target: "/api/channels/ch1/review/comments/a", body: `{"verdict":"maybe"}`, want: http.StatusBadRequest, wantMsg: "verdict must be"},
+		{name: "verdict on github comment", target: "/api/channels/ch1/review/comments/gh-9", body: `{"verdict":"false_positive"}`, want: http.StatusConflict, wantMsg: "only agent comments can take a verdict"},
+		{name: "pushed body with verdict", target: "/api/channels/ch1/review/comments/p", body: `{"body":"x","verdict":"real"}`, want: http.StatusConflict, wantMsg: "only unpushed agent comments"},
 		{name: "no session", target: "/api/channels/ch2/review/comments/a", body: `{"body":"x"}`, want: http.StatusNotFound, wantMsg: "no review session"},
 		{name: "no comment", target: "/api/channels/ch1/review/comments/zz", body: `{"body":"x"}`, want: http.StatusNotFound, wantMsg: "comment not found"},
 		{name: "pushed comment", target: "/api/channels/ch1/review/comments/p", body: `{"body":"x"}`, want: http.StatusConflict, wantMsg: "only unpushed agent comments"},
@@ -1185,6 +1188,38 @@ func (s *ReviewHandlerSuite) TestUpdateComment() {
 	hubMu.Lock()
 	require.Equal(s.T(), []events.ReviewCommentEventData{{ID: "a", Path: "x.go", Line: 3, Body: got.Body}}, updated)
 	hubMu.Unlock()
+}
+
+// TestUpdateCommentVerdict records a verdict, on its own or with a new
+// body, and on a pushed comment, whose body can't change.
+func (s *ReviewHandlerSuite) TestUpdateCommentVerdict() {
+	s.rs.Put("ch1", &review.Session{PR: &githubapi.PRInfo{Number: 7}, HeadSHA: "abc"})
+	s.rs.AddComment("ch1", &review.Comment{ID: "a", Path: "x.go", Line: 3, Body: "Race.", Source: "agent", Verdict: review.VerdictReal, VerdictReason: "dedup"})
+	s.rs.AddComment("ch1", &review.Comment{ID: "p", Path: "x.go", Line: 40, Body: "Pushed.", Source: "agent", GitHubID: 5, Pushed: true})
+
+	tests := []struct {
+		name       string
+		id         string
+		body       string
+		wantBody   string
+		wantReason string
+		wantResult string
+	}{
+		{name: "verdict alone", id: "a", body: `{"verdict":"false_positive","verdict_reason":" one goroutine "}`, wantBody: "Race.", wantReason: "one goroutine", wantResult: review.VerdictFalsePositive},
+		{name: "body and verdict", id: "a", body: `{"body":"Race, rarely.","verdict":"real"}`, wantBody: "Race, rarely.", wantResult: review.VerdictReal},
+		{name: "pushed comment", id: "p", body: `{"verdict":"already_fixed","verdict_reason":"fixed in abc"}`, wantBody: "Pushed.", wantReason: "fixed in abc", wantResult: review.VerdictAlreadyFixed},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			w := httptest.NewRecorder()
+			s.mux.ServeHTTP(w, agentRequest("PATCH", "/api/channels/ch1/review/comments/"+tt.id, strings.NewReader(tt.body)))
+			require.Equal(s.T(), http.StatusOK, w.Code, w.Body.String())
+			c, _ := s.rs.FindComment("ch1", tt.id)
+			require.Equal(s.T(), tt.wantBody, c.Body)
+			require.Equal(s.T(), tt.wantResult, c.Verdict)
+			require.Equal(s.T(), tt.wantReason, c.VerdictReason)
+		})
+	}
 }
 
 func (s *ReviewHandlerSuite) TestUpdateCommentNotConfigured() {

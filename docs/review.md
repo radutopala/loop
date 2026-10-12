@@ -243,7 +243,7 @@ comments to act on:
 | **Why?** | The same quote, with `Please explain why we need this.` filled into that blank line | Yes, straight away |
 | **Address** | `Please address this review comment from the PR:` plus file, line, side, PR number, head SHA and author, then the quoted body and the run transcripts | Yes, straight away |
 | **Address all (N)** | The same request over every unpushed finding not marked `false_positive` or `already_fixed`: the metadata header once, then a numbered block per finding, then the run transcripts | Yes, straight away |
-| **Check all (N)** | A request to clean up, then verify, every finding this session's runs reported (not the GitHub comments): PR number, head SHA and the PR checkout, then steps — run `dedup_review_findings`, read what is left with `get_review_comments`, check each against the code (real / false positive / already fixed), reply with an entry per comment (its category when it has one, its verdict and why, and a link to a pushed comment's GitHub thread; no severity unless the comment states one), ending with what the dedup pass removed and the count per verdict; change nothing else | Yes, straight away |
+| **Check all (N)** | A request to clean up, then verify, every finding this session's runs reported (not the GitHub comments): PR number, head SHA and the PR checkout, then steps — run `dedup_review_findings`, read what is left with `get_review_comments`, check each against the code (real / false positive / already fixed) and record that verdict with a reason through `update_review_comment`, reply with an entry per comment (its category when it has one, its verdict and why, and a link to a pushed comment's GitHub thread; no severity unless the comment states one), ending with what the dedup pass removed and the count per verdict; change nothing else | Yes, straight away |
 
 Discuss and Why? are one builder and one send path differing by a single
 string, so the quote, the transcripts and the spacing cannot drift apart
@@ -265,8 +265,9 @@ collapses into the `on github` marker once pushed.
 what is left itself with `get_review_comments`, which acts on the same channel's
 session, so the request stays short however many findings there are and each
 body arrives whole. The message carries no count, since the dedup pass changes
-it. It
-names the PR checkout because the review runs in the PR worktree, which need not
+it. The agent records the verdict it reaches on each comment, replacing the
+dedup pass's, so the badges and the **All ▾** menu's skip note match its
+reply. It names the PR checkout because the review runs in the PR worktree, which need not
 be the chat's working directory.
 
 All five first dispatch `loop:open-panel`, so a Chat panel is mounted in the

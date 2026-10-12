@@ -318,7 +318,7 @@ func ParseDedupReply(reply string, cands []*Comment, fresh map[string]bool) (Ded
 	judged := map[string]bool{}
 	for _, v := range parsed.Verdicts {
 		c := byID[v.ID]
-		if c == nil || !droppable(c, fresh) || keeperOf[v.ID] != "" || judged[v.ID] || !knownVerdict(v.Verdict) {
+		if c == nil || !droppable(c, fresh) || keeperOf[v.ID] != "" || judged[v.ID] || !KnownVerdict(v.Verdict) {
 			continue
 		}
 		judged[v.ID] = true
@@ -343,8 +343,8 @@ func Dismissed(verdict string) bool {
 	return verdict == VerdictFalsePositive || verdict == VerdictAlreadyFixed
 }
 
-// knownVerdict reports whether v is one of the Verdict constants.
-func knownVerdict(v string) bool {
+// KnownVerdict reports whether v is one of the Verdict constants.
+func KnownVerdict(v string) bool {
 	return v == VerdictReal || v == VerdictFalsePositive || v == VerdictAlreadyFixed
 }
 

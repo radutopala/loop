@@ -270,10 +270,11 @@ export function buildCheckAllPrompt(session?: ReviewSession | null): string {
     "1. Run the dedup_review_findings tool first, so comments that report the same issue are merged before you check them. If it fails, say why and carry on.",
     "2. Read the comments left with the get_review_comments tool. Skip the ones whose source is github.",
     `3. For each one, read the code it points at${checkout ? " in the checkout above" : ""} and decide whether it is a real issue, a false positive, or already fixed.`,
-    `4. Reply with one entry per comment: its id, path:line, category (when it has one), verdict and why. Link a pushed comment to ${prURL ? `${prURL}#discussion_r<its GitHub id>` : "its GitHub thread"}. Only show a severity the comment itself states; don't rate them yourself.`,
-    "5. End with what the dedup pass removed and how many comments got each verdict.",
+    "4. Record your verdict on each one with the update_review_comment tool: its comment_id, verdict (real, false_positive or already_fixed) and a one-sentence reason citing the line you read. Don't pass a body. Your verdict replaces the dedup pass's, so the Review panel shows yours.",
+    `5. Reply with one entry per comment: its id, path:line, category (when it has one), verdict and why. Link a pushed comment to ${prURL ? `${prURL}#discussion_r<its GitHub id>` : "its GitHub thread"}. Only show a severity the comment itself states; don't rate them yourself.`,
+    "6. End with what the dedup pass removed and how many comments got each verdict.",
     "",
-    "Don't change any code. Apart from the dedup pass, don't edit, delete or push any comment.",
+    "Don't change any code. Apart from the dedup pass and recording verdicts, don't edit, delete or push any comment.",
   );
   return lines.join("\n");
 }

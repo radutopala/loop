@@ -2545,15 +2545,19 @@ the review service is not configured.
 
 ### `PATCH /api/channels/{id}/review/comments/{cid}`
 
-Replace a comment's body, e.g. to fold in what a duplicate adds. Body:
-`{"body": "..."}`. Only an unpushed agent comment can change. Broadcasts
-`review.comment_updated`.
+Replace a comment's body, e.g. to fold in what a duplicate adds, and/or
+record a verdict on it, replacing the dedup pass's. Body:
+`{"body": "...", "verdict": "false_positive", "verdict_reason": "..."}`;
+give `body`, `verdict` or both. `verdict` is `real`, `false_positive` or
+`already_fixed`. Only an unpushed agent comment's body can change; a verdict
+goes on any agent comment. Broadcasts `review.comment_updated`.
 
 Response: the updated comment.
 
-**Errors:** `400` on invalid JSON or an empty body. `404` if session or
-comment id is unknown. `409` for a pushed or GitHub comment. `501` if the
-review service is not configured.
+**Errors:** `400` on invalid JSON, an unknown verdict, or neither a body nor
+a verdict. `404` if session or comment id is unknown. `409` for a GitHub
+comment, or a body for a pushed one. `501` if the review service is not
+configured.
 
 ### `POST /api/channels/{id}/review/comments/{cid}/push`
 

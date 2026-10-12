@@ -660,24 +660,32 @@ func (s *reviewService) handleReviewDeleteComment(w http.ResponseWriter, r *http
 }
 
 // handleReviewUpdateComment replaces a comment's body, as when folding what
-// a duplicate added into the comment kept. Only an unpushed agent comment
-// can change: a GitHub comment isn't ours, and a pushed one would drift
-// from its copy on the PR. Answers the updated comment and broadcasts it.
+// a duplicate added into the comment kept, and records a verdict on it, as
+// when an agent checking the comments judges one. Only an unpushed agent
+// comment's body can change: a GitHub comment isn't ours, and a pushed one
+// would drift from its copy on the PR. A verdict goes on any agent comment.
+// Answers the updated comment and broadcasts it.
 func (s *reviewService) handleReviewUpdateComment(w http.ResponseWriter, r *http.Request) {
 	if s.sessions == nil {
 		http.Error(w, "review service not configured", http.StatusNotImplemented)
 		return
 	}
 	var body struct {
-		Body string `json:"body"`
+		Body    string `json:"body"`
+		Verdict string `json:"verdict"`
+		Reason  string `json:"verdict_reason"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	text := strings.TrimSpace(body.Body)
-	if text == "" {
-		http.Error(w, "body is required", http.StatusBadRequest)
+	if text == "" && body.Verdict == "" {
+		http.Error(w, "body or verdict is required", http.StatusBadRequest)
+		return
+	}
+	if body.Verdict != "" && !review.KnownVerdict(body.Verdict) {
+		http.Error(w, "verdict must be real, false_positive or already_fixed", http.StatusBadRequest)
 		return
 	}
 	channelID := r.PathValue("id")
@@ -691,10 +699,19 @@ func (s *reviewService) handleReviewUpdateComment(w http.ResponseWriter, r *http
 		http.Error(w, "comment not found", http.StatusNotFound)
 		return
 	}
-	updated := s.editComment(channelID, commentID, func(c *review.Comment) { c.Body = text })
-	if updated == nil {
-		http.Error(w, "only unpushed agent comments can be edited", http.StatusConflict)
-		return
+	updated := c
+	if text != "" {
+		if updated = s.editComment(channelID, commentID, func(c *review.Comment) { c.Body = text }); updated == nil {
+			http.Error(w, "only unpushed agent comments can be edited", http.StatusConflict)
+			return
+		}
+	}
+	if body.Verdict != "" {
+		v := review.DedupVerdict{ID: commentID, Verdict: body.Verdict, Reason: strings.TrimSpace(body.Reason)}
+		if updated = s.setVerdict(channelID, v); updated == nil {
+			http.Error(w, "only agent comments can take a verdict", http.StatusConflict)
+			return
+		}
 	}
 	writeHTTPJSON(w, http.StatusOK, updated, s.deps.logger)
 }

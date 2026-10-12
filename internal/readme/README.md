@@ -1175,7 +1175,7 @@ In headless/Linux environments where Electron can't launch, `LOOP_NO_ELECTRON=1 
 | `get_review_comments` | Read the channel's review session: the PR, head SHA, status and every comment with its id, location, pushed state, source (agent or GitHub, with the GitHub id), category and the dedup pass's verdict; filter to unpushed agent comments or one file. The diff is left out |
 | `dedup_review_findings` | Run the review dedup pass: drop agent comments that repeat another, trim bundled ones, re-anchor misplaced ones, and record a real / false-positive / already-fixed verdict on the rest |
 | `delete_review_comment` | Delete an agent review comment (from the PR too if pushed); GitHub comments are refused |
-| `update_review_comment` | Replace an unpushed agent review comment's body |
+| `update_review_comment` | Replace an unpushed agent review comment's body and/or record a verdict on it |
 | `push_review_comment` | Post one agent review comment to the PR |
 | `push_all_review_comments` | Post every unpushed agent review comment to the PR |
 | `search_memory` | Semantic search across memory files (ranked by similarity) |

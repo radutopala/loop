@@ -35,7 +35,7 @@ func (s *Server) registerReviewTools() {
 	}, s.handleDeleteReviewComment)
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "update_review_comment",
-		Description: "Replace the body of an unpushed agent comment in this channel's review session, e.g. to fold in what a duplicate you are deleting adds. Pushed and GitHub comments can't be edited.",
+		Description: "Change an agent comment in this channel's review session: replace its body, e.g. to fold in what a duplicate you are deleting adds, and/or record your verdict on it (real, false_positive or already_fixed, with a one-sentence reason), which replaces the dedup pass's. Give body, verdict or both. Only an unpushed comment's body can change; GitHub comments can't change at all. Address all and Push all skip false_positive and already_fixed comments.",
 	}, s.handleUpdateReviewComment)
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "push_review_comment",
@@ -285,7 +285,9 @@ func (s *Server) handleDeleteReviewComment(_ context.Context, _ *mcp.CallToolReq
 
 type updateReviewCommentInput struct {
 	CommentID string `json:"comment_id" jsonschema:"required,The comment id, as get_review_comments shows it"`
-	Body      string `json:"body" jsonschema:"required,The comment's new body, replacing the old one"`
+	Body      string `json:"body,omitempty" jsonschema:"The comment's new body, replacing the old one"`
+	Verdict   string `json:"verdict,omitempty" jsonschema:"Your verdict on the comment: real, false_positive or already_fixed"`
+	Reason    string `json:"reason,omitempty" jsonschema:"One sentence on why, citing the line you read"`
 }
 
 func (s *Server) handleUpdateReviewComment(_ context.Context, _ *mcp.CallToolRequest, input updateReviewCommentInput) (*mcp.CallToolResult, any, error) {
@@ -293,13 +295,20 @@ func (s *Server) handleUpdateReviewComment(_ context.Context, _ *mcp.CallToolReq
 	if input.CommentID == "" {
 		return errorResult("comment_id is required"), nil, nil
 	}
-	if strings.TrimSpace(input.Body) == "" {
-		return errorResult("body is required"), nil, nil
+	if strings.TrimSpace(input.Body) == "" && input.Verdict == "" {
+		return errorResult("body or verdict is required"), nil, nil
 	}
-	data, _ := json.Marshal(map[string]string{"body": input.Body})
+	data, _ := json.Marshal(struct {
+		Body    string `json:"body,omitempty"`
+		Verdict string `json:"verdict,omitempty"`
+		Reason  string `json:"verdict_reason,omitempty"`
+	}{input.Body, input.Verdict, input.Reason})
 	c, errResult, err := doAPICall[reviewComment](s, "PATCH", s.reviewCommentURL(input.CommentID, ""), http.StatusOK, data)
 	if errResult != nil || err != nil {
 		return errResult, nil, err
+	}
+	if input.Verdict != "" {
+		return textResult(fmt.Sprintf("Updated review comment %s at %s:%d; verdict %s.", c.ID, c.Path, c.Line, c.Verdict)), nil, nil
 	}
 	return textResult(fmt.Sprintf("Updated review comment %s at %s:%d.", c.ID, c.Path, c.Line)), nil, nil
 }
