@@ -97,7 +97,13 @@ func (s *Server) handleStartPluginRun(w http.ResponseWriter, r *http.Request) {
 			"plugin_id": p.PluginID, "run_id": runID, "thread_id": threadID,
 		}})
 	}
-	writeHTTPJSON(w, http.StatusAccepted, map[string]string{"run_id": runID, "thread_id": threadID}, s.logger)
+	writeHTTPJSON(w, http.StatusAccepted, pluginRunResponse{RunID: runID, ThreadID: threadID}, s.logger)
+}
+
+// pluginRunResponse is a started plugin agent run.
+type pluginRunResponse struct {
+	RunID    string `json:"run_id"`
+	ThreadID string `json:"thread_id"`
 }
 
 // pluginAgentResponse is a plugin's hidden thread in a channel, where its

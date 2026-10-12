@@ -40,9 +40,14 @@ type Config struct {
 	// Git is GET /channel/git/recent's answer; nil answers 409, as for a
 	// dir that isn't a git repository.
 	Git *pluginsdk.GitRecent
-	// Hotspots is GET /channel/quality/hotspots's answer; nil answers 503,
-	// as before the first quality scan.
+	// Hotspots are the latest quality scan's functions, worst first, which
+	// GET /channel/quality/hotspots pages through; nil answers 503, as
+	// before the first quality scan.
 	Hotspots []pluginsdk.Hotspot
+	// Quality is the scan's score, raw value, over-threshold count and
+	// histogram, which the hotspots answer carries; the fake fills in the
+	// rest.
+	Quality pluginsdk.Hotspots
 	// Threads are the channel's threads a UI command may open.
 	Threads []string
 }
@@ -291,21 +296,41 @@ func (f *FakeLoop) git(w http.ResponseWriter, _ *http.Request) {
 	pluginsdk.WriteJSON(w, http.StatusOK, f.cfg.Git)
 }
 
+// Loop's default and largest page of hotspots.
+const (
+	hotspotsLimit    = 50
+	hotspotsMaxLimit = 100
+)
+
+// hotspots pages through the scan's functions as Loop does.
 func (f *FakeLoop) hotspots(w http.ResponseWriter, r *http.Request) {
 	if f.cfg.Hotspots == nil {
 		http.Error(w, "no quality scan yet", http.StatusServiceUnavailable)
 		return
 	}
 	limit, err := query(r, "limit")
+	if err != nil || limit == 0 && r.URL.Query().Has("limit") {
+		http.Error(w, "limit must be a positive integer", http.StatusBadRequest)
+		return
+	}
+	offset, err := query(r, "offset")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	fns := f.cfg.Hotspots
-	if limit > 0 && limit < len(fns) {
-		fns = fns[:limit]
+	if limit == 0 {
+		limit = hotspotsLimit
 	}
-	pluginsdk.WriteJSON(w, http.StatusOK, map[string]any{"functions": fns})
+	limit = min(limit, hotspotsMaxLimit)
+	all := f.cfg.Hotspots
+	start := min(offset, len(all))
+	page := all[start:min(start+limit, len(all))]
+	h := f.cfg.Quality
+	h.TotalFunctions, h.Functions, h.Offset, h.Limit, h.Returned = len(all), page, offset, limit, len(page)
+	if h.Histogram == nil {
+		h.Histogram = map[string]map[string]int{}
+	}
+	pluginsdk.WriteJSON(w, http.StatusOK, h)
 }
 
 // agent returns the manifest's agent id, or nil when the fake has no

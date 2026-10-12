@@ -14,82 +14,40 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/radutopala/loop/pluginsdk/openapi/pluginapi"
 )
 
 // Channel is the channel the plugin's container serves.
-type Channel struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	DirPath  string `json:"dir_path"`
-	Platform string `json:"platform"`
-	Model    string `json:"model"`
-	Effort   string `json:"effort"`
-	// Settings are the plugin's settings in the channel's project.
-	Settings map[string]any `json:"settings"`
-}
+type Channel = pluginapi.Channel
 
 // File is a range of lines of a file in the channel.
-type File struct {
-	Path       string `json:"path"`
-	Content    string `json:"content"`
-	Start      int    `json:"start"`
-	End        int    `json:"end"`
-	TotalLines int    `json:"total_lines"`
-}
+type File = pluginapi.File
 
 // Tree is the channel's files.
-type Tree struct {
-	Files []string `json:"files"`
-	// Truncated is set when there were more files than Loop lists.
-	Truncated bool `json:"truncated"`
-}
+type Tree = pluginapi.Tree
 
 // Commit is a recent commit.
-type Commit struct {
-	SHA     string `json:"sha"`
-	Subject string `json:"subject"`
-	Author  string `json:"author"`
-	Time    string `json:"time"`
-}
+type Commit = pluginapi.Commit
 
 // FileChurn is how many recent commits touched a file.
-type FileChurn struct {
-	Path    string `json:"path"`
-	Commits int    `json:"commits"`
-}
+type FileChurn = pluginapi.FileChurn
 
 // GitRecent is the channel's recent git history.
-type GitRecent struct {
-	Commits []Commit    `json:"commits"`
-	Files   []FileChurn `json:"files"`
-}
+type GitRecent = pluginapi.GitRecent
 
 // Hotspot is a function from the latest quality scan.
-type Hotspot struct {
-	Path       string  `json:"path"`
-	Name       string  `json:"name"`
-	StartLine  int     `json:"start_line"`
-	Cyclomatic int     `json:"cyclomatic"`
-	Cognitive  int     `json:"cognitive"`
-	MaxNesting int     `json:"max_nesting"`
-	ParamCount int     `json:"param_count"`
-	LOC        int     `json:"loc"`
-	Score      float64 `json:"score"`
-}
+type Hotspot = pluginapi.Hotspot
+
+// Hotspots is a page of the latest quality scan's functions, worst first,
+// with the scan's complexity score.
+type Hotspots = pluginapi.Hotspots
 
 // RunRequest asks Loop for a run of one of the plugin's agents.
-type RunRequest struct {
-	Agent  string `json:"agent"`
-	Prompt string `json:"prompt"`
-	Model  string `json:"model,omitempty"`
-	Effort string `json:"effort,omitempty"`
-}
+type RunRequest = pluginapi.RunRequest
 
 // Run is a started agent run.
-type Run struct {
-	RunID    string `json:"run_id"`
-	ThreadID string `json:"thread_id"`
-}
+type Run = pluginapi.Run
 
 // UIStep is a UI bridge step: its op and the op's fields, as Loop's API
 // docs list them.
@@ -109,12 +67,7 @@ type UICommand struct {
 
 // UIReply is how the window ran the steps. A failed step has ok false and
 // an error, and the steps after it don't run.
-type UIReply struct {
-	ClientID string           `json:"client_id"`
-	Results  []map[string]any `json:"results"`
-	// Error is why the window couldn't run the steps at all.
-	Error string `json:"error,omitempty"`
-}
+type UIReply = pluginapi.UIReply
 
 // API is Loop's Plugin API v1, as the plugin's channel-scoped token sees it.
 type API interface {
@@ -123,6 +76,7 @@ type API interface {
 	Tree(ctx context.Context, glob string) (*Tree, error)
 	GitRecent(ctx context.Context, days int) (*GitRecent, error)
 	Hotspots(ctx context.Context, limit int) ([]Hotspot, error)
+	HotspotsPage(ctx context.Context, limit, offset int) (*Hotspots, error)
 	StartRun(ctx context.Context, req RunRequest) (*Run, error)
 	Event(ctx context.Context, typ string, data any) error
 	Notify(ctx context.Context, title, body string) error
@@ -299,13 +253,22 @@ func (c *Client) GitRecent(ctx context.Context, days int) (*GitRecent, error) {
 // Hotspots returns up to limit functions of the latest quality scan, worst
 // first; zero is Loop's default. Needs quality.read.
 func (c *Client) Hotspots(ctx context.Context, limit int) ([]Hotspot, error) {
-	var out struct {
-		Functions []Hotspot `json:"functions"`
-	}
-	if err := c.do(ctx, http.MethodGet, "/channel/quality/hotspots", positive(url.Values{}, "limit", limit), nil, &out); err != nil {
+	h, err := c.HotspotsPage(ctx, limit, 0)
+	if err != nil {
 		return nil, err
 	}
-	return out.Functions, nil
+	return h.Functions, nil
+}
+
+// HotspotsPage returns up to limit functions of the latest quality scan,
+// worst first, after skipping offset, along with the scan's complexity
+// score and totals. Zero limit is Loop's default. Needs quality.read.
+func (c *Client) HotspotsPage(ctx context.Context, limit, offset int) (*Hotspots, error) {
+	var h Hotspots
+	if err := c.do(ctx, http.MethodGet, "/channel/quality/hotspots", positive(positive(url.Values{}, "limit", limit), "offset", offset), nil, &h); err != nil {
+		return nil, err
+	}
+	return &h, nil
 }
 
 // StartRun starts a run of one of the plugin's agents. Loop calls the
@@ -324,19 +287,19 @@ func (c *Client) StartRun(ctx context.Context, req RunRequest) (*Run, error) {
 
 // Event sends an event to the plugin's panels in the channel.
 func (c *Client) Event(ctx context.Context, typ string, data any) error {
-	return c.do(ctx, http.MethodPost, "/events", nil, map[string]any{"type": typ, "data": data}, nil)
+	return c.do(ctx, http.MethodPost, "/events", nil, pluginapi.Event{Type: typ, Data: data}, nil)
 }
 
 // Notify shows a desktop notification. Needs ui.notify.
 func (c *Client) Notify(ctx context.Context, title, body string) error {
-	return c.do(ctx, http.MethodPost, "/notify", nil, map[string]string{"title": title, "body": body}, nil)
+	return c.do(ctx, http.MethodPost, "/notify", nil, pluginapi.Notification{Title: title, Body: body}, nil)
 }
 
 // WriteMemory writes the plugin's memory file name (lowercase letters,
 // digits and dashes) into the channel's memory, where its agents find it
 // with search_memory. Needs memory.write.
 func (c *Client) WriteMemory(ctx context.Context, name, content string) error {
-	return c.do(ctx, http.MethodPut, "/memory/"+url.PathEscape(name), nil, map[string]string{"content": content}, nil)
+	return c.do(ctx, http.MethodPut, "/memory/"+url.PathEscape(name), nil, pluginapi.Memory{Content: content}, nil)
 }
 
 // DeleteMemory removes the plugin's memory file name. Needs memory.write.

@@ -9,44 +9,34 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/radutopala/loop/pluginsdk/openapi/plugincontract"
 )
 
 // APIVersion is the Plugin API major the SDK speaks.
 const APIVersion = "1"
 
 // Trigger is what started an action.
-type Trigger string
+type Trigger = plugincontract.Trigger
 
 const (
-	TriggerManual   Trigger = "manual"
-	TriggerSchedule Trigger = "schedule"
-	TriggerWorkflow Trigger = "workflow"
+	TriggerManual   = plugincontract.TriggerManual
+	TriggerSchedule = plugincontract.TriggerSchedule
+	TriggerWorkflow = plugincontract.TriggerWorkflow
 )
 
 // ActionRequest is the body of POST /actions/{action}.
-type ActionRequest struct {
-	Trigger Trigger `json:"trigger"`
-	// TaskID is the scheduled task that ran the action.
-	TaskID int64 `json:"task_id,omitempty"`
-}
+type ActionRequest = plugincontract.ActionRequest
 
 // ToolRequest is the body of POST /tools/{tool}: a call from Agent, in the
 // run RunID in the hidden thread ThreadID. A workflow's call has no Agent
 // or ThreadID, and a RunID of the form workflow:<run id>:<node id>. Loop
 // has checked Input against the tool's input_schema.
-type ToolRequest struct {
-	RunID    string          `json:"run_id"`
-	Agent    string          `json:"agent"`
-	ThreadID string          `json:"thread_id"`
-	Input    json.RawMessage `json:"input"`
-}
+type ToolRequest = plugincontract.ToolRequest
 
 // ToolResult is the answer to a tool call, which the agent sees as the
 // tool's result. IsError lets it retry.
-type ToolResult struct {
-	Content string `json:"content"`
-	IsError bool   `json:"is_error"`
-}
+type ToolResult = plugincontract.ToolResult
 
 // Run statuses Loop sends to POST /runs/{run_id}/done.
 const (
@@ -56,28 +46,16 @@ const (
 
 // RunDoneRequest is the body of POST /runs/{run_id}/done: how an agent run
 // the plugin started ended.
-type RunDoneRequest struct {
-	Status string `json:"status"`
-	Error  string `json:"error,omitempty"`
-}
+type RunDoneRequest = plugincontract.RunDoneRequest
 
 // Event is the body of POST /events: a Loop event the plugin subscribes
 // to, in ChannelID or, when ThreadID is set, one of its threads. Data is
-// the event's data as the app's events WebSocket carries it.
-type Event struct {
-	Type      string          `json:"type"`
-	ChannelID string          `json:"channel_id"`
-	ThreadID  string          `json:"thread_id,omitempty"`
-	Data      json.RawMessage `json:"data"`
-	// Timestamp is when Loop sent it, in Unix milliseconds.
-	Timestamp int64 `json:"timestamp"`
-}
+// the event's data as the app's events WebSocket carries it, and Timestamp
+// when Loop sent it, in Unix milliseconds.
+type Event = plugincontract.Event
 
 // Health is the answer to GET /healthz.
-type Health struct {
-	API     string `json:"api"`
-	Version string `json:"version"`
-}
+type Health = plugincontract.Health
 
 // ActionFunc does an action's work, after Loop has had its 202.
 type ActionFunc func(ctx context.Context, req ActionRequest) error

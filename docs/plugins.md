@@ -210,7 +210,10 @@ build one with `make build-linux` and point `plugins.gate_binary` at it.
 Both halves of the contract are published as OpenAPI 3.1 specs in the SDK module:
 [`plugin-contract-v1.yaml`](../pluginsdk/openapi/plugin-contract-v1.yaml) for what a plugin
 serves, and [`plugin-api-v1.yaml`](../pluginsdk/openapi/plugin-api-v1.yaml) for the Plugin API.
-Loop's and the SDK's tests check the routes, capabilities and success statuses against them.
+Loop's and the SDK's tests check the routes, capabilities, success statuses and the shape of each
+JSON answer against them. The SDK's wire types are generated from them with oapi-codegen into
+`openapi/pluginapi` and `openapi/plugincontract`: after changing a spec, run `make sdk-gen`;
+`make lint` and CI fail while the generated files are out of date (`make sdk-gen-check`).
 
 Every request carries `Authorization: Bearer <contents of LOOP_PLUGIN_SECRET_FILE>`; refuse
 any other.
@@ -254,7 +257,7 @@ channel id. A route needing a capability the owner didn't approve answers `403`.
 | `GET /channel/files?path=&start=&end=` | `files.read` | `{"path", "content", "start", "end", "total_lines"}`; lines are 1-based and inclusive, both optional (without them `content` is the whole file); `.git/` is refused, and so is a file the channel's agents may not read under agentgate (`403`); `404` if missing, `400` for a directory or a range past the end, `413` over the size limit |
 | `GET /channel/tree?glob=` | `files.read` | `{"files": ["a/b.go", …], "truncated": true}`: the files git tracks (or every file outside `.git/` without git), leaving out files agentgate keeps from the channel's agents, optionally filtered by a glob matched against the path or its base name; at most 50,000, with `truncated` set when there were more |
 | `GET /channel/git/recent?days=` | `git.read` | `{"commits": [{"sha", "subject", "author", "time"}], "files": [{"path", "commits"}]}`; files most-changed first; `days` defaults to 14, at most 365; the last 500 commits; `409` when the dir isn't a git repository |
-| `GET /channel/quality/hotspots?limit=` | `quality.read` | the latest quality scan's functions, worst first: `{"functions": [{"path", "name", "start_line", "cyclomatic", "cognitive", "max_nesting", "param_count", "loc", "score"}]}`; `503` before the first scan |
+| `GET /channel/quality/hotspots?limit=&offset=` | `quality.read` | a page of the latest quality scan's functions, worst first: `{"score", "raw", "total_functions", "over_threshold", "histogram", "functions": [{"path", "name", "start_line", "cyclomatic", "cognitive", "max_nesting", "param_count", "loc", "score"}], "offset", "limit", "returned"}`; `limit` defaults to 50, at most 100; `503` before the first scan |
 | `POST /runs` | `agent.readonly` / `agent.write` | body `{"agent", "prompt", "model"?, "effort"?}` → `202 {"run_id", "thread_id"}`; see below |
 | `POST /events` | | body `{"type", "data"}` → `204`; sent to the plugin's panels in the channel as `type` |
 | `POST /notify` | `ui.notify` | body `{"title", "body"}` → `204`; a desktop notification, also kept in the app's notification drawer. Five a minute per plugin, cards included; past that `429` with `Retry-After` |
@@ -293,7 +296,8 @@ written in Go:
   while Loop waits, so hand long work to `Server.Go`. `Server.Go` runs other
   background work, which `Close` cancels.
 - `Client` (the `API` interface) calls the Plugin API; a non-2xx answer is a `StatusError`, which
-  `HasStatus` checks. `RunUI` waits as long as the command's timeout, past `Client.Timeout`.
+  `HasStatus` checks. `Hotspots` returns the worst functions, `HotspotsPage` a page of them with
+  the scan's totals. `RunUI` waits as long as the command's timeout, past `Client.Timeout`.
 - `ReadManifest` parses `plugin.json`, so `/healthz` can report its version.
 - `Serve` serves until the context ends, then waits for requests in flight.
 
@@ -325,6 +329,21 @@ srv := newServer(loop.Client())
 ts := httptest.NewServer(srv.Handler())
 pluginsdktest.Check(t, &pluginsdktest.Plugin{URL: ts.URL, Secret: secret}, m,
 	pluginsdktest.CheckOptions{Loop: loop, Settle: srv.Wait})
+```
+
+`CheckUI` loads each panel and card of the plugin's `/loop-plugin` directory in a headless Chrome
+the way Loop draws them: served with Loop's content security policy into a sandboxed frame, with
+a fake bridge that answers `api.request` with `UIOptions.API`. It returns the problems it saw: a
+load or inline script the policy blocked, an uncaught error or unhandled rejection, a file of the
+bundle that didn't load, a failed bridge call, and a page that didn't load or take the bridge's
+port within `UIOptions.Timeout` (10 seconds; `NoBridge` skips the bridge). It finds Chrome or
+Chromium where chromedp looks; `Chrome.Options` takes another path, or `chromedp.NoSandbox` to
+run as root in a container.
+
+```go
+problems, err := pluginsdktest.CheckUI(ctx, "../loop-plugin", pluginsdktest.UIOptions{API: uiAPI})
+require.NoError(t, err)
+require.Empty(t, problems)
 ```
 
 ## Panels

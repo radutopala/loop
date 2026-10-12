@@ -40,6 +40,8 @@ jobs:
         with:
           go-version: "1.27"
       - run: go generate ./internal/readme/
+      - name: Check the plugin SDK's generated types
+        run: make sdk-gen-check
       - uses: golangci/golangci-lint-action@v9
       - uses: golangci/golangci-lint-action@v9
         with:

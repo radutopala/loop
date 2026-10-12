@@ -3,6 +3,8 @@ package pluginsdktest
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -49,6 +51,10 @@ type spec struct {
 	mux *http.ServeMux
 	// eventTypes is the Event schema's type enum.
 	eventTypes []string
+	// answers are the schemas of the operations' 2xx JSON answers.
+	answers map[string]map[string]any
+	// schemas are components.schemas, for $ref.
+	schemas map[string]any
 }
 
 func loadSpec(t *testing.T, file string) *spec {
@@ -70,8 +76,16 @@ func loadSpec(t *testing.T, file string) *spec {
 		} `yaml:"components"`
 	}
 	require.NoError(t, yaml.Unmarshal(data, &doc), file)
+	var raw struct {
+		Paths      map[string]map[string]any `yaml:"paths"`
+		Components struct {
+			Schemas map[string]any `yaml:"schemas"`
+		} `yaml:"components"`
+	}
+	require.NoError(t, yaml.Unmarshal(data, &raw), file)
 	methods := []string{"get", "put", "post", "delete", "options", "head", "patch", "trace"}
-	s := &spec{ops: map[string]specOp{}, mux: http.NewServeMux(), eventTypes: doc.Components.Schemas.Event.Properties.Type.Enum}
+	s := &spec{ops: map[string]specOp{}, mux: http.NewServeMux(), eventTypes: doc.Components.Schemas.Event.Properties.Type.Enum,
+		answers: map[string]map[string]any{}, schemas: raw.Components.Schemas}
 	for p, item := range doc.Paths {
 		for key, node := range item {
 			if !slices.Contains(methods, key) {
@@ -90,6 +104,13 @@ func loadSpec(t *testing.T, file string) *spec {
 			}
 			route := strings.ToUpper(key) + " " + p
 			s.ops[route] = specOp{caps: op.Caps, success: success}
+			if success != 0 {
+				responses, _ := raw.Paths[p][key].(map[string]any)["responses"].(map[string]any)
+				content, _ := responses[strconv.Itoa(success)].(map[string]any)["content"].(map[string]any)
+				if body, ok := content["application/json"].(map[string]any); ok {
+					s.answers[route] = body["schema"].(map[string]any)
+				}
+			}
 			// A {path} parameter spans the rest of the path.
 			s.mux.Handle(strings.ToUpper(key)+" "+strings.ReplaceAll(p, "{path}", "{path...}"), http.NotFoundHandler())
 		}
@@ -106,6 +127,100 @@ func (s *spec) route(method, path string) string {
 
 func (s *spec) routes() []string {
 	return slices.Sorted(maps.Keys(s.ops))
+}
+
+// check returns why the JSON answer body of route breaks the spec's
+// schema, or nil when it doesn't.
+func (s *spec) check(route string, body []byte) []string {
+	schema, ok := s.answers[route]
+	if !ok {
+		return nil
+	}
+	var v any
+	if err := json.Unmarshal(body, &v); err != nil {
+		return []string{"the answer isn't JSON: " + err.Error()}
+	}
+	return s.checkValue(schema, v, "answer")
+}
+
+// checkValue returns why v breaks schema; at names v.
+func (s *spec) checkValue(schema map[string]any, v any, at string) []string {
+	if ref, ok := schema["$ref"].(string); ok {
+		schema = s.schemas[strings.TrimPrefix(ref, "#/components/schemas/")].(map[string]any)
+	}
+	if enum, ok := schema["enum"].([]any); ok && !slices.Contains(enum, v) {
+		return []string{fmt.Sprintf("%s is %v, not one of %v", at, v, enum)}
+	}
+	if c, ok := schema["const"]; ok && c != v {
+		return []string{fmt.Sprintf("%s is %v, not %v", at, v, c)}
+	}
+	switch schema["type"] {
+	case "object":
+		obj, ok := v.(map[string]any)
+		if !ok {
+			return []string{at + " isn't an object"}
+		}
+		return s.checkObject(schema, obj, at)
+	case "array":
+		arr, ok := v.([]any)
+		if !ok {
+			return []string{at + " isn't an array"}
+		}
+		var out []string
+		for i, item := range arr {
+			out = append(out, s.checkValue(schema["items"].(map[string]any), item, fmt.Sprintf("%s[%d]", at, i))...)
+		}
+		return out
+	case "integer":
+		if n, ok := v.(float64); !ok || n != float64(int64(n)) {
+			return []string{at + " isn't an integer"}
+		}
+	case "number":
+		if _, ok := v.(float64); !ok {
+			return []string{at + " isn't a number"}
+		}
+	case "string":
+		if _, ok := v.(string); !ok {
+			return []string{at + " isn't a string"}
+		}
+	case "boolean":
+		if _, ok := v.(bool); !ok {
+			return []string{at + " isn't a boolean"}
+		}
+	}
+	return nil
+}
+
+// checkObject returns why obj breaks the object schema: a required
+// property missing, one the schema doesn't declare, or a bad value.
+func (s *spec) checkObject(schema, obj map[string]any, at string) []string {
+	var out []string
+	required, _ := schema["required"].([]any)
+	for _, name := range required {
+		if _, ok := obj[name.(string)]; !ok {
+			out = append(out, fmt.Sprintf("%s has no %s", at, name))
+		}
+	}
+	props, _ := schema["properties"].(map[string]any)
+	for name, v := range obj {
+		prop, ok := props[name].(map[string]any)
+		switch extra := schema["additionalProperties"].(type) {
+		case map[string]any:
+			if !ok {
+				prop, ok = extra, true
+			}
+		case bool:
+			if !ok && extra {
+				continue
+			}
+		}
+		if !ok {
+			out = append(out, fmt.Sprintf("%s has %s, which the schema doesn't declare", at, name))
+			continue
+		}
+		out = append(out, s.checkValue(prop, v, at+"."+name)...)
+	}
+	return out
 }
 
 // sample turns a route into a request path, filling in its parameters.
@@ -185,6 +300,8 @@ func (s *OpenAPISuite) TestClient() {
 	require.NoError(s.T(), err)
 	_, err = c.Hotspots(ctx, 5)
 	require.NoError(s.T(), err)
+	_, err = c.HotspotsPage(ctx, 5, 10)
+	require.NoError(s.T(), err)
 	_, err = c.StartRun(ctx, pluginsdk.RunRequest{Agent: "gen", Prompt: "p"})
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), c.Event(ctx, "done", nil))
@@ -199,10 +316,10 @@ func (s *OpenAPISuite) TestClient() {
 	require.NoError(s.T(), err)
 
 	require.NotContains(s.T(), rec.routes, "", "a call isn't in %s", apiSpec)
-	slices.Sort(rec.routes)
-	require.Equal(s.T(), s.api.routes(), rec.routes)
-	require.Equal(s.T(), len(rec.routes), reflect.TypeFor[pluginsdk.API]().NumMethod(),
+	require.Len(s.T(), rec.routes, reflect.TypeFor[pluginsdk.API]().NumMethod(),
 		"a method of API isn't called above")
+	slices.Sort(rec.routes)
+	require.Equal(s.T(), s.api.routes(), slices.Compact(rec.routes))
 }
 
 // TestServer checks that the server serves the contract's operations with
@@ -237,6 +354,9 @@ func (s *OpenAPISuite) TestServer() {
 				code = http.StatusUnauthorized
 			}
 			require.Equal(s.T(), code, w.Code, "%s with secret %q", route, secret)
+			if code == want {
+				require.Empty(s.T(), s.contract.check(route, w.Body.Bytes()), route)
+			}
 		}
 	}
 	srv.Wait()
@@ -281,9 +401,11 @@ func (s *OpenAPISuite) TestFakeLoop() {
 			loop := NewFakeLoop(s.T(), Config{
 				Manifest: &pluginsdk.Manifest{Capabilities: tt.caps, Agents: []pluginsdk.Agent{{ID: "gen", ReadOnly: true}},
 					UI: &pluginsdk.UI{Cards: []pluginsdk.Card{{ID: "c", Entry: "ui/c.html"}}}},
+				Channel:  pluginsdk.Channel{Settings: map[string]any{"n": 1}},
 				Files:    map[string]string{"a.go": "package a\n"},
-				Git:      &pluginsdk.GitRecent{},
-				Hotspots: []pluginsdk.Hotspot{},
+				Git:      &pluginsdk.GitRecent{Commits: []pluginsdk.Commit{{SHA: "abc"}}, Files: []pluginsdk.FileChurn{{Path: "a.go", Commits: 1}}},
+				Hotspots: []pluginsdk.Hotspot{{Name: "f", Score: 0.5}},
+				Quality:  pluginsdk.Hotspots{Score: 0.9, Histogram: map[string]map[string]int{"cyclomatic": {"ok": 1}}},
 			})
 			token, err := os.ReadFile(loop.TokenFile)
 			require.NoError(s.T(), err)
@@ -295,6 +417,8 @@ func (s *OpenAPISuite) TestFakeLoop() {
 				req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(token)))
 				resp, err := http.DefaultClient.Do(req)
 				require.NoError(s.T(), err)
+				body, err := io.ReadAll(resp.Body)
+				require.NoError(s.T(), err)
 				resp.Body.Close()
 				op := s.api.ops[route]
 				want := op.success
@@ -302,6 +426,9 @@ func (s *OpenAPISuite) TestFakeLoop() {
 					want = http.StatusForbidden
 				}
 				require.Equal(s.T(), want, resp.StatusCode, route)
+				if want == op.success {
+					require.Empty(s.T(), s.api.check(route, body), route)
+				}
 			}
 		})
 	}

@@ -116,6 +116,15 @@ func (s *ClientSuite) TestReads() {
 			method: http.MethodGet, path: "/channel/quality/hotspots",
 			want: []Hotspot{{Path: "a.go", Name: "f", StartLine: 3, Cyclomatic: 4, Cognitive: 5, MaxNesting: 2, ParamCount: 1, LOC: 20, Score: 0.5}},
 		},
+		{
+			name: "hotspots page",
+			answer: `{"score":0.7,"raw":2.5,"total_functions":9,"over_threshold":1,"histogram":{"cyclomatic":{"ok":8,"crit":1}},` +
+				`"functions":[{"name":"f"}],"offset":4,"limit":1,"returned":1}`,
+			call:   func() (any, error) { return s.client.HotspotsPage(ctx, 1, 4) },
+			method: http.MethodGet, path: "/channel/quality/hotspots", query: "limit=1&offset=4",
+			want: &Hotspots{Score: 0.7, Raw: 2.5, TotalFunctions: 9, OverThreshold: 1, Histogram: map[string]map[string]int{"cyclomatic": {"ok": 8, "crit": 1}},
+				Functions: []Hotspot{{Name: "f"}}, Offset: 4, Limit: 1, Returned: 1},
+		},
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {

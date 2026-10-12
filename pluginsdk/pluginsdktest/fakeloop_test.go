@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -94,7 +95,7 @@ func (s *FakeLoopSuite) TestFile() {
 
 func (s *FakeLoopSuite) TestBadQuery() {
 	f := NewFakeLoop(s.T(), Config{Files: map[string]string{"a.go": "x"}, Hotspots: []pluginsdk.Hotspot{}})
-	for _, path := range []string{"/channel/files?path=a.go&start=x", "/channel/files?path=a.go&end=-1", "/channel/quality/hotspots?limit=x"} {
+	for _, path := range []string{"/channel/files?path=a.go&start=x", "/channel/files?path=a.go&end=-1", "/channel/quality/hotspots?limit=x", "/channel/quality/hotspots?limit=0", "/channel/quality/hotspots?offset=-1"} {
 		require.Equal(s.T(), http.StatusBadRequest, s.raw(f, http.MethodGet, path, ""), path)
 	}
 }
@@ -141,6 +142,40 @@ func (s *FakeLoopSuite) TestGitAndHotspots() {
 		got, err := c.Hotspots(s.ctx, tt.limit)
 		require.NoError(s.T(), err)
 		require.Equal(s.T(), tt.want, got)
+	}
+}
+
+func (s *FakeLoopSuite) TestHotspotsPage() {
+	hot := make([]pluginsdk.Hotspot, 120)
+	for i := range hot {
+		hot[i] = pluginsdk.Hotspot{Name: strconv.Itoa(i)}
+	}
+	quality := pluginsdk.Hotspots{Score: 0.8, Raw: 2.5, OverThreshold: 3, Histogram: map[string]map[string]int{"cyclomatic": {"ok": 117, "warn": 3}}}
+	tests := []struct {
+		name          string
+		cfg           Config
+		limit, offset int
+		want          *pluginsdk.Hotspots
+	}{
+		{
+			name: "default limit", cfg: Config{Hotspots: hot, Quality: quality},
+			want: &pluginsdk.Hotspots{Score: 0.8, Raw: 2.5, OverThreshold: 3, Histogram: quality.Histogram, TotalFunctions: 120, Functions: hot[:50], Limit: 50, Returned: 50},
+		},
+		{
+			name: "capped limit and offset", cfg: Config{Hotspots: hot, Quality: quality}, limit: 500, offset: 10,
+			want: &pluginsdk.Hotspots{Score: 0.8, Raw: 2.5, OverThreshold: 3, Histogram: quality.Histogram, TotalFunctions: 120, Functions: hot[10:110], Offset: 10, Limit: 100, Returned: 100},
+		},
+		{
+			name: "past the end", cfg: Config{Hotspots: hot[:2]}, limit: 5, offset: 7,
+			want: &pluginsdk.Hotspots{Histogram: map[string]map[string]int{}, TotalFunctions: 2, Functions: []pluginsdk.Hotspot{}, Offset: 7, Limit: 5},
+		},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			got, err := NewFakeLoop(s.T(), tt.cfg).Client().HotspotsPage(s.ctx, tt.limit, tt.offset)
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tt.want, got)
+		})
 	}
 }
 

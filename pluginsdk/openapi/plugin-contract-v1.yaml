@@ -306,4 +306,5 @@ components:
           description: The event's data, as the app's events WebSocket carries it.
         timestamp:
           type: integer
+          format: int64
           description: When Loop sent it, in Unix milliseconds.

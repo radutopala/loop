@@ -1,0 +1,15 @@
+# Generates the plugin contract's types from plugin-contract-v1.yaml; see
+# pluginsdk/generate.go.
+package: plugincontract
+output: openapi/plugincontract/plugincontract_gen.go
+generate:
+  models: true
+compatibility:
+  always-prefix-enum-values: true
+output-options:
+  skip-prune: true
+  skip-enum-validate: true
+  prefer-skip-optional-pointer: true
+  name-normalizer: ToCamelCaseWithInitialisms
+  overlay:
+    path: openapi/plugincontract/overlay.yaml

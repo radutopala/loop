@@ -1,0 +1,21 @@
+# Go types for the open-ended JSON in plugin-api-v1.yaml.
+overlay: 1.0.0
+info:
+  title: Go types for the Plugin API
+  version: "1"
+actions:
+  - target: $.components.schemas.Channel.properties.settings
+    update:
+      x-go-type: map[string]any
+  - target: $.components.schemas.Event.properties.data
+    update:
+      x-go-type: any
+  - target: $.components.schemas.Card.properties.data
+    update:
+      x-go-type: any
+  - target: $.components.schemas.UICommand.properties.steps.items
+    update:
+      x-go-type: map[string]any
+  - target: $.components.schemas.UIReply.properties.results.items
+    update:
+      x-go-type: map[string]any

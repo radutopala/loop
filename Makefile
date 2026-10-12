@@ -1,4 +1,4 @@
-.PHONY: help build build-linux install test test-integration test-integration-browser test-integration-plugin test-component test-runner-build test-runner-push bdd-serve lint lint-go lint-app coverage coverage-check codeql-download codeql codeql-js docker-build docs-build docs-serve docs-capture run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-test app-install app-build-binary app-dist-linux app-icons _sync-loop-overrides
+.PHONY: help build build-linux install test test-integration test-integration-browser test-integration-plugin test-integration-pluginsdk test-component test-runner-build test-runner-push bdd-serve lint lint-go lint-app sdk-gen sdk-gen-check coverage coverage-check codeql-download codeql codeql-js docker-build docs-build docs-serve docs-capture run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-test app-install app-build-binary app-dist-linux app-icons _sync-loop-overrides
 .DEFAULT_GOAL := help
 
 # Strip gate-child env inheritance when invoking make from inside a
@@ -47,6 +47,9 @@ test-integration-browser: ## Run browser integration tests (requires Docker; bui
 test-integration-plugin: ## Run plugin integration tests (requires Docker; builds the echo fixture plugin)
 	docker build -q -t loop-plugin-dev/echo:latest test/component/testdata/plugins/echo
 	go test -v -tags integration -race -count=1 -timeout 10m ./internal/plugin/
+
+test-integration-pluginsdk: ## Run the plugin SDK's integration tests (requires Chrome or Chromium)
+	cd pluginsdk && go test -v -tags integration -race -count=1 -timeout 5m ./pluginsdktest/
 
 # Documentation-capture scenarios are tagged @docs and excluded by default so
 # normal runs (and CI) stay fast and don't write assets. `make docs-capture`
@@ -170,7 +173,17 @@ test-runner-build: ## Build the test-runner Docker image
 test-runner-push: test-runner-build ## Build and push the test-runner Docker image
 	docker push $(TEST_RUNNER_IMAGE)
 
-lint: lint-go lint-app ## Run golangci-lint + biome/tsc (with auto-fix)
+lint: sdk-gen-check lint-go lint-app ## Check the SDK's generated types, run golangci-lint + biome/tsc (with auto-fix)
+
+sdk-gen: ## Generate the plugin SDK's types from its OpenAPI specs
+	cd pluginsdk && go generate .
+
+sdk-gen-check: ## Regenerate the plugin SDK's types, failing when they were out of date
+	@tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
+	cp -R pluginsdk/openapi "$$tmp/openapi" && \
+	$(MAKE) --no-print-directory sdk-gen && \
+	diff -r "$$tmp/openapi" pluginsdk/openapi || \
+	{ echo "error: the plugin SDK's generated types were out of date; make sdk-gen has regenerated them" >&2; exit 1; }
 
 lint-go: ## Run golangci-lint (with auto-fix)
 	@if [ -n "$$(docker ps --filter name=^loop-lint$$ --quiet)" ]; then \
