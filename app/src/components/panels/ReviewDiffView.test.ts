@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ReviewComment } from "../../api/review";
 import type { ColorPalette } from "../../theme";
 import { parseUnifiedDiff } from "./DiffViewer";
-import { type CommentAnchor, type FileSummary, navigableAnchors, orderedComments, unlandedTarget, verdictColor, verdictLabel } from "./ReviewDiffView";
+import { type CommentAnchor, type FileSummary, navigableAnchors, orderedComments, splitComments, unlandedTarget, verdictColor, verdictLabel } from "./ReviewDiffView";
 
 const DIFF = `diff --git a/a.go b/a.go
 index 111..222 100644
@@ -33,13 +33,7 @@ function comment(id: string, path: string, line: number, extra: Partial<ReviewCo
 // exercised against real hunk geometry rather than hand-written line lists.
 function summarize(rawDiff: string, comments: ReviewComment[]) {
   const parsedFiles = parseUnifiedDiff(rawDiff);
-  const known = new Set(parsedFiles.map((p) => p.path));
-  const byFile = new Map<string, ReviewComment[]>();
-  const orphans: ReviewComment[] = [];
-  for (const c of comments) {
-    if (known.has(c.path)) byFile.set(c.path, [...(byFile.get(c.path) ?? []), c]);
-    else orphans.push(c);
-  }
+  const { byFile, orphans } = splitComments(parsedFiles, comments);
   const summaries: FileSummary[] = parsedFiles.map((p) => ({
     path: p.path,
     additions: 0,
@@ -74,10 +68,13 @@ describe("orderedComments", () => {
     expect(out).toEqual(["a1", "b1", "orphan"]);
   });
 
-  it("drops a comment whose line falls outside every hunk", () => {
-    // Line 900 is in no hunk, so FileSection renders no card for it —
-    // counting it would leave the navigator with a dead target.
-    expect(ids(DIFF, [comment("a1", "a.go", 2), comment("nowhere", "a.go", 900)])).toEqual(["a1"]);
+  it("puts a comment whose line falls outside every hunk with the out-of-diff ones", () => {
+    // The line has no row to render under, so it's an orphan the navigator
+    // still counts, like the menus that act on every comment.
+    expect(ids(DIFF, [comment("nowhere", "a.go", 900), comment("a1", "a.go", 2), comment("left", "b.go", 2, { side: "LEFT" })])).toEqual(["a1", "nowhere", "left"]);
+    const { byFile, orphans } = splitComments(parseUnifiedDiff(DIFF), [comment("nowhere", "a.go", 900), comment("a1", "a.go", 2)]);
+    expect([...byFile.keys()]).toEqual(["a.go"]);
+    expect(orphans.map((c) => c.id)).toEqual(["nowhere"]);
   });
 
   it("anchors a LEFT-side comment on the deleted line's old number", () => {

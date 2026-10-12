@@ -332,9 +332,12 @@ twenty comments spread over four files is painful to scroll by hand:
 - **Floating prev/next** (`review-comment-nav`, pinned bottom-right over the
   scroll) steps **comment to comment**, in render order: files top-to-bottom,
   within a file by the diff line each comment anchors to, then out-of-diff
-  comments last. Jumping to a comment in a collapsed file expands that file
-  first and moves the file rail's highlight with it. The widget only appears
-  once the session has at least one anchored comment.
+  comments last. A comment on a line no hunk shows, such as one anchored
+  past the end of its file, counts as out of diff and renders in that
+  section too, so the navigator's **new** count matches **Check all**'s.
+  Jumping to a comment in a collapsed file expands that file first and
+  moves the file rail's highlight with it. The widget only appears once
+  the session has at least one anchored comment.
 - **new | all** (the pair at the left of the floating widget) picks what
   the floating prev/next walks. **new**, the default, is only the findings
   this review session's runs reported, so a PR with a long GitHub thread
