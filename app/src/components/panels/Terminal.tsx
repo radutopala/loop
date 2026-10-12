@@ -399,7 +399,16 @@ export function Terminal({
           </div>
         )}
       </div>
-      {instanceId && <TerminalShortcuts channelId={channelId} leafId={instanceId} onPick={handleShortcutPick} target={target} showPrompts={target === "agent" && !cmd} />}
+      {instanceId && (
+        <TerminalShortcuts
+          channelId={channelId}
+          leafId={instanceId}
+          onPick={handleShortcutPick}
+          target={target}
+          showPrompts={target === "agent" && !cmd}
+          onContinue={target === "agent" && !cmd && status === "running" ? () => handleShortcutPick("continue") : undefined}
+        />
+      )}
     </div>
   );
 }
