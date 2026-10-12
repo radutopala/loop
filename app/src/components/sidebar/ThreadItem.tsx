@@ -83,7 +83,9 @@ export function ThreadItem({
   const activePills = SIDEBAR_PILLS.filter((p) => pillsRef?.current?.get(p.kind)?.has(thread.id));
   const reviewing = !!thread.review_running;
   const badges = thread.plugin_badges ?? [];
-  const notes = useNotificationsState().unread[thread.id] ?? 0;
+  // The open row's bell already counts its notifications.
+  const unread = useNotificationsState().unread[thread.id] ?? 0;
+  const notes = selected ? 0 : unread;
   const hasAnyPill = activePills.length > 0 || reviewing || badges.length > 0 || notes > 0;
   const displayName = sessionName(thread);
 
@@ -277,7 +279,7 @@ export function ThreadItem({
           {notes > 0 && (
             <StatusPill
               label={unreadLabel(notes)}
-              color={colors.error}
+              color={colors.textMuted}
               title={unreadTitle(notes)}
               marginLeft={isUnread || activePills.length > 0 || reviewing || badges.length > 0 || thread.diff_additions > 0 || thread.diff_deletions > 0 ? 4 : "auto"}
             />
