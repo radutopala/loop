@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { createPortal } from "react-dom";
 import { contentCapBase } from "../api/api";
 import { checkFilesExist, type RootEntry } from "../api/files";
-import { pluginXRequest, setPluginEnabled } from "../api/plugins";
+import { pluginXRequest, postPluginNotification, setPluginEnabled } from "../api/plugins";
 import type { FileLinkOpenDetail } from "../components/chat/FileLink";
 import { clampSplit, LearnSplit, SplitSeamLogo } from "../components/layout/LearnSplit";
 import type { ActiveChatState } from "../hooks/useChatStateStore";
@@ -84,9 +84,7 @@ export function PluginPanel({ plugin: ref, channelId, channelName, dirPath, leaf
         request: (method, path, body) => pluginXRequest(pluginId, channelId, method, path, body),
         theme: () => pluginTheme(colors),
         settings: () => found.plugin.settings ?? {},
-        notify: (title, body) => {
-          new Notification(title, { body });
-        },
+        notify: (title, body) => postPluginNotification(pluginId, channelId, title, body),
         openFile: async (path, line) => {
           const [file] = await checkFilesExist(channelId, [path]);
           if (!file?.exists || file.root_index === undefined || file.rel_path === undefined) throw new Error(`no file "${path}" in the channel`);

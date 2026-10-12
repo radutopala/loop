@@ -731,7 +731,7 @@ func (s *ServiceSuite) TestShows() {
 		{name: "shown", state: func() *db.PluginState { return s.installedWith("ui.badge") }, enabled: true, want: true},
 		{name: "not enabled", state: func() *db.PluginState { return s.installedWith("ui.badge") }},
 		{name: "config unreadable", state: func() *db.PluginState { return s.installedWith("ui.badge") }, enabledErr: errors.New("bad config"), wantErr: "bad config"},
-		{name: "not approved", state: func() *db.PluginState { return s.installedWith("ui.card") }, enabled: true},
+		{name: "not approved", state: func() *db.PluginState { return s.installedWith("ui.notification.card") }, enabled: true},
 		{name: "not installed", state: func() *db.PluginState { return nil }, enabled: true},
 		{name: "disabled", state: func() *db.PluginState { return s.installed(db.PluginStatusDisabled) }, enabled: true},
 		{name: "store fails", state: func() *db.PluginState { return nil }, readErr: errors.New("db down"), wantErr: "reading the plugin: db down"},

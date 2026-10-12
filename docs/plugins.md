@@ -98,7 +98,7 @@ The image carries the label `dev.loop.plugin=1`, runs as a non-root `USER` (a nu
   "settings": { "count": { "type": "integer", "title": "Count", "minimum": 1, "maximum": 10, "default": 3 } },
   "ui": {
     "panels": [{ "id": "main", "label": "Echo", "entry": "ui/main/index.html", "singleton": true }],
-    // needs "ui.card" in capabilities
+    // needs "ui.notification.card" in capabilities
     "cards": [{ "id": "score", "entry": "ui/score.html" }],
   },
   "resources": { "memory": "128m", "cpus": 0.5 },
@@ -143,14 +143,14 @@ Capabilities are approved by the owner at install and checked on every call:
 | `agent.write` | runs of any agent |
 | `schedule` | actions' `default_schedule` tasks |
 | `ui.panel` | panels |
-| `ui.notify` | `POST /notify`, the bridge's `ui.notify` |
+| `ui.notification.notify` | `POST /notify`, the bridge's `ui.notification.notify` |
 | `ui.open_file` | the bridge's `ui.open_file` |
 | `ui.copy` | the bridge's `ui.copy` |
 | `memory.write` | `PUT /memory/{name}`, `DELETE /memory/{name}` |
 | `events.subscribe` | the manifest's `events`, sent to `POST /events` |
 | `ui.run` | `POST /ui/commands`: drives an app window, in the plugin's channel and its threads |
 | `ui.badge` | `PUT /badge`, `DELETE /badge`: a short label on the channel's sidebar row |
-| `ui.card` | the manifest's `ui.cards`, `POST /cards`: pages in the channel's notification drawer |
+| `ui.notification.card` | the manifest's `ui.cards`, `POST /cards`: pages in the channel's notification drawer |
 
 ## Container environment
 
@@ -260,13 +260,13 @@ channel id. A route needing a capability the owner didn't approve answers `403`.
 | `GET /channel/quality/hotspots?limit=&offset=` | `quality.read` | a page of the latest quality scan's functions, worst first: `{"score", "raw", "total_functions", "over_threshold", "histogram", "functions": [{"path", "name", "start_line", "cyclomatic", "cognitive", "max_nesting", "param_count", "loc", "score"}], "offset", "limit", "returned"}`; `limit` defaults to 50, at most 100; `503` before the first scan |
 | `POST /runs` | `agent.readonly` / `agent.write` | body `{"agent", "prompt", "model"?, "effort"?}` → `202 {"run_id", "thread_id"}`; see below |
 | `POST /events` | | body `{"type", "data"}` → `204`; sent to the plugin's panels in the channel as `type` |
-| `POST /notify` | `ui.notify` | body `{"title", "body"}` → `204`; a desktop notification, also kept in the notification drawer of the plugin's channel, or of the thread its container serves. Five a minute per plugin, cards included; past that `429` with `Retry-After` |
+| `POST /notify` | `ui.notification.notify` | body `{"title", "body"}` → `204`; kept in the notification drawer of the plugin's channel, or of the thread its container serves. There's no desktop notification. Five a minute per plugin, cards included; past that `429` with `Retry-After` |
 | `PUT /memory/{name}` | `memory.write` | body `{"content"}` (up to 256 KB) → `204`; writes `plugin-<id>-<name>.md` into the auto-memory dir of the channel's dir, where the channel's agents find it with `search_memory` once memory is on. `name` is lowercase letters, digits and dashes, at most 64 (`400` otherwise); `409` when the channel has no dir |
 | `DELETE /memory/{name}` | `memory.write` | `204`, also when there was no such file |
 | `POST /ui/commands` | `ui.run` | body `{"steps", "client_id"?, "timeout"?}` → `200 {"client_id", "results", "error"?}`; an app window runs the [UI bridge steps](api.md#post-apiuicommands) and Loop answers when it's done, up to `timeout` (a Go duration, `1m` by default, at most `10m`). The first step is `select_channel`, and each `select_channel` opens the plugin's channel or one of its threads (`403` otherwise); terminal steps work only on the agent and shell panes. `404` when no window is open, `502` when it goes away, `504` when it doesn't answer in time |
 | `PUT /badge` | `ui.badge` | body `{"text", "title"?}` → `204`; shows `text` (trimmed, 1 to 16 characters on one line) on the sidebar row of the plugin's channel, or of the thread its container serves, with `title` (at most 200 characters) as its tooltip. It replaces the plugin's badge there and stays until the plugin clears it, is removed or loses `ui.badge`, the channel is deleted, or its project stops enabling the plugin; every open window drops it at once |
 | `DELETE /badge` | `ui.badge` | `204`, also when there was no badge |
-| `POST /cards` | `ui.card` | body `{"card", "title"?, "data"?}` (up to 64 KB) → `201 {"id"}`; posts one of the manifest's cards to the notification drawer of the plugin's channel, or of the thread its container serves, with `data` for its page (see [Cards](#cards)). Shares `/notify`'s five a minute (`429`). `400` for a card the manifest doesn't declare, and outside the desktop app |
+| `POST /cards` | `ui.notification.card` | body `{"card", "title"?, "data"?}` (up to 64 KB) → `201 {"id"}`; posts one of the manifest's cards to the notification drawer of the plugin's channel, or of the thread its container serves, with `data` for its page (see [Cards](#cards)). Shares `/notify`'s five a minute (`429`). `400` for a card the manifest doesn't declare, and outside the desktop app |
 
 ### Agent runs
 
@@ -389,7 +389,7 @@ On load the host posts `{"type": "loop-plugin:init"}` to the frame with a `Messa
 | `state.set` | `{"value"}` | `null`; up to 64 KB of JSON, kept per plugin, channel and panel |
 | `theme.get` | | `{"mode": "dark"\|"light", "vars": {"--bg": "…", …}}` |
 | `settings.get` | | the plugin's settings in the channel's project |
-| `ui.notify` | `{"title", "body"}` | `null`; needs `ui.notify` |
+| `ui.notification.notify` | `{"title", "body"}` | `null`; kept in the notification drawer of the panel's channel, like `POST /notify`; needs `ui.notification.notify` |
 | `ui.open_file` | `{"path", "line"?}` | `null`; opens a file of the channel in the editor; needs `ui.open_file` |
 | `ui.copy` | `{"text"}` | `null`; puts `text`, at most 1 MB, on the clipboard; needs `ui.copy` |
 | `ui.resize` | `{"height"}` | `null`; sets a card's height in pixels, kept within 80 to 900; a panel fills its pane and gets an error |
@@ -407,7 +407,7 @@ Host notifications:
 
 ### Cards
 
-A plugin approved for `ui.card` declares pages in the manifest's `ui.cards` (`id` and `entry`,
+A plugin approved for `ui.notification.card` declares pages in the manifest's `ui.cards` (`id` and `entry`,
 checked like a panel's) and posts one with `POST /cards`. Cards don't go in the chat, which is
 for talking with the agent: they land in the notification drawer of the channel or thread, opened
 from the bell at the right of the layout bar, next to Loop's own notifications about it
@@ -418,4 +418,4 @@ gets the same bridge as a panel, with three differences: `context.get` has the c
 `card` and the posted `data`, `state` lasts as long as the frame, and the page sets its own
 height with `ui.resize`, 160 pixels until it does. `api.request` reaches the container of the
 card's channel or thread. A card of a plugin that was removed, or no longer approved for
-`ui.card`, shows a note in its place; removing the plugin drops its notifications.
+`ui.notification.card`, shows a note in its place; removing the plugin drops its notifications.

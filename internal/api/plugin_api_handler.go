@@ -423,8 +423,8 @@ type pluginNotifyRequest struct {
 	Body  string `json:"body"`
 }
 
-// handlePluginNotify asks the app to show a desktop notification from the
-// calling plugin, which its notification drawer lists too.
+// handlePluginNotify keeps a notification from the calling plugin in its
+// channel's notification drawer.
 func (s *Server) handlePluginNotify(w http.ResponseWriter, r *http.Request) {
 	p, _, ok := s.pluginCaller(w, r, plugin.CapUINotify)
 	if !ok {
@@ -435,25 +435,64 @@ func (s *Server) handlePluginNotify(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+	s.recordPluginNotify(w, r, p.PluginID, p.ChannelID, req)
+}
+
+type pluginPageNotifyRequest struct {
+	ChannelID string `json:"channel_id"`
+	pluginNotifyRequest
+}
+
+// handlePluginPageNotify serves POST /api/plugins/{plugin}/notifications:
+// a notification from one of the plugin's panel or card pages, which the
+// app sends on its behalf. It's kept like one from the plugin's container.
+func (s *Server) handlePluginPageNotify(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.plugins, pluginsDisabled) {
+		return
+	}
+	var req pluginPageNotifyRequest
+	r.Body = http.MaxBytesReader(w, r.Body, pluginEventMax)
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.ChannelID == "" {
+		http.Error(w, "channel_id is required", http.StatusBadRequest)
+		return
+	}
+	ch, ok := s.pluginChannel(w, r, req.ChannelID)
+	if !ok {
+		return
+	}
+	pluginID := r.PathValue("plugin")
+	shows, err := s.plugins.Shows(r.Context(), pluginID, plugin.CapUINotify, pluginRuntimeChannel(ch))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !shows {
+		http.Error(w, "the plugin can't notify in this channel", http.StatusForbidden)
+		return
+	}
+	s.recordPluginNotify(w, r, pluginID, ch.ChannelID, req.pluginNotifyRequest)
+}
+
+// recordPluginNotify keeps plugin pluginID's notification req in
+// channelID's drawer, within the plugin's limit.
+func (s *Server) recordPluginNotify(w http.ResponseWriter, r *http.Request, pluginID, channelID string, req pluginNotifyRequest) {
 	if req.Title == "" {
 		http.Error(w, "title is required", http.StatusBadRequest)
 		return
 	}
-	if ok, wait := s.notifyLimit.allow(p.PluginID); !ok {
+	if ok, wait := s.notifyLimit.allow(pluginID); !ok {
 		w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(wait.Seconds()))))
 		http.Error(w, "too many notifications; try again later", http.StatusTooManyRequests)
 		return
 	}
 	if s.notifications != nil {
-		n := &db.Notification{PluginID: p.PluginID, Kind: db.NotificationNotify, ChannelID: p.ChannelID, Title: req.Title, Body: req.Body}
+		n := &db.Notification{PluginID: pluginID, Kind: db.NotificationNotify, ChannelID: channelID, Title: req.Title, Body: req.Body}
 		if err := s.notify(r.Context(), n); err != nil {
-			s.logger.Warn("recording a plugin's notification", "plugin", p.PluginID, "error", err)
+			s.logger.Warn("recording a plugin's notification", "plugin", pluginID, "error", err)
 		}
-	}
-	if s.eventsHub != nil {
-		s.eventsHub.Broadcast(Event{Type: "plugin.notify", ChannelID: p.ChannelID, Data: map[string]any{
-			"plugin_id": p.PluginID, "title": req.Title, "body": req.Body,
-		}})
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

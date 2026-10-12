@@ -48,13 +48,13 @@ const (
 	CapAgentWrite    Capability = "agent.write"
 	CapSchedule      Capability = "schedule"
 	CapUIPanel       Capability = "ui.panel"
-	CapUINotify      Capability = "ui.notify"
+	CapUINotify      Capability = "ui.notification.notify"
 	CapUIOpenFile    Capability = "ui.open_file"
 	CapMemoryWrite   Capability = "memory.write"
 	CapEventsSub     Capability = "events.subscribe"
 	CapUIRun         Capability = "ui.run"
 	CapUIBadge       Capability = "ui.badge"
-	CapUICard        Capability = "ui.card"
+	CapUICard        Capability = "ui.notification.card"
 	CapUICopy        Capability = "ui.copy"
 )
 

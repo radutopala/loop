@@ -64,7 +64,8 @@ export interface BridgeHost {
   theme: () => PluginTheme;
   /** The plugin's settings in the channel's project. */
   settings: () => Record<string, unknown>;
-  notify: (title: string, body: string) => void;
+  /** Keeps a notification in the channel's drawer. */
+  notify: (title: string, body: string) => Promise<void>;
   openFile: (path: string, line?: number) => Promise<void>;
   /** Puts text on the clipboard. */
   copy: (text: string) => Promise<void>;
@@ -110,9 +111,9 @@ export async function callBridge(host: BridgeHost, method: string, params: Param
       return host.theme();
     case "settings.get":
       return host.settings();
-    case "ui.notify":
-      needs(host, "ui.notify");
-      host.notify(str(params, "title"), str(params, "body", false));
+    case "ui.notification.notify":
+      needs(host, "ui.notification.notify");
+      await host.notify(str(params, "title"), str(params, "body", false));
       return null;
     case "ui.open_file": {
       needs(host, "ui.open_file");

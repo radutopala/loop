@@ -30,7 +30,7 @@ const cogtest = `{
   "version": "1.0.0",
   "api": "1",
   "loop": ">=2026.11.0",
-  "capabilities": ["files.read", "git.read", "quality.read", "agent.readonly", "schedule", "ui.panel", "ui.notify", "ui.open_file", "memory.write", "events.subscribe", "ui.run"],
+  "capabilities": ["files.read", "git.read", "quality.read", "agent.readonly", "schedule", "ui.panel", "ui.notification.notify", "ui.open_file", "memory.write", "events.subscribe", "ui.run"],
   "events": ["message.created"],
   "gate": {
     "commands": [{"commands": ["git"], "args_patterns": ["^log"], "decision": "allow"}],
@@ -188,7 +188,7 @@ func (s *ManifestSuite) TestValidate() {
 				{ID: "S", Entry: "ui/s.js"},
 			}}
 		}, wantErr: []string{
-			`ui.cards needs capability "ui.card"`,
+			`ui.cards needs capability "ui.notification.card"`,
 			`ui.cards[1]: card "score" is declared twice`,
 			`ui.cards[1]: entry "ui/../score.html" must be an .html file under ui/`,
 			`ui.cards[2]: id "S" must match`,

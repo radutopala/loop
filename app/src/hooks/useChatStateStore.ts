@@ -672,12 +672,6 @@ export function useChatStateStore({ channels, channelsFetchedAt, selectedId, onA
       window.loopAPI?.notifyApprovalNeeded?.(reqData.req_id);
     }
 
-    // A plugin's notification, posted from its container or its panel.
-    if (wsEvent.type === "plugin.notify") {
-      const data = wsEvent.data as { title?: string; body?: string };
-      if (data.title) new Notification(data.title, { body: data.body ?? "" });
-    }
-
     if (wsEvent.type === "gate.approval_resolved") {
       const data = wsEvent.data as GateApprovalResolvedData;
       console.log("[bounce] notifyApprovalResolved reqId=%s channelId=%s", data.req_id, channelId);

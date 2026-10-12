@@ -145,7 +145,7 @@ type Server struct {
 	threads                 ThreadEnsurer
 	removeMCPConfig         func(dirPath, channelID string) error // removes a deleted channel's MCP config files
 	configLocks             configLocks                           // serializes edits of each config.json
-	notifyLimit             notifyLimit                           // caps each plugin's desktop notifications
+	notifyLimit             notifyLimit                           // caps each plugin's notifications and cards
 	ui                      *uibridge.Bridge                      // the app windows the UI routes drive
 	uiStateWaitOverride     time.Duration                         // tests shorten GET /api/ui/state's wait
 	history                 configHistory                         // records each config.json's revisions; see lockConfig
@@ -676,6 +676,7 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/plugins/{plugin}/agent", s.handleGetPluginAgent)
 	mux.HandleFunc("POST /api/plugins/{plugin}/actions/{action}", s.handleRunPluginAction)
 	mux.HandleFunc("POST /api/plugins/{plugin}/tools/{tool}", s.handleCallPluginTool)
+	mux.HandleFunc("POST /api/plugins/{plugin}/notifications", s.handlePluginPageNotify)
 	mux.HandleFunc("/api/plugins/{plugin}/x/{path...}", s.handlePluginX)
 	mux.HandleFunc("POST /api/plugin/v1/runs", s.handleStartPluginRun)
 	mux.HandleFunc("GET /api/plugin/v1/channel", s.handlePluginChannel)

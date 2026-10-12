@@ -9,6 +9,7 @@ import {
   installPlugin,
   PLUGINS_CHANGED,
   pluginXRequest,
+  postPluginNotification,
   removePlugin,
   setPluginEnabled,
   setPluginSetting,
@@ -134,6 +135,13 @@ describe("plugin management", () => {
     { name: "remove", call: () => removePlugin("echo", false), url: "http://localhost:8222/api/plugins/echo", method: "DELETE" },
     { name: "remove and purge", call: () => removePlugin("echo", true), url: "http://localhost:8222/api/plugins/echo?purge=true", method: "DELETE" },
     { name: "stop", call: () => stopPluginContainer("echo", "ch/1"), url: "http://localhost:8222/api/plugins/echo/channels/ch%2F1/stop", method: "POST" },
+    {
+      name: "a notification",
+      call: () => postPluginNotification("echo", "ch", "Hi", "there"),
+      url: "http://localhost:8222/api/plugins/echo/notifications",
+      method: "POST",
+      body: { channel_id: "ch", title: "Hi", body: "there" },
+    },
   ])("sends $name", async ({ call, url, method, body }) => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify(candidate)));
     await call();
@@ -148,6 +156,7 @@ describe("plugin management", () => {
     ["install", () => installPlugin(candidate, []), "Failed to install the plugin: Bad Request"],
     ["remove", () => removePlugin("echo", false), "Failed to remove the plugin: Bad Request"],
     ["stop", () => stopPluginContainer("echo", "ch"), "Failed to stop the plugin: Bad Request"],
+    ["notify", () => postPluginNotification("echo", "ch", "Hi", ""), "Failed to keep the notification: Bad Request"],
   ])("explains a failed %s", async (_name, call, fallback) => {
     fetchMock.mockResolvedValueOnce(new Response("pull failed\n", { status: 400 }));
     await expect(call()).rejects.toThrow(/^pull failed$/);

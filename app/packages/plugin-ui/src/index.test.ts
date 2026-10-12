@@ -16,7 +16,7 @@ function fakeHost(over: Partial<BridgeHost> = {}): BridgeHost {
     channelId: "ch1",
     channelName: "proj",
     dirPath: "/src/proj",
-    capabilities: ["ui.notify", "ui.open_file", "ui.copy"],
+    capabilities: ["ui.notification.notify", "ui.open_file", "ui.copy"],
     request: vi.fn(async (method: string, path: string) => ({ status: 200, body: { method, path } })),
     theme: () => pluginTheme(darkColors),
     settings: () => ({ count: 5 }),
@@ -121,9 +121,9 @@ describe("calls", () => {
   });
 
   it.each([
-    { name: "title only", run: (b: Bridge) => b.ui.notify("Done"), want: ["Done", ""] },
-    { name: "title and body", run: (b: Bridge) => b.ui.notify("Done", "3 of 5"), want: ["Done", "3 of 5"] },
-  ])("ui.notify: $name", async ({ run, want }) => {
+    { name: "title only", run: (b: Bridge) => b.ui.notification.notify("Done"), want: ["Done", ""] },
+    { name: "title and body", run: (b: Bridge) => b.ui.notification.notify("Done", "3 of 5"), want: ["Done", "3 of 5"] },
+  ])("ui.notification.notify: $name", async ({ run, want }) => {
     const { bridge, host } = pair();
     await expect(run(bridge)).resolves.toBeUndefined();
     expect(host.notify).toHaveBeenCalledWith(...want);
@@ -175,10 +175,10 @@ describe("errors", () => {
     { name: "state over 64 KB", run: (b: Bridge) => b.state.set("x".repeat(MAX_STATE_BYTES)), code: ErrorCode.INVALID_PARAMS, message: "state is over 64 KB" },
     {
       name: "not approved",
-      run: (b: Bridge) => b.ui.notify("hi"),
+      run: (b: Bridge) => b.ui.notification.notify("hi"),
       over: { capabilities: [] },
       code: ErrorCode.CALL_FAILED,
-      message: "the plugin wasn't approved for ui.notify",
+      message: "the plugin wasn't approved for ui.notification.notify",
     },
     {
       name: "host call fails",

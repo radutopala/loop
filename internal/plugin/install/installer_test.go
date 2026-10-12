@@ -331,7 +331,7 @@ func (s *InstallerSuite) TestInspectFailures() {
 		{"no manifest", extracting(tarOf(entry{name: "loop-plugin/"})), "needs /loop-plugin/plugin.json"},
 		{"bad manifest", extracting(pluginTar(`{"id": "X"}`)), "invalid plugin manifest"},
 		{"missing panel entry", extracting(tarOf(entry{name: "loop-plugin/plugin.json", body: str(manifest)})), `panel "main": entry ui/main/index.html is not in the image`},
-		{"missing card entry", extracting(pluginTar(strings.NewReplacer(`"ui.panel",`, `"ui.panel", "ui.card",`, `"panels"`, `"cards": [{"id": "score", "entry": "ui/score.html"}], "panels"`).Replace(manifest))), `card "score": entry ui/score.html is not in the image`},
+		{"missing card entry", extracting(pluginTar(strings.NewReplacer(`"ui.panel",`, `"ui.panel", "ui.notification.card",`, `"panels"`, `"cards": [{"id": "score", "entry": "ui/score.html"}], "panels"`).Replace(manifest))), `card "score": entry ui/score.html is not in the image`},
 		{"needs a newer loop", extracting(pluginTar(strings.Replace(manifest, `"api": "1",`, `"api": "1", "loop": ">=2027.1.0",`, 1))), "plugin echo needs Loop >=2027.1.0, this is v2026.10.3"},
 		{"place", func() {
 			extracting(pluginTar(manifest))()

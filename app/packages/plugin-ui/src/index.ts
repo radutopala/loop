@@ -126,8 +126,11 @@ export interface Bridge {
     on<T = unknown>(cb: (event: PluginEvent<T>) => void): Unsubscribe;
   };
   ui: {
-    /** Shows a native notification. Needs the ui.notify capability. */
-    notify(title: string, body?: string): Promise<void>;
+    notification: {
+      /** Keeps a notification in the channel's notification drawer. Needs
+       *  the ui.notification.notify capability. */
+      notify(title: string, body?: string): Promise<void>;
+    };
     /** Opens a file of the channel in the editor, at line if given. Needs
      *  the ui.open_file capability. */
     openFile(path: string, line?: number): Promise<void>;
@@ -281,8 +284,10 @@ export function connectPort(port: MessagePort, opts: BridgeOptions = {}): Bridge
     },
     events: { on: (cb) => on("event", cb) },
     ui: {
-      notify: async (title, body) => {
-        await call("ui.notify", body === undefined ? { title } : { title, body });
+      notification: {
+        notify: async (title, body) => {
+          await call("ui.notification.notify", body === undefined ? { title } : { title, body });
+        },
       },
       openFile: async (path, line) => {
         await call("ui.open_file", line === undefined ? { path } : { path, line });

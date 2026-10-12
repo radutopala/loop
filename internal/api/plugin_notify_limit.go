@@ -12,8 +12,8 @@ const (
 	pluginNotifyWindow = time.Minute
 )
 
-// notifyLimit caps how many desktop notifications each plugin shows, so a
-// plugin can't flood the owner's desktop. The zero value is ready to use.
+// notifyLimit caps how many notifications and cards each plugin keeps, so
+// a plugin can't flood the owner's notification drawer. The zero value is ready to use.
 type notifyLimit struct {
 	mu   sync.Mutex
 	sent map[string][]time.Time // each plugin's notifications within the window

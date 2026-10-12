@@ -58,7 +58,7 @@ type Event struct {
 	Data json.RawMessage
 }
 
-// Notification is a desktop notification the plugin asked for.
+// Notification is a notification the plugin asked to keep in the drawer.
 type Notification struct {
 	Title string
 	Body  string

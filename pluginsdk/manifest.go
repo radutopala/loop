@@ -20,13 +20,13 @@ const (
 	CapAgentWrite    = "agent.write"
 	CapSchedule      = "schedule"
 	CapUIPanel       = "ui.panel"
-	CapUINotify      = "ui.notify"
+	CapUINotify      = "ui.notification.notify"
 	CapUIOpenFile    = "ui.open_file"
 	CapMemoryWrite   = "memory.write"
 	CapEventsSub     = "events.subscribe"
 	CapUIRun         = "ui.run"
 	CapUIBadge       = "ui.badge"
-	CapUICard        = "ui.card"
+	CapUICard        = "ui.notification.card"
 	CapUICopy        = "ui.copy"
 )
 

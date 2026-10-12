@@ -101,7 +101,7 @@ export function NotificationDrawer({ open, channelId, channelName, dirPath, onCl
           top: 0,
           right: 0,
           bottom: 0,
-          width: 480,
+          width: 640,
           maxWidth: "100%",
           zIndex: 41,
           display: "flex",

@@ -3006,7 +3006,7 @@ List the installed plugins.
       "digest": "sha256:…",
       "version": "1.0.0",
       "api": "1",
-      "capabilities": ["ui.panel", "ui.card"],
+      "capabilities": ["ui.panel", "ui.notification.card"],
       "dev": false,
       "status": "installed",
       "installed_at": "2026-10-10T09:00:00Z",
@@ -3018,7 +3018,7 @@ List the installed plugins.
 }
 ```
 
-`capabilities` are the ones the owner approved. `digest` is empty for a dev install. `name`, `panels` and `cards` come from the manifest of a plugin that may run; `panels` only when the owner approved `ui.panel`, `cards` only for `ui.card`. `settings_schema` is the manifest's settings, and `global_settings` the global config's `plugins.<id>.settings`. With `channel_id`, `project_settings` are that channel's project config's own values, `settings` what the plugin runs with there (each default, then the global, then the project values) and `settings_problems` the values left out for no such setting or a value the schema refuses.
+`capabilities` are the ones the owner approved. `digest` is empty for a dev install. `name`, `panels` and `cards` come from the manifest of a plugin that may run; `panels` only when the owner approved `ui.panel`, `cards` only for `ui.notification.card`. `settings_schema` is the manifest's settings, and `global_settings` the global config's `plugins.<id>.settings`. With `channel_id`, `project_settings` are that channel's project config's own values, `settings` what the plugin runs with there (each default, then the global, then the project values) and `settings_problems` the values left out for no such setting or a value the schema refuses.
 
 ### `POST /api/plugins/inspect`
 
@@ -3147,6 +3147,20 @@ An unknown tool, an input the schema rejects, or a plugin that isn't answering c
 
 **Errors:** `403` for any caller but the plugin's own agent run; `404` if the thread or its channel is gone; `502` if the container doesn't start or the plugin fails the call.
 
+### `POST /api/plugins/{plugin}/notifications`
+
+A notification from one of the plugin's panel or card pages (the bridge's `ui.notification.notify`), which the app sends on its behalf. It's kept as a `notify` [notification](#notifications) in the channel's drawer, like one from the plugin's container, and shares its limit.
+
+**Request body:**
+
+```json
+{"channel_id": "ch-1", "title": "Quiz ready", "body": "3 questions"}
+```
+
+**Response:** `204 No Content`
+
+**Errors:** `400` without `channel_id` or `title`; `403` if the plugin isn't enabled in the channel or wasn't approved for `ui.notification.notify`; `404` if the channel doesn't exist; `429` with `Retry-After` past five a minute.
+
 ### `ANY /api/plugins/{plugin}/x/{path...}?channel_id=`
 
 The plugin's own API for its panels. Loop sends the method, the query (without `channel_id`), the body (up to 8 MB) and its `Content-Type` to the plugin's `/x/{path}` in the container of the channel, thread or worktree thread, starting it if needed, and answers with the plugin's status, body and `Content-Type`.
@@ -3165,12 +3179,12 @@ Called by a plugin's container with the token in its `LOOP_PLUGIN_TOKEN_FILE`; t
 | `GET /api/plugin/v1/channel/git/recent?days=` | `git.read` | `{"commits": [{"sha", "subject", "author", "time"}], "files": [{"path", "commits"}]}`; `days` defaults to 14, at most 365; the last 500 non-merge commits; `409` without git |
 | `GET /api/plugin/v1/channel/quality/hotspots?limit=&offset=` | `quality.read` | as `GET /api/channels/{id}/quality/complexity`; `503` before the first scan |
 | `POST /api/plugin/v1/events` | | body `{"type", "data"}` (up to 64 KB) → `204`; broadcast as a `plugin.event` event with `{"plugin_id", "type", "data"}` for the channel |
-| `POST /api/plugin/v1/notify` | `ui.notify` | body `{"title", "body"}` → `204`; kept as a `notify` [notification](#notifications) and broadcast as a `plugin.notify` event with `{"plugin_id", "title", "body"}`. At most five a minute per plugin, cards included: past that `429` with `Retry-After` in seconds |
+| `POST /api/plugin/v1/notify` | `ui.notification.notify` | body `{"title", "body"}` → `204`; kept as a `notify` [notification](#notifications); there's no desktop notification. At most five a minute per plugin, cards included: past that `429` with `Retry-After` in seconds |
 | `PUT /api/plugin/v1/memory/{name}` | `memory.write` | body `{"content"}` (up to 256 KB) → `204`; writes `plugin-<plugin>-<name>.md` in `~/.claude/projects/<encoded dir>/memory/` for the channel's dir, which `search_memory` indexes. `name` matches `^[a-z0-9][a-z0-9-]{0,63}$` (`400` otherwise); `409` when the channel has no dir |
 | `DELETE /api/plugin/v1/memory/{name}` | `memory.write` | removes that file → `204`, also when it's already gone |
 | `PUT /api/plugin/v1/badge` | `ui.badge` | body `{"text", "title"?}` → `204`; keeps the plugin's badge on the channel's sidebar row (see `plugin_badges` in [`GET /api/channels`](#get-apichannels)) and broadcasts a `plugin.badge` event with `{"plugin_id", "text", "title"?}` to every window. `text` is trimmed and must be 1 to 16 characters on one line, `title` at most 200 (`400` otherwise) |
 | `DELETE /api/plugin/v1/badge` | `ui.badge` | removes the plugin's badge → `204`, also when there was none; broadcasts `plugin.badge` with an empty `text` |
-| `POST /api/plugin/v1/cards` | `ui.card` | body `{"card", "title"?, "data"?}` (up to 64 KB) → `201 {"id"}`; keeps a `card` [notification](#notifications) for the channel with `data` and broadcasts `notifications.changed`. `title` is cut to one line of 120 characters. Shares notify's limit (`429`). `400` for a card the manifest doesn't declare (`ui.cards`) and on Slack or Discord |
+| `POST /api/plugin/v1/cards` | `ui.notification.card` | body `{"card", "title"?, "data"?}` (up to 64 KB) → `201 {"id"}`; keeps a `card` [notification](#notifications) for the channel with `data` and broadcasts `notifications.changed`. `title` is cut to one line of 120 characters. Shares notify's limit (`429`). `400` for a card the manifest doesn't declare (`ui.cards`) and on Slack or Discord |
 | `POST /api/plugin/v1/ui/commands` | `ui.run` | as [`POST /api/ui/commands`](#post-apiuicommands), held to the channel: the first step is `select_channel`, and each `select_channel` names the channel or one of its threads that isn't hidden (`403` otherwise) |
 
 ---

@@ -3,9 +3,12 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"github.com/radutopala/loop/internal/db"
@@ -241,13 +244,70 @@ func (s *ServerSuite) TestPluginNotifyRecorded() {
 	require.NoError(s.T(), err)
 	require.Len(s.T(), list, 1)
 	require.Equal(s.T(), db.Notification{ID: list[0].ID, PluginID: "echo", Kind: db.NotificationNotify, ChannelID: "ch-1", Title: "Quiz due", Body: "3 cards", Data: "null", CreatedAt: list[0].CreatedAt}, *list[0])
-	require.Equal(s.T(), []string{EventNotificationsChanged, "plugin.notify"}, eventTypes(*sent))
+	require.Equal(s.T(), []string{EventNotificationsChanged}, eventTypes(*sent))
 
-	// A failed recording still shows the desktop notification.
+	// A failed recording is only logged.
 	require.NoError(s.T(), store.Close())
 	rec = s.requestAs(echoPlugin, "POST", "/api/plugin/v1/notify", `{"title":"again"}`)
 	require.Equal(s.T(), http.StatusNoContent, rec.Code)
-	require.Equal(s.T(), []string{EventNotificationsChanged, "plugin.notify", "plugin.notify"}, eventTypes(*sent))
+	require.Equal(s.T(), []string{EventNotificationsChanged}, eventTypes(*sent))
+}
+
+func (s *ServerSuite) TestPluginPageNotify() {
+	tests := []struct {
+		name     string
+		body     string
+		channel  *db.Channel
+		chErr    error
+		shows    bool
+		showsErr error
+		wantCode int
+		wantBody string
+	}{
+		{name: "bad body", body: `{`, wantCode: http.StatusBadRequest},
+		{name: "no channel", body: `{"title":"t"}`, wantCode: http.StatusBadRequest, wantBody: "channel_id is required"},
+		{name: "channel lookup fails", body: `{"channel_id":"ch-1","title":"t"}`, chErr: errors.New("boom"), wantCode: http.StatusInternalServerError},
+		{name: "no such channel", body: `{"channel_id":"ch-1","title":"t"}`, wantCode: http.StatusNotFound},
+		{name: "shows fails", body: `{"channel_id":"ch-1","title":"t"}`, channel: &db.Channel{ChannelID: "ch-1"}, showsErr: errors.New("boom"), wantCode: http.StatusInternalServerError},
+		{name: "not shown", body: `{"channel_id":"ch-1","title":"t"}`, channel: &db.Channel{ChannelID: "ch-1"}, wantCode: http.StatusForbidden, wantBody: "the plugin can't notify in this channel"},
+		{name: "no title", body: `{"channel_id":"ch-1"}`, channel: &db.Channel{ChannelID: "ch-1"}, shows: true, wantCode: http.StatusBadRequest, wantBody: "title is required"},
+		{name: "kept", body: `{"channel_id":"ch-1","title":"Quiz due","body":"3 cards"}`, channel: &db.Channel{ChannelID: "ch-1"}, shows: true, wantCode: http.StatusNoContent},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			pm := s.pluginRoutes()
+			s.mux.HandleFunc("POST /api/plugins/{plugin}/notifications", s.srv.handlePluginPageNotify)
+			store, sent := s.notificationStore()
+			if tt.channel != nil || tt.chErr != nil || tt.wantCode == http.StatusNotFound {
+				s.store.On("GetChannel", mock.Anything, "ch-1").Return(tt.channel, tt.chErr).Once()
+			}
+			if tt.channel != nil {
+				pm.On("Shows", mock.Anything, "echo", plugin.CapUINotify, pluginRuntimeChannel(tt.channel)).Return(tt.shows, tt.showsErr).Once()
+			}
+			rec := s.testRequest("POST", "/api/plugins/echo/notifications", tt.body)
+			require.Equal(s.T(), tt.wantCode, rec.Code)
+			if tt.wantBody != "" {
+				require.Equal(s.T(), tt.wantBody, strings.TrimSpace(rec.Body.String()))
+			}
+			list, err := store.ListNotifications(context.Background(), "ch-1", 10)
+			require.NoError(s.T(), err)
+			if tt.wantCode != http.StatusNoContent {
+				require.Empty(s.T(), list)
+				require.Empty(s.T(), *sent)
+				return
+			}
+			require.Len(s.T(), list, 1)
+			require.Equal(s.T(), db.Notification{ID: list[0].ID, PluginID: "echo", Kind: db.NotificationNotify, ChannelID: "ch-1", Title: "Quiz due", Body: "3 cards", Data: "null", CreatedAt: list[0].CreatedAt}, *list[0])
+			require.Equal(s.T(), []string{EventNotificationsChanged}, eventTypes(*sent))
+		})
+	}
+}
+
+func (s *ServerSuite) TestPluginPageNotifyDisabled() {
+	s.mux.HandleFunc("POST /api/plugins/{plugin}/notifications", s.srv.handlePluginPageNotify)
+	rec := s.testRequest("POST", "/api/plugins/echo/notifications", `{"channel_id":"ch-1","title":"t"}`)
+	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
 }
 
 func eventTypes(evts []Event) []string {

@@ -139,6 +139,17 @@ export async function stopPluginContainer(id: string, channelId: string): Promis
   if (!res.ok) throw await failure(res, "stop the plugin");
 }
 
+/** Keeps a notification from one of the plugin's pages in channelId's
+ *  notification drawer. */
+export async function postPluginNotification(id: string, channelId: string, title: string, body: string): Promise<void> {
+  const res = await apiFetch(`${getApiUrl()}/api/plugins/${encodeURIComponent(id)}/notifications`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ channel_id: channelId, title, body }),
+  });
+  if (!res.ok) throw await failure(res, "keep the notification");
+}
+
 /** A record of the gate a plugin's container runs under: a decision it
  *  made, a deny unless the owner's policy says to log every one. */
 export interface PluginAuditEntry {

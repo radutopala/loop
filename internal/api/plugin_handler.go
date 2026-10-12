@@ -58,7 +58,7 @@ type pluginInfo struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 	// Name, Panels, Cards and Actions come from the manifest of a plugin
 	// that may run; Panels only when the owner approved ui.panel, Cards
-	// ui.card.
+	// ui.notification.card.
 	Name    string         `json:"name,omitempty"`
 	Panels  []plugin.Panel `json:"panels,omitempty"`
 	Cards   []plugin.Card  `json:"cards,omitempty"`

@@ -287,11 +287,12 @@ paths:
     post:
       operationId: notify
       tags: [ui]
-      summary: Show a desktop notification
+      summary: Keep a notification in the drawer
       description: |
-        Asks the app to show a desktop notification from the plugin. Five a
-        minute per plugin. The body is capped at 64 KB.
-      x-loop-capabilities: [ui.notify]
+        Keeps a notification from the plugin in the notification drawer of
+        its channel, or of the thread its container serves. Five a minute per
+        plugin, cards included. The body is capped at 64 KB.
+      x-loop-capabilities: [ui.notification.notify]
       requestBody:
         required: true
         content:
@@ -474,7 +475,7 @@ paths:
         another platform refuses them. Cards share notify's limit of five a
         minute per plugin; Loop keeps a plugin's newest 200 notifications.
         The body is capped at 64 KB.
-      x-loop-capabilities: [ui.card]
+      x-loop-capabilities: [ui.notification.card]
       requestBody:
         required: true
         content:

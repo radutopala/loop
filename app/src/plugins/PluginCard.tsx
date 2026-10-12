@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { contentCapBase } from "../api/api";
 import { checkFilesExist } from "../api/files";
 import type { PluginInfo } from "../api/plugins";
-import { pluginXRequest } from "../api/plugins";
+import { pluginXRequest, postPluginNotification } from "../api/plugins";
 import type { FileLinkOpenDetail } from "../components/chat/FileLink";
 import { useContentCapsEpoch } from "../hooks/useContentCapsEpoch";
 import { useTheme } from "../ThemeContext";
@@ -70,9 +70,7 @@ export function PluginCard({ pluginId, cardId, label, data, channelId, channelNa
         request: (method, path, body) => pluginXRequest(pluginId, channelId, method, path, body),
         theme: () => pluginTheme(colors),
         settings: () => found.plugin.settings ?? {},
-        notify: (t, body) => {
-          new Notification(t, { body });
-        },
+        notify: (t, body) => postPluginNotification(pluginId, channelId, t, body),
         openFile: async (path, line) => {
           const [file] = await checkFilesExist(channelId, [path]);
           if (!file?.exists || file.root_index === undefined || file.rel_path === undefined) throw new Error(`no file "${path}" in the channel`);

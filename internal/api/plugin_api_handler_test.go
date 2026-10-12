@@ -456,8 +456,7 @@ func (s *ServerSuite) TestPluginEventAndNotify() {
 			want: `{"type":"plugin.event","channel_id":"ch-1","data":{"plugin_id":"echo","type":"quiz.ready","data":{"id":1}}}`},
 		{name: "event without a type", path: "events", body: `{}`, wantCode: http.StatusBadRequest},
 		{name: "event too big", path: "events", body: `{"type":"x","data":"` + strings.Repeat("a", pluginEventMax) + `"}`, wantCode: http.StatusBadRequest},
-		{name: "notify", path: "notify", c: plugin.CapUINotify, body: `{"title":"Quiz ready","body":"3 questions"}`, wantCode: http.StatusNoContent,
-			want: `{"type":"plugin.notify","channel_id":"ch-1","data":{"plugin_id":"echo","title":"Quiz ready","body":"3 questions"}}`},
+		{name: "notify", path: "notify", c: plugin.CapUINotify, body: `{"title":"Quiz ready","body":"3 questions"}`, wantCode: http.StatusNoContent},
 		{name: "notify without a title", path: "notify", c: plugin.CapUINotify, body: `{"body":"x"}`, wantCode: http.StatusBadRequest},
 		{name: "notify bad body", path: "notify", c: plugin.CapUINotify, body: `{`, wantCode: http.StatusBadRequest},
 	}

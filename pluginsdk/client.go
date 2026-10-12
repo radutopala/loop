@@ -290,7 +290,8 @@ func (c *Client) Event(ctx context.Context, typ string, data any) error {
 	return c.do(ctx, http.MethodPost, "/events", nil, pluginapi.Event{Type: typ, Data: data}, nil)
 }
 
-// Notify shows a desktop notification. Needs ui.notify.
+// Notify keeps a notification in the notification drawer of the plugin's
+// channel. Needs ui.notification.notify.
 func (c *Client) Notify(ctx context.Context, title, body string) error {
 	return c.do(ctx, http.MethodPost, "/notify", nil, pluginapi.Notification{Title: title, Body: body}, nil)
 }
@@ -323,7 +324,7 @@ func (c *Client) ClearBadge(ctx context.Context) error {
 // drawer of the plugin's channel in the desktop app, and returns the notification's id. The card's page
 // gets data, at most 64 KB of JSON, from the bridge's context.get. Cards
 // share Notify's rate limit and show in the desktop app only. Needs
-// ui.card.
+// ui.notification.card.
 func (c *Client) PostCard(ctx context.Context, card, title string, data any) (int64, error) {
 	var out struct {
 		ID int64 `json:"id"`

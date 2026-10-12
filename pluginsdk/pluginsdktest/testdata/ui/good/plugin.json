@@ -3,7 +3,7 @@
   "name": "Good",
   "version": "1.0.0",
   "api": "v1",
-  "capabilities": ["ui.panel", "ui.card", "ui.notify", "ui.copy"],
+  "capabilities": ["ui.panel", "ui.notification.card", "ui.notification.notify", "ui.copy"],
   "settings": {
     "greeting": { "type": "string", "default": "hello" }
   },

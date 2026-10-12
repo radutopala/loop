@@ -9,7 +9,7 @@ function host(over: Partial<BridgeHost> = {}): BridgeHost {
     channelId: "ch1",
     channelName: "proj",
     dirPath: "/src/proj",
-    capabilities: ["ui.notify", "ui.open_file", "ui.copy"],
+    capabilities: ["ui.notification.notify", "ui.open_file", "ui.copy"],
     request: vi.fn(async () => ({ status: 200, body: { ok: true } })),
     theme: () => pluginTheme(darkColors),
     settings: () => ({ question_count: 5 }),
@@ -110,9 +110,9 @@ describe("callBridge", () => {
     await expect(callBridge(host(), "theme.get", {})).resolves.toEqual(pluginTheme(darkColors));
   });
 
-  it("ui.notify", async () => {
+  it("ui.notification.notify", async () => {
     const h = host();
-    await expect(callBridge(h, "ui.notify", { title: "Quiz ready" })).resolves.toBeNull();
+    await expect(callBridge(h, "ui.notification.notify", { title: "Quiz ready" })).resolves.toBeNull();
     expect(h.notify).toHaveBeenCalledWith("Quiz ready", "");
   });
 
@@ -141,8 +141,8 @@ describe("callBridge", () => {
     { name: "api.request without path", method: "api.request", params: { method: "GET" }, code: -32602, msg: "path must be a non-empty string" },
     { name: "api.request empty method", method: "api.request", params: { method: "", path: "x" }, code: -32602, msg: "method must be a non-empty string" },
     { name: "state over 64 KB", method: "state.set", params: { value: "x".repeat(MAX_STATE_BYTES) }, code: -32602, msg: "state is over 64 KB" },
-    { name: "notify without the cap", method: "ui.notify", params: { title: "t" }, caps: [], code: -32000, msg: "the plugin wasn't approved for ui.notify" },
-    { name: "notify body not a string", method: "ui.notify", params: { title: "t", body: 3 }, code: -32602, msg: "body must be a string" },
+    { name: "notify without the cap", method: "ui.notification.notify", params: { title: "t" }, caps: [], code: -32000, msg: "the plugin wasn't approved for ui.notification.notify" },
+    { name: "notify body not a string", method: "ui.notification.notify", params: { title: "t", body: 3 }, code: -32602, msg: "body must be a string" },
     { name: "copy without the cap", method: "ui.copy", params: { text: "t" }, caps: [], code: -32000, msg: "the plugin wasn't approved for ui.copy" },
     { name: "copy without text", method: "ui.copy", params: {}, code: -32602, msg: "text must be a non-empty string" },
     { name: "copy over 1 MB", method: "ui.copy", params: { text: "é".repeat(MAX_COPY_BYTES / 2 + 1) }, code: -32602, msg: "text is over 1 MB" },

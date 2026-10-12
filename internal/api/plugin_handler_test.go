@@ -163,7 +163,7 @@ func (s *ServerSuite) TestListPlugins() {
 		Cards:  []plugin.Card{{ID: "score", Entry: "ui/score.html"}},
 	}}
 	pm.On("List", mock.Anything).Return([]*db.PluginState{
-		{PluginID: "echo", ApprovedCaps: []string{"ui.panel", "ui.card"}, InstalledAt: at, UpdatedAt: at},
+		{PluginID: "echo", ApprovedCaps: []string{"ui.panel", "ui.notification.card"}, InstalledAt: at, UpdatedAt: at},
 		{PluginID: "quiet", InstalledAt: at, UpdatedAt: at},
 		{PluginID: "bare", ApprovedCaps: []string{"ui.panel"}, InstalledAt: at, UpdatedAt: at},
 	}, nil).Once()

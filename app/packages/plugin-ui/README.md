@@ -47,7 +47,7 @@ bridge.events.on((ev) => {
 await bridge.state.set({ tab: "history" }); // up to 64 KB of JSON
 const saved = await bridge.state.get<{ tab: string }>();
 
-await bridge.ui.notify("Done", "3 items added"); // needs the ui.notify capability
+await bridge.ui.notification.notify("Done", "3 items added"); // needs the ui.notification.notify capability
 await bridge.ui.openFile("cmd/main.go", 12); // needs the ui.open_file capability
 await bridge.ui.copy("go test ./..."); // needs the ui.copy capability
 ```
@@ -60,7 +60,8 @@ await bridge.ui.copy("go test ./..."); // needs the ui.copy capability
 | `settings.get()`, `settings.onChange(cb)` | the plugin's settings in the channel's project |
 | `state.get()`, `state.set(value)` | small JSON UI state, kept per plugin, channel and panel |
 | `events.on(cb)` | `{type, data}` the plugin's container sent with `POST /events` |
-| `ui.notify(title, body?)`, `ui.openFile(path, line?)` | |
+| `ui.notification.notify(title, body?)` | keeps a notification in the channel's notification drawer |
+| `ui.openFile(path, line?)` | |
 | `ui.copy(text)` | puts text on the clipboard, at most 1 MB |
 | `ui.resize(height)` | a card's height in pixels, kept within 80 to 900 |
 | `theme.get()`, `theme.onChange(cb)` | `{mode, vars}` |
@@ -108,7 +109,7 @@ Durable data belongs in the plugin, behind its `/x` API.
 
 ### Cards
 
-A card is a page the plugin posts to its channel's notification drawer (`ui.card`). The same bridge drives it,
+A card is a page the plugin posts to its channel's notification drawer (`ui.notification.card`). The same bridge drives it,
 with these differences: `context.get()` has `panel: ""`, the card's id as `card` and the data
 it was posted with as `data`; the state lasts only as long as the frame; and the card sizes
 itself with `ui.resize`, while a panel fills its pane:
