@@ -52,7 +52,7 @@ const (
 	// dataDir must exist in a plugin image, owned by its USER.
 	dataDir = "/data"
 	// maxExtract caps the size of an extracted /loop-plugin dir.
-	maxExtract = 256 << 20
+	maxExtract = 25 << 20
 )
 
 // Candidate is a plugin image pulled, extracted and validated, waiting for
