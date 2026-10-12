@@ -1129,9 +1129,17 @@ func (s *reviewService) runDedupPass(ctx context.Context, channelID, parentDirPa
 		}
 		res.Removed = append(res.Removed, out.Removed...)
 		if cl.Note != "" {
+			// The note adds what the group's dropped comments raised, and
+			// the group shares a root cause, so the keeper's verdict still
+			// stands: a dismissed one stays dismissed rather than going
+			// back to unjudged, as any other new body would.
+			kept, _ := s.sessions.FindComment(channelID, cl.Keep)
 			out.NoteAdded = s.editComment(channelID, cl.Keep, func(c *review.Comment) {
 				c.Body = review.WithDedupNote(c.Body, cl.Note)
 			}) != nil
+			if out.NoteAdded && kept.Verdict != "" {
+				s.setVerdict(channelID, review.DedupVerdict{ID: cl.Keep, Verdict: kept.Verdict, Reason: kept.VerdictReason})
+			}
 		}
 		res.Clusters = append(res.Clusters, out)
 	}

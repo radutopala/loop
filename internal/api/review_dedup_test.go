@@ -288,6 +288,23 @@ func (s *ReviewHandlerSuite) TestDedupNoteWithoutHub() {
 	require.Equal(s.T(), review.VerdictAlreadyFixed, kept.Verdict)
 }
 
+// A note folds in what the group's dropped comments raise, so the kept
+// comment keeps its verdict, a dismissed one included.
+func (s *ReviewHandlerSuite) TestDedupNoteKeepsVerdict() {
+	s.wireDedupSession()
+	require.NotNil(s.T(), s.rs.SetVerdict("ch1", "a", review.VerdictFalsePositive, "x.go:3 checks it"))
+	s.srv.review.setAgent(&mockReviewRunner{runFn: func() (*agent.AgentResponse, error) {
+		return &agent.AgentResponse{Response: `{"clusters":[{"keep":"a","drop":["b"],"note":"n"}]}`}, nil
+	}}, "", "")
+
+	w := s.postDedup()
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	kept, _ := s.rs.FindComment("ch1", "a")
+	require.Equal(s.T(), "Nil map write panics on the first insert.\n\nAlso flagged: n", kept.Body)
+	require.Equal(s.T(), review.VerdictFalsePositive, kept.Verdict)
+	require.Equal(s.T(), "x.go:3 checks it", kept.VerdictReason)
+}
+
 func (s *ReviewHandlerSuite) TestDedupRunFailures() {
 	cases := []struct {
 		name string
