@@ -299,3 +299,31 @@ jobs:
           if [ -n "$FILES" ]; then
             gh release upload "$RELEASE_TAG" $FILES --clobber --repo "${{ github.repository }}"
           fi
+
+  # SLSA build provenance for every release asset, so a download can be
+  # checked with `gh attestation verify <file> --repo radutopala/loop`. The
+  # subjects are the sha256 digests GitHub records for the uploaded assets,
+  # so nothing is downloaded.
+  attest:
+    needs: update-manifests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: List the release assets' digests
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api "repos/${{ github.repository }}/releases/tags/$RELEASE_TAG" --jq '
+            .assets[] |
+            if (.digest // "" | startswith("sha256:"))
+            then "\(.digest | ltrimstr("sha256:"))  \(.name)"
+            else error("no sha256 digest for \(.name)") end' > subjects.txt
+          cat subjects.txt
+
+      - name: Attest the build provenance
+        uses: actions/attest@v4
+        with:
+          subject-checksums: subjects.txt
