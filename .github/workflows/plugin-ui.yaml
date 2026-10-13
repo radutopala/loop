@@ -1,0 +1,40 @@
+name: plugin-ui
+
+# Publishes app/packages/plugin-ui to GitHub Packages on a plugin-ui/v<version>
+# tag, the version in its package.json.
+on:
+  push:
+    tags:
+      - "plugin-ui/v*"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          registry-url: https://npm.pkg.github.com
+          scope: "@radutopala"
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Check the tag against package.json
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(node -p 'require("./app/packages/plugin-ui/package.json").version')
+          if [ "$TAG" != "plugin-ui/v$version" ]; then
+            echo "::error::tag $TAG doesn't match package.json version $version"
+            exit 1
+          fi
+      # Retried: the Electron postinstall binary download intermittently 504s.
+      - run: cd app && (npm ci || (sleep 20 && npm ci) || (sleep 60 && npm ci))
+      - run: cd app && npx vitest run packages/plugin-ui
+      - run: cd app/packages/plugin-ui && npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
