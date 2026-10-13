@@ -29,7 +29,7 @@ End-to-end walkthrough — a guided tour of every panel, recorded in one continu
 - [**Browser**](browser.md) — Chrome sidecar containers, CDP client, screencast, input dispatch, tabs
 - [**Scheduling**](scheduling.md) — Task types (cron/interval/once), templates, auto-deletion, thread creation, worktree isolation, Tasks panel
 - [**Workflows**](workflows.md) — Declarative DAG-based pipelines with prompt, bash, loop, and approval nodes; parallel execution, retry, trigger rules
-- [**Plugins**](plugins.md) — OCI-image plugins in per-channel containers: manifest, Plugin API, scheduled actions, the Go SDK, panels and the `@radutopala/plugin-ui` bridge
+- [**Plugins**](plugins.md) — OCI-image plugins in per-channel containers: manifest, Plugin API, scheduled actions, the Go SDK, panels and the `@radutopala/loop-plugin-ui` bridge
 - [**Daemon**](daemon.md) — Cross-platform service management (launchd, systemd, Windows SCM)
 
 ## API & Data
