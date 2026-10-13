@@ -1,7 +1,8 @@
 name: plugin-ui
 
-# Publishes app/packages/plugin-ui to GitHub Packages on a plugin-ui/v<version>
-# tag, the version in its package.json.
+# Publishes app/packages/plugin-ui to npm on a plugin-ui/v<version> tag, the
+# version in its package.json. npm trusted publishing authenticates the job
+# through OIDC and adds a provenance statement; Node 24's npm is new enough.
 on:
   push:
     tags:
@@ -9,7 +10,7 @@ on:
 
 permissions:
   contents: read
-  packages: write
+  id-token: write
 
 jobs:
   publish:
@@ -19,8 +20,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "24"
-          registry-url: https://npm.pkg.github.com
-          scope: "@radutopala"
+          registry-url: https://registry.npmjs.org
           cache: npm
           cache-dependency-path: app/package-lock.json
       - name: Check the tag against package.json
@@ -36,5 +36,3 @@ jobs:
       - run: cd app && (npm ci || (sleep 20 && npm ci) || (sleep 60 && npm ci))
       - run: cd app && npx vitest run packages/plugin-ui
       - run: cd app/packages/plugin-ui && npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

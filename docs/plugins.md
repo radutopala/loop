@@ -425,8 +425,8 @@ the plugin starts runs in its thread, each in a new session of its own. Removing
 
 ### Bridge
 
-The TypeScript package under `app/packages/plugin-ui`, published to GitHub Packages as
-`@radutopala/plugin-ui`, wraps the bridge: `connect()` waits for the port and returns typed `api`,
+The TypeScript package under `app/packages/plugin-ui`, published to npm as
+`@radutopala/loop-plugin-ui`, wraps the bridge: `connect()` waits for the port and returns typed `api`,
 `context`, `settings`, `state`, `events`, `ui` and `theme` calls, with `applyTheme`/`syncTheme`
 for the theme's CSS variables and `createStorage`, a `localStorage` stand-in kept in the panel's
 state. Its README covers installing and using it. The protocol below

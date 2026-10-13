@@ -1,4 +1,4 @@
-# @radutopala/plugin-ui
+# @radutopala/loop-plugin-ui
 
 A typed client for the bridge between a plugin's panel and Loop. A panel runs in a sandboxed
 frame with an opaque origin; Loop hands it a `MessagePort` on load, and the bridge is JSON-RPC
@@ -7,21 +7,8 @@ protocol is described in Loop's plugin docs, under Panels → Bridge.
 
 ## Install
 
-The package is on GitHub Packages, whose npm registry wants a token even to install a public
-package: a GitHub token with `read:packages` (`gh auth refresh -s read:packages` adds the scope
-to the GitHub CLI's, then `gh auth token` prints it; in GitHub Actions, the job's
-`GITHUB_TOKEN` with `packages: read`). Point the `@radutopala` scope at the registry in the
-panel's `.npmrc`:
-
-```ini
-@radutopala:registry=https://npm.pkg.github.com
-//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}
-```
-
-then, with the token in `NODE_AUTH_TOKEN`:
-
 ```sh
-npm install @radutopala/plugin-ui
+npm install @radutopala/loop-plugin-ui
 ```
 
 It ships TypeScript source (`src/index.ts`), which Vite, esbuild and other bundlers compile
@@ -34,7 +21,7 @@ Call `connect()` at startup, before anything awaits: Loop posts the port as the 
 and a listener added later misses it.
 
 ```ts
-import { connect, createStorage, syncTheme } from "@radutopala/plugin-ui";
+import { connect, createStorage, syncTheme } from "@radutopala/loop-plugin-ui";
 
 const bridge = await connect();
 await syncTheme(bridge); // Loop's CSS variables on <html>, now and on change
@@ -148,4 +135,6 @@ The frame loads under a strict content security policy:
 ## Releasing
 
 Bump `version` in `package.json`, then push a `plugin-ui/v<version>` tag; the `plugin-ui`
-workflow checks that the two match, runs the package's tests and publishes it.
+workflow checks that the two match, runs the package's tests and publishes it to npm with
+[trusted publishing](https://docs.npmjs.com/trusted-publishers), which adds a provenance
+statement.
