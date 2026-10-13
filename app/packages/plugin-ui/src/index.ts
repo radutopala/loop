@@ -169,6 +169,10 @@ export interface BridgeOptions {
 export interface ConnectOptions extends BridgeOptions {
   /** Where the init message arrives, the frame's window by default. */
   target?: Pick<EventTarget, "addEventListener" | "removeEventListener">;
+  /** Where the init message must come from, the frame's parent by default.
+   *  Messages from any other window are ignored, so a frame or popup the
+   *  panel opens can't hand it a port of its own. */
+  source?: unknown;
 }
 
 /** Waits for Loop to hand over the bridge's port and returns the bridge.
@@ -176,9 +180,11 @@ export interface ConnectOptions extends BridgeOptions {
  *  anything awaits, or the message is missed. */
 export function connect(opts: ConnectOptions = {}): Promise<Bridge> {
   const target = opts.target ?? globalThis;
+  const source = opts.source ?? globalThis.parent;
   return new Promise((resolve) => {
     const onMessage = (ev: Event) => {
       const { data, ports } = ev as MessageEvent;
+      if ((ev as MessageEvent).source !== source) return;
       const port = ports?.[0];
       if (!data || typeof data !== "object" || data.type !== BRIDGE_INIT || !port) return;
       target.removeEventListener("message", onMessage);

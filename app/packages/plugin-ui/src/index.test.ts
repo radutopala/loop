@@ -61,13 +61,19 @@ function nextTick(): Promise<void> {
 describe("connect", () => {
   it("resolves with a bridge once the init message brings a port", async () => {
     const target = new EventTarget();
-    const ready = connect({ target });
+    const parent = new MessageChannel();
+    const other = new MessageChannel();
+    const ready = connect({ target, source: parent.port1 });
     const host = fakeHost();
     const ch = new MessageChannel();
+    const fake = new MessageChannel();
+    opened.push(parent.port1, parent.port2, other.port1, other.port2, fake.port1, fake.port2);
     opened.push(connectBridge(ch.port1, () => host));
-    target.dispatchEvent(new MessageEvent("message", { data: { type: "other" } }));
-    target.dispatchEvent(new MessageEvent("message", { data: { type: BRIDGE_INIT } }));
-    target.dispatchEvent(new MessageEvent("message", { data: { type: BRIDGE_INIT }, ports: [ch.port2] }));
+    target.dispatchEvent(new MessageEvent("message", { data: { type: "other" }, source: parent.port1 }));
+    target.dispatchEvent(new MessageEvent("message", { data: { type: BRIDGE_INIT }, source: parent.port1 }));
+    target.dispatchEvent(new MessageEvent("message", { data: { type: BRIDGE_INIT }, ports: [fake.port2] }));
+    target.dispatchEvent(new MessageEvent("message", { data: { type: BRIDGE_INIT }, ports: [fake.port2], source: other.port1 }));
+    target.dispatchEvent(new MessageEvent("message", { data: { type: BRIDGE_INIT }, ports: [ch.port2], source: parent.port1 }));
     const bridge = await ready;
     opened.push(bridge);
     await expect(bridge.context.get()).resolves.toEqual({ pluginId: "echo", panel: "main", channelId: "ch1", channelName: "proj", dirPath: "/src/proj" });
