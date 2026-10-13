@@ -29,6 +29,7 @@ End-to-end walkthrough — a guided tour of every panel, recorded in one continu
 - [**Browser**](browser.md) — Chrome sidecar containers, CDP client, screencast, input dispatch, tabs
 - [**Scheduling**](scheduling.md) — Task types (cron/interval/once), templates, auto-deletion, thread creation, worktree isolation, Tasks panel
 - [**Workflows**](workflows.md) — Declarative DAG-based pipelines with prompt, bash, loop, and approval nodes; parallel execution, retry, trigger rules
+- [**Plugins**](plugins.md) — OCI-image plugins in per-channel containers: manifest, Plugin API, scheduled actions, the Go SDK, panels and the `@radutopala/plugin-ui` bridge
 - [**Daemon**](daemon.md) — Cross-platform service management (launchd, systemd, Windows SCM)
 
 ## API & Data
@@ -50,6 +51,7 @@ End-to-end walkthrough — a guided tour of every panel, recorded in one continu
 - [**Git**](git.md) — Git panel: status, staged/unstaged diffs, commits, branches, PR creation
 - [**Kanban**](kanban.md) — Ticket board panel, filesystem-backed tickets, worktree assignment, `tk` CLI integration
 - [**Playground**](playground.md) — Live interactive code sandbox, agent-driven HTML/CSS/JS rendering, global and project scopes
+- [**Sessions**](sessions.md) — Sessions panel: a channel's past Claude Code sessions, newest first, and resuming one
 - [**Review**](review.md) — Pull-request review panel, agent diff pass, inline comments pushed back to the PR
 - [**Settings**](settings.md) — Settings panel, command palette (Cmd+K), daemon management
 
