@@ -140,41 +140,41 @@ func (s *MainSuite) TestPluginGate() {
 	require.ErrorContains(s.T(), err, "architecture: no daemon")
 }
 
-func (s *MainSuite) TestPluginEnabled() {
+func (s *MainSuite) TestPluginProject() {
 	on, off := true, false
 	cfg := &config.Config{LoopDir: s.T().TempDir()}
 	global := &config.Config{Plugins: config.PluginsConfig{ByID: map[string]config.PluginConfig{"echo": {Enabled: &on}, "quiz": {Enabled: &off}}}}
 	reload := func() (*config.Config, error) { return global, nil }
 	store := new(testutil.MockStore)
 	store.On("GetChannel", mock.Anything, mock.Anything).Return(nil, nil)
-	enabled := pluginEnabled(cfg, reload, store)
+	project := pluginProject(cfg, reload, store)
 	ctx := context.Background()
 
 	// A channel without a dir reads the project config the API keeps for it.
-	got, err := enabled(ctx, "echo", runtime.Channel{ID: "ch1"})
+	got, err := project(ctx, "echo", runtime.Channel{ID: "ch1"})
 	require.NoError(s.T(), err)
-	require.True(s.T(), got)
-	got, err = enabled(ctx, "quiz", runtime.Channel{ID: "ch1"})
+	require.Equal(s.T(), &on, got.Enabled)
+	got, err = project(ctx, "quiz", runtime.Channel{ID: "ch1"})
 	require.NoError(s.T(), err)
-	require.False(s.T(), got)
+	require.Equal(s.T(), &off, got.Enabled)
 
 	// A broken project config is an error.
 	dir := filepath.Join(cfg.LoopDir, "ch1", "work", ".loop")
 	require.NoError(s.T(), os.MkdirAll(dir, 0o755))
 	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "config.json"), []byte("{"), 0o644))
-	_, err = enabled(ctx, "echo", runtime.Channel{ID: "ch1"})
+	_, err = project(ctx, "echo", runtime.Channel{ID: "ch1"})
 	require.ErrorContains(s.T(), err, "parsing project config file")
 
 	// A project with a config that doesn't touch plugins keeps the global value.
 	proj := s.T().TempDir()
 	require.NoError(s.T(), os.MkdirAll(filepath.Join(proj, ".loop"), 0o755))
 	require.NoError(s.T(), os.WriteFile(filepath.Join(proj, ".loop", "config.json"), []byte(`{"claude_model": "opus"}`), 0o644))
-	got, err = enabled(ctx, "echo", runtime.Channel{ID: "ch2", DirPath: proj})
+	got, err = project(ctx, "echo", runtime.Channel{ID: "ch2", DirPath: proj})
 	require.NoError(s.T(), err)
-	require.True(s.T(), got)
+	require.Equal(s.T(), &on, got.Enabled)
 }
 
-func (s *MainSuite) TestPluginEnabledWorktree() {
+func (s *MainSuite) TestPluginProjectWorktree() {
 	on := true
 	cfg := &config.Config{LoopDir: s.T().TempDir()}
 	global := &config.Config{Plugins: config.PluginsConfig{ByID: map[string]config.PluginConfig{"echo": {Enabled: &on}}}}
@@ -189,15 +189,15 @@ func (s *MainSuite) TestPluginEnabledWorktree() {
 	store.On("GetChannel", mock.Anything, "wt").Return(&db.Channel{ChannelID: "wt", DirPath: wt, ParentID: "proj", Worktree: true}, nil)
 	store.On("GetChannel", mock.Anything, "proj").Return(&db.Channel{ChannelID: "proj", DirPath: proj}, nil)
 	store.On("GetChannel", mock.Anything, "broken").Return(nil, errors.New("db down"))
-	enabled := pluginEnabled(cfg, reload, store)
+	project := pluginProject(cfg, reload, store)
 	ctx := context.Background()
 
 	// A worktree thread reads its checkout's project config, not its own.
-	got, err := enabled(ctx, "echo", runtime.Channel{ID: "wt", DirPath: wt})
+	got, err := project(ctx, "echo", runtime.Channel{ID: "wt", DirPath: wt})
 	require.NoError(s.T(), err)
-	require.True(s.T(), got)
+	require.Equal(s.T(), &on, got.Enabled)
 
-	_, err = enabled(ctx, "echo", runtime.Channel{ID: "broken", DirPath: wt})
+	_, err = project(ctx, "echo", runtime.Channel{ID: "broken", DirPath: wt})
 	require.ErrorContains(s.T(), err, "db down")
 }
 

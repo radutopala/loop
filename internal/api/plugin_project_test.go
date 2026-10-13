@@ -115,6 +115,42 @@ func (s *ServerSuite) TestListPluginsSettings() {
 	require.Nil(s.T(), quiz.Settings)
 }
 
+func (s *ServerSuite) TestListPluginsSchedules() {
+	pm := s.pluginRoutes()
+	s.pluginProjectSetup(`{"plugins": {"echo": {"schedules": {"daily": {"schedule": "0 7 * * *"}}}}}`)
+	global := s.srv.configs.load
+	s.srv.configs.load = func() (*config.Config, error) {
+		cfg, err := global()
+		cfg.Plugins.ByID["echo"] = config.PluginConfig{Schedules: map[string]config.PluginSchedule{"daily": {}, "ping": {Schedule: "1h", Type: "interval"}}}
+		return cfg, err
+	}
+	daily := plugin.Schedule{Type: db.TaskTypeCron, Schedule: "0 9 * * *"}
+	m := &plugin.Manifest{Actions: []plugin.Action{{ID: "daily", DefaultSchedule: &daily}, {ID: "ping"}}}
+	pm.On("List", mock.Anything).Return([]*db.PluginState{
+		{PluginID: "echo", ApprovedCaps: []string{"schedule"}},
+		{PluginID: "quiz"},
+	}, nil)
+	pm.On("UI", mock.Anything, mock.Anything).Return("/d", m, nil)
+	pm.On("Containers", mock.Anything, mock.Anything).Return(nil, nil)
+
+	// The project's schedules wait for trust.
+	list := s.listPluginsIn("ch-1")
+	echo, quiz := list.Plugins[0], list.Plugins[1]
+	require.Equal(s.T(), map[string]plugin.Schedule{"daily": daily}, echo.DefaultSchedules)
+	require.Equal(s.T(), map[string]config.PluginSchedule{"daily": {}, "ping": {Schedule: "1h", Type: "interval"}}, echo.GlobalSchedules)
+	require.Equal(s.T(), map[string]config.PluginSchedule{"daily": {Schedule: "0 7 * * *"}}, echo.ProjectSchedules)
+	require.Equal(s.T(), echo.GlobalSchedules, echo.Schedules)
+	require.Nil(s.T(), quiz.DefaultSchedules, "without schedule approved")
+
+	st := s.projectTrustStatus()
+	pm.On("StopDisabled", mock.Anything).Return(false).Once()
+	pm.On("SyncSchedules", mock.Anything).Return(nil).Once()
+	rec := s.testRequest("POST", "/api/config/project/trust?channel_id=ch-1", `{"hash":"`+st.Hash+`"}`)
+	require.Equal(s.T(), http.StatusNoContent, rec.Code, rec.Body.String())
+	list = s.listPluginsIn("ch-1")
+	require.Equal(s.T(), map[string]config.PluginSchedule{"daily": {Schedule: "0 7 * * *"}, "ping": {Schedule: "1h", Type: "interval"}}, list.Plugins[0].Schedules)
+}
+
 func (s *ServerSuite) TestListPluginsInProjectWithoutConfig() {
 	pm := s.pluginRoutes()
 	s.pluginProjectSetup("", "echo")

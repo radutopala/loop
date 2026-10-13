@@ -43,6 +43,9 @@ type trustedFields struct {
 	// Plugins is which plugins the project turns on or off: a plugin runs
 	// with the capabilities the owner approved, against the project.
 	Plugins map[string]bool `json:"plugins,omitempty"`
+	// PluginSchedules is the scheduled tasks the project asks of plugins,
+	// each run of which can start an agent.
+	PluginSchedules map[string]map[string]PluginSchedule `json:"plugin_schedules,omitempty"`
 }
 
 // trustedBrowser is the part of the browser block that reaches the host:
@@ -88,6 +91,12 @@ func trustedFieldsOf(pc *projectConfig) trustedFields {
 				}
 				t.Plugins[id] = *c.Enabled
 			}
+			if len(c.Schedules) > 0 {
+				if t.PluginSchedules == nil {
+					t.PluginSchedules = map[string]map[string]PluginSchedule{}
+				}
+				t.PluginSchedules[id] = c.Schedules
+			}
 		}
 	}
 	return t
@@ -123,18 +132,23 @@ func (t trustedFields) apply(pc *projectConfig) {
 			pc.Memory.Paths = t.Memory.Paths
 		}
 	}
-	if pc.Plugins != nil || t.Plugins != nil {
+	if pc.Plugins != nil || t.Plugins != nil || t.PluginSchedules != nil {
 		if pc.Plugins == nil {
 			pc.Plugins = &PluginsConfig{}
 		}
 		byID := map[string]PluginConfig{}
 		for id, c := range pc.Plugins.ByID {
-			c.Enabled = nil
+			c.Enabled, c.Schedules = nil, nil
 			byID[id] = c
 		}
 		for id, on := range t.Plugins {
 			c := byID[id]
 			c.Enabled = &on
+			byID[id] = c
+		}
+		for id, sch := range t.PluginSchedules {
+			c := byID[id]
+			c.Schedules = sch
 			byID[id] = c
 		}
 		pc.Plugins.ByID = byID

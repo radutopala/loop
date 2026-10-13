@@ -125,13 +125,15 @@ type Action struct {
 	DefaultSchedule *Schedule `json:"default_schedule,omitempty"`
 }
 
-// Schedule is the task Loop creates for an action in each channel whose
-// project enables the plugin.
+// Schedule is an action's default schedule: the one its task gets in a
+// project whose config asks for it, under plugins.<id>.schedules, without
+// setting its own.
 type Schedule struct {
 	// Type is cron or interval.
 	Type     string `json:"type"`
 	Schedule string `json:"schedule"`
-	Enabled  bool   `json:"enabled"`
+	// Enabled is ignored: the project config turns the task on or off.
+	Enabled bool `json:"enabled,omitempty"`
 }
 
 // UI is what the plugin draws in Loop.

@@ -569,6 +569,10 @@ var migrations = []migration{
 	// data is a plugin tool node's structured result, a JSON object, which
 	// later nodes read as {{.NodeData.<node id>}}.
 	sqlMigration(`ALTER TABLE workflow_node_runs ADD COLUMN data TEXT NOT NULL DEFAULT ''`),
+	// applied is the schedule a project config last asked of the task, so
+	// the owner's edits stand until the config changes; empty on a task
+	// Loop created before configs asked for them.
+	sqlMigration(`ALTER TABLE plugin_schedules ADD COLUMN applied TEXT NOT NULL DEFAULT ''`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the

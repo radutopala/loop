@@ -94,7 +94,7 @@ install refuses a bigger one. See
   "actions": [
     { "id": "ping" },
     // needs "schedule" in capabilities
-    { "id": "daily", "default_schedule": { "type": "cron", "schedule": "0 9 * * *", "enabled": true } },
+    { "id": "daily", "default_schedule": { "type": "cron", "schedule": "0 9 * * *" } },
   ],
   "settings": { "count": { "type": "integer", "title": "Count", "minimum": 1, "maximum": 10, "default": 3 } },
   "ui": {
@@ -124,16 +124,29 @@ dropped when the plugin doesn't take it.
 
 ### Scheduled actions
 
-An action with a `default_schedule` (type `cron` or `interval`) gets a scheduled task in each
-channel whose project enables the plugin, created once, enabled as `enabled` says. When it
-runs, Loop calls `POST /actions/{action}` on the channel's container with `"trigger":
-"schedule"` and the task's id, starting the container if it isn't running. The tasks show in
-the Tasks panel like any other, where the owner can change their schedule, turn them off or
-delete them; a deleted one isn't created again. A project that stops enabling the plugin
-pauses its tasks, and enabling it again resumes them, except those the owner turned off.
-Only desktop app channels get them: threads and worktree threads run their channel's, and
-plugins don't run in Slack or Discord. Removing the plugin deletes
-them.
+A project asks for the scheduled task of an action in its config:
+
+```jsonc
+// <project>/.loop/config.json
+{ "plugins": { "cogtest": { "enabled": true, "schedules": { "daily": { "enabled": true } } } } }
+```
+
+Each channel of a project that enables the plugin then gets the task. `type` (`cron` or
+`interval`) and `schedule` default to the action's `default_schedule`, which an action without
+one must set; `enabled` defaults to `true`, and `false` keeps the task but turned off.
+Removing the entry deletes the task. An entry in the global config asks for the task in every
+project; a project's own entry replaces it, action by action. Like `enabled`, a project's
+schedules apply once the owner trusts its config. Settings → Plugins turns them on and off for a
+project.
+
+When a task runs, Loop calls `POST /actions/{action}` on the channel's container with
+`"trigger": "schedule"` and the task's id, starting the container if it isn't running. The tasks
+show in the Tasks panel like any other, where the owner can change their schedule, turn them off
+or delete them. Loop applies an entry once per change to it, so those edits stand until the
+config changes; a deleted task comes back only then. A project that stops enabling the plugin
+pauses its tasks, and enabling it again resumes them, except those the owner turned off. Only
+desktop app channels get them: threads and worktree threads run their channel's, and plugins
+don't run in Slack or Discord. Removing the plugin deletes them.
 
 Capabilities are approved by the owner at install and checked on every call:
 
@@ -144,7 +157,7 @@ Capabilities are approved by the owner at install and checked on every call:
 | `quality.read` | `GET /channel/quality/hotspots` |
 | `agent.readonly` | runs of read-only agents; `GET` and `DELETE /runs/{run_id}` |
 | `agent.write` | runs of any agent; `GET` and `DELETE /runs/{run_id}` |
-| `schedule` | actions' `default_schedule` tasks |
+| `schedule` | scheduled tasks of actions |
 | `ui.panel` | panels |
 | `ui.notification.notify` | `POST /notify`, the bridge's `ui.notification.notify` |
 | `ui.open_file` | `POST /ui/open_file`, the bridge's `ui.open_file` |

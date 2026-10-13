@@ -12,6 +12,7 @@ import {
   postPluginNotification,
   removePlugin,
   setPluginEnabled,
+  setPluginSchedule,
   setPluginSetting,
   stopPluginContainer,
   withPluginEnabled,
@@ -246,6 +247,18 @@ describe("setPluginSetting", () => {
     await setPluginSetting("echo", "count", undefined);
     expect(fetchMock.mock.calls[2]![0]).toBe("http://localhost:8222/api/config");
     expect(JSON.parse(JSON.parse(fetchMock.mock.calls[3]![1].body).content)).toEqual({ plugins: { echo: { enabled: true, settings: {} } } });
+  });
+});
+
+describe("setPluginSchedule", () => {
+  it("turns an action's scheduled task off, keeping the rest of its entry", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ raw: '{"plugins": {"echo": {"schedules": {"daily": {"schedule": "0 7 * * *"}}}}}', content: {} })));
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await setPluginSchedule("echo", "daily", false, "ch-1");
+    expect(fetchMock.mock.calls[1]![0]).toBe("http://localhost:8222/api/config/project?channel_id=ch-1");
+    expect(JSON.parse(JSON.parse(fetchMock.mock.calls[1]![1].body).content)).toEqual({
+      plugins: { echo: { schedules: { daily: { schedule: "0 7 * * *", enabled: false } } } },
+    });
   });
 });
 

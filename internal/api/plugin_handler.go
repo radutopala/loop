@@ -82,6 +82,15 @@ type pluginInfo struct {
 	ProjectSettings  map[string]any `json:"project_settings,omitempty"`
 	Settings         map[string]any `json:"settings,omitempty"`
 	SettingsProblems []string       `json:"settings_problems,omitempty"`
+	// DefaultSchedules are the default_schedule of each action that has
+	// one, when the owner approved schedule. GlobalSchedules are the
+	// global config's plugins.<id>.schedules, ProjectSchedules the
+	// channel_id's project config's own, and Schedules the ones that apply
+	// there: the global ones, each replaced by the trusted project one.
+	DefaultSchedules map[string]plugin.Schedule       `json:"default_schedules,omitempty"`
+	GlobalSchedules  map[string]config.PluginSchedule `json:"global_schedules,omitempty"`
+	ProjectSchedules map[string]config.PluginSchedule `json:"project_schedules,omitempty"`
+	Schedules        map[string]config.PluginSchedule `json:"schedules,omitempty"`
 	// Containers are the plugin's containers, one per channel it ran in.
 	Containers []pluginContainerInfo `json:"containers"`
 }
@@ -182,16 +191,25 @@ func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request) {
 			}
 			for _, a := range m.Actions {
 				info.Actions = append(info.Actions, a.ID)
+				if a.DefaultSchedule != nil && slices.Contains(st.ApprovedCaps, string(plugin.CapSchedule)) {
+					if info.DefaultSchedules == nil {
+						info.DefaultSchedules = map[string]plugin.Schedule{}
+					}
+					info.DefaultSchedules[a.ID] = *a.DefaultSchedule
+				}
 			}
 		}
 		if global != nil {
 			info.EnabledByDefault = global.Plugins.EnabledFor(st.PluginID)
 			info.GlobalSettings = global.Plugins.ByID[st.PluginID].Settings
+			info.GlobalSchedules = global.Plugins.ByID[st.PluginID].Schedules
 		}
 		if proj != nil {
 			on := proj.merged.Plugins.EnabledFor(st.PluginID)
 			info.Enabled, info.ProjectEnabled = &on, proj.own.ByID[st.PluginID].Enabled
 			info.ProjectSettings = proj.own.ByID[st.PluginID].Settings
+			info.ProjectSchedules = proj.own.ByID[st.PluginID].Schedules
+			info.Schedules = proj.merged.Plugins.ByID[st.PluginID].Schedules
 			if m != nil {
 				info.Settings, info.SettingsProblems = proj.settings(m, st.PluginID)
 			}

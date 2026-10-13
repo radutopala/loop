@@ -11,6 +11,7 @@ import {
   type PluginList,
   removePlugin,
   setPluginEnabled,
+  setPluginSchedule,
   stopPluginContainer,
 } from "../../api/plugins";
 import { useEventStream } from "../../hooks/useEventStream";
@@ -418,6 +419,70 @@ export function GlobalPluginsSection({ colors, onConfigChanged }: { colors: Colo
 /** Settings → Project → Plugins: whether each installed plugin runs in
  *  this channel's project, and its container here. onConfigChanged runs
  *  after a toggle wrote the project config. */
+/** The actions of p a project can ask a scheduled task of: each with a
+ *  default_schedule, and each a config already asks for. */
+export function scheduledActions(p: PluginInfo): string[] {
+  if (!p.capabilities.includes("schedule")) return [];
+  const named = new Set([...Object.keys(p.default_schedules ?? {}), ...Object.keys(p.schedules ?? {}), ...Object.keys(p.project_schedules ?? {})]);
+  return (p.actions ?? []).filter((a) => named.has(a));
+}
+
+/** The scheduled task toggles of p's actions in channelId's project. */
+function ProjectSchedules({
+  colors,
+  plugin: p,
+  channelId,
+  onChanged,
+  onError,
+}: {
+  colors: ColorPalette;
+  plugin: PluginInfo;
+  channelId: string;
+  onChanged: () => void;
+  onError: (e: string | null) => void;
+}) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const actions = scheduledActions(p);
+  if (actions.length === 0) return null;
+  const toggle = async (action: string, enabled: boolean) => {
+    setBusy(action);
+    onError(null);
+    try {
+      await setPluginSchedule(p.id, action, enabled, channelId);
+      onChanged();
+    } catch (e) {
+      onError(errText(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <div style={{ marginTop: 6 }}>
+      {actions.map((a) => {
+        const want = p.schedules?.[a];
+        const own = p.project_schedules?.[a];
+        const on = want !== undefined && want.enabled !== false;
+        const def = p.default_schedules?.[a];
+        const schedule = (own ?? want)?.schedule || def?.schedule;
+        const pending = own !== undefined && JSON.stringify(own) !== JSON.stringify(want);
+        return (
+          <div key={a} data-testid={`project-plugin-schedule-${p.id}-${a}`}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Toggle label={`Scheduled ${a}`} testId={`project-plugin-schedule-toggle-${p.id}-${a}`} checked={on} disabled={busy === a || !p.enabled} onChange={(v) => toggle(a, v)} />
+              {schedule && <Code>{schedule}</Code>}
+            </div>
+            {pending && (
+              <div data-testid={`project-plugin-schedule-pending-${p.id}-${a}`} style={{ color: colors.warning }}>
+                The project config asks for it {own.enabled === false ? "off" : "on"}, but it takes effect only once you trust the project config.
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function ProjectPluginsSection({ colors, channelId, onConfigChanged }: { colors: ColorPalette; channelId: string; onConfigChanged: () => void }) {
   const { list, error, reload } = usePluginList(channelId);
   const [busy, setBusy] = useState<string | null>(null);
@@ -444,7 +509,7 @@ export function ProjectPluginsSection({ colors, channelId, onConfigChanged }: { 
     <div data-testid="project-plugins-section">
       <Note colors={colors}>
         Enabling a plugin here sets <Code>plugins.&lt;id&gt;.enabled</Code> in this project's <Code>.loop/config.json</Code>; unset, the project follows the plugin's global default. Its threads and
-        worktree threads follow it too.
+        worktree threads follow it too. A scheduled action's toggle sets <Code>plugins.&lt;id&gt;.schedules.&lt;action&gt;.enabled</Code>, which makes the action's task in the Tasks panel.
       </Note>
       {list.plugins.length === 0 && <div style={{ color: colors.textDim, fontSize: 12 }}>No plugins installed. Install them under Global → Plugins.</div>}
       {toggleError && <div style={{ color: colors.error, fontSize: 12, marginBottom: 12 }}>{toggleError}</div>}
@@ -470,6 +535,16 @@ export function ProjectPluginsSection({ colors, channelId, onConfigChanged }: { 
                 The project config says {p.project_enabled ? "on" : "off"}, but it takes effect only once you trust the project config.
               </div>
             )}
+            <ProjectSchedules
+              colors={colors}
+              plugin={p}
+              channelId={channelId}
+              onError={setToggleError}
+              onChanged={() => {
+                reload();
+                onConfigChanged();
+              }}
+            />
             <PluginSettings
               colors={colors}
               plugin={p}

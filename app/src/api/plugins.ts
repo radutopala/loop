@@ -58,7 +58,23 @@ export interface PluginInfo {
   project_settings?: Record<string, unknown>;
   settings?: Record<string, unknown>;
   settings_problems?: string[];
+  /** The default_schedule of each action that has one, when the owner
+   *  approved schedule. */
+  default_schedules?: Record<string, { type: string; schedule: string }>;
+  /** The global config's plugins.<id>.schedules; listed for a channel, its
+   *  project config's own, and the ones that apply there. */
+  global_schedules?: Record<string, PluginSchedule>;
+  project_schedules?: Record<string, PluginSchedule>;
+  schedules?: Record<string, PluginSchedule>;
   containers?: PluginContainerInfo[];
+}
+
+/** A config's ask for the scheduled task of a plugin action; type and
+ *  schedule default to the action's default_schedule, enabled to true. */
+export interface PluginSchedule {
+  enabled?: boolean;
+  type?: string;
+  schedule?: string;
 }
 
 /** The installed plugins, and for a channel whether its project config is
@@ -226,6 +242,13 @@ export function setPluginEnabled(id: string, enabled: boolean, channelId?: strin
  *  applies. */
 export function setPluginSetting(id: string, key: string, value: unknown, channelId?: string | null): Promise<void> {
   return setPluginValue(id, ["settings", key], value, channelId);
+}
+
+/** Sets plugins.<id>.schedules.<action>.enabled in channelId's project
+ *  config, or in the global config without one: on asks for the action's
+ *  scheduled task, off keeps it but turned off. */
+export function setPluginSchedule(id: string, action: string, enabled: boolean, channelId?: string | null): Promise<void> {
+  return setPluginValue(id, ["schedules", action, "enabled"], enabled, channelId);
 }
 
 /** The answer of a plugin's own API, its body decoded when it's JSON. */

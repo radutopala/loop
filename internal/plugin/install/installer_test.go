@@ -486,9 +486,18 @@ func (m *mockStore) ListChannels(ctx context.Context) ([]*db.Channel, error) {
 	return v, args.Error(1)
 }
 
-func (m *mockStore) SeedPluginTask(ctx context.Context, task *db.ScheduledTask) (bool, error) {
-	args := m.Called(ctx, task)
-	return args.Bool(0), args.Error(1)
+func (m *mockStore) GetPluginSchedule(ctx context.Context, pluginID, channelID, action string) (*db.PluginSchedule, error) {
+	args := m.Called(ctx, pluginID, channelID, action)
+	v, _ := args.Get(0).(*db.PluginSchedule)
+	return v, args.Error(1)
+}
+
+func (m *mockStore) ApplyPluginSchedule(ctx context.Context, task *db.ScheduledTask, applied string) error {
+	return m.Called(ctx, task, applied).Error(0)
+}
+
+func (m *mockStore) DeletePluginSchedule(ctx context.Context, pluginID, channelID, action string) error {
+	return m.Called(ctx, pluginID, channelID, action).Error(0)
 }
 
 func (m *mockStore) SetPluginTasksPaused(ctx context.Context, pluginID, channelID string, paused bool) error {

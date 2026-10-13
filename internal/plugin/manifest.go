@@ -207,8 +207,10 @@ type Action struct {
 	DefaultSchedule *Schedule `json:"default_schedule,omitempty"`
 }
 
-// Schedule is the scheduled task Loop creates for an action when the plugin
-// is enabled in a channel.
+// Schedule is the scheduled task of an action. An action's
+// default_schedule is the one a project config's plugins.<id>.schedules
+// entry for it gets unless the entry sets its own; the entry, not Enabled,
+// turns the task on or off.
 type Schedule struct {
 	Type     db.TaskType `json:"type"`
 	Schedule string      `json:"schedule"`

@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/radutopala/loop/internal/agentgate"
+	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/plugin"
 	"github.com/radutopala/loop/internal/plugin/proxy"
@@ -106,10 +107,24 @@ func (s *ServiceSuite) SetupTest() {
 	s.runtime = new(mockRuntime)
 	s.caller = new(mockCaller)
 	s.enabled, s.enabledErr = true, nil
-	s.svc = NewService(s.in, s.runtime, s.store, s.caller, func(_ context.Context, pluginID string, ch runtime.Channel) (bool, error) {
+	s.svc = NewService(s.in, s.runtime, s.store, s.caller, func(_ context.Context, pluginID string, ch runtime.Channel) (config.PluginConfig, error) {
 		s.Require().Equal("echo", pluginID)
-		return s.enabled, s.enabledErr
+		return config.PluginConfig{Enabled: &s.enabled}, s.enabledErr
 	})
+}
+
+// onlyIn is a Project that enables echo in the channel "on", asking it for
+// schedules, fails to read the config of "broken" and disables it
+// elsewhere.
+func (s *ServiceSuite) onlyIn(schedules map[string]config.PluginSchedule) Project {
+	return func(_ context.Context, pluginID string, ch runtime.Channel) (config.PluginConfig, error) {
+		s.Require().Equal("echo", pluginID)
+		if ch.ID == "broken" {
+			return config.PluginConfig{}, errors.New("bad config")
+		}
+		on := ch.ID == "on"
+		return config.PluginConfig{Enabled: &on, Schedules: schedules}, nil
+	}
 }
 
 func (s *ServiceSuite) TearDownTest() {
@@ -196,13 +211,7 @@ func (s *ServiceSuite) TestStopDisabled() {
 		{PluginID: "echo", Channel: runtime.Channel{ID: "off"}},
 		{PluginID: "echo", Channel: runtime.Channel{ID: "broken"}},
 	}).Once()
-	s.svc.enabled = func(_ context.Context, pluginID string, ch runtime.Channel) (bool, error) {
-		s.Require().Equal("echo", pluginID)
-		if ch.ID == "broken" {
-			return false, errors.New("bad config")
-		}
-		return ch.ID == "on", nil
-	}
+	s.svc.project = s.onlyIn(nil)
 	s.runtime.On("Stop", s.ctx, "echo", "off").Once()
 	require.True(s.T(), s.svc.StopDisabled(s.ctx))
 
@@ -360,46 +369,50 @@ func (s *ServiceSuite) TestSyncSchedules() {
 		{ChannelID: "thread", ParentID: "on", Platform: local},
 		{ChannelID: "C0SLACK", Platform: types.PlatformSlack},
 	}
-	// setup enables echo in "on", fails to read the config of "broken" and
-	// disables it elsewhere.
-	setup := func() {
+	off := false
+	setup := func(schedules map[string]config.PluginSchedule) {
 		s.SetupTest()
 		s.svc.now = func() time.Time { return now }
-		s.svc.enabled = func(_ context.Context, pluginID string, ch runtime.Channel) (bool, error) {
-			s.Require().Equal("echo", pluginID)
-			if ch.ID == "broken" {
-				return false, errors.New("bad config")
-			}
-			return ch.ID == "on", nil
+		s.svc.project = s.onlyIn(schedules)
+	}
+	task := func(action, typ, schedule string, enabled bool, next time.Time) *db.ScheduledTask {
+		return &db.ScheduledTask{
+			ChannelID: "on", GuildID: "g", Schedule: schedule, Type: db.TaskType(typ),
+			Prompt: "Runs the echo plugin's " + action + " action.", Enabled: enabled,
+			NextRunAt: next, PluginID: "echo", PluginAction: action,
 		}
 	}
-	daily := &db.ScheduledTask{
-		ChannelID: "on", GuildID: "g", Schedule: "0 9 * * *", Type: db.TaskTypeCron,
-		Prompt: "Runs the echo plugin's daily action.", Enabled: true,
-		NextRunAt: time.Date(2026, 10, 11, 9, 0, 0, 0, time.UTC), PluginID: "echo", PluginAction: "daily",
-	}
+	nine := time.Date(2026, 10, 11, 9, 0, 0, 0, time.UTC)
+	dailyApplied := `{"type":"cron","schedule":"0 9 * * *","enabled":true}`
 	approved := func(status string) *db.PluginState {
 		st := s.installed(status)
 		st.ApprovedCaps = []string{"agent.write", "schedule"}
 		return st
 	}
+	// onlyOn lists echo, installed, and the channel "on".
+	onlyOn := func() {
+		s.store.On("ListPluginStates", s.ctx).Return([]*db.PluginState{approved(db.PluginStatusInstalled)}, nil).Once()
+		s.store.On("ListChannels", s.ctx).Return(channels[:1], nil).Once()
+	}
 	boom := errors.New("boom")
 
-	s.Run("seeds where enabled and pauses elsewhere", func() {
-		setup()
+	s.Run("makes what the config asks where enabled and pauses elsewhere", func() {
+		setup(map[string]config.PluginSchedule{"daily": {}})
 		s.store.On("ListPluginStates", s.ctx).Return([]*db.PluginState{
 			{PluginID: "unscheduled", ApprovedCaps: []string{"ui.panel"}},
 			approved(db.PluginStatusInstalled),
 		}, nil).Once()
 		s.store.On("ListChannels", s.ctx).Return(channels, nil).Once()
-		s.store.On("SeedPluginTask", s.ctx, daily).Return(true, nil).Once()
+		s.store.On("GetPluginSchedule", s.ctx, "echo", "on", "ping").Return(nil, nil).Once()
+		s.store.On("GetPluginSchedule", s.ctx, "echo", "on", "daily").Return(nil, nil).Once()
+		s.store.On("ApplyPluginSchedule", s.ctx, task("daily", "cron", "0 9 * * *", true, nine), dailyApplied).Return(nil).Once()
 		s.store.On("SetPluginTasksPaused", s.ctx, "echo", "on", false).Return(nil).Once()
 		s.store.On("SetPluginTasksPaused", s.ctx, "echo", "off", true).Return(nil).Once()
 		require.NoError(s.T(), s.svc.SyncSchedules(s.ctx))
 		s.store.AssertExpectations(s.T())
 	})
 	s.Run("a disabled plugin's tasks pause everywhere", func() {
-		setup()
+		setup(nil)
 		s.store.On("ListPluginStates", s.ctx).Return([]*db.PluginState{approved(db.PluginStatusDisabled)}, nil).Once()
 		s.store.On("ListChannels", s.ctx).Return(channels, nil).Once()
 		for _, id := range []string{"on", "off", "broken"} {
@@ -410,10 +423,73 @@ func (s *ServiceSuite) TestSyncSchedules() {
 	})
 
 	tests := []struct {
-		name    string
-		setup   func()
-		wantErr string
+		name      string
+		schedules map[string]config.PluginSchedule
+		setup     func()
+		wantErr   string
 	}{
+		{name: "an unchanged ask leaves the owner's edits", schedules: map[string]config.PluginSchedule{"daily": {}}, setup: func() {
+			onlyOn()
+			s.store.On("GetPluginSchedule", s.ctx, "echo", "on", "ping").Return(nil, nil).Once()
+			s.store.On("GetPluginSchedule", s.ctx, "echo", "on", "daily").Return(&db.PluginSchedule{Applied: dailyApplied}, nil).Once()
+			s.store.On("SetPluginTasksPaused", s.ctx, "echo", "on", false).Return(nil).Once()
+		}},
+		{name: "an ask after a delete makes the task again", schedules: map[string]config.PluginSchedule{"daily": {}}, setup: func() {
+			onlyOn()
+			s.store.On("GetPluginSchedule", s.ctx, "echo", "on", "ping").Return(nil, nil).Once()
+			s.store.On("GetPluginSchedule", s.ctx, "echo", "on", "daily").Return(&db.PluginSchedule{}, nil).Once()
+			s.store.On("ApplyPluginSchedule", s.ctx, task("daily", "cron", "0 9 * * *", true, nine), dailyApplied).Return(nil).Once()
+			s.store.On("SetPluginTasksPaused", s.ctx, "echo", "on", false).Return(nil).Once()
+		}},
+		{name: "the config's own schedule, turned off", schedules: map[string]config.PluginSchedule{
+			"ping": {Type: "interval", Schedule: "2h", Enabled: &off},
+			"gone": {},
+		}, setup: func() {
+			onlyOn()
+			s.store.On("GetPluginSchedule", s.ctx, "echo", "on", "ping").Return(nil, nil).Once()
+			s.store.On("GetPluginSchedule", s.ctx, "echo", "on", "daily").Return(nil, nil).Once()
+			s.store.On("ApplyPluginSchedule", s.ctx, task("ping", "interval", "2h", false, now.Add(2*time.Hour)), `{"type":"interval","schedule":"2h","enabled":false}`).Return(nil).Once()
+			s.store.On("SetPluginTasksPaused", s.ctx, "echo", "on", false).Return(nil).Once()
+		}},
+		{name: "a task the config stopped asking for is deleted", setup: func() {
+			onlyOn()
+			s.store.On("GetPluginSchedule", s.ctx, "echo", "on", "ping").Return(&db.PluginSchedule{Applied: "{}"}, nil).Once()
+			s.store.On("GetPluginSchedule", s.ctx, "echo", "on", "daily").Return(&db.PluginSchedule{TaskID: 7}, nil).Once()
+			s.store.On("DeletePluginSchedule", s.ctx, "echo", "on", "ping").Return(nil).Once()
+			s.store.On("SetPluginTasksPaused", s.ctx, "echo", "on", false).Return(nil).Once()
+		}},
+		{name: "delete", setup: func() {
+			onlyOn()
+			s.store.On("GetPluginSchedule", s.ctx, "echo", "on", "ping").Return(&db.PluginSchedule{Applied: "{}"}, nil).Once()
+			s.store.On("GetPluginSchedule", s.ctx, "echo", "on", "daily").Return(nil, nil).Once()
+			s.store.On("DeletePluginSchedule", s.ctx, "echo", "on", "ping").Return(boom).Once()
+			s.store.On("SetPluginTasksPaused", s.ctx, "echo", "on", false).Return(nil).Once()
+		}, wantErr: "deleting echo's ping task in on: boom"},
+		{name: "read", setup: func() {
+			onlyOn()
+			s.store.On("GetPluginSchedule", s.ctx, "echo", "on", "ping").Return(nil, boom).Once()
+			s.store.On("GetPluginSchedule", s.ctx, "echo", "on", "daily").Return(nil, nil).Once()
+			s.store.On("SetPluginTasksPaused", s.ctx, "echo", "on", false).Return(nil).Once()
+		}, wantErr: "reading echo's ping task in on: boom"},
+		{name: "apply", schedules: map[string]config.PluginSchedule{"daily": {}}, setup: func() {
+			onlyOn()
+			s.store.On("GetPluginSchedule", s.ctx, "echo", "on", "ping").Return(nil, nil).Once()
+			s.store.On("GetPluginSchedule", s.ctx, "echo", "on", "daily").Return(nil, nil).Once()
+			s.store.On("ApplyPluginSchedule", s.ctx, mock.Anything, dailyApplied).Return(boom).Once()
+			s.store.On("SetPluginTasksPaused", s.ctx, "echo", "on", false).Return(nil).Once()
+		}, wantErr: "making echo's daily task in on: boom"},
+		{name: "no schedule", schedules: map[string]config.PluginSchedule{"ping": {}}, setup: func() {
+			onlyOn()
+			s.store.On("GetPluginSchedule", s.ctx, "echo", "on", "ping").Return(nil, nil).Once()
+			s.store.On("GetPluginSchedule", s.ctx, "echo", "on", "daily").Return(nil, nil).Once()
+			s.store.On("SetPluginTasksPaused", s.ctx, "echo", "on", false).Return(nil).Once()
+		}, wantErr: "plugins.echo.schedules.ping: invalid task schedule"},
+		{name: "type", schedules: map[string]config.PluginSchedule{"daily": {Type: "once", Schedule: "2026-10-12T09:00:00Z"}}, setup: func() {
+			onlyOn()
+			s.store.On("GetPluginSchedule", s.ctx, "echo", "on", "ping").Return(nil, nil).Once()
+			s.store.On("GetPluginSchedule", s.ctx, "echo", "on", "daily").Return(nil, nil).Once()
+			s.store.On("SetPluginTasksPaused", s.ctx, "echo", "on", false).Return(nil).Once()
+		}, wantErr: `plugins.echo.schedules.daily: type must be cron or interval, not "once"`},
 		{name: "plugins", setup: func() {
 			s.store.On("ListPluginStates", s.ctx).Return(nil, boom).Once()
 		}, wantErr: "listing the plugins: boom"},
@@ -428,11 +504,6 @@ func (s *ServiceSuite) TestSyncSchedules() {
 			s.store.On("ListPluginStates", s.ctx).Return([]*db.PluginState{approved(db.PluginStatusInstalled)}, nil).Once()
 			s.store.On("ListChannels", s.ctx).Return(nil, boom).Once()
 		}, wantErr: "listing the channels: boom"},
-		{name: "seed", setup: func() {
-			s.store.On("ListPluginStates", s.ctx).Return([]*db.PluginState{approved(db.PluginStatusInstalled)}, nil).Once()
-			s.store.On("ListChannels", s.ctx).Return(channels[:1], nil).Once()
-			s.store.On("SeedPluginTask", s.ctx, daily).Return(false, boom).Once()
-		}, wantErr: "creating echo's daily task in on: boom"},
 		{name: "pause", setup: func() {
 			s.store.On("ListPluginStates", s.ctx).Return([]*db.PluginState{approved(db.PluginStatusInstalled)}, nil).Once()
 			s.store.On("ListChannels", s.ctx).Return(channels[1:2], nil).Once()
@@ -441,10 +512,14 @@ func (s *ServiceSuite) TestSyncSchedules() {
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
-			setup()
+			setup(tt.schedules)
 			tt.setup()
 			err := s.svc.SyncSchedules(s.ctx)
-			require.ErrorContains(s.T(), err, tt.wantErr)
+			if tt.wantErr == "" {
+				require.NoError(s.T(), err)
+			} else {
+				require.ErrorContains(s.T(), err, tt.wantErr)
+			}
 			s.store.AssertExpectations(s.T())
 		})
 	}

@@ -96,7 +96,7 @@ func (a *app) newPlugins(ctx context.Context, cfg *config.Config, reload func() 
 	mgr.SetImageGate(gate)
 	mgr.SetRegistry(registry)
 	installer := install.NewInstaller(cli, ps, root, a.version)
-	svc := install.NewService(installer, mgr, ps, proxy.NewClient(&http.Client{}), pluginEnabled(cfg, reload, store))
+	svc := install.NewService(installer, mgr, ps, proxy.NewClient(&http.Client{}), pluginProject(cfg, reload, store))
 	if err := errors.Join(mgr.RemoveLeftovers(ctx), svc.PruneChannels(ctx)); err != nil {
 		logger.Warn("removing leftover plugin containers", "error", err)
 	}
@@ -135,16 +135,16 @@ func (w workflowPlugins) CallPluginTool(ctx context.Context, pluginID, tool, cha
 	return workflow.PluginToolResult{Content: res.Content, IsError: res.IsError, Structured: res.StructuredContent}, nil
 }
 
-// pluginEnabled reports whether a plugin is enabled in a channel's project:
-// the project config's plugins.<id>.enabled, else the global one. A
-// worktree's project config is its checkout's, as the config API has it; a
-// channel without a dir has its project config where the API keeps it.
-func pluginEnabled(cfg *config.Config, reload func() (*config.Config, error), store db.ChannelGetter) install.Enabled {
-	return func(ctx context.Context, pluginID string, ch runtime.Channel) (bool, error) {
+// pluginProject returns a plugin's config in a channel's project: the
+// project config's plugins.<id> over the global one. A worktree's project
+// config is its checkout's, as the config API has it; a channel without a
+// dir has its project config where the API keeps it.
+func pluginProject(cfg *config.Config, reload func() (*config.Config, error), store db.ChannelGetter) install.Project {
+	return func(ctx context.Context, pluginID string, ch runtime.Channel) (config.PluginConfig, error) {
 		dir := ch.DirPath
 		c, err := store.GetChannel(ctx, ch.ID)
 		if err != nil {
-			return false, err
+			return config.PluginConfig{}, err
 		}
 		if c != nil {
 			dir = cmp.Or(db.WorktreeRootDirPath(ctx, store, c), dir)
@@ -154,9 +154,9 @@ func pluginEnabled(cfg *config.Config, reload func() (*config.Config, error), st
 		}
 		merged, err := mergedProjectConfig(cfg, reload, dir, "")
 		if err != nil {
-			return false, err
+			return config.PluginConfig{}, err
 		}
-		return merged.Plugins.EnabledFor(pluginID), nil
+		return merged.Plugins.ByID[pluginID], nil
 	}
 }
 
