@@ -59,6 +59,9 @@ type RunRequest struct {
 	// agent gets the read-only tool set (agent.AgentRequest.ReadOnly) instead
 	// of a code-review run's.
 	ReadOnly bool
+	// AllowTools are the Loop tools a ReadOnly pass may still call; see
+	// agent.AgentRequest.AllowTools.
+	AllowTools []string
 	// OnComment, when set, receives each finding the agent reports through
 	// the built-in ReportFindings tool, in the order reported; it runs on the
 	// stream-reading goroutine, so it must not block for long.
@@ -108,6 +111,7 @@ func (r *Runner) Run(ctx context.Context, rr RunRequest) (*agent.AgentResponse, 
 		Prompt:               rr.Prompt,
 		ReviewMode:           !rr.ReadOnly,
 		ReadOnly:             rr.ReadOnly,
+		AllowTools:           rr.AllowTools,
 		SessionID:            rr.ForkSessionID,
 		ForkSession:          rr.ForkSessionID != "",
 		Model:                rr.Model,

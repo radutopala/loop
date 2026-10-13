@@ -68,6 +68,10 @@ type AgentRequest struct {
 	// changes state is denied, so the run can only look (and a learn pass
 	// propose).
 	ReadOnly bool `json:"read_only,omitempty"`
+	// AllowTools are Loop MCP tools a ReadOnly run may call after all, out
+	// of the ones it is denied: the review verification step records
+	// verdicts through update_review_comment.
+	AllowTools []string `json:"allow_tools,omitempty"`
 	// MCPArgs are added to the built-in loop MCP server's args; a plugin's
 	// agent run gets the plugin's tools through them.
 	MCPArgs []string `json:"mcp_args,omitempty"`

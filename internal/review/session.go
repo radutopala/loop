@@ -58,6 +58,11 @@ const (
 	StatusLoading   Status = "loading"
 	StatusReady     Status = "ready"
 	StatusReviewing Status = "reviewing"
+	// StatusVerifying is the check that follows a review: the dedup pass,
+	// then an agent judging each agent comment against the code (see
+	// VerifyPrompt). The session takes no other run until it is over, so
+	// Address all and Push all act on the verdicts.
+	StatusVerifying Status = "verifying"
 	StatusError     Status = "error"
 )
 

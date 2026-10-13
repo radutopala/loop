@@ -888,6 +888,26 @@ func (s *RunnerSuite) TestBuildClaudeCmdReadOnly() {
 	require.Less(s.T(), t, slices.Index(cmd, "--print"))
 }
 
+// TestBuildClaudeCmdReadOnlyAllowTools verifies the tools a read-only request
+// allows are left out of its denials, and only those.
+func (s *RunnerSuite) TestBuildClaudeCmdReadOnlyAllowTools() {
+	cfg := &config.Config{ClaudeBinPath: "claude"}
+	req := &agent.AgentRequest{
+		ChannelID:  "ch-1",
+		Messages:   []agent.AgentMessage{{Role: "user", Content: "verify"}},
+		ReadOnly:   true,
+		AllowTools: []string{"mcp__loop__update_review_comment"},
+	}
+
+	cmd := buildClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", req)
+	denied := strings.Split(cmd[slices.Index(cmd, "--disallowedTools")+1], ",")
+	require.NotContains(s.T(), denied, "mcp__loop__update_review_comment")
+	require.Contains(s.T(), denied, "mcp__loop__push_review_comment")
+	require.Contains(s.T(), denied, "mcp__loop__dedup_review_findings")
+	require.Len(s.T(), denied, len(readOnlyDisallowedTools)-1)
+	require.Contains(s.T(), readOnlyDisallowedTools, "mcp__loop__update_review_comment")
+}
+
 func (s *RunnerSuite) TestBuildClaudeCmdPermissionPromptTool() {
 	cfg := &config.Config{ClaudeBinPath: "claude"}
 	req := &agent.AgentRequest{

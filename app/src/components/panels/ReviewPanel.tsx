@@ -353,6 +353,8 @@ function statusLabel(status: ReviewStatus): string {
       return "Ready";
     case "reviewing":
       return "Reviewing...";
+    case "verifying":
+      return "Verifying...";
     case "error":
       return "Error";
   }
@@ -361,6 +363,9 @@ function statusLabel(status: ReviewStatus): string {
 export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView, hasChatPanel, gateApprovals, onClearGateApproval }: ReviewPanelProps) {
   const { colors, fontSizes } = useTheme();
   const [session, setSession] = useState<ReviewSession | null>(null);
+  // A run's verification step holds the session like the run does.
+  const verifying = session?.status === "verifying";
+  const reviewRunning = session?.status === "reviewing" || verifying;
   const [prList, setPrList] = useState<ReviewPR[] | null>(null);
   const [listLoading, setListLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -660,6 +665,9 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
           if (d.node_id === "dedup") {
             // review-loop's final pass runs after the loop, not in an iteration.
             setLoopChip("deduping comments");
+          } else if (d.node_id === "check") {
+            // So does the seeded loops' final verification.
+            setLoopChip("verifying comments");
           } else if (d.node_id) {
             const iter = typeof d.iteration === "number" ? d.iteration + 1 : 1;
             setLoopChip(`${d.node_id} — iter ${iter}`);
@@ -1083,13 +1091,13 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
     setError(null);
     try {
       if (loopActive && loopRunId) await cancelWorkflowRun(loopRunId);
-      if (session?.status === "reviewing") await stopReview(channelId);
+      if (reviewRunning) await stopReview(channelId);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
-  }, [channelId, loopActive, loopRunId, session?.status]);
+  }, [channelId, loopActive, loopRunId, reviewRunning]);
 
   const onPushAll = useCallback(async () => {
     setBusy(true);
@@ -1136,7 +1144,9 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
   // Disabled styling is applied inline so the button visibly dims and
   // shows a not-allowed cursor — otherwise `disabled` is a no-op visual.
   const disabledStyle: React.CSSProperties = { opacity: 0.4, cursor: "not-allowed" };
-  const syncDisabled = busy || session?.status === "reviewing" || session?.status === "loading";
+  const syncDisabled = busy || reviewRunning || session?.status === "loading";
+  // Address all and Push all wait for the verification step's verdicts.
+  const allDisabled = busy || verifying;
   // `loopActive` is the single source of truth for "a run is in flight": set
   // when runMode dispatches the workflow, cleared in the workflow.run_completed
   // handler regardless of the daemon's terminal status. Earlier this gate also
@@ -1357,9 +1367,9 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
                   borderBottomRightRadius: 0,
                   borderRight: "none",
                 }}
-                title={session?.status === "reviewing" ? "Review already running" : `Start ${mode === "review-fix" ? "review + fix loop" : "review loop"}`}
+                title={reviewRunning ? "Review already running" : `Start ${mode === "review-fix" ? "review + fix loop" : "review loop"}`}
               >
-                {session?.status === "reviewing" ? "Running..." : modePrimaryLabel(mode)}
+                {reviewRunning ? "Running..." : modePrimaryLabel(mode)}
               </button>
               <button
                 ref={caretRef}
@@ -1379,7 +1389,7 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
                 ▾
               </button>
             </div>
-            {(session?.status === "reviewing" || loopActive) && (
+            {(reviewRunning || loopActive) && (
               <button
                 data-testid="review-stop-btn"
                 onClick={() => void onStop()}
@@ -1411,10 +1421,10 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
                 ref={allBtnRef}
                 data-testid="review-all-menu-btn"
                 onClick={openAllMenu}
-                disabled={busy}
+                disabled={allDisabled}
                 aria-haspopup="menu"
-                style={busy ? { ...btnStyle, ...disabledStyle } : btnStyle}
-                title="Check, address or push every comment"
+                style={allDisabled ? { ...btnStyle, ...disabledStyle } : btnStyle}
+                title={verifying ? "Waiting for the verification's verdicts" : "Check, address or push every comment"}
               >
                 All ▾
               </button>
@@ -1519,7 +1529,7 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
             newCount,
             pendingCount,
             skipped,
-            busy,
+            busy: allDisabled,
             onCheckAll: () => void onCheckAll(),
             onAddressAll: () => void onAddressAll(),
             onPushAll: () => void onPushAll(),

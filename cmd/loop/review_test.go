@@ -1243,3 +1243,88 @@ func (s *MainSuite) TestNewReviewDedupCmd() {
 		})
 	}
 }
+
+// --no-verify asks the run to skip the verification step; without it the
+// config decides.
+func (s *MainSuite) TestNewReviewRunCmdVerifyFlag() {
+	cases := []struct {
+		name     string
+		args     []string
+		wantBody string
+	}{
+		{"config decides", nil, `{}`},
+		{"no verify", []string{"--no-verify"}, `{"verify":false}`},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			var body string
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				require.Equal(s.T(), "/api/channels/ch1/review/run", r.URL.Path)
+				b, _ := io.ReadAll(r.Body)
+				body = string(b)
+				w.WriteHeader(http.StatusAccepted)
+			}))
+			defer ts.Close()
+			s.app.reviewClient = http.DefaultClient
+			cmd := s.app.newReviewCmd()
+			cmd.SetArgs(append([]string{"run", "--channel-id", "ch1", "--api-url", ts.URL}, tc.args...))
+			cmd.SetOut(new(bytes.Buffer))
+			cmd.SetErr(new(bytes.Buffer))
+			require.NoError(s.T(), cmd.Execute())
+			require.Equal(s.T(), tc.wantBody, body)
+		})
+	}
+}
+
+func (s *MainSuite) TestNewReviewVerifyCmd() {
+	var polls atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/channels/env-ch/review/verify":
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = io.WriteString(w, `{"status":"started"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/channels/env-ch/review":
+			status := "verifying"
+			if polls.Add(1) > 1 {
+				status = "ready"
+			}
+			_, _ = io.WriteString(w, `{"present":true,"session":{"status":"`+status+`","comments":[{"id":"a","source":"agent","path":"x.go","line":3,"body":"b","verdict":"real"}]}}`)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusTeapot)
+		}
+	}))
+	defer ts.Close()
+	s.app.reviewClient = http.DefaultClient
+
+	cases := []struct {
+		name    string
+		args    []string
+		env     string
+		wantErr string
+		wantOut string
+	}{
+		{name: "invalid timeout", args: []string{"verify", "--channel-id", "ch1", "--timeout", "nope"}, wantErr: "invalid --timeout"},
+		{name: "channel id required", args: []string{"verify"}, wantErr: "channel-id"},
+		{name: "waits for the verdicts", args: []string{"verify", "--api-url", ts.URL, "--wait"}, env: "env-ch",
+			wantOut: `"status":"ready"`},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			s.T().Setenv("LOOP_CHANNEL_ID", tc.env)
+			cmd := s.app.newReviewCmd()
+			cmd.SetArgs(tc.args)
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(new(bytes.Buffer))
+			err := cmd.Execute()
+			if tc.wantErr != "" {
+				require.ErrorContains(s.T(), err, tc.wantErr)
+				return
+			}
+			require.NoError(s.T(), err)
+			require.Contains(s.T(), out.String(), tc.wantOut)
+			require.Contains(s.T(), out.String(), `"verdict":"real"`)
+			require.EqualValues(s.T(), 2, polls.Load())
+		})
+	}
+}

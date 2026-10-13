@@ -576,7 +576,8 @@ For development: `make docker-build` builds from `container/Dockerfile` in the r
 | `loop daemon:status` | `d:status` | Show daemon status |
 | `loop mcp-host-browser` | | Standalone MCP server for host Chrome browser automation |
 | `loop quality:scan` | | One-shot architectural quality scan (`--root <dir>`, `--max-files <n>`, `--json`); see [docs/quality.md](docs/quality.md) |
-| `loop review:run` | | Drive a channel's review pass via the daemon (`--channel-id`, `--api-url`, `--wait`, `--timeout`); used by the seeded `review-loop` / `review-fix-loop` workflows. See [docs/review.md](docs/review.md) |
+| `loop review:run` | | Drive a channel's review pass via the daemon (`--channel-id`, `--api-url`, `--wait`, `--timeout`, `--no-verify`); used by the seeded `review-loop` / `review-fix-loop` workflows. See [docs/review.md](docs/review.md) |
+| `loop review:verify` | | Run the verification step over a channel's review session: dedup, then a verdict on each agent comment, posted to the channel (`--channel-id`, `--api-url`, `--wait`, `--timeout`). See [docs/review.md](docs/review.md#lifecycle) |
 | `loop api:rotate-token` | | Replace the API token the desktop app and CLI use; see [docs/api.md](docs/api.md) |
 | `loop app:url` | | Print the web UI's URL signed in with the API token (`--base`, default `http://localhost:5173/`), for running the UI in a browser |
 | `loop ui:state` | | Print the desktop app windows' state (`--watch` to print each change); see [docs/api.md](docs/api.md#ui-bridge) |
@@ -1046,6 +1047,8 @@ Loop includes a cross-platform desktop app for macOS, Windows, and Linux, built 
 | Linux (ARM64) | `.AppImage`, `.deb` | AppImage only |
 
 Release builds for macOS are signed with a Developer ID Application certificate and notarized by Apple.
+
+Every release asset has a [build provenance attestation](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations) from the release workflow. Verify a download with `gh attestation verify <file> --repo radutopala/loop`.
 
 ### Build from source
 

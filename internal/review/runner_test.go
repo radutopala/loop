@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/mock"
@@ -60,11 +61,11 @@ func (s *RunnerSuite) TestRunBuildsRequest() {
 func (s *RunnerSuite) TestRunReadOnly() {
 	a := new(mockAgentRunner)
 	a.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
-		return req.ReadOnly && !req.ReviewMode
+		return req.ReadOnly && !req.ReviewMode && slices.Equal(req.AllowTools, VerifyTools)
 	})).Return(&agent.AgentResponse{}, nil)
 
 	r := &Runner{Agent: a}
-	_, err := r.Run(context.Background(), RunRequest{ChannelID: "ch", DirPath: "/wt", Prompt: "p", ReadOnly: true})
+	_, err := r.Run(context.Background(), RunRequest{ChannelID: "ch", DirPath: "/wt", Prompt: "p", ReadOnly: true, AllowTools: VerifyTools})
 	require.NoError(s.T(), err)
 	a.AssertExpectations(s.T())
 }

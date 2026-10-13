@@ -376,6 +376,18 @@ func buildSchema() *ConfigSchema {
 						Description:  "Prompt file under {loopDir}/review/",
 						XPlaceholder: "prompt.md",
 					},
+					"verify": {
+						Type:        "boolean",
+						Title:       "Verify",
+						Description: "Once a review is over (a single run, or a review loop's last iteration), dedup the comments, have an agent judge each agent comment against the code, and post a summary to the channel. On by default.",
+						Default:     true,
+					},
+					"verify_prompt": {
+						Type:        "string",
+						Title:       "Verify Prompt",
+						Description: "Instructions for the verification agent, in place of the built-in ones; the PR, commit, checkout and dedup outcome are added after them",
+						XWidget:     "textarea",
+					},
 				},
 			},
 

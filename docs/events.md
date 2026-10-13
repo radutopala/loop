@@ -1004,7 +1004,7 @@ Emitted when a comment changes in place: the dedup pass (`POST /review/dedup`) a
 
 ### `review.status`
 
-Emitted on every review session status transition (`idle → loading → ready → reviewing → ready|error`), and with `idle` when the session is deleted, which also stops a run in progress. The FE swaps affordances based on this; no polling needed. The sidebar lights a ready session's `rev` pill, and patches the channel's `review_running` and `last_activity_at` from it, so a reviewing channel shows as running, in Recent too.
+Emitted on every review session status transition (`idle → loading → ready → reviewing → verifying → ready|error`; `verifying` is the [verification step](review.md#lifecycle), skipped when it is off), and with `idle` when the session is deleted, which also stops a run in progress. The FE swaps affordances based on this; no polling needed. The sidebar lights a ready session's `rev` pill, and patches the channel's `review_running` and `last_activity_at` from it, so a reviewing channel shows as running, in Recent too.
 
 **Payload schema:**
 
@@ -1014,7 +1014,7 @@ Emitted on every review session status transition (`idle → loading → ready �
 
 | Field    | Type   | Description |
 |----------|--------|-------------|
-| `status` | string | `"idle" \| "loading" \| "ready" \| "reviewing" \| "error"` |
+| `status` | string | `"idle" \| "loading" \| "ready" \| "reviewing" \| "verifying" \| "error"` |
 | `error`  | string | Populated only when `status == "error"`; omitted otherwise |
 
 **Scope:** Global, so every window's sidebar hears it.

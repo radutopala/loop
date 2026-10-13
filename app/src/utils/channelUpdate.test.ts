@@ -17,6 +17,7 @@ const gitOnly: ChannelUpdatedData = { channel_id: "t1", branch: "", commit: "", 
 describe("applyReviewStatus", () => {
   it.each([
     ["reviewing", true],
+    ["verifying", true],
     ["ready", false],
     ["idle", false],
     ["error", false],

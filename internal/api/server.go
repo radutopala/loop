@@ -403,6 +403,7 @@ func NewServer(sched scheduler.Scheduler, channels ChannelEnsurer, threads Threa
 	}
 	s.ui = uibridge.New()
 	s.review = newReviewService(&s.serverDeps)
+	s.review.messages = messages
 	s.playground = newPlaygroundService(&s.serverDeps)
 	s.quality = newQualityService(&s.serverDeps)
 	s.browser = newBrowserService(&s.serverDeps)
@@ -514,6 +515,7 @@ func (s *Server) registerReviewRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/channels/{id}/review", s.review.handleReviewDelete)
 	mux.HandleFunc("POST /api/channels/{id}/review/run", s.review.handleReviewRun)
 	mux.HandleFunc("POST /api/channels/{id}/review/dedup", s.review.handleReviewDedup)
+	mux.HandleFunc("POST /api/channels/{id}/review/verify", s.review.handleReviewVerify)
 	mux.HandleFunc("POST /api/channels/{id}/review/stop", s.review.handleReviewStop)
 	mux.HandleFunc("PUT /api/channels/{id}/review/fork", s.review.handleReviewSetFork)
 	mux.HandleFunc("PUT /api/channels/{id}/review/agent", s.review.handleReviewSetAgent)

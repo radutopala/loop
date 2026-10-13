@@ -595,6 +595,12 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 		if pc.Review.PromptPath != "" {
 			merged.Review.PromptPath = pc.Review.PromptPath
 		}
+		if pc.Review.Verify != nil {
+			merged.Review.Verify = *pc.Review.Verify
+		}
+		if pc.Review.VerifyPrompt != "" {
+			merged.Review.VerifyPrompt = pc.Review.VerifyPrompt
+		}
 	}
 
 	// PlaygroundShare: Enabled overrides global only when explicitly set.
