@@ -1047,6 +1047,8 @@ Loop includes a cross-platform desktop app for macOS, Windows, and Linux, built 
 
 Release builds for macOS are signed with a Developer ID Application certificate and notarized by Apple.
 
+Every release asset has a [build provenance attestation](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations) from the release workflow. Verify a download with `gh attestation verify <file> --repo radutopala/loop`.
+
 ### Build from source
 
 Requires [Node.js 24+](https://nodejs.org/).
