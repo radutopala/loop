@@ -117,7 +117,7 @@ func (s *ServerSuite) TestListPluginsSettings() {
 
 func (s *ServerSuite) TestListPluginsSchedules() {
 	pm := s.pluginRoutes()
-	s.pluginProjectSetup(`{"plugins": {"echo": {"schedules": {"daily": {"schedule": "0 7 * * *"}}}}}`)
+	dir := s.pluginProjectSetup(`{"plugins": {"echo": {"schedules": {"daily": {"schedule": "0 7 * * *"}}}}}`)
 	global := s.srv.configs.load
 	s.srv.configs.load = func() (*config.Config, error) {
 		cfg, err := global()
@@ -141,6 +141,7 @@ func (s *ServerSuite) TestListPluginsSchedules() {
 	require.Equal(s.T(), map[string]config.PluginSchedule{"daily": {Schedule: "0 7 * * *"}}, echo.ProjectSchedules)
 	require.Equal(s.T(), echo.GlobalSchedules, echo.Schedules)
 	require.Nil(s.T(), quiz.DefaultSchedules, "without schedule approved")
+	require.Nil(s.T(), echo.ScheduleProblems)
 
 	st := s.projectTrustStatus()
 	pm.On("StopDisabled", mock.Anything).Return(false).Once()
@@ -149,6 +150,17 @@ func (s *ServerSuite) TestListPluginsSchedules() {
 	require.Equal(s.T(), http.StatusNoContent, rec.Code, rec.Body.String())
 	list = s.listPluginsIn("ch-1")
 	require.Equal(s.T(), map[string]config.PluginSchedule{"daily": {Schedule: "0 7 * * *"}, "ping": {Schedule: "1h", Type: "interval"}}, list.Plugins[0].Schedules)
+
+	// The project's own entries are checked untrusted, each replacing the
+	// global one; without a channel only the global ones are.
+	s.writeProject(dir, `{"plugins": {"echo": {"schedules": {"ping": {"schedule": "soon"}, "ghost": {}}}}}`)
+	require.Equal(s.T(), []string{
+		"plugins.echo.schedules.ghost: no such action",
+		`plugins.echo.schedules.ping: invalid task schedule: cron schedule "soon": expected exactly 5 fields, found 1: [soon]`,
+	}, s.listPluginsIn("ch-1").Plugins[0].ScheduleProblems)
+	rec = s.testRequest("GET", "/api/plugins", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code, rec.Body.String())
+	require.NotContains(s.T(), rec.Body.String(), "schedule_problems")
 }
 
 func (s *ServerSuite) TestListPluginsInProjectWithoutConfig() {

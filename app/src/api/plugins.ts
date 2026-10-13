@@ -66,6 +66,9 @@ export interface PluginInfo {
   global_schedules?: Record<string, PluginSchedule>;
   project_schedules?: Record<string, PluginSchedule>;
   schedules?: Record<string, PluginSchedule>;
+  /** The schedules entries that make no task: the global ones, for a
+   *  channel each replaced by its project's own. */
+  schedule_problems?: string[];
   containers?: PluginContainerInfo[];
 }
 
@@ -249,6 +252,22 @@ export function setPluginSetting(id: string, key: string, value: unknown, channe
  *  scheduled task, off keeps it but turned off. */
 export function setPluginSchedule(id: string, action: string, enabled: boolean, channelId?: string | null): Promise<void> {
   return setPluginValue(id, ["schedules", action, "enabled"], enabled, channelId);
+}
+
+/** Sets plugins.<id>.schedules.<action> in channelId's project config, or
+ *  in the global config without one, to entry; undefined removes it, which
+ *  deletes the task the entry made. */
+export function setPluginScheduleEntry(id: string, action: string, entry: PluginSchedule | undefined, channelId?: string | null): Promise<void> {
+  return setPluginValue(id, ["schedules", action], entry && scheduleEntry(entry), channelId);
+}
+
+/** entry without its unset fields, as a config file holds it. */
+export function scheduleEntry(entry: PluginSchedule): PluginSchedule {
+  const out: PluginSchedule = {};
+  if (entry.enabled !== undefined) out.enabled = entry.enabled;
+  if (entry.type) out.type = entry.type;
+  if (entry.schedule) out.schedule = entry.schedule;
+  return out;
 }
 
 /** The answer of a plugin's own API, its body decoded when it's JSON. */

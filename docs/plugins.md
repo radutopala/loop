@@ -136,14 +136,21 @@ Each channel of a project that enables the plugin then gets the task. `type` (`c
 one must set; `enabled` defaults to `true`, and `false` keeps the task but turned off.
 Removing the entry deletes the task. An entry in the global config asks for the task in every
 project; a project's own entry replaces it, action by action. Like `enabled`, a project's
-schedules apply once the owner trusts its config. Settings → Plugins turns them on and off for a
-project.
+schedules apply once the owner trusts its config. Settings → Plugins edits the entries: under
+Global for every project, under Project for one, each turned on or off, with its own type and
+schedule, or removed. The Tasks panel of a project's channel makes one too: New task → Plugin
+picks an action of a plugin the project enables and writes the project's entry.
 
 When a task runs, Loop calls `POST /actions/{action}` on the channel's container with
 `"trigger": "schedule"` and the task's id, starting the container if it isn't running. The tasks
-show in the Tasks panel like any other, where the owner can change their schedule, turn them off
-or delete them. Loop applies an entry once per change to it, so those edits stand until the
-config changes; a deleted task comes back only then. A project that stops enabling the plugin
+show in the Tasks panel like any other. There, editing one's schedule or turning it on or off
+writes the project's entry, and deleting one the project's own entry made removes that entry.
+Loop applies an entry once per change to it, so a task deleted otherwise, one the global entry
+makes, comes back only when the entry changes. The entry holds only the schedule; how the task
+runs is the task's own, set when making or editing it in the Tasks panel. With Worktree on, the
+action runs in a worktree thread made on the first run, its later runs first rebased onto the
+origin branch when Update before run is on, and Auto-delete deletes the thread that many seconds
+after the action started. A project that stops enabling the plugin
 pauses its tasks, and enabling it again resumes them, except those the owner turned off. Only
 desktop app channels get them: threads and worktree threads run their channel's, and plugins
 don't run in Slack or Discord. Removing the plugin deletes them.

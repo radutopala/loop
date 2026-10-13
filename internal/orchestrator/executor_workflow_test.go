@@ -3,13 +3,16 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/types"
 	"github.com/radutopala/loop/internal/workflow"
+	"github.com/radutopala/loop/internal/worktree"
 )
 
 // --- Workflow Engine mock (used only in scheduled workflow tests) ---
@@ -224,4 +227,120 @@ func (s *TaskExecutorSuite) TestExecutePluginTask() {
 	resp, err = s.executor.ExecuteTask(s.ctx, task)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "quiz plugin's daily action started", resp)
+}
+
+func (s *TaskExecutorSuite) TestExecutePluginTaskWorktreeFirstRun() {
+	eb := new(MockEventBroadcaster)
+	s.executor.events = eb
+	task := &db.ScheduledTask{
+		ID: 7, ChannelID: "ch1", Type: db.TaskTypeCron, Schedule: "0 9 * * *",
+		PluginID: "quiz", PluginAction: "daily", Worktree: true, AutoDeleteSec: 30,
+	}
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/proj", Platform: types.PlatformLocal}, nil)
+	s.store.On("UpdateScheduledTaskOriginBranch", s.ctx, int64(7), "main").Return(nil)
+	s.expectTaskThread(task, "task-thread", true, nil)
+	eb.On("BroadcastChannelCreated", "ch1", "task-thread").Once()
+	s.bot.On("DeleteThread", mock.Anything, "task-thread").Return(errors.New("gone")).Once()
+	eb.On("BroadcastChannelDeleted", "task-thread").Once()
+	s.executor.SetWorktreeCreator(&worktree.Creator{
+		Sys: &mockWorktreeSys{},
+		Run: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			if args[0] == "rev-parse" {
+				return []byte("main\n"), nil
+			}
+			return nil, nil
+		},
+	})
+	var delay time.Duration
+	s.executor.timeAfterFunc = func(d time.Duration, f func()) *time.Timer {
+		delay = d
+		f()
+		return time.NewTimer(0)
+	}
+	var channelID, dirPath string
+	s.executor.SetPluginActions(func(ctx context.Context, pluginID, action, ch, dir string, taskID int64) error {
+		channelID, dirPath = ch, dir
+		return nil
+	})
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "quiz plugin's daily action started", resp)
+	require.Equal(s.T(), "task-thread", channelID)
+	require.Contains(s.T(), dirPath, ".worktrees/task-7-")
+	require.Equal(s.T(), 30*time.Second, delay)
+	s.bot.AssertExpectations(s.T())
+	eb.AssertExpectations(s.T())
+}
+
+func (s *TaskExecutorSuite) TestExecutePluginTaskWorktreeThreadFails() {
+	task := &db.ScheduledTask{ID: 7, ChannelID: "ch1", Type: db.TaskTypeCron, PluginID: "quiz", PluginAction: "daily", Worktree: true, OriginBranch: "main"}
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/proj"}, nil)
+	s.bot.On("CreateSimpleThread", mock.Anything, "ch1", mock.Anything, "").Return("", errors.New("boom")).Once()
+	s.executor.SetWorktreeCreator(&worktree.Creator{
+		Sys: &mockWorktreeSys{},
+		Run: func(context.Context, string, string, ...string) ([]byte, error) { return nil, nil },
+	})
+	s.executor.SetPluginActions(func(context.Context, string, string, string, string, int64) error {
+		s.T().Fatal("the action must not run")
+		return nil
+	})
+
+	_, err := s.executor.ExecuteTask(s.ctx, task)
+	require.EqualError(s.T(), err, "creating the worktree thread of task 7")
+}
+
+func (s *TaskExecutorSuite) TestExecutePluginTaskWorktreeUpdate() {
+	tests := []struct {
+		name    string
+		fail    string
+		wantErr string
+		wantRun []string
+	}{
+		{name: "fetch fails", fail: "fetch", wantErr: "fetching origin/main: no remote", wantRun: []string{"fetch"}},
+		{name: "rebase fails", fail: "rebase", wantErr: "rebasing onto origin/main: conflict", wantRun: []string{"fetch", "rebase", "rebase"}},
+		{name: "updated", wantRun: []string{"fetch", "rebase"}},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			task := &db.ScheduledTask{
+				ID: 7, ChannelID: "ch1", Type: db.TaskTypeCron, PluginID: "quiz", PluginAction: "daily",
+				Worktree: true, ThreadID: "th", UpdateBeforeRun: true, OriginBranch: "main",
+			}
+			s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/proj"}, nil)
+			s.store.On("GetChannel", s.ctx, "th").Return(&db.Channel{ChannelID: "th", DirPath: "/wt"}, nil)
+			var ran []string
+			s.executor.SetWorktreeCreator(&worktree.Creator{
+				Sys: &mockWorktreeSys{},
+				Run: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+					require.Equal(s.T(), "/wt", dir)
+					ran = append(ran, args[0])
+					switch {
+					case tt.fail == "fetch" && args[0] == "fetch":
+						return []byte("no remote\n"), errors.New("exit 1")
+					case tt.fail == "rebase" && args[0] == "rebase" && args[1] == "--autostash":
+						return []byte("conflict\n"), errors.New("exit 1")
+					}
+					return nil, nil
+				},
+			})
+			var channelID, dirPath string
+			s.executor.SetPluginActions(func(ctx context.Context, pluginID, action, ch, dir string, taskID int64) error {
+				channelID, dirPath = ch, dir
+				return nil
+			})
+
+			_, err := s.executor.ExecuteTask(s.ctx, task)
+			require.Equal(s.T(), tt.wantRun, ran)
+			if tt.wantErr != "" {
+				require.EqualError(s.T(), err, tt.wantErr)
+				require.Empty(s.T(), channelID)
+				return
+			}
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), "th", channelID)
+			require.Equal(s.T(), "/wt", dirPath)
+		})
+	}
 }

@@ -9,15 +9,17 @@ import {
   type PluginCandidate,
   type PluginInfo,
   type PluginList,
+  type PluginSchedule,
   removePlugin,
   setPluginEnabled,
-  setPluginSchedule,
+  setPluginScheduleEntry,
   stopPluginContainer,
 } from "../../api/plugins";
 import { useEventStream } from "../../hooks/useEventStream";
 import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
 import type { WSEvent } from "../../types";
+import { scheduledActions, scheduleState } from "../../utils/pluginTasks";
 import { PluginSettings } from "./PluginSettings";
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -340,6 +342,7 @@ function PluginCard({ colors, plugin, onChanged }: { colors: ColorPalette; plugi
           {plugin.actions.join(", ")}
         </div>
       )}
+      <PluginSchedules colors={colors} plugin={plugin} onChanged={onChanged} onError={setError} />
       <PluginSettings colors={colors} plugin={plugin} onChanged={onChanged} />
       <div style={{ marginTop: 8, marginBottom: 4, color: colors.textDim }}>Containers</div>
       <ContainerRows colors={colors} plugin={plugin} onError={setError} />
@@ -416,19 +419,10 @@ export function GlobalPluginsSection({ colors, onConfigChanged }: { colors: Colo
   );
 }
 
-/** Settings → Project → Plugins: whether each installed plugin runs in
- *  this channel's project, and its container here. onConfigChanged runs
- *  after a toggle wrote the project config. */
-/** The actions of p a project can ask a scheduled task of: each with a
- *  default_schedule, and each a config already asks for. */
-export function scheduledActions(p: PluginInfo): string[] {
-  if (!p.capabilities.includes("schedule")) return [];
-  const named = new Set([...Object.keys(p.default_schedules ?? {}), ...Object.keys(p.schedules ?? {}), ...Object.keys(p.project_schedules ?? {})]);
-  return (p.actions ?? []).filter((a) => named.has(a));
-}
-
-/** The scheduled task toggles of p's actions in channelId's project. */
-function ProjectSchedules({
+/** The scheduled tasks p's actions ask for in channelId's project, or in
+ *  every project without one: each on or off, its own schedule, and
+ *  removing its entry. */
+function PluginSchedules({
   colors,
   plugin: p,
   channelId,
@@ -437,18 +431,22 @@ function ProjectSchedules({
 }: {
   colors: ColorPalette;
   plugin: PluginInfo;
-  channelId: string;
+  channelId?: string;
   onChanged: () => void;
   onError: (e: string | null) => void;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const actions = scheduledActions(p);
-  if (actions.length === 0) return null;
-  const toggle = async (action: string, enabled: boolean) => {
+  const own = (channelId ? p.project_schedules : p.global_schedules) ?? {};
+  const strays = p.capabilities.includes("schedule") ? Object.keys(own).filter((a) => !p.actions?.includes(a)) : [];
+  if (actions.length === 0 && strays.length === 0) return null;
+  const tid = channelId ? "project-plugin-schedule" : "plugin-schedule";
+  const off = !!channelId && !p.enabled;
+  const save = async (action: string, entry: PluginSchedule | undefined) => {
     setBusy(action);
     onError(null);
     try {
-      await setPluginSchedule(p.id, action, enabled, channelId);
+      await setPluginScheduleEntry(p.id, action, entry, channelId);
       onChanged();
     } catch (e) {
       onError(errText(e));
@@ -456,33 +454,130 @@ function ProjectSchedules({
       setBusy(null);
     }
   };
+  const remove = (a: string) => (
+    <button
+      data-testid={`${tid}-remove-${p.id}-${a}`}
+      title={channelId ? "Remove this project's entry; the task it made is deleted." : "Remove the global entry; the tasks it made are deleted."}
+      disabled={busy === a}
+      onClick={() => save(a, undefined)}
+      style={buttonStyle(colors, { disabled: busy === a })}
+    >
+      Remove
+    </button>
+  );
   return (
     <div style={{ marginTop: 6 }}>
       {actions.map((a) => {
-        const want = p.schedules?.[a];
-        const own = p.project_schedules?.[a];
-        const on = want !== undefined && want.enabled !== false;
-        const def = p.default_schedules?.[a];
-        const schedule = (own ?? want)?.schedule || def?.schedule;
-        const pending = own !== undefined && JSON.stringify(own) !== JSON.stringify(want);
+        const st = scheduleState(p, a, channelId);
+        const disabled = busy === a || off;
         return (
-          <div key={a} data-testid={`project-plugin-schedule-${p.id}-${a}`}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <Toggle label={`Scheduled ${a}`} testId={`project-plugin-schedule-toggle-${p.id}-${a}`} checked={on} disabled={busy === a || !p.enabled} onChange={(v) => toggle(a, v)} />
-              {schedule && <Code>{schedule}</Code>}
+          <div key={a} data-testid={`${tid}-${p.id}-${a}`}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <Toggle
+                label={channelId ? `Scheduled ${a}` : `Scheduled ${a} in every project`}
+                testId={`${tid}-toggle-${p.id}-${a}`}
+                checked={st.on}
+                disabled={disabled}
+                onChange={(v) => save(a, { ...st.base, enabled: v })}
+              />
+              <select
+                data-testid={`${tid}-type-${p.id}-${a}`}
+                value={st.own?.type ?? ""}
+                disabled={disabled}
+                onChange={(e) => save(a, { ...st.base, type: e.target.value || undefined })}
+                style={inputStyle(colors, 110)}
+              >
+                <option value="">{`type: ${st.fallback?.type || "cron"}`}</option>
+                <option value="cron">cron</option>
+                <option value="interval">interval</option>
+              </select>
+              <ScheduleInput
+                colors={colors}
+                testId={`${tid}-schedule-${p.id}-${a}`}
+                value={st.own?.schedule ?? ""}
+                placeholder={st.fallback?.schedule ? `default ${st.fallback.schedule}` : "e.g. 0 9 * * * or 1h"}
+                disabled={disabled}
+                onSave={(v) => save(a, { ...st.base, schedule: v || undefined })}
+              />
+              {st.own && remove(a)}
             </div>
-            {pending && (
-              <div data-testid={`project-plugin-schedule-pending-${p.id}-${a}`} style={{ color: colors.warning }}>
-                The project config asks for it {own.enabled === false ? "off" : "on"}, but it takes effect only once you trust the project config.
+            {channelId && !st.own && p.global_schedules?.[a] && <div style={{ color: colors.textDim }}>Follows the global entry.</div>}
+            {st.pending && (
+              <div data-testid={`${tid}-pending-${p.id}-${a}`} style={{ color: colors.warning }}>
+                The project config asks for it {st.own?.enabled === false ? "off" : "on"}, but it takes effect only once you trust the project config.
               </div>
             )}
           </div>
         );
       })}
+      {strays.map((a) => (
+        <div key={a} data-testid={`${tid}-${p.id}-${a}`} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ color: colors.textDim }}>Scheduled {a}</span>
+          {remove(a)}
+        </div>
+      ))}
+      {!!p.schedule_problems?.length && (
+        <div data-testid={`${tid}-problems-${p.id}`} style={{ color: colors.warning }}>
+          No task for: {p.schedule_problems.join("; ")}
+        </div>
+      )}
     </div>
   );
 }
 
+const inputStyle = (colors: ColorPalette, width: number): React.CSSProperties => ({
+  width,
+  boxSizing: "border-box",
+  padding: "3px 6px",
+  backgroundColor: colors.bg,
+  border: `1px solid ${colors.border}`,
+  borderRadius: 4,
+  color: colors.text,
+  fontSize: 12,
+  fontFamily: "inherit",
+});
+
+/** A schedule's text box, saved as it loses focus or on Enter; empty
+ *  falls back to the default. */
+function ScheduleInput({
+  colors,
+  testId,
+  value,
+  placeholder,
+  disabled,
+  onSave,
+}: {
+  colors: ColorPalette;
+  testId: string;
+  value: string;
+  placeholder: string;
+  disabled: boolean;
+  onSave: (v: string) => void;
+}) {
+  const [text, setText] = useState(value);
+  useEffect(() => setText(value), [value]);
+  const commit = () => {
+    if (text.trim() !== value) onSave(text.trim());
+  };
+  return (
+    <input
+      data-testid={testId}
+      value={text}
+      placeholder={placeholder}
+      disabled={disabled}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") commit();
+      }}
+      style={{ ...inputStyle(colors, 160), fontFamily: fonts.mono }}
+    />
+  );
+}
+
+/** Settings → Project → Plugins: whether each installed plugin runs in
+ *  this channel's project, and its container here. onConfigChanged runs
+ *  after a toggle wrote the project config. */
 export function ProjectPluginsSection({ colors, channelId, onConfigChanged }: { colors: ColorPalette; channelId: string; onConfigChanged: () => void }) {
   const { list, error, reload } = usePluginList(channelId);
   const [busy, setBusy] = useState<string | null>(null);
@@ -509,7 +604,8 @@ export function ProjectPluginsSection({ colors, channelId, onConfigChanged }: { 
     <div data-testid="project-plugins-section">
       <Note colors={colors}>
         Enabling a plugin here sets <Code>plugins.&lt;id&gt;.enabled</Code> in this project's <Code>.loop/config.json</Code>; unset, the project follows the plugin's global default. Its threads and
-        worktree threads follow it too. A scheduled action's toggle sets <Code>plugins.&lt;id&gt;.schedules.&lt;action&gt;.enabled</Code>, which makes the action's task in the Tasks panel.
+        worktree threads follow it too. A scheduled action's row sets <Code>plugins.&lt;id&gt;.schedules.&lt;action&gt;</Code>, which makes the action's task in the Tasks panel; Remove deletes the
+        entry and the task.
       </Note>
       {list.plugins.length === 0 && <div style={{ color: colors.textDim, fontSize: 12 }}>No plugins installed. Install them under Global → Plugins.</div>}
       {toggleError && <div style={{ color: colors.error, fontSize: 12, marginBottom: 12 }}>{toggleError}</div>}
@@ -535,7 +631,7 @@ export function ProjectPluginsSection({ colors, channelId, onConfigChanged }: { 
                 The project config says {p.project_enabled ? "on" : "off"}, but it takes effect only once you trust the project config.
               </div>
             )}
-            <ProjectSchedules
+            <PluginSchedules
               colors={colors}
               plugin={p}
               channelId={channelId}

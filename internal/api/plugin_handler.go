@@ -87,10 +87,14 @@ type pluginInfo struct {
 	// global config's plugins.<id>.schedules, ProjectSchedules the
 	// channel_id's project config's own, and Schedules the ones that apply
 	// there: the global ones, each replaced by the trusted project one.
+	// ScheduleProblems are the global entries, with channel_id the global
+	// ones each replaced by the project's own, that make no task: for no
+	// such action or a schedule Loop refuses.
 	DefaultSchedules map[string]plugin.Schedule       `json:"default_schedules,omitempty"`
 	GlobalSchedules  map[string]config.PluginSchedule `json:"global_schedules,omitempty"`
 	ProjectSchedules map[string]config.PluginSchedule `json:"project_schedules,omitempty"`
 	Schedules        map[string]config.PluginSchedule `json:"schedules,omitempty"`
+	ScheduleProblems []string                         `json:"schedule_problems,omitempty"`
 	// Containers are the plugin's containers, one per channel it ran in.
 	Containers []pluginContainerInfo `json:"containers"`
 }
@@ -213,6 +217,9 @@ func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request) {
 			if m != nil {
 				info.Settings, info.SettingsProblems = proj.settings(m, st.PluginID)
 			}
+		}
+		if m != nil {
+			info.ScheduleProblems = m.ScheduleProblems(st.PluginID, info.GlobalSchedules, info.ProjectSchedules)
 		}
 		containers, err := s.plugins.Containers(ctx, st.PluginID)
 		if err != nil {

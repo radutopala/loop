@@ -303,17 +303,8 @@ func (s *Service) syncSchedule(ctx context.Context, pluginID string, a plugin.Ac
 		}
 		return nil
 	}
-	sch := plugin.Schedule{Type: db.TaskType(want.Type), Schedule: want.Schedule, Enabled: want.On()}
-	if d := a.DefaultSchedule; d != nil && sch.Schedule == "" {
-		sch.Type, sch.Schedule = d.Type, d.Schedule
-	}
-	if sch.Type == "" {
-		sch.Type = db.TaskTypeCron
-	}
-	if sch.Type != db.TaskTypeCron && sch.Type != db.TaskTypeInterval {
-		return fmt.Errorf("plugins.%s.schedules.%s: type must be cron or interval, not %q", pluginID, a.ID, sch.Type)
-	}
-	if err := scheduler.ValidateSchedule(sch.Type, sch.Schedule); err != nil {
+	sch, err := a.ResolveSchedule(want)
+	if err != nil {
 		return fmt.Errorf("plugins.%s.schedules.%s: %w", pluginID, a.ID, err)
 	}
 	applied, _ := json.Marshal(sch) // plain strings and a bool always encode
