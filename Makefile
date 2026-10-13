@@ -232,7 +232,7 @@ coverage-check: ## Run tests and enforce 100% coverage (via Docker on host, dire
 
 # Hugo version pinned to match .github/workflows/pages.yaml so local
 # builds reproduce CI output exactly. Update both when bumping.
-HUGO_VERSION ?= 0.154.5
+HUGO_VERSION ?= 0.165.0
 DOCS_BASE_URL ?= https://radutopala.github.io/loop/
 DOCS_SERVE_PORT ?= 8080
 
@@ -261,11 +261,11 @@ docs-build: ## Build the docs/ Hugo site via Docker (output in docs/public/)
 	if [ -n "$$CA_BUNDLE" ]; then \
 		docker run --rm --name loop-docs -v "$$(pwd)":/repo -w /repo/docs \
 			-v "$$CA_BUNDLE":/usr/local/share/ca-certificates/host-ca.crt:ro \
-			hugomods/hugo:exts-$(HUGO_VERSION) \
+			hugomods/hugo:$(HUGO_VERSION) \
 			sh -c 'cat /usr/local/share/ca-certificates/host-ca.crt >> /etc/ssl/certs/ca-certificates.crt; git config --global --add safe.directory /repo; git config --global http.sslCAInfo /etc/ssl/certs/ca-certificates.crt; export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt; hugo mod get -u && hugo --gc --minify --baseURL $(DOCS_BASE_URL)'; \
 	else \
 		docker run --rm --name loop-docs -v "$$(pwd)":/repo -w /repo/docs \
-			hugomods/hugo:exts-$(HUGO_VERSION) \
+			hugomods/hugo:$(HUGO_VERSION) \
 			sh -c 'git config --global --add safe.directory /repo; hugo mod get -u && hugo --gc --minify --baseURL $(DOCS_BASE_URL)'; \
 	fi
 	@echo "Built site in docs/public/"

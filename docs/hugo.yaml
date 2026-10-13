@@ -7,7 +7,7 @@
 
 baseURL: https://radutopala.github.io/loop/
 title: Loop Documentation
-languageCode: en-us
+locale: en-us
 enableRobotsTXT: true
 enableGitInfo: true
 
@@ -16,7 +16,7 @@ enableGitInfo: true
 # Without this, our flat top-level layout would fall back to the basic
 # single-column page template (no sidebar).
 cascade:
-  - _target: {}
+  - target: {}
     type: docs
 
 # Hextra is consumed as a Hugo module — see go.mod.
@@ -29,18 +29,18 @@ module:
   mounts:
     - source: .
       target: content
-      excludeFiles:
-        - hugo.yaml
-        - go.mod
-        - go.sum
-        - .gitignore
-        - .hugo_build.lock
-        - README.md
-        - public/**
-        - resources/**
-        - layouts/**
-        - static/**
-        - i18n/**
+      files:
+        - '! hugo.yaml'
+        - '! go.mod'
+        - '! go.sum'
+        - '! .gitignore'
+        - '! .hugo_build.lock'
+        - '! README.md'
+        - '! public/**'
+        - '! resources/**'
+        - '! layouts/**'
+        - '! static/**'
+        - '! i18n/**'
 
 markup:
   goldmark:
