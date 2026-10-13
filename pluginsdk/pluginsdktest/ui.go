@@ -426,6 +426,10 @@ func withProbe(page []byte, src string) []byte {
 	return slices.Concat(page[:at], []byte(probe), page[at:])
 }
 
+// chromeStart is how long Chrome may take to come up. chromedp's 20s is
+// too short for a cold start on a busy CI runner.
+const chromeStart = time.Minute
+
 // Chrome is a headless Chrome or Chromium, started for each page it opens.
 type Chrome struct {
 	// Options are added to chromedp's defaults, such as chromedp.ExecPath
@@ -439,7 +443,7 @@ type Chrome struct {
 
 // Open starts the browser and loads url.
 func (c Chrome) Open(ctx context.Context, url string) (func(), error) {
-	actx, cancelAlloc := chromedp.NewExecAllocator(ctx, slices.Concat(chromedp.DefaultExecAllocatorOptions[:], c.Options)...)
+	actx, cancelAlloc := chromedp.NewExecAllocator(ctx, slices.Concat(chromedp.DefaultExecAllocatorOptions[:], []chromedp.ExecAllocatorOption{chromedp.WSURLReadTimeout(chromeStart)}, c.Options)...)
 	bctx, cancelBrowser := chromedp.NewContext(actx)
 	closeAll := func() {
 		cancelBrowser()
