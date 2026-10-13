@@ -587,6 +587,42 @@ func (s *TrustSuite) TestMergePluginSettings() {
 	require.Equal(s.T(), map[string]any{"count": float64(5), "lang": "en"}, main.Plugins.ByID["quiz"].Settings, "the global config is left as it was")
 }
 
+func (s *TrustSuite) TestMergePluginSchedules() {
+	off := false
+	main := &Config{Plugins: PluginsConfig{ByID: map[string]PluginConfig{
+		"quiz": {Schedules: map[string]PluginSchedule{"daily": {}, "weekly": {Schedule: "0 9 * * 1"}}},
+	}}}
+
+	// A schedule can start an agent, so the project's wait for trust.
+	s.project(`{"plugins": {"quiz": {"schedules": {"daily": {"enabled": false}, "hourly": {"type": "interval", "schedule": "1h"}}}, "echo": {"schedules": {"ping": {}}}}}`)
+	st, err := s.store.Status("/proj")
+	require.NoError(s.T(), err)
+	require.False(s.T(), st.Trusted)
+	require.Contains(s.T(), st.Current, `"hourly"`)
+	merged, err := s.loader().loadProjectConfig("/proj", main)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), main.Plugins.ByID["quiz"].Schedules, merged.Plugins.ByID["quiz"].Schedules)
+	require.Nil(s.T(), merged.Plugins.ByID["echo"].Schedules)
+
+	require.NoError(s.T(), s.store.Trust("/proj", st.Hash))
+	merged, err = s.loader().loadProjectConfig("/proj", main)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), map[string]PluginSchedule{
+		"daily":  {Enabled: &off},
+		"weekly": {Schedule: "0 9 * * 1"},
+		"hourly": {Type: "interval", Schedule: "1h"},
+	}, merged.Plugins.ByID["quiz"].Schedules, "the project's replace the global ones, action by action")
+	require.Equal(s.T(), map[string]PluginSchedule{"ping": {}}, merged.Plugins.ByID["echo"].Schedules)
+	require.Len(s.T(), main.Plugins.ByID["quiz"].Schedules, 2, "the global config is left as it was")
+}
+
+func (s *TrustSuite) TestPluginScheduleOn() {
+	on, off := true, false
+	require.True(s.T(), PluginSchedule{}.On())
+	require.True(s.T(), PluginSchedule{Enabled: &on}.On())
+	require.False(s.T(), PluginSchedule{Enabled: &off}.On())
+}
+
 func (s *TrustSuite) TestProjectPlugins() {
 	on := true
 	tests := []struct {

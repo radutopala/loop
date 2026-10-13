@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"path"
 	"regexp"
 	"slices"
@@ -207,12 +208,56 @@ type Action struct {
 	DefaultSchedule *Schedule `json:"default_schedule,omitempty"`
 }
 
-// Schedule is the scheduled task Loop creates for an action when the plugin
-// is enabled in a channel.
+// Schedule is the scheduled task of an action. An action's
+// default_schedule is the one a project config's plugins.<id>.schedules
+// entry for it gets unless the entry sets its own; the entry, not Enabled,
+// turns the task on or off.
 type Schedule struct {
 	Type     db.TaskType `json:"type"`
 	Schedule string      `json:"schedule"`
 	Enabled  bool        `json:"enabled"`
+}
+
+// ResolveSchedule is the schedule of the task want asks of the action: its
+// own type and schedule, or without a schedule the action's
+// default_schedule, on unless want turns it off.
+func (a Action) ResolveSchedule(want config.PluginSchedule) (Schedule, error) {
+	sch := Schedule{Type: db.TaskType(want.Type), Schedule: want.Schedule, Enabled: want.On()}
+	if d := a.DefaultSchedule; d != nil && sch.Schedule == "" {
+		sch.Type, sch.Schedule = d.Type, d.Schedule
+	}
+	if sch.Type == "" {
+		sch.Type = db.TaskTypeCron
+	}
+	if sch.Type != db.TaskTypeCron && sch.Type != db.TaskTypeInterval {
+		return sch, fmt.Errorf("type must be cron or interval, not %q", sch.Type)
+	}
+	if err := scheduler.ValidateSchedule(sch.Type, sch.Schedule); err != nil {
+		return sch, err
+	}
+	return sch, nil
+}
+
+// ScheduleProblems are what's wrong with the schedules the layers ask of
+// the plugin id's actions, each layer's entry replacing the one below it:
+// no such action, or a schedule ResolveSchedule refuses.
+func (m *Manifest) ScheduleProblems(id string, layers ...map[string]config.PluginSchedule) []string {
+	want := map[string]config.PluginSchedule{}
+	for _, layer := range layers {
+		maps.Copy(want, layer)
+	}
+	var problems []string
+	for _, name := range slices.Sorted(maps.Keys(want)) {
+		i := slices.IndexFunc(m.Actions, func(a Action) bool { return a.ID == name })
+		if i < 0 {
+			problems = append(problems, fmt.Sprintf("plugins.%s.schedules.%s: no such action", id, name))
+			continue
+		}
+		if _, err := m.Actions[i].ResolveSchedule(want[name]); err != nil {
+			problems = append(problems, fmt.Sprintf("plugins.%s.schedules.%s: %v", id, name, err))
+		}
+	}
+	return problems
 }
 
 // UI is what the plugin draws in Loop.

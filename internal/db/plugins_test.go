@@ -68,21 +68,31 @@ func (s *IntegrationSuite) TestPlugins() {
 	require.Len(s.T(), cs, 1)
 	require.Equal(s.T(), "ch2", cs[0].ChannelID)
 
-	daily := func() *ScheduledTask {
-		return &ScheduledTask{ChannelID: "ch1", Schedule: "0 9 * * *", Type: TaskTypeCron, Enabled: true, NextRunAt: now, PluginID: "cogtest", PluginAction: "daily"}
+	none, err := store.GetPluginSchedule(ctx, "cogtest", "ch1", "daily")
+	require.NoError(s.T(), err)
+	require.Nil(s.T(), none)
+	daily := func(schedule string) *ScheduledTask {
+		return &ScheduledTask{ChannelID: "ch1", Schedule: schedule, Type: TaskTypeCron, Enabled: true, NextRunAt: now, PluginID: "cogtest", PluginAction: "daily"}
 	}
-	created, err := store.SeedPluginTask(ctx, daily())
-	require.NoError(s.T(), err)
-	require.True(s.T(), created)
-	created, err = store.SeedPluginTask(ctx, daily())
-	require.NoError(s.T(), err)
-	require.False(s.T(), created, "an action gets one task per channel")
+	require.NoError(s.T(), store.ApplyPluginSchedule(ctx, daily("0 9 * * *"), "a"))
 	tasks, err := store.ListScheduledTasks(ctx, "ch1")
 	require.NoError(s.T(), err)
 	require.Len(s.T(), tasks, 1)
 	require.Equal(s.T(), "cogtest", tasks[0].PluginID)
 	require.Equal(s.T(), "daily", tasks[0].PluginAction)
 	taskID := tasks[0].ID
+	have, err := store.GetPluginSchedule(ctx, "cogtest", "ch1", "daily")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), &PluginSchedule{Applied: "a", TaskID: taskID}, have)
+
+	require.NoError(s.T(), store.UpdateScheduledTaskEnabled(ctx, taskID, false))
+	require.NoError(s.T(), store.ApplyPluginSchedule(ctx, daily("0 10 * * *"), "b"))
+	tasks, err = store.ListScheduledTasks(ctx, "ch1")
+	require.NoError(s.T(), err)
+	require.Len(s.T(), tasks, 1, "an action gets one task per channel")
+	require.Equal(s.T(), taskID, tasks[0].ID)
+	require.Equal(s.T(), "0 10 * * *", tasks[0].Schedule)
+	require.True(s.T(), tasks[0].Enabled, "applying a schedule sets the task to what it asks")
 	_, err = store.InsertTaskRunLog(ctx, &TaskRunLog{TaskID: taskID, Status: RunStatusSuccess, StartedAt: now})
 	require.NoError(s.T(), err)
 
@@ -101,19 +111,32 @@ func (s *IntegrationSuite) TestPlugins() {
 	require.False(s.T(), enabled(), "one the owner turned off stays off")
 
 	require.NoError(s.T(), store.DeleteScheduledTask(ctx, taskID))
-	created, err = store.SeedPluginTask(ctx, daily())
+	have, err = store.GetPluginSchedule(ctx, "cogtest", "ch1", "daily")
 	require.NoError(s.T(), err)
-	require.False(s.T(), created, "a task the owner deleted isn't created again")
-	_, err = store.SeedPluginTask(ctx, &ScheduledTask{ChannelID: "ch2", Schedule: "1h", Type: TaskTypeInterval, NextRunAt: now, PluginID: "cogtest", PluginAction: "daily"})
+	require.Equal(s.T(), &PluginSchedule{Applied: "b"}, have, "a deleted task keeps its record")
+	require.NoError(s.T(), store.ApplyPluginSchedule(ctx, daily("0 9 * * *"), "c"))
+	tasks, err = store.ListScheduledTasks(ctx, "ch1")
 	require.NoError(s.T(), err)
+	require.Len(s.T(), tasks, 1, "and applying makes it again")
+	taskID = tasks[0].ID
+	_, err = store.InsertTaskRunLog(ctx, &TaskRunLog{TaskID: taskID, Status: RunStatusSuccess, StartedAt: now})
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), store.DeletePluginSchedule(ctx, "cogtest", "ch1", "daily"))
+	tasks, err = store.ListScheduledTasks(ctx, "ch1")
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), tasks)
+	none, err = store.GetPluginSchedule(ctx, "cogtest", "ch1", "daily")
+	require.NoError(s.T(), err)
+	require.Nil(s.T(), none, "deleting drops the record too")
 
+	require.NoError(s.T(), store.ApplyPluginSchedule(ctx, &ScheduledTask{ChannelID: "ch2", Schedule: "1h", Type: TaskTypeInterval, NextRunAt: now, PluginID: "cogtest", PluginAction: "daily"}, "d"))
 	require.NoError(s.T(), store.DeletePluginState(ctx, "cogtest"))
 	tasks, err = store.ListScheduledTasks(ctx, "ch2")
 	require.NoError(s.T(), err)
 	require.Empty(s.T(), tasks, "removing a plugin drops its tasks")
-	created, err = store.SeedPluginTask(ctx, daily())
+	none, err = store.GetPluginSchedule(ctx, "cogtest", "ch2", "daily")
 	require.NoError(s.T(), err)
-	require.True(s.T(), created, "and what it created, so a new install starts afresh")
+	require.Nil(s.T(), none, "and their records, so a new install starts afresh")
 	got, err = store.GetPluginState(ctx, "cogtest")
 	require.NoError(s.T(), err)
 	require.Nil(s.T(), got)
@@ -163,27 +186,44 @@ func (s *StoreSuite) TestPluginsErrors() {
 			s.mock.ExpectRollback()
 			return s.store.DeletePluginState(ctx, "x")
 		}},
-		{"seed task's schedule", false, func() error {
+		{"get schedule", false, func() error {
+			s.mock.ExpectQuery(`FROM plugin_schedules p`).WillReturnError(boom)
+			_, err := s.store.GetPluginSchedule(ctx, "x", "ch", "a")
+			return err
+		}},
+		{"apply schedule's record", false, func() error {
 			s.mock.ExpectBegin()
 			s.mock.ExpectExec(`INSERT INTO plugin_schedules`).WillReturnError(boom)
 			s.mock.ExpectRollback()
-			_, err := s.store.SeedPluginTask(ctx, &ScheduledTask{})
-			return err
+			return s.store.ApplyPluginSchedule(ctx, &ScheduledTask{}, "a")
 		}},
-		{"seed task's schedule rows", false, func() error {
-			s.mock.ExpectBegin()
-			s.mock.ExpectExec(`INSERT INTO plugin_schedules`).WillReturnResult(sqlmock.NewErrorResult(boom))
-			s.mock.ExpectRollback()
-			_, err := s.store.SeedPluginTask(ctx, &ScheduledTask{})
-			return err
-		}},
-		{"seed task", false, func() error {
+		{"apply schedule's update", false, func() error {
 			s.mock.ExpectBegin()
 			s.mock.ExpectExec(`INSERT INTO plugin_schedules`).WillReturnResult(sqlmock.NewResult(0, 1))
+			s.mock.ExpectExec(`UPDATE scheduled_tasks`).WillReturnError(boom)
+			s.mock.ExpectRollback()
+			return s.store.ApplyPluginSchedule(ctx, &ScheduledTask{}, "a")
+		}},
+		{"apply schedule's update rows", false, func() error {
+			s.mock.ExpectBegin()
+			s.mock.ExpectExec(`INSERT INTO plugin_schedules`).WillReturnResult(sqlmock.NewResult(0, 1))
+			s.mock.ExpectExec(`UPDATE scheduled_tasks`).WillReturnResult(sqlmock.NewErrorResult(boom))
+			s.mock.ExpectRollback()
+			return s.store.ApplyPluginSchedule(ctx, &ScheduledTask{}, "a")
+		}},
+		{"apply schedule's insert", false, func() error {
+			s.mock.ExpectBegin()
+			s.mock.ExpectExec(`INSERT INTO plugin_schedules`).WillReturnResult(sqlmock.NewResult(0, 1))
+			s.mock.ExpectExec(`UPDATE scheduled_tasks`).WillReturnResult(sqlmock.NewResult(0, 0))
 			s.mock.ExpectExec(`INSERT INTO scheduled_tasks`).WillReturnError(boom)
 			s.mock.ExpectRollback()
-			_, err := s.store.SeedPluginTask(ctx, &ScheduledTask{})
-			return err
+			return s.store.ApplyPluginSchedule(ctx, &ScheduledTask{}, "a")
+		}},
+		{"delete schedule", false, func() error {
+			s.mock.ExpectBegin()
+			s.mock.ExpectExec(`DELETE FROM task_run_logs`).WillReturnError(boom)
+			s.mock.ExpectRollback()
+			return s.store.DeletePluginSchedule(ctx, "x", "ch", "a")
 		}},
 		{"list containers query", false, func() error {
 			s.mock.ExpectQuery(`FROM plugin_containers`).WillReturnError(boom)

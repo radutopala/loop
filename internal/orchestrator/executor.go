@@ -173,11 +173,6 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		return e.executeWorkflowTask(ctx, task, dirPath)
 	}
 
-	// Plugin tasks: ask the plugin's container to run the action.
-	if task.PluginID != "" {
-		return e.executePluginTask(ctx, task, dirPath)
-	}
-
 	// Worktree: on first run, create a git worktree; on subsequent runs, reuse
 	// the thread's DirPath which already points to the worktree.
 	worktreeCreated := false
@@ -235,6 +230,12 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 			worktreeCreated = true
 			e.logger.Info("created worktree for task", "task_id", task.ID, "worktree_path", dirPath)
 		}
+	}
+
+	// Plugin tasks: ask the plugin's container to run the action, in the
+	// task's worktree thread when it has one.
+	if task.PluginID != "" {
+		return e.executePluginTask(ctx, task, dirPath, channel, worktreeCreated)
 	}
 
 	// Track the root project dir for worktree config inheritance (gates,
@@ -820,16 +821,58 @@ func (e *TaskExecutor) executeWorkflowTask(ctx context.Context, task *db.Schedul
 	return fmt.Sprintf("workflow run started: %s", runID), nil
 }
 
-// executePluginTask asks the plugin of a task with plugin_id set to run its
-// action in the task's channel.
-func (e *TaskExecutor) executePluginTask(ctx context.Context, task *db.ScheduledTask, dirPath string) (string, error) {
+// executePluginTask asks the plugin's container to run task's action. A
+// worktree task runs it in its worktree thread, made on the first run and
+// on later ones first updated to its origin branch when the task asks for
+// that; auto_delete_sec then deletes the thread that long after the action
+// started.
+func (e *TaskExecutor) executePluginTask(ctx context.Context, task *db.ScheduledTask, dirPath string, channel *db.Channel, worktreeCreated bool) (string, error) {
 	if e.pluginActions == nil {
 		return "", fmt.Errorf("plugins are disabled")
 	}
-	if err := e.pluginActions(ctx, task.PluginID, task.PluginAction, task.ChannelID, dirPath, task.ID); err != nil {
+	channelID, threadID := task.ChannelID, ""
+	if task.Worktree && dirPath != "" && (worktreeCreated || task.ThreadID != "") {
+		threadID = task.ThreadID
+		if threadID == "" {
+			label := fmt.Sprintf("%s plugin's %s action", task.PluginID, task.PluginAction)
+			if threadID, _ = e.createTaskThread(ctx, task, label, dirPath, channel, worktreeCreated); threadID == "" {
+				return "", fmt.Errorf("creating the worktree thread of task %d", task.ID)
+			}
+		} else if task.UpdateBeforeRun && task.OriginBranch != "" {
+			if err := e.updateWorktree(ctx, dirPath, task.OriginBranch); err != nil {
+				return "", err
+			}
+		}
+		channelID = threadID
+	}
+	if err := e.pluginActions(ctx, task.PluginID, task.PluginAction, channelID, dirPath, task.ID); err != nil {
 		return "", fmt.Errorf("running the %s plugin's %s action: %w", task.PluginID, task.PluginAction, err)
 	}
+	if task.AutoDeleteSec > 0 && threadID != "" {
+		e.timeAfterFunc(time.Duration(task.AutoDeleteSec)*time.Second, func() {
+			if err := e.bot.DeleteThread(context.Background(), threadID); err != nil {
+				e.logger.Error("auto-deleting task thread", "error", err, "thread_id", threadID, "task_id", task.ID)
+			}
+			if e.events != nil {
+				e.events.BroadcastChannelDeleted(threadID)
+			}
+		})
+	}
 	return fmt.Sprintf("%s plugin's %s action started", task.PluginID, task.PluginAction), nil
+}
+
+// updateWorktree rebases the worktree at dirPath onto the latest
+// origin/branch, keeping its uncommitted changes; a rebase that stops on a
+// conflict is undone.
+func (e *TaskExecutor) updateWorktree(ctx context.Context, dirPath, branch string) error {
+	if out, err := e.worktreeCreator.Run(ctx, dirPath, "git", "fetch", "origin", branch); err != nil {
+		return fmt.Errorf("fetching origin/%s: %s", branch, strings.TrimSpace(string(out)))
+	}
+	if out, err := e.worktreeCreator.Run(ctx, dirPath, "git", "rebase", "--autostash", "origin/"+branch); err != nil {
+		_, _ = e.worktreeCreator.Run(ctx, dirPath, "git", "rebase", "--abort")
+		return fmt.Errorf("rebasing onto origin/%s: %s", branch, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // invitePermissionUsers invites all RBAC owner and member users to a thread.

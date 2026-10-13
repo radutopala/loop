@@ -658,6 +658,14 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 				maps.Copy(settings, c.Settings)
 				pl.Settings = settings
 			}
+			if len(c.Schedules) > 0 {
+				schedules := maps.Clone(pl.Schedules)
+				if schedules == nil {
+					schedules = map[string]PluginSchedule{}
+				}
+				maps.Copy(schedules, c.Schedules)
+				pl.Schedules = schedules
+			}
 			byID[id] = pl
 		}
 		merged.Plugins.ByID = byID

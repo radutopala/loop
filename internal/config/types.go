@@ -562,6 +562,26 @@ type PluginConfig struct {
 	// Settings are the plugin's settings, as its manifest declares them. A
 	// project's values override the global ones, setting by setting.
 	Settings map[string]any `json:"settings,omitempty"`
+	// Schedules asks for a scheduled task of the plugin's actions, keyed
+	// by action id. A project's entry replaces the global one, action by
+	// action.
+	Schedules map[string]PluginSchedule `json:"schedules,omitempty"`
+}
+
+// PluginSchedule asks for the scheduled task of a plugin action in each
+// channel of the project.
+type PluginSchedule struct {
+	// Enabled turns the task on or off; unset is on.
+	Enabled *bool `json:"enabled,omitempty"`
+	// Type is cron or interval, and Schedule its cron expression or
+	// duration. Unset, they're the action's default_schedule.
+	Type     string `json:"type,omitempty"`
+	Schedule string `json:"schedule,omitempty"`
+}
+
+// On reports whether the task is on.
+func (s PluginSchedule) On() bool {
+	return s.Enabled == nil || *s.Enabled
 }
 
 // pluginsReserved are the plugins block's own keys, which no plugin id

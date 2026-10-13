@@ -110,6 +110,7 @@ Browser settings are grouped under `"browser"`:
 | `plugins.gate_binary` | `string` | `""` | A linux build of loop (`make build-linux`) that plugin containers run agentgate from. Empty downloads the release matching the daemon's version; a dev build needs this set. |
 | `plugins.daily_runs` | `integer` | `50` | How many agent runs each plugin may start in 24 hours; past it, its run requests are refused (`429`). Global only. |
 | `plugins.<id>.enabled` | `bool` | `false` | Runs the installed plugin `<id>` in a project. Set globally for every project; a project config overrides it once trusted. See [Plugins](plugins.md#enabling-a-plugin). |
+| `plugins.<id>.schedules.<action>` | `object` | — | Asks for a scheduled task of the plugin's action in each channel: `enabled` (default `true`), `type` (`cron` or `interval`) and `schedule`, both defaulting to the action's `default_schedule`. A project's entry replaces the global one once trusted. See [Plugins](plugins.md#scheduled-actions). |
 
 #### Mounts
 

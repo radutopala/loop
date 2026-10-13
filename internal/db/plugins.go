@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"time"
 )
 
@@ -120,28 +121,74 @@ func (s *SQLiteStore) DeletePluginState(ctx context.Context, pluginID string) er
 	})
 }
 
-// SeedPluginTask creates task, the scheduled task of a plugin action in its
-// channel, unless one was created there before, even if since deleted. It
-// reports whether it created it.
-func (s *SQLiteStore) SeedPluginTask(ctx context.Context, task *ScheduledTask) (bool, error) {
-	created := false
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+// PluginSchedule is the scheduled task Loop keeps of a plugin action in a
+// channel.
+type PluginSchedule struct {
+	// Applied is the schedule a project config last asked of it.
+	Applied string
+	// TaskID is the task's id, 0 once the owner deleted it.
+	TaskID int64
+}
+
+// GetPluginSchedule returns the scheduled task Loop keeps of the plugin's
+// action in channelID, nil when it never made one.
+func (s *SQLiteStore) GetPluginSchedule(ctx context.Context, pluginID, channelID, action string) (*PluginSchedule, error) {
+	var ps PluginSchedule
+	err := s.db.QueryRowContext(ctx,
+		`SELECT p.applied, COALESCE((SELECT MIN(t.id) FROM scheduled_tasks t WHERE t.plugin_id = p.plugin_id AND t.channel_id = p.channel_id AND t.plugin_action = p.action), 0)
+		 FROM plugin_schedules p WHERE p.plugin_id = ? AND p.channel_id = ? AND p.action = ?`,
+		pluginID, channelID, action).Scan(&ps.Applied, &ps.TaskID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &ps, nil
+}
+
+// ApplyPluginSchedule makes the scheduled task of task's plugin action in
+// its channel what task says, updating the one Loop made or creating it,
+// and records applied as the schedule the config asked for.
+func (s *SQLiteStore) ApplyPluginSchedule(ctx context.Context, task *ScheduledTask, applied string) error {
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO plugin_schedules (plugin_id, channel_id, action, applied) VALUES (?, ?, ?, ?)
+			 ON CONFLICT (plugin_id, channel_id, action) DO UPDATE SET applied = excluded.applied`,
+			task.PluginID, task.ChannelID, task.PluginAction, applied); err != nil {
+			return err
+		}
+		now := s.nowFunc()
 		res, err := tx.ExecContext(ctx,
-			`INSERT INTO plugin_schedules (plugin_id, channel_id, action) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
-			task.PluginID, task.ChannelID, task.PluginAction)
+			`UPDATE scheduled_tasks SET schedule = ?, type = ?, enabled = ?, next_run_at = ?, plugin_paused = 0, updated_at = ?
+			 WHERE plugin_id = ? AND channel_id = ? AND plugin_action = ?`,
+			task.Schedule, string(task.Type), boolToInt(task.Enabled), task.NextRunAt, now, task.PluginID, task.ChannelID, task.PluginAction)
 		if err != nil {
 			return err
 		}
-		if n, err := res.RowsAffected(); err != nil || n == 0 {
+		if n, err := res.RowsAffected(); err != nil || n > 0 {
 			return err
 		}
-		if _, err := insertScheduledTask(ctx, tx, s.nowFunc(), task); err != nil {
-			return err
+		_, err = insertScheduledTask(ctx, tx, now, task)
+		return err
+	})
+}
+
+// DeletePluginSchedule deletes the scheduled task of the plugin's action in
+// channelID, its run logs, and Loop's record of it.
+func (s *SQLiteStore) DeletePluginSchedule(ctx context.Context, pluginID, channelID, action string) error {
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		for _, q := range []string{
+			`DELETE FROM task_run_logs WHERE task_id IN (SELECT id FROM scheduled_tasks WHERE plugin_id = ? AND channel_id = ? AND plugin_action = ?)`,
+			`DELETE FROM scheduled_tasks WHERE plugin_id = ? AND channel_id = ? AND plugin_action = ?`,
+			`DELETE FROM plugin_schedules WHERE plugin_id = ? AND channel_id = ? AND action = ?`,
+		} {
+			if _, err := tx.ExecContext(ctx, q, pluginID, channelID, action); err != nil {
+				return err
+			}
 		}
-		created = true
 		return nil
 	})
-	return created, err
 }
 
 // SetPluginTasksPaused turns off the plugin's enabled scheduled tasks in

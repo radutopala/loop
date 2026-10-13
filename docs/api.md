@@ -1479,7 +1479,7 @@ List tasks for a channel.
 ]
 ```
 
-The `running` field indicates whether the task is currently being executed. It is set atomically when execution begins and cleared when it finishes. When `workflow_name` is set, the task triggers a workflow run instead of an agent prompt. `plugin_id` and `plugin_action`, omitted otherwise, are set on a task Loop created for a [plugin action](plugins.md#scheduled-actions): it asks the plugin's container in the channel to run the action.
+The `running` field indicates whether the task is currently being executed. It is set atomically when execution begins and cleared when it finishes. When `workflow_name` is set, the task triggers a workflow run instead of an agent prompt. `plugin_id` and `plugin_action`, omitted otherwise, are set on the task of a [plugin action](plugins.md#scheduled-actions): it asks the plugin's container in the channel to run the action.
 
 **Errors:** `400` if `channel_id` is missing.
 
@@ -3025,7 +3025,7 @@ List the installed plugins.
 }
 ```
 
-`capabilities` are the ones the owner approved. `digest` is empty for a dev install. `name`, `panels` and `cards` come from the manifest of a plugin that may run; `panels` only when the owner approved `ui.panel`, `cards` only for `ui.notification.card`. `settings_schema` is the manifest's settings, and `global_settings` the global config's `plugins.<id>.settings`. With `channel_id`, `project_settings` are that channel's project config's own values, `settings` what the plugin runs with there (each default, then the global, then the project values) and `settings_problems` the values left out for no such setting or a value the schema refuses.
+`capabilities` are the ones the owner approved. `digest` is empty for a dev install. `name`, `panels` and `cards` come from the manifest of a plugin that may run; `panels` only when the owner approved `ui.panel`, `cards` only for `ui.notification.card`. `settings_schema` is the manifest's settings, and `global_settings` the global config's `plugins.<id>.settings`. With `channel_id`, `project_settings` are that channel's project config's own values, `settings` what the plugin runs with there (each default, then the global, then the project values) and `settings_problems` the values left out for no such setting or a value the schema refuses. `default_schedules` are the manifest's `default_schedule` of each action that has one, when the owner approved `schedule`, and `global_schedules` the global config's `plugins.<id>.schedules`. With `channel_id`, `project_schedules` are the project config's own and `schedules` the ones that apply there: the global ones, each replaced by the trusted project one. `schedule_problems` are the entries that make no task, for no such action or a schedule Loop refuses: the global ones, with `channel_id` each replaced by the project's own, trusted or not.
 
 ### `POST /api/plugins/inspect`
 

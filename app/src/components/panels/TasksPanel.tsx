@@ -1,18 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ScheduledTask, TaskRunLog, WorkflowDef } from "../../api/loopApi";
 import { createTask, deleteTask, fetchTaskRuns, fetchTasks, fetchWorkflows, runTaskNow, updateTask } from "../../api/loopApi";
+import { fetchPluginList, PLUGINS_CHANGED, type PluginList, type PluginSchedule, setPluginScheduleEntry } from "../../api/plugins";
 import { useEventStream } from "../../hooks/useEventStream";
 import { useTheme } from "../../ThemeContext";
+import { type PluginTaskOption, pluginRunOptions, pluginTaskEntry, pluginTaskOptions } from "../../utils/pluginTasks";
 import { defaultScheduleForType, nextRunLabel, TYPE_COLORS, taskSummary, timeAgo } from "../../utils/taskUtils";
 import { TaskScheduleField, type TaskType } from "./TaskScheduleField";
 
 interface TasksPanelProps {
   channelId: string;
   allowWorktree?: boolean;
+  /** Whether a plugin action's task can be made here: a project's own
+   *  channel, whose config asks for it. */
+  allowPlugins?: boolean;
   onSelectChannel?: (channelId: string) => void;
 }
 
-export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksPanelProps) {
+export function TasksPanel({ channelId, allowWorktree, allowPlugins, onSelectChannel }: TasksPanelProps) {
   const { colors, fontSizes } = useTheme();
   const [tasks, setTasks] = useState<ScheduledTask[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -28,7 +33,7 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
   // Create form state
   const [newSchedule, setNewSchedule] = useState("*/30 * * * *");
   const [newType, setNewType] = useState<TaskType>("cron");
-  const [newMode, setNewMode] = useState<"prompt" | "workflow" | "bash">("prompt");
+  const [newMode, setNewMode] = useState<"prompt" | "workflow" | "bash" | "plugin">("prompt");
   const [newPrompt, setNewPrompt] = useState("");
   const [newWorkflowName, setNewWorkflowName] = useState("");
   const [newWorkflowInputs, setNewWorkflowInputs] = useState<Record<string, string>>({});
@@ -37,6 +42,9 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
   const [newOriginBranch, setNewOriginBranch] = useState("");
   const [newUpdateBeforeRun, setNewUpdateBeforeRun] = useState(false);
   const [newAutoDelete, setNewAutoDelete] = useState(0);
+  const [plugins, setPlugins] = useState<PluginList | null>(null);
+  const [newPluginAction, setNewPluginAction] = useState("");
+  const [createError, setCreateError] = useState<string | null>(null);
 
   // Edit form state
   const [editSchedule, setEditSchedule] = useState("");
@@ -82,6 +90,21 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
       });
   }, [channelId]);
 
+  const loadPlugins = useCallback(() => {
+    if (!allowPlugins) return;
+    fetchPluginList(channelId)
+      .then(setPlugins)
+      .catch(() => {
+        /* plugins may be off in the daemon */
+      });
+  }, [allowPlugins, channelId]);
+
+  useEffect(() => {
+    loadPlugins();
+    window.addEventListener(PLUGINS_CHANGED, loadPlugins);
+    return () => window.removeEventListener(PLUGINS_CHANGED, loadPlugins);
+  }, [loadPlugins]);
+
   useEffect(() => {
     if (selectedId != null) loadRuns(selectedId);
   }, [selectedId, loadRuns]);
@@ -89,6 +112,7 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
   // Real-time updates
   const onEvent = useCallback(
     (evt: { type: string }) => {
+      if (evt.type === "plugins.changed") loadPlugins();
       if (evt.type.startsWith("task.")) {
         loadTasks();
         if (selectedId != null && evt.type === "task.run_completed") {
@@ -96,14 +120,57 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
         }
       }
     },
-    [loadTasks, loadRuns, selectedId],
+    [loadTasks, loadRuns, loadPlugins, selectedId],
   );
 
   useEventStream({ channelId, onEvent });
 
   const selectedTask = tasks.find((t) => t.id === selectedId) ?? null;
 
+  const pluginOptions = pluginTaskOptions(plugins, channelId);
+  const newPlugin = pluginOptions.find((o) => o.key === newPluginAction);
+  // A plugin action's task follows its project config entry, so changes to
+  // it go there.
+  const pluginOptionOf = (task: ScheduledTask | null) => (task?.plugin_id ? pluginOptions.find((o) => o.key === `${task.plugin_id}/${task.plugin_action}`) : undefined);
+  const [pluginError, setPluginError] = useState<string | null>(null);
+  const writePluginEntry = async (o: PluginTaskOption, entry: PluginSchedule | undefined): Promise<boolean> => {
+    setPluginError(null);
+    try {
+      await setPluginScheduleEntry(o.plugin.id, o.action, entry, channelId);
+      loadTasks();
+      return true;
+    } catch (e) {
+      setPluginError(e instanceof Error ? e.message : String(e));
+      return false;
+    }
+  };
+
   const handleCreate = useCallback(async () => {
+    setCreateError(null);
+    if (newMode === "plugin") {
+      if (!newPlugin) return;
+      try {
+        await setPluginScheduleEntry(newPlugin.plugin.id, newPlugin.action, pluginTaskEntry(newPlugin, newType, newSchedule), channelId);
+        // The config entry holds only the schedule; how the task runs is
+        // the task's own, set on it once the entry made it.
+        const opts = pluginRunOptions(newWorktree, newOriginBranch, newUpdateBeforeRun, newAutoDelete);
+        if (opts) {
+          const made = (await fetchTasks(channelId)).find((t) => t.plugin_id === newPlugin.plugin.id && t.plugin_action === newPlugin.action);
+          if (made) await updateTask(made.id, opts);
+        }
+        setShowCreate(false);
+        setNewMode("prompt");
+        setNewPluginAction("");
+        setNewWorktree(false);
+        setNewOriginBranch("");
+        setNewUpdateBeforeRun(false);
+        setNewAutoDelete(0);
+        loadTasks();
+      } catch (e) {
+        setCreateError(e instanceof Error ? e.message : String(e));
+      }
+      return;
+    }
     try {
       await createTask({
         channel_id: channelId,
@@ -130,10 +197,15 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
     } catch {
       /* ignore */
     }
-  }, [channelId, newSchedule, newType, newMode, newPrompt, newWorkflowName, newWorkflowInputs, newBashScript, newWorktree, newOriginBranch, newUpdateBeforeRun, newAutoDelete, loadTasks]);
+  }, [channelId, newSchedule, newType, newMode, newPlugin, newPrompt, newWorkflowName, newWorkflowInputs, newBashScript, newWorktree, newOriginBranch, newUpdateBeforeRun, newAutoDelete, loadTasks]);
 
   const handleToggle = useCallback(
     async (task: ScheduledTask) => {
+      const o = pluginOptionOf(task);
+      if (o) {
+        await writePluginEntry(o, pluginTaskEntry(o, task.type, task.schedule, !task.enabled));
+        return;
+      }
       try {
         await updateTask(task.id, { enabled: !task.enabled });
         loadTasks();
@@ -146,6 +218,14 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
 
   const handleDelete = useCallback(
     async (taskId: number) => {
+      // The project's own entry made the task: removing it deletes the task
+      // for good. One the global config makes comes back, so it's only
+      // deleted here.
+      const o = pluginOptionOf(tasks.find((t) => t.id === taskId) ?? null);
+      if (o?.state.own && !o.plugin.global_schedules?.[o.action]) {
+        if ((await writePluginEntry(o, undefined)) && selectedId === taskId) setSelectedId(null);
+        return;
+      }
       try {
         await deleteTask(taskId);
         if (selectedId === taskId) setSelectedId(null);
@@ -154,7 +234,7 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
         /* ignore */
       }
     },
-    [selectedId, loadTasks],
+    [selectedId, loadTasks, tasks],
   );
 
   const handleRunNow = useCallback(
@@ -198,6 +278,29 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
 
   const handleSaveEdit = useCallback(async () => {
     if (selectedId == null) return;
+    const task = tasks.find((t) => t.id === selectedId) ?? null;
+    if (task?.plugin_id) {
+      const opts = pluginRunOptions(editWorktree, editOriginBranch, editUpdateBeforeRun, editAutoDelete) ?? { worktree: false, origin_branch: "", update_before_run: false, auto_delete_sec: 0 };
+      const o = pluginOptionOf(task);
+      if (o) {
+        try {
+          await updateTask(selectedId, opts);
+        } catch (e) {
+          setPluginError(e instanceof Error ? e.message : String(e));
+          return;
+        }
+        if (await writePluginEntry(o, pluginTaskEntry(o, editType, editSchedule, task.enabled))) setEditing(false);
+        return;
+      }
+      try {
+        await updateTask(selectedId, { schedule: editSchedule, type: editType, ...opts });
+        setEditing(false);
+        loadTasks();
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
     try {
       await updateTask(selectedId, {
         schedule: editType === "manual" ? "" : editSchedule,
@@ -216,7 +319,22 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
     } catch {
       /* ignore */
     }
-  }, [selectedId, editSchedule, editType, editMode, editPrompt, editWorkflowName, editWorkflowInputs, editBashScript, editWorktree, editOriginBranch, editUpdateBeforeRun, editAutoDelete, loadTasks]);
+  }, [
+    selectedId,
+    tasks,
+    editSchedule,
+    editType,
+    editMode,
+    editPrompt,
+    editWorkflowName,
+    editWorkflowInputs,
+    editBashScript,
+    editWorktree,
+    editOriginBranch,
+    editUpdateBeforeRun,
+    editAutoDelete,
+    loadTasks,
+  ]);
 
   // Resizable divider
   const onMouseDown = useCallback(() => {
@@ -271,7 +389,23 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
   const selectedNewWorkflow = workflows.find((w) => w.name === newWorkflowName);
   // "once" needs a picked time; manual/cron/interval don't gate on schedule.
   const newScheduleOk = newType !== "once" || !!newSchedule;
-  const newCanSubmit = (newMode === "workflow" ? !!newWorkflowName : !!newPrompt.trim()) && newScheduleOk;
+  const newCanSubmit = newMode === "plugin" ? !!newPlugin && !!newSchedule.trim() : (newMode === "workflow" ? !!newWorkflowName : !!newPrompt.trim()) && newScheduleOk;
+
+  const onSelectNewPlugin = (key: string) => {
+    setNewPluginAction(key);
+    const o = pluginOptions.find((o) => o.key === key);
+    if (o) {
+      setNewType(o.type);
+      setNewSchedule(o.schedule);
+    }
+  };
+  const pickPluginMode = () => {
+    setNewMode("plugin");
+    if (newType !== "cron" && newType !== "interval") {
+      setNewType("cron");
+      setNewSchedule(defaultScheduleForType("cron"));
+    }
+  };
 
   const onSelectNewWorkflow = (name: string) => {
     setNewWorkflowName(name);
@@ -299,8 +433,8 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
         >
           <option value="cron">Cron</option>
           <option value="interval">Interval</option>
-          <option value="once">Once</option>
-          <option value="manual">Manual</option>
+          {newMode !== "plugin" && <option value="once">Once</option>}
+          {newMode !== "plugin" && <option value="manual">Manual</option>}
         </select>
         <TaskScheduleField type={newType} value={newSchedule} onChange={setNewSchedule} inputStyle={inputStyle} selectStyle={selectStyle} />
       </div>
@@ -339,8 +473,48 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
         >
           Bash
         </button>
+        {allowPlugins && (
+          <button
+            data-testid="task-new-plugin-mode"
+            onClick={pickPluginMode}
+            disabled={pluginOptions.length === 0}
+            title={pluginOptions.length === 0 ? "No plugin enabled in this project has a schedulable action" : "Schedule a plugin's action through the project config"}
+            style={{
+              ...btnSecondaryStyle,
+              padding: "2px 8px",
+              fontSize: 11,
+              background: newMode === "plugin" ? colors.surface : "transparent",
+              color: newMode === "plugin" ? colors.text : colors.textDim,
+              opacity: pluginOptions.length === 0 ? 0.5 : 1,
+            }}
+          >
+            Plugin
+          </button>
+        )}
       </div>
-      {newMode === "prompt" ? (
+      {newMode === "plugin" ? (
+        <>
+          <select data-testid="task-new-plugin-action" value={newPluginAction} onChange={(e) => onSelectNewPlugin(e.target.value)} style={selectStyle}>
+            <option value="">Select plugin action...</option>
+            {pluginOptions.map((o) => (
+              <option key={o.key} value={o.key}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <div style={{ fontSize: 11, color: colors.textDim }}>
+            Sets plugins.{newPlugin ? `${newPlugin.plugin.id}.schedules.${newPlugin.action}` : "<id>.schedules.<action>"} in this project's .loop/config.json; remove it in Settings → Project →
+            Plugins. The worktree options are the task's own.
+            {newPlugin?.scheduled && " The action already has a task here; this changes its schedule and turns it on."}
+          </div>
+          {plugins?.projectTrusted === false && (
+            <div data-testid="task-new-plugin-untrusted" style={{ fontSize: 11, color: colors.warning }}>
+              This project's config isn't trusted; the task appears once you trust it.
+            </div>
+          )}
+          {!!newPlugin?.plugin.schedule_problems?.length && <div style={{ fontSize: 11, color: colors.warning }}>No task for: {newPlugin.plugin.schedule_problems.join("; ")}</div>}
+        </>
+      ) : newMode === "prompt" ? (
         <textarea placeholder="Task prompt..." value={newPrompt} onChange={(e) => setNewPrompt(e.target.value)} rows={3} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
       ) : newMode === "bash" ? (
         <textarea
@@ -383,7 +557,7 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         {allowWorktree && (
           <label style={{ display: "flex", alignItems: "center", gap: 4, color: colors.textDim, fontSize: 11, cursor: "pointer" }}>
-            <input type="checkbox" checked={newWorktree} onChange={(e) => setNewWorktree(e.target.checked)} />
+            <input data-testid="task-new-worktree" type="checkbox" checked={newWorktree} onChange={(e) => setNewWorktree(e.target.checked)} />
             Worktree
           </label>
         )}
@@ -396,15 +570,18 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
             </label>
           </>
         )}
-        <label style={{ display: "flex", alignItems: "center", gap: 4, color: colors.textDim, fontSize: 11 }}>
-          Auto-delete (s):
-          <input type="number" value={newAutoDelete} onChange={(e) => setNewAutoDelete(Number(e.target.value))} style={{ ...inputStyle, width: 60 }} min={0} />
-        </label>
+        {(newMode !== "plugin" || newWorktree) && (
+          <label style={{ display: "flex", alignItems: "center", gap: 4, color: colors.textDim, fontSize: 11 }}>
+            Auto-delete (s):
+            <input data-testid="task-new-auto-delete" type="number" value={newAutoDelete} onChange={(e) => setNewAutoDelete(Number(e.target.value))} style={{ ...inputStyle, width: 60 }} min={0} />
+          </label>
+        )}
+        {createError && <span style={{ color: colors.error, fontSize: 11 }}>{createError}</span>}
         <div style={{ flex: 1 }} />
         <button onClick={() => setShowCreate(false)} style={btnSecondaryStyle}>
           Cancel
         </button>
-        <button onClick={handleCreate} disabled={!newCanSubmit} style={{ ...btnStyle, opacity: newCanSubmit ? 1 : 0.5 }}>
+        <button data-testid="task-new-create" onClick={handleCreate} disabled={!newCanSubmit} style={{ ...btnStyle, opacity: newCanSubmit ? 1 : 0.5 }}>
           Create
         </button>
       </div>
@@ -520,6 +697,7 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
           <div style={{ fontSize: 13, fontWeight: 600, color: colors.text }}>Edit Task #{selectedTask.id}</div>
           <div style={{ display: "flex", gap: 6 }}>
             <select
+              data-testid="task-edit-type"
               value={editType}
               onChange={(e) => {
                 const t = e.target.value as TaskType;
@@ -530,90 +708,106 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
             >
               <option value="cron">Cron</option>
               <option value="interval">Interval</option>
-              <option value="once">Once</option>
-              <option value="manual">Manual</option>
+              {!selectedTask.plugin_id && <option value="once">Once</option>}
+              {!selectedTask.plugin_id && <option value="manual">Manual</option>}
             </select>
             <TaskScheduleField type={editType} value={editSchedule} onChange={setEditSchedule} inputStyle={inputStyle} selectStyle={selectStyle} />
           </div>
-          <div style={{ display: "flex", gap: 4 }}>
-            <button
-              onClick={() => setEditMode("prompt")}
-              style={{
-                ...btnSecondaryStyle,
-                padding: "2px 8px",
-                fontSize: 11,
-                background: editMode === "prompt" ? colors.surface : "transparent",
-                color: editMode === "prompt" ? colors.text : colors.textDim,
-              }}
-            >
-              Prompt
-            </button>
-            <button
-              onClick={() => setEditMode("workflow")}
-              disabled={workflows.length === 0}
-              title={workflows.length === 0 ? "No workflows defined" : ""}
-              style={{
-                ...btnSecondaryStyle,
-                padding: "2px 8px",
-                fontSize: 11,
-                background: editMode === "workflow" ? colors.surface : "transparent",
-                color: editMode === "workflow" ? colors.text : colors.textDim,
-                opacity: workflows.length === 0 ? 0.5 : 1,
-              }}
-            >
-              Workflow
-            </button>
-            <button
-              onClick={() => setEditMode("bash")}
-              title="Run a shell script in the channel's agent container"
-              style={{
-                ...btnSecondaryStyle,
-                padding: "2px 8px",
-                fontSize: 11,
-                background: editMode === "bash" ? colors.surface : "transparent",
-                color: editMode === "bash" ? colors.text : colors.textDim,
-              }}
-            >
-              Bash
-            </button>
-          </div>
-          {editMode === "prompt" ? (
-            <textarea value={editPrompt} onChange={(e) => setEditPrompt(e.target.value)} rows={5} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
-          ) : editMode === "bash" ? (
-            <textarea value={editBashScript} onChange={(e) => setEditBashScript(e.target.value)} rows={5} spellCheck={false} style={{ ...inputStyle, resize: "vertical", fontFamily: "monospace" }} />
+          {selectedTask.plugin_id ? (
+            <div data-testid="task-edit-plugin" style={{ fontSize: 11, color: colors.textDim }}>
+              {pluginOptionOf(selectedTask)
+                ? `Saves the schedule in plugins.${selectedTask.plugin_id}.schedules.${selectedTask.plugin_action} of this project's .loop/config.json; the worktree options stay on the task.`
+                : "The plugin isn't on in this project, so this changes only the task; its config entry sets it again once it changes."}
+            </div>
           ) : (
             <>
-              <select value={editWorkflowName} onChange={(e) => onSelectEditWorkflow(e.target.value)} style={selectStyle}>
-                <option value="">Select workflow...</option>
-                {workflows.map((w) => (
-                  <option key={w.name} value={w.name}>
-                    {w.name}
-                  </option>
-                ))}
-              </select>
-              {selectedEditWorkflow?.inputs &&
-                Object.entries(selectedEditWorkflow.inputs).map(([key, def]) => (
-                  <div key={key} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                    <label style={{ fontSize: 11, color: colors.textDim }}>
-                      {key}
-                      {def.required ? " *" : ""}
-                      {def.description ? ` — ${def.description}` : ""}
-                    </label>
-                    <input
-                      type="text"
-                      placeholder={def.default ? `default: ${def.default}` : key}
-                      value={editWorkflowInputs[key] ?? ""}
-                      onChange={(e) => setEditWorkflowInputs((prev) => ({ ...prev, [key]: e.target.value }))}
-                      style={inputStyle}
-                    />
-                  </div>
-                ))}
+              <div style={{ display: "flex", gap: 4 }}>
+                <button
+                  onClick={() => setEditMode("prompt")}
+                  style={{
+                    ...btnSecondaryStyle,
+                    padding: "2px 8px",
+                    fontSize: 11,
+                    background: editMode === "prompt" ? colors.surface : "transparent",
+                    color: editMode === "prompt" ? colors.text : colors.textDim,
+                  }}
+                >
+                  Prompt
+                </button>
+                <button
+                  onClick={() => setEditMode("workflow")}
+                  disabled={workflows.length === 0}
+                  title={workflows.length === 0 ? "No workflows defined" : ""}
+                  style={{
+                    ...btnSecondaryStyle,
+                    padding: "2px 8px",
+                    fontSize: 11,
+                    background: editMode === "workflow" ? colors.surface : "transparent",
+                    color: editMode === "workflow" ? colors.text : colors.textDim,
+                    opacity: workflows.length === 0 ? 0.5 : 1,
+                  }}
+                >
+                  Workflow
+                </button>
+                <button
+                  onClick={() => setEditMode("bash")}
+                  title="Run a shell script in the channel's agent container"
+                  style={{
+                    ...btnSecondaryStyle,
+                    padding: "2px 8px",
+                    fontSize: 11,
+                    background: editMode === "bash" ? colors.surface : "transparent",
+                    color: editMode === "bash" ? colors.text : colors.textDim,
+                  }}
+                >
+                  Bash
+                </button>
+              </div>
+              {editMode === "prompt" ? (
+                <textarea value={editPrompt} onChange={(e) => setEditPrompt(e.target.value)} rows={5} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
+              ) : editMode === "bash" ? (
+                <textarea
+                  value={editBashScript}
+                  onChange={(e) => setEditBashScript(e.target.value)}
+                  rows={5}
+                  spellCheck={false}
+                  style={{ ...inputStyle, resize: "vertical", fontFamily: "monospace" }}
+                />
+              ) : (
+                <>
+                  <select value={editWorkflowName} onChange={(e) => onSelectEditWorkflow(e.target.value)} style={selectStyle}>
+                    <option value="">Select workflow...</option>
+                    {workflows.map((w) => (
+                      <option key={w.name} value={w.name}>
+                        {w.name}
+                      </option>
+                    ))}
+                  </select>
+                  {selectedEditWorkflow?.inputs &&
+                    Object.entries(selectedEditWorkflow.inputs).map(([key, def]) => (
+                      <div key={key} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                        <label style={{ fontSize: 11, color: colors.textDim }}>
+                          {key}
+                          {def.required ? " *" : ""}
+                          {def.description ? ` — ${def.description}` : ""}
+                        </label>
+                        <input
+                          type="text"
+                          placeholder={def.default ? `default: ${def.default}` : key}
+                          value={editWorkflowInputs[key] ?? ""}
+                          onChange={(e) => setEditWorkflowInputs((prev) => ({ ...prev, [key]: e.target.value }))}
+                          style={inputStyle}
+                        />
+                      </div>
+                    ))}
+                </>
+              )}
             </>
           )}
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             {allowWorktree && (
               <label style={{ display: "flex", alignItems: "center", gap: 4, color: colors.textDim, fontSize: 11, cursor: "pointer" }}>
-                <input type="checkbox" checked={editWorktree} onChange={(e) => setEditWorktree(e.target.checked)} />
+                <input data-testid="task-edit-worktree" type="checkbox" checked={editWorktree} onChange={(e) => setEditWorktree(e.target.checked)} />
                 Worktree
               </label>
             )}
@@ -626,16 +820,26 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
                 </label>
               </>
             )}
-            <label style={{ display: "flex", alignItems: "center", gap: 4, color: colors.textDim, fontSize: 11 }}>
-              Auto-delete (s):
-              <input type="number" value={editAutoDelete} onChange={(e) => setEditAutoDelete(Number(e.target.value))} style={{ ...inputStyle, width: 60 }} min={0} />
-            </label>
+            {(!selectedTask.plugin_id || editWorktree) && (
+              <label style={{ display: "flex", alignItems: "center", gap: 4, color: colors.textDim, fontSize: 11 }}>
+                Auto-delete (s):
+                <input
+                  data-testid="task-edit-auto-delete"
+                  type="number"
+                  value={editAutoDelete}
+                  onChange={(e) => setEditAutoDelete(Number(e.target.value))}
+                  style={{ ...inputStyle, width: 60 }}
+                  min={0}
+                />
+              </label>
+            )}
           </div>
+          {pluginError && <div style={{ color: colors.error, fontSize: 11 }}>{pluginError}</div>}
           <div style={{ display: "flex", gap: 6 }}>
             <button onClick={() => setEditing(false)} style={btnSecondaryStyle}>
               Cancel
             </button>
-            <button onClick={handleSaveEdit} style={btnStyle}>
+            <button data-testid="task-edit-save" onClick={handleSaveEdit} style={btnStyle}>
               Save
             </button>
           </div>
@@ -687,6 +891,10 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
           {selectedTask.plugin_id ? (
             <div data-testid="task-detail-plugin" style={{ color: colors.text, fontSize: 12 }}>
               <span style={{ color: colors.active, fontWeight: 600 }}>Plugin:</span> {selectedTask.plugin_id}'s {selectedTask.plugin_action} action
+              <div style={{ color: colors.textDim, fontSize: 11 }}>
+                The project config's plugins.{selectedTask.plugin_id}.schedules.{selectedTask.plugin_action} makes it: change or remove that in Settings → Project → Plugins, or a change there brings
+                back a task deleted here.
+              </div>
             </div>
           ) : selectedTask.workflow_name ? (
             <>
@@ -781,6 +989,7 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
         style={{
           width: listWidth,
           minWidth: 200,
+          minHeight: 0,
           display: "flex",
           flexDirection: "column",
           borderRight: `1px solid ${colors.border}`,
@@ -808,9 +1017,10 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
           </button>
         </div>
 
-        {showCreate && renderCreateForm()}
-
-        <div style={{ flex: 1, overflowY: "auto" }}>
+        {/* The form scrolls with the list, so its buttons and the tasks
+            stay reachable in a short panel. */}
+        <div data-testid="tasks-list-scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+          {showCreate && renderCreateForm()}
           {tasks.map((t) => renderTaskRow(t))}
           {tasks.length === 0 && !showCreate && <div style={{ padding: 16, color: colors.textDim, fontSize: 12, textAlign: "center" }}>No scheduled tasks</div>}
         </div>

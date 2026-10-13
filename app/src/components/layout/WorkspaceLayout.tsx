@@ -1450,7 +1450,15 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         case "notes":
           return <NotesPanel key={`layout-notes-${channelId}`} channelId={channelId} />;
         case "tasks":
-          return <TasksPanel key={`layout-tasks-${channelId}`} channelId={channelId} allowWorktree={!channel.worktree && !!channel.branch} onSelectChannel={onSelectThread} />;
+          return (
+            <TasksPanel
+              key={`layout-tasks-${channelId}`}
+              channelId={channelId}
+              allowWorktree={!channel.worktree && !!channel.branch}
+              allowPlugins={!channel.parent_id}
+              onSelectChannel={onSelectThread}
+            />
+          );
         case "kanban":
           // Assigning from inside a worktree is fine: the daemon resolves the
           // ticket store and the new worktree's base to the root checkout.

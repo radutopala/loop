@@ -12,6 +12,8 @@ import {
   postPluginNotification,
   removePlugin,
   setPluginEnabled,
+  setPluginSchedule,
+  setPluginScheduleEntry,
   setPluginSetting,
   stopPluginContainer,
   withPluginEnabled,
@@ -246,6 +248,42 @@ describe("setPluginSetting", () => {
     await setPluginSetting("echo", "count", undefined);
     expect(fetchMock.mock.calls[2]![0]).toBe("http://localhost:8222/api/config");
     expect(JSON.parse(JSON.parse(fetchMock.mock.calls[3]![1].body).content)).toEqual({ plugins: { echo: { enabled: true, settings: {} } } });
+  });
+});
+
+describe("setPluginSchedule", () => {
+  it("turns an action's scheduled task off, keeping the rest of its entry", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ raw: '{"plugins": {"echo": {"schedules": {"daily": {"schedule": "0 7 * * *"}}}}}', content: {} })));
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await setPluginSchedule("echo", "daily", false, "ch-1");
+    expect(fetchMock.mock.calls[1]![0]).toBe("http://localhost:8222/api/config/project?channel_id=ch-1");
+    expect(JSON.parse(JSON.parse(fetchMock.mock.calls[1]![1].body).content)).toEqual({
+      plugins: { echo: { schedules: { daily: { schedule: "0 7 * * *", enabled: false } } } },
+    });
+  });
+});
+
+describe("setPluginScheduleEntry", () => {
+  it("writes an action's entry without its unset fields, then removes it", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ raw: '{"plugins": {"echo": {"enabled": true}}}', content: {} })));
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await setPluginScheduleEntry("echo", "daily", { enabled: true, type: "", schedule: "0 7 * * *" });
+    expect(fetchMock.mock.calls[1]![0]).toBe("http://localhost:8222/api/config");
+    const set = JSON.parse(JSON.parse(fetchMock.mock.calls[1]![1].body).content);
+    expect(set).toEqual({ plugins: { echo: { enabled: true, schedules: { daily: { enabled: true, schedule: "0 7 * * *" } } } } });
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ raw: JSON.stringify(set), content: {} })));
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await setPluginScheduleEntry("echo", "daily", undefined, "ch-1");
+    expect(fetchMock.mock.calls[3]![0]).toBe("http://localhost:8222/api/config/project?channel_id=ch-1");
+    expect(JSON.parse(JSON.parse(fetchMock.mock.calls[3]![1].body).content)).toEqual({ plugins: { echo: { enabled: true, schedules: {} } } });
+  });
+
+  it("keeps an interval's type", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ raw: "", content: {} })));
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await setPluginScheduleEntry("echo", "ping", { type: "interval", schedule: "1h" });
+    expect(JSON.parse(JSON.parse(fetchMock.mock.calls[1]![1].body).content)).toEqual({ plugins: { echo: { schedules: { ping: { type: "interval", schedule: "1h" } } } } });
   });
 });
 

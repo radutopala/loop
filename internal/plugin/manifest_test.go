@@ -326,3 +326,54 @@ func (s *ManifestSuite) TestThreadEventsTo() {
 		})
 	}
 }
+
+func (s *ManifestSuite) TestScheduleProblems() {
+	m := &Manifest{Actions: []Action{
+		{ID: "daily", DefaultSchedule: &Schedule{Type: db.TaskTypeCron, Schedule: "0 9 * * *"}},
+		{ID: "now"},
+	}}
+	tests := []struct {
+		name   string
+		layers []map[string]config.PluginSchedule
+		want   []string
+	}{
+		{name: "none"},
+		{
+			name:   "the default schedule",
+			layers: []map[string]config.PluginSchedule{{"daily": {}}},
+		},
+		{
+			name:   "its own schedule",
+			layers: []map[string]config.PluginSchedule{{"now": {Type: "interval", Schedule: "1h"}}},
+		},
+		{
+			name: "every problem, by action",
+			layers: []map[string]config.PluginSchedule{{
+				"now":   {},
+				"daily": {Type: "once", Schedule: "1h"},
+				"gone":  {},
+			}},
+			want: []string{
+				`plugins.p.schedules.daily: type must be cron or interval, not "once"`,
+				"plugins.p.schedules.gone: no such action",
+				"plugins.p.schedules.now: invalid task schedule",
+			},
+		},
+		{
+			name: "a later layer replaces the entry",
+			layers: []map[string]config.PluginSchedule{
+				{"daily": {Schedule: "not cron"}},
+				{"daily": {Schedule: "0 8 * * *"}},
+			},
+		},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			got := m.ScheduleProblems("p", tt.layers...)
+			require.Len(s.T(), got, len(tt.want))
+			for i, w := range tt.want {
+				require.Contains(s.T(), got[i], w)
+			}
+		})
+	}
+}

@@ -1100,15 +1100,24 @@ func (tc *TestContext) clickConfigRevision(name string) error {
 	if !ok {
 		return fmt.Errorf("no config revision remembered as %q", name)
 	}
+	// Until its revision loads, the panel still shows the one selected
+	// before, so wait for the diff caption to name it: a step right after,
+	// such as Restore, would act on the old one. A click landing while the
+	// list re-renders is lost, so click again until it does.
 	js := fmt.Sprintf(`(() => {
-		const row = [...document.querySelectorAll('[data-testid="config-history-item"]')].find((el) => el.innerText.includes("#%d ·"));
-		if (!row) return false;
-		row.click();
-		return true;
-	})()`, id)
-	return chromedp.Run(tc.chromeTab.ctx,
-		chromedp.Poll(js, nil, chromedp.WithPollingTimeout(10*time.Second), chromedp.WithPollingInterval(100*time.Millisecond)),
-	)
+		const t = document.querySelector('[data-testid="config-history-diff-caption"]')?.innerText ?? "";
+		if (t.endsWith("to #%d") || t.startsWith("#%d,")) return true;
+		[...document.querySelectorAll('[data-testid="config-history-item"]')].find((el) => el.innerText.includes("#%d ·"))?.click();
+		return false;
+	})()`, id, id, id)
+	if err := chromedp.Run(tc.chromeTab.ctx,
+		chromedp.Poll(js, nil, chromedp.WithPollingTimeout(15*time.Second), chromedp.WithPollingInterval(500*time.Millisecond)),
+	); err != nil {
+		var caption string
+		_ = chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(`document.querySelector('[data-testid="config-history-diff-caption"]')?.innerText ?? "<none>"`, &caption))
+		return fmt.Errorf("revision #%d not shown (caption %q): %w", id, caption, err)
+	}
+	return nil
 }
 
 func (tc *TestContext) clickInSettingsPanel(text string) error {
