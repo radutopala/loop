@@ -440,10 +440,13 @@ func (l *Loader) parse() (*Config, error) {
 		cfg.Plugins = *jc.Plugins
 	}
 
+	cfg.Review.Verify = true
 	if jc.Review != nil {
 		cfg.Review.Enabled = ptrDefault(jc.Review.Enabled, false)
 		cfg.Review.Prompt = jc.Review.Prompt
 		cfg.Review.PromptPath = jc.Review.PromptPath
+		cfg.Review.Verify = ptrDefault(jc.Review.Verify, true)
+		cfg.Review.VerifyPrompt = jc.Review.VerifyPrompt
 	}
 
 	if jc.PlaygroundShare != nil {

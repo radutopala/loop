@@ -889,6 +889,25 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 			},
 		},
 		{
+			name:        "Review/VerifyOverridesGlobal",
+			projectJSON: `{"review": {"verify": false, "verify_prompt": "project verify"}}`,
+			mainCfg:     &Config{Review: ReviewConfig{Verify: true, VerifyPrompt: "global verify"}},
+			assert: func(merged, main *Config) {
+				require.False(s.T(), merged.Review.Verify)
+				require.Equal(s.T(), "project verify", merged.Review.VerifyPrompt)
+				require.True(s.T(), main.Review.Verify)
+			},
+		},
+		{
+			name:        "Review/VerifyUnsetKeepsGlobal",
+			projectJSON: `{"review": {}}`,
+			mainCfg:     &Config{Review: ReviewConfig{Verify: true, VerifyPrompt: "global verify"}},
+			assert: func(merged, _ *Config) {
+				require.True(s.T(), merged.Review.Verify)
+				require.Equal(s.T(), "global verify", merged.Review.VerifyPrompt)
+			},
+		},
+		{
 			name:        "Review/PromptPathOverride",
 			projectJSON: `{"review": {"prompt_path": "project/path.md"}}`,
 			mainCfg:     &Config{Review: ReviewConfig{PromptPath: "global/path.md"}},

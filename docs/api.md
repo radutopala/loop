@@ -151,7 +151,7 @@ List all channels with optional filtering. Enriches each channel with container 
 - When a channel has no `dir_path`, falls back to `~/.loop/{channel_id}/work`.
 - `container_running` is determined by querying the Docker daemon for running containers.
 - `agent_running` indicates whether an active Claude agent run exists for the channel. A run is registered before its `agent.status` "running" event is broadcast, so a response to a request made after that event reflects the run.
-- `review_running` is true while a review run or a dedup pass runs on the channel's [review session](#review) (its status is `reviewing`). Review sessions live in the daemon's memory, so this comes from the review store, not the database. The sidebar shows the channel as running and patches the flag live from `review.status` events.
+- `review_running` is true while a review run or a dedup pass runs on the channel's [review session](#review) (its status is `reviewing`, or `verifying` during the [verification step](#post-apichannelsidreviewverify)). Review sessions live in the daemon's memory, so this comes from the review store, not the database. The sidebar shows the channel as running and patches the flag live from `review.status` events.
 - `branch` is resolved by running `git rev-parse --abbrev-ref HEAD` in the channel's directory.
 - `commit` is the short commit hash from `git rev-parse --short HEAD`, and `subject` its subject line.
 - `upstream` is the branch's tracking branch (e.g. `origin/main`), with `ahead` / `behind` counting the commits between them. Omitted when there's none.
@@ -2406,6 +2406,14 @@ The session's `superseded` field then maps each comment it deleted to the
 comment it was folded into; a new run clears it. A run that added no
 agent comment skips the pass, and a failed pass is only logged.
 
+When `review.verify` is on (the default), the run instead ends with the
+[verification step](#post-apichannelsidreviewverify): the session goes
+from `reviewing` to `verifying` and turns `ready` once it is done. The
+step's dedup pass covers the whole session. An optional body
+`{"verify": false}` skips the step for this run and runs the per-run dedup
+pass above (`loop review:run --no-verify`). An empty body or `{}` keeps
+the config's choice. A body that isn't valid JSON gets a `400`.
+
 If the session is configured to fork (see below), the chosen session's
 transcript is copied into the worktree's Claude project dir before the
 agent starts, and the run is launched with `--resume <id> --fork-session`.
@@ -2414,6 +2422,33 @@ agent starts, and the run is launched with `--resume <id> --fork-session`.
 status. `400` if the configured fork cannot be resolved or staged (no chat
 session yet, unknown session id, transcript missing on disk). `501` if the
 review agent is not wired.
+
+### `POST /api/channels/{id}/review/verify`
+
+Run the verification step over a `ready` session (`loop review:verify`),
+as a review run does once it is over. Returns `202 {"status":"started"}`.
+The step goes on in the background, with the session in status
+`verifying`:
+
+1. The [dedup pass](#post-apichannelsidreviewdedup) runs over the whole
+   session. If it fails, the failure is logged and the step goes on.
+2. A read-only agent reads, in the PR worktree at the reviewed commit, the
+   code each agent comment points at. It records a verdict (`real`,
+   `false_positive`, `already_fixed`) and a reason on each one through
+   `update_review_comment`, the one change the agent is allowed to make.
+   The prompt is `review.verify_prompt`, or the built-in one, followed by
+   the PR, the reviewed commit, the checkout and the dedup outcome.
+3. Loop posts the agent's reply, a per-comment summary, to the channel.
+
+The session then turns `ready`. If the agent fails or times out (15
+minutes), it turns `error`; Stop settles it `ready`. A session with no
+agent comments skips the step. When `review.verify` is off, the endpoint
+returns `202 {"status":"disabled"}` and does nothing. It is in the agent
+token scope.
+
+**Errors:** `404` if no session. `409` if the session has no worktree, a
+review run or dedup pass is in progress, or the session isn't `ready`.
+`403` if review is disabled. `501` if the review agent is not wired.
 
 ### `POST /api/channels/{id}/review/dedup`
 
@@ -2573,7 +2608,8 @@ Response: `{"pushed": true}` (or `{"pushed": true, "already": true}` if already 
 Push every unpushed comment in the session, except those the dedup pass
 marked `false_positive` or `already_fixed`; `skipped` counts them. Errors
 are accumulated rather than short-circuiting — one bad comment does not
-block the rest.
+block the rest. Returns `409` while the session is `verifying`, so it
+waits for the verdicts.
 
 Response: `{"pushed": N, "skipped": S, "failed": M, "errors": ["id: msg", ...]}`.
 

@@ -59,13 +59,13 @@ func (a *app) newReviewCmd() *cobra.Command {
 		Use:   "review",
 		Short: "Drive review-panel runs from the CLI",
 	}
-	cmd.AddCommand(a.newReviewRunCmd(), a.newReviewDedupCmd())
+	cmd.AddCommand(a.newReviewRunCmd(), a.newReviewDedupCmd(), a.newReviewVerifyCmd())
 	return cmd
 }
 
 func (a *app) newReviewRunCmd() *cobra.Command {
 	var channelID, apiURL, timeoutStr, pr string
-	var wait bool
+	var wait, noVerify bool
 
 	cmd := &cobra.Command{
 		Use:   "run",
@@ -100,7 +100,11 @@ func (a *app) newReviewRunCmd() *cobra.Command {
 					}
 				}
 			}
-			return a.runReview(c.Context(), c.OutOrStdout(), resolvedURL, channelID, wait, timeout)
+			kickoff := reviewKickoff{action: "run", body: `{}`}
+			if noVerify {
+				kickoff.body = `{"verify":false}`
+			}
+			return a.kickoffReview(c.Context(), c.OutOrStdout(), resolvedURL, channelID, kickoff, wait, timeout)
 		},
 	}
 
@@ -108,15 +112,17 @@ func (a *app) newReviewRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&apiURL, "api-url", "", "Loop API base URL (default $LOOP_API_URL or http://localhost:8222)")
 	cmd.Flags().StringVar(&pr, "pr", "", "PR number or URL to load and review first (default: the channel's already-loaded review)")
 	cmd.Flags().BoolVar(&wait, "wait", false, "Block until the daemon flips to a terminal status, then print JSON")
-	// 75m default chosen to sit above the daemon-side ceilings of a run
-	// and the dedup pass after it (api.WithReviewRunTimeout and
-	// api.WithReviewDedupTimeout in cmd/loop/serve.go, currently 50m and
-	// 15m): the daemon flips the session to status=error first with a
-	// meaningful message, and the CLI exits with that message rather than
-	// its generic "timed out after 75m" wrapper. The earlier 30m default
-	// fired before the daemon's own deadline on big PRs, killing the
-	// workflow's bash node while the agent was still emitting comments.
-	cmd.Flags().StringVar(&timeoutStr, "timeout", "75m", "Maximum time to wait when --wait is set (Go duration)")
+	cmd.Flags().BoolVar(&noVerify, "no-verify", false, "Skip the verification step the config runs after the review (a review loop runs it once, at the end)")
+	// 90m default chosen to sit above the daemon-side ceilings of a run,
+	// the dedup pass and the verification after it (api.WithReviewRunTimeout,
+	// api.WithReviewDedupTimeout and api.WithReviewVerifyTimeout in
+	// cmd/loop/serve.go, currently 50m, 15m and 15m): the daemon flips the
+	// session to status=error first with a meaningful message, and the CLI
+	// exits with that message rather than its generic "timed out after 90m"
+	// wrapper. The earlier 30m default fired before the daemon's own
+	// deadline on big PRs, killing the workflow's bash node while the agent
+	// was still emitting comments.
+	cmd.Flags().StringVar(&timeoutStr, "timeout", "90m", "Maximum time to wait when --wait is set (Go duration)")
 
 	return cmd
 }
@@ -145,6 +151,37 @@ func (a *app) newReviewDedupCmd() *cobra.Command {
 	// Same reasoning as run's --timeout: sit above the daemon's own
 	// dedup ceiling (15m).
 	cmd.Flags().StringVar(&timeoutStr, "timeout", "20m", "Maximum time to wait for the pass (Go duration)")
+
+	return cmd
+}
+
+func (a *app) newReviewVerifyCmd() *cobra.Command {
+	var channelID, apiURL, timeoutStr string
+	var wait bool
+
+	cmd := &cobra.Command{
+		Use:   "verify",
+		Short: "Run the verification step over the channel's review session: dedup, then a verdict on each agent comment, posted to the channel. With --wait, block until it is done and print JSON.",
+		RunE: func(c *cobra.Command, _ []string) error {
+			timeout, err := time.ParseDuration(timeoutStr)
+			if err != nil {
+				return fmt.Errorf("invalid --timeout: %w", err)
+			}
+			channelID = resolveReviewChannelID(channelID, os.Getenv("LOOP_CHANNEL_ID"))
+			if channelID == "" {
+				return fmt.Errorf("channel-id is required (pass --channel-id or set $LOOP_CHANNEL_ID)")
+			}
+			apiURL := resolveReviewAPIURL(apiURL, os.Getenv("LOOP_API_URL"))
+			return a.kickoffReview(c.Context(), c.OutOrStdout(), apiURL, channelID, reviewKickoff{action: "verify", body: `{}`}, wait, timeout)
+		},
+	}
+
+	cmd.Flags().StringVar(&channelID, "channel-id", "", "Channel ID whose review session to verify (default $LOOP_CHANNEL_ID)")
+	cmd.Flags().StringVar(&apiURL, "api-url", "", "Loop API base URL (default $LOOP_API_URL or http://localhost:8222)")
+	cmd.Flags().BoolVar(&wait, "wait", false, "Block until the daemon flips to a terminal status, then print JSON")
+	// Same reasoning as run's --timeout: sit above the daemon's own
+	// ceilings of the dedup pass and the verification (15m each).
+	cmd.Flags().StringVar(&timeoutStr, "timeout", "35m", "Maximum time to wait when --wait is set (Go duration)")
 
 	return cmd
 }
@@ -292,9 +329,23 @@ type pollPermanentError struct{ err error }
 func (e *pollPermanentError) Error() string { return e.err.Error() }
 func (e *pollPermanentError) Unwrap() error { return e.err }
 
-// runReview POSTs to /api/channels/{id}/review/run and, when wait is true,
-// polls /api/channels/{id}/review every second until the session leaves the
-// "reviewing" status or the deadline fires.
+// reviewKickoff is the POST that starts a daemon-side review action:
+// /api/channels/{id}/review/<action> with body.
+type reviewKickoff struct {
+	action string
+	body   string
+}
+
+// runReview starts a review run with the verification step the config sets;
+// see kickoffReview.
+func (a *app) runReview(ctx context.Context, stdout io.Writer, apiURL, channelID string, wait bool, timeout time.Duration) error {
+	return a.kickoffReview(ctx, stdout, apiURL, channelID, reviewKickoff{action: "run", body: `{}`}, wait, timeout)
+}
+
+// kickoffReview POSTs to /api/channels/{id}/review/<action> (a run, or the
+// verification step) and, when wait is true, polls /api/channels/{id}/review
+// every second until the session reaches a terminal status (ready or error)
+// or the deadline fires.
 //
 // When wait is true the timeout bounds the whole operation: ctx is wrapped in
 // context.WithTimeout so cancellation propagates into every client.Do call,
@@ -307,7 +358,7 @@ func (e *pollPermanentError) Unwrap() error { return e.err }
 // When wait is false the POST itself still gets a smaller fixed timeout
 // (reviewPostTimeout) so fire-and-forget callers can't hang on a stalled
 // POST response either.
-func (a *app) runReview(ctx context.Context, stdout io.Writer, apiURL, channelID string, wait bool, timeout time.Duration) error {
+func (a *app) kickoffReview(ctx context.Context, stdout io.Writer, apiURL, channelID string, kickoff reviewKickoff, wait bool, timeout time.Duration) error {
 	if wait {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)
@@ -330,7 +381,7 @@ func (a *app) runReview(ctx context.Context, stdout io.Writer, apiURL, channelID
 		return err
 	}
 
-	runURL := fmt.Sprintf("%s/api/channels/%s/review/run", apiURL, channelID)
+	runURL := fmt.Sprintf("%s/api/channels/%s/review/%s", apiURL, channelID, kickoff.action)
 	postCtx := ctx
 	postTimeout := timeout
 	if !wait {
@@ -339,7 +390,7 @@ func (a *app) runReview(ctx context.Context, stdout io.Writer, apiURL, channelID
 		defer cancel()
 		postTimeout = a.reviewPostTimeout
 	}
-	req, err := http.NewRequestWithContext(postCtx, http.MethodPost, runURL, bytes.NewReader([]byte(`{}`)))
+	req, err := http.NewRequestWithContext(postCtx, http.MethodPost, runURL, strings.NewReader(kickoff.body))
 	if err != nil {
 		return fmt.Errorf("building POST request: %w", err)
 	}

@@ -32,8 +32,13 @@ type reviewService struct {
 	userPrompt   string
 	runTimeout   time.Duration
 	dedupTimeout time.Duration
-	mu           sync.Mutex // guards active
-	active       map[string]context.CancelFunc
+	// verifyTimeout caps the verification agent; the dedup pass before it
+	// has dedupTimeout.
+	verifyTimeout time.Duration
+	// messages posts the verification step's summary to the channel.
+	messages MessageSender
+	mu       sync.Mutex // guards active
+	active   map[string]context.CancelFunc
 }
 
 // newReviewService creates the review domain with its run registry ready.
@@ -260,8 +265,10 @@ func (s *reviewService) pushOneComment(ctx context.Context, channelID string, se
 //
 // before holds the ids of the comments the run started from: once the run
 // succeeds, dedupAfterRun checks the ones it added against the rest before
-// the session is ready again.
-func (s *reviewService) runReviewAsync(runCtx context.Context, before map[string]bool, req review.RunRequest) {
+// the session is ready again. When verify is on, the verification step runs
+// instead: its dedup pass covers the whole session, the run's comments
+// included.
+func (s *reviewService) runReviewAsync(runCtx context.Context, before map[string]bool, req review.RunRequest, verify verifyStep) {
 	channelID, worktreePath, parentDirPath := req.ChannelID, req.DirPath, req.ParentDirPath
 	defer s.unregisterReviewRun(channelID)
 	ctx, cancel := withTimeout(runCtx, s.runTimeout)
@@ -298,6 +305,10 @@ func (s *reviewService) runReviewAsync(runCtx context.Context, before map[string
 		}
 		s.sessions.UpdateStatus(channelID, review.StatusError, msg)
 		s.broadcastReviewStatus(channelID, review.StatusError, msg)
+		return
+	}
+	if verify.on {
+		s.verifyAfterRun(runCtx, channelID, parentDirPath, verify.prompt)
 		return
 	}
 	// The pass gets a budget of its own: on the review's leftovers, a long
@@ -618,11 +629,18 @@ func (s *reviewService) setRunTimeout(d time.Duration) {
 	s.runTimeout = d
 }
 
-// setDedupTimeout caps a dedup pass, the one after a run and one run on
-// demand; 0 leaves it unbounded. The run's ceiling plus this one should stay
-// below the CLI's `loop review:run --timeout`, which waits for both.
+// setDedupTimeout caps a dedup pass, the one after a run, the one the
+// verification step starts with, and one run on demand; 0 leaves it
+// unbounded. The run's ceiling plus this one and the verification's should
+// stay below the CLI's `loop review:run --timeout`, which waits for all of
+// them.
 func (s *reviewService) setDedupTimeout(d time.Duration) {
 	s.dedupTimeout = d
+}
+
+// setVerifyTimeout caps the verification agent; 0 leaves it unbounded.
+func (s *reviewService) setVerifyTimeout(d time.Duration) {
+	s.verifyTimeout = d
 }
 
 // WithReview configures the review panel's backends at construction.
@@ -643,4 +661,9 @@ func WithReviewRunTimeout(d time.Duration) Option {
 // WithReviewDedupTimeout caps the daemon-side dedup pass.
 func WithReviewDedupTimeout(d time.Duration) Option {
 	return func(s *Server) { s.review.setDedupTimeout(d) }
+}
+
+// WithReviewVerifyTimeout caps the daemon-side verification agent.
+func WithReviewVerifyTimeout(d time.Duration) Option {
+	return func(s *Server) { s.review.setVerifyTimeout(d) }
 }

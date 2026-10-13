@@ -192,9 +192,11 @@ func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRe
 			override.ClaudeBatchDisallowedTools = withoutTool(cfg.ClaudeBatchDisallowedTools, reportFindingsTool)
 		}
 		// A read-only run looks (and a learn run proposes); it never
-		// changes anything itself. See readOnlyDisallowedTools.
+		// changes anything itself. See readOnlyDisallowedTools. The tools
+		// the request allows stay available.
 		if req.ReadOnly {
-			override.ClaudeBatchDisallowedTools = slices.Concat(override.ClaudeBatchDisallowedTools, readOnlyDisallowedTools)
+			denied := slices.DeleteFunc(slices.Clone(readOnlyDisallowedTools), func(t string) bool { return slices.Contains(req.AllowTools, t) })
+			override.ClaudeBatchDisallowedTools = slices.Concat(override.ClaudeBatchDisallowedTools, denied)
 		}
 		cfg = &override
 	}

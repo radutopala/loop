@@ -1,6 +1,9 @@
 package fsmigrate
 
-import "context"
+import (
+	"context"
+	"slices"
+)
 
 // RestoreBuiltinShortcuts re-seeds any missing built-in prompt shortcuts into
 // ~/.loop/config.json AND upgrades an unmodified "builtin code review" entry
@@ -78,8 +81,13 @@ func RestoreBuiltinWorkflows(ctx context.Context, c *Ctx) (added []string, patch
 	if err != nil {
 		return nil, nil, err
 	}
+	checkPatched, err := patchReviewLoopFinalCheckReport(ctx, c)
+	if err != nil {
+		return nil, nil, err
+	}
 	// verify/deps patchers touch only `review-fix-loop`, the dedup patcher
-	// only `review-loop`; the env/pr patcher may touch both seeded loops.
+	// only `review-loop`; the env/pr and final-check patchers may touch both
+	// seeded loops.
 	// De-dupe via a set.
 	patchedSet := map[string]struct{}{}
 	if dedupPatched {
@@ -91,7 +99,7 @@ func RestoreBuiltinWorkflows(ctx context.Context, c *Ctx) (added []string, patch
 	if depsPatched {
 		patchedSet[seededReviewFixLoopName] = struct{}{}
 	}
-	for _, n := range envPatched {
+	for _, n := range slices.Concat(envPatched, checkPatched) {
 		patchedSet[n] = struct{}{}
 	}
 	for n := range patchedSet {

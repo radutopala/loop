@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"path/filepath"
 	"slices"
@@ -233,7 +234,7 @@ func (s *reviewService) handleReviewSync(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "session not ready (no PR or worktree)", http.StatusConflict)
 		return
 	}
-	if sess.Status == review.StatusLoading || sess.Status == review.StatusReviewing {
+	if sess.Status == review.StatusLoading || sess.Status == review.StatusReviewing || sess.Status == review.StatusVerifying {
 		http.Error(w, "session busy (status="+string(sess.Status)+")", http.StatusConflict)
 		return
 	}
@@ -586,6 +587,12 @@ func (s *reviewService) handleReviewPushAll(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "no review session for channel", http.StatusNotFound)
 		return
 	}
+	// Wait for the verdicts: a comment the verification step dismisses is
+	// skipped.
+	if sess.Status == review.StatusVerifying {
+		http.Error(w, "session busy (status="+string(sess.Status)+")", http.StatusConflict)
+		return
+	}
 	var result pushAllResult
 	for _, c := range sess.Comments {
 		if c.Pushed {
@@ -791,6 +798,17 @@ func (s *reviewService) handleReviewRun(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// The body is optional: {"verify": false} skips the verification step
+	// the config would otherwise run after this one (a review loop runs it
+	// once, after its last iteration).
+	var body struct {
+		Verify *bool `json:"verify"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	channelID := r.PathValue("id")
 	sess := s.sessions.Get(channelID)
 	if sess == nil {
@@ -905,6 +923,10 @@ func (s *reviewService) handleReviewRun(w http.ResponseWriter, r *http.Request) 
 	for _, c := range sess.Comments {
 		before[c.ID] = true
 	}
+	verify := s.deps.configs.reviewVerify(channelDirPath, parentDirPath)
+	if body.Verify != nil && !*body.Verify {
+		verify.on = false
+	}
 	s.sessions.SetSuperseded(channelID, nil)
 	s.sessions.UpdateStatus(channelID, review.StatusReviewing, "")
 	s.broadcastReviewStatus(channelID, review.StatusReviewing, "")
@@ -919,7 +941,7 @@ func (s *reviewService) handleReviewRun(w http.ResponseWriter, r *http.Request) 
 		ForkSessionID:        forkSessionID,
 		Model:                sess.Model,
 		Effort:               sess.Effort,
-	})
+	}, verify)
 	writeHTTPJSON(w, http.StatusAccepted, map[string]string{"status": "started"}, s.deps.logger)
 }
 

@@ -620,7 +620,7 @@ func (s *FSMigrateSuite) TestBuiltinReviewLoopDefShape() {
 	require.Equal(s.T(), "review-loop", def["name"])
 	require.Contains(s.T(), def["description"], "review")
 	nodes := def["nodes"].([]any)
-	require.Len(s.T(), nodes, 1)
+	require.Len(s.T(), nodes, 2)
 	loop := nodes[0].(map[string]any)
 	require.Equal(s.T(), "loop", loop["type"])
 	body := loop["body"].([]any)
@@ -628,13 +628,16 @@ func (s *FSMigrateSuite) TestBuiltinReviewLoopDefShape() {
 	review := body[0].(map[string]any)
 	require.Equal(s.T(), "review", review["id"])
 	require.Equal(s.T(), "bash", review["type"])
-	require.Equal(s.T(), reviewRunScript, review["script"])
+	require.Equal(s.T(), reviewRunScriptNoVerify, review["script"])
+	require.Equal(s.T(), reviewCheckNode(), nodes[1])
 }
 
 func (s *FSMigrateSuite) TestBuiltinReviewFixLoopDefShape() {
 	def := builtinReviewFixLoopDef()
 	require.Equal(s.T(), "review-fix-loop", def["name"])
 	nodes := def["nodes"].([]any)
+	require.Len(s.T(), nodes, 2)
+	require.Equal(s.T(), reviewCheckNode(), nodes[1])
 	loop := nodes[0].(map[string]any)
 	body := loop["body"].([]any)
 	require.Len(s.T(), body, 3)

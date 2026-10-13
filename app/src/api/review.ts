@@ -10,7 +10,7 @@ export interface ReviewPR {
   is_draft?: boolean;
 }
 
-export type ReviewStatus = "idle" | "loading" | "ready" | "reviewing" | "error";
+export type ReviewStatus = "idle" | "loading" | "ready" | "reviewing" | "verifying" | "error";
 
 export type ReviewVerdict = "real" | "false_positive" | "already_fixed";
 

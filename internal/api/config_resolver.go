@@ -99,3 +99,14 @@ func (c *configResolver) claudeEffort(workdir, parentDirPath string) string {
 	}
 	return cfg.ClaudeEffort
 }
+
+// reviewVerify mirrors ghUser for review.verify and review.verify_prompt:
+// whether a review ends with the verification step, and its instructions.
+// On a config-load error the step stays on, its default.
+func (c *configResolver) reviewVerify(workdir, parentDirPath string) verifyStep {
+	cfg := c.merged(workdir, parentDirPath)
+	if cfg == nil {
+		return verifyStep{on: true}
+	}
+	return verifyStep{on: cfg.Review.Verify, prompt: cfg.Review.VerifyPrompt}
+}

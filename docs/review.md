@@ -131,6 +131,30 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
    `review-fix-loop` the pass is over before the fix step, so that step
    isn't handed reworded repeats of findings it already fixed.
 
+   Once the review is over (a single run, or the last iteration of a
+   seeded review loop), Loop runs the **verification step**. The session
+   shows `verifying` while it runs, and **Address all**, **Push all** and
+   **Sync** wait for it. The step does three things:
+   - It runs the dedup pass over the whole session. If the pass fails, the
+     failure is logged and the step goes on.
+   - A read-only agent then reads, in the PR worktree at the reviewed
+     commit, the code each agent comment points at (GitHub comments are
+     skipped). It records a verdict (`real`, `false_positive` or
+     `already_fixed`) with a one-sentence reason through
+     `update_review_comment`, which replaces the dedup pass's verdict.
+     That tool is the only change the agent can make: it can't edit code,
+     or edit, delete or push comments.
+   - Loop posts the agent's reply to the channel: one entry per comment
+     (id, `path:line`, category, verdict, reason, and a link to a pushed
+     comment's GitHub thread), then what the dedup pass removed, trimmed,
+     moved and marked related, and the count per verdict.
+
+   A session with no agent comments skips the step. If the agent fails
+   or times out (15 minutes), the session goes to `error`. Stop cancels
+   the step. Turn the step off with `review.verify: false` (see
+   [Configuration](#configuration)), or for one run with
+   `loop review:run --no-verify`. `loop review:verify` runs it on its own.
+
    A chip
    in the panel header mirrors the workflow events
    (`workflow.node_started`, `workflow.run_completed`, …) so the
@@ -401,7 +425,14 @@ exports both `LOOP_CHANNEL_ID` and `LOOP_API_URL`, and the CLI falls back to the
 so the seeded review workflows' bash body is simply:
 
 ```sh
-loop review:run --pr {{.Inputs.pr}} --wait
+loop review:run --pr {{.Inputs.pr}} --wait --no-verify
+```
+
+Each iteration skips the verification step (`--no-verify`). The loop's
+last node, `check`, runs it once after the loop ends:
+
+```sh
+loop review:verify --wait
 ```
 
 `--pr` is optional (blank via the seeded `pr` input) — leave it blank to
@@ -418,9 +449,18 @@ load. Any session-lookup failure falls back to loading.
 | `--api-url` | `$LOOP_API_URL` then `http://localhost:8222` | Daemon URL. The agent container already exports `$LOOP_API_URL`. |
 | `--pr` | (none) | PR number (`567`) or URL (`.../pull/567`) to **load** into the channel's review session (fetch PR + create its worktree) before running. Omitted → review whatever the channel already has loaded. |
 | `--wait` | `false` | Block until the session reaches a terminal status (`ready` or `error`) and emit the JSON envelope to stdout. Without `--wait`, the command exits 0 immediately after the `202`. |
-| `--timeout` | `75m` | Bound on the total `--wait` time. Enforced inside the HTTP client, not just between polls, so a hung response can't outlive the deadline. Transient transport errors (TCP reset, momentary daemon restart, proxy 502) back off and retry instead of failing the whole loop. Sits above the daemon-side ceilings of the run and the dedup pass after it (50m and 15m) so the daemon flips first with a meaningful error rather than the CLI's generic timeout. |
+| `--no-verify` | `false` | Skip the [verification step](#lifecycle) after this run, even when `review.verify` is on. The dedup pass after the run still runs. |
+| `--timeout` | `90m` | Bound on the total `--wait` time. Enforced inside the HTTP client, not just between polls, so a hung response can't outlive the deadline. Transient transport errors (TCP reset, momentary daemon restart, proxy 502) back off and retry instead of failing the whole loop. Sits above the daemon-side ceilings of the run and the verification step after it (50m, plus 15m for the step's dedup pass and 15m for its agent) so the daemon flips first with a meaningful error rather than the CLI's generic timeout. |
 
 The emitted JSON shape is `{"status":"ready","no_comments":bool,"comments":[...]}`, plus `"superseded":{"<deleted id>":"<kept id>"}` when the dedup pass after the run deleted any — the same payload used by the workflow body parser to populate `{{.Review.*}}` templates inside the seeded loops. Each comment carries the dedup pass's `verdict` and `verdict_reason` once it has one. The workflow parser leaves out the comments marked `false_positive` or `already_fixed`: the fix step doesn't get them, the same-as-previous check doesn't count them, and a round that leaves only those sets `NoComments`, so the loop stops.
+
+`loop review:verify` runs the verification step on its own over a `ready`
+session. It takes `--channel-id`, `--api-url`, `--wait` and `--timeout`
+(default `35m`, above the daemon's two 15m ceilings). With `--wait` it
+prints the same JSON envelope as `review:run --wait`, verdicts included.
+When `review.verify` is off, the daemon answers `{"status":"disabled"}` and
+runs nothing, and `--wait` prints the session as it stands. A run in progress, or a session that isn't `ready`, makes it fail with a
+`409`.
 
 `loop review:dedup` runs the dedup pass on its own, over the whole session
 rather than only the latest run's comments. It
@@ -461,10 +501,13 @@ Status is broadcast over the WebSocket as `review.status` events so
 multiple panes / browser tabs stay in sync without polling.
 
 ```
-idle ──load──▶ loading ──ok──▶ ready ──run──▶ reviewing ──ok──▶ ready
-                  │                            │
-                  └──err──▶ error              └──err──▶ error
+idle ──load──▶ loading ──ok──▶ ready ──run──▶ reviewing ──ok──▶ verifying ──ok──▶ ready
+                  │                            │                   │
+                  └──err──▶ error              └──err──▶ error     └──err──▶ error
 ```
+
+A run with the verification step off goes from `reviewing` straight to
+`ready`; `loop review:verify` goes from `ready` to `verifying`.
 
 Deleting the session stops a run in progress and broadcasts `idle`. While a
 run is in progress the sidebar shows the channel as running, in Recent too,
@@ -488,6 +531,14 @@ Or, to keep the prompt out of the JSON file:
 
 The latter is read from `~/.loop/review/review.md`. Setting both is an
 error; setting neither uses the daemon's built-in default prompt.
+
+The [verification step](#lifecycle) is on by default. `verify_prompt`
+replaces its agent's built-in instructions. Loop still appends the PR,
+the reviewed commit, the checkout and the dedup pass's outcome to it:
+
+```json
+{ "review": { "verify": false } }
+```
 
 ### Required output format
 

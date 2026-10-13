@@ -532,6 +532,32 @@ func (s *ConfigSuite) TestLearnConfigLoad() {
 	}
 }
 
+func (s *ConfigSuite) TestReviewConfigLoad() {
+	tests := []struct {
+		name string
+		json string
+		want ReviewConfig
+	}{
+		{name: "absent verifies", json: ``, want: ReviewConfig{Verify: true}},
+		{name: "empty verifies", json: `, "review": {}`, want: ReviewConfig{Verify: true}},
+		{
+			name: "all fields",
+			json: `, "review": {"enabled": true, "prompt": "p", "prompt_path": "r.md", "verify": false, "verify_prompt": "v"}`,
+			want: ReviewConfig{Enabled: true, Prompt: "p", PromptPath: "r.md", VerifyPrompt: "v"},
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.loader.readFile = func(_ string) ([]byte, error) {
+				return []byte(`{"platforms": ["discord"], "discord_token": "t", "discord_app_id": "a"` + tc.json + `}`), nil
+			}
+			cfg, err := s.loader.load()
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tc.want, cfg.Review)
+		})
+	}
+}
+
 func (s *ConfigSuite) TestExplainConfigLoad() {
 	tests := []struct {
 		name string

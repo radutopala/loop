@@ -46,8 +46,8 @@ type channelResponse struct {
 	Active           bool   `json:"active"`
 	ContainerRunning bool   `json:"container_running"`
 	AgentRunning     bool   `json:"agent_running"`
-	// ReviewRunning is set while a review (or a dedup pass) runs on the
-	// channel's review session.
+	// ReviewRunning is set while a review (or a dedup pass, or the
+	// verification step) runs on the channel's review session.
 	ReviewRunning  bool   `json:"review_running"`
 	Branch         string `json:"branch,omitempty"`
 	Commit         string `json:"commit,omitempty"`
@@ -265,7 +265,7 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 			Active:           ch.Active,
 			ContainerRunning: running,
 			AgentRunning:     runningBot,
-			ReviewRunning:    rev.Status == review.StatusReviewing,
+			ReviewRunning:    rev.Status == review.StatusReviewing || rev.Status == review.StatusVerifying,
 			Branch:           git.Branch,
 			Commit:           git.Commit,
 			Subject:          git.Subject,

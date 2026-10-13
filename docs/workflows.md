@@ -164,11 +164,17 @@ Loop with a body — runs `review → fix → verify` per iteration, stops when 
   "max_iterations": 3,
   "condition": "{{ or .Review.NoComments .Review.SameAsPrev }}",
   "body": [
-    { "id": "review", "type": "bash",   "script": "loop review:run --channel-id {{.ChannelID}} --api-url $LOOP_API_URL --wait" },
+    { "id": "review", "type": "bash",   "script": "loop review:run --channel-id {{.ChannelID}} --api-url $LOOP_API_URL --wait --no-verify" },
     { "id": "fix",    "type": "prompt", "depends_on": ["review"], "when": "{{ not .Review.NoComments }}", "prompt": "Fix these review comments and commit:\n\n{{.Review.CommentsJSON}}" },
     { "id": "verify", "type": "bash",   "depends_on": ["fix"],    "when": "{{ not .Review.NoComments }}", "script": "git add -u && git diff --cached --quiet || git commit -m \"fix: address review feedback\"" }
   ]
 }
+```
+
+`--no-verify` skips the review's [verification step](review.md#lifecycle) in each iteration. The seeded loops run it once, after the loop, with a node that depends on it:
+
+```jsonc
+{ "id": "check", "type": "bash", "depends_on": ["loop"], "script": "loop review:verify --wait" }
 ```
 
 ### Approval Node (`"type": "approval"`)

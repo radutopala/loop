@@ -203,19 +203,28 @@ type EmbeddingsConfig struct {
 // FE hide the panel from the picker and the backend reject /review/*
 // requests with 403. The flag is per global/project/worktree, layered
 // the same way as github.gh_user.
+//
+// Verify (on by default) runs the verification step once a review is over:
+// the dedup pass, then an agent that judges each agent comment against the
+// code and posts a summary to the channel. VerifyPrompt replaces that
+// agent's built-in instructions (review.DefaultVerifyPrompt).
 type ReviewConfig struct {
-	Enabled    bool   `json:"enabled"`
-	Prompt     string `json:"prompt"`
-	PromptPath string `json:"prompt_path"`
+	Enabled      bool   `json:"enabled"`
+	Prompt       string `json:"prompt"`
+	PromptPath   string `json:"prompt_path"`
+	Verify       bool   `json:"verify"`
+	VerifyPrompt string `json:"verify_prompt"`
 }
 
-// jsonReviewConfig is the JSON representation of ReviewConfig with an
-// optional Enabled pointer so we can distinguish "unset" (inherit parent
+// jsonReviewConfig is the JSON representation of ReviewConfig with optional
+// Enabled and Verify pointers so we can distinguish "unset" (inherit parent
 // layer) from "explicitly false" (force-disable at this layer).
 type jsonReviewConfig struct {
-	Enabled    *bool  `json:"enabled"`
-	Prompt     string `json:"prompt"`
-	PromptPath string `json:"prompt_path"`
+	Enabled      *bool  `json:"enabled"`
+	Prompt       string `json:"prompt"`
+	PromptPath   string `json:"prompt_path"`
+	Verify       *bool  `json:"verify"`
+	VerifyPrompt string `json:"verify_prompt"`
 }
 
 // ResolvePrompt returns the configured prompt text. When neither field

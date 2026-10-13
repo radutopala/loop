@@ -305,6 +305,12 @@ var migrations = []Migration{
 		Description: "drop claude_dangerously_load_development_channels from config.json",
 		Apply:       dropDevChannelsKey,
 	},
+	{
+		// A review run now ends with the verification step. The seeded
+		// loops skip it on each iteration and run it once, after the last.
+		Description: "patch review-loop/review-fix-loop to verify the comments once, at the end",
+		Apply:       patchReviewLoopFinalCheck,
+	},
 }
 
 // adoptProjectConfigs trusts the project config of every project checkout
@@ -1265,16 +1271,20 @@ func isNullLiteral(v *hujson.Value) bool {
 	return lit.Kind() == 'n'
 }
 
-// reviewRunScript is the current review-node bash: channel-id / api-url come
-// from the container's injected env (LOOP_CHANNEL_ID / LOOP_API_URL), and an optional
-// `pr` input reviews a specific PR (blank = the channel's already-loaded
-// review). The patcher upgrades the earlier forms: reviewRunScriptOld, from
-// before the env, and reviewRunScriptSpaced, from before the colon paths.
+// reviewRunScriptNoVerify is the current review-node bash: channel-id /
+// api-url come from the container's injected env (LOOP_CHANNEL_ID /
+// LOOP_API_URL), an optional `pr` input reviews a specific PR (blank = the
+// channel's already-loaded review), and --no-verify leaves the verification
+// step to the loop's final check node (reviewCheckScript). The patchers
+// upgrade the earlier forms: reviewRunScriptOld, from before the env,
+// reviewRunScriptSpaced, from before the colon paths, and reviewRunScript,
+// from before the final check.
 const (
-	reviewRunScript       = "loop review:run --pr {{.Inputs.pr}} --wait"
-	reviewRunScriptSpaced = "loop review run --pr {{.Inputs.pr}} --wait"
-	reviewRunScriptOld    = "loop review run --channel-id {{.ChannelID}} --api-url $API_URL --wait"
-	reviewPRInputDesc     = "PR number or URL to review (blank = the channel's already-loaded review)."
+	reviewRunScriptNoVerify = "loop review:run --pr {{.Inputs.pr}} --wait --no-verify"
+	reviewRunScript         = "loop review:run --pr {{.Inputs.pr}} --wait"
+	reviewRunScriptSpaced   = "loop review run --pr {{.Inputs.pr}} --wait"
+	reviewRunScriptOld      = "loop review run --channel-id {{.ChannelID}} --api-url $API_URL --wait"
+	reviewPRInputDesc       = "PR number or URL to review (blank = the channel's already-loaded review)."
 )
 
 // reviewBashBodyChild is the bash node every seeded review loop pins as its
@@ -1285,13 +1295,29 @@ func reviewBashBodyChild() map[string]any {
 	return map[string]any{
 		"id":     "review",
 		"type":   "bash",
-		"script": reviewRunScript,
+		"script": reviewRunScriptNoVerify,
 	}
 }
 
-// builtinLoopDef builds the outer shape (name, description, inputs, single
-// loop node with same-IDs stop-condition) shared by both seeded review
-// workflows. The body children differ between the two — see callers.
+// reviewCheckScript is the seeded review loops' last node: once the loop is
+// done, the verification step checks the comments it left.
+const reviewCheckScript = "loop review:verify --wait"
+
+// reviewCheckNode is the seeded review loops' final node, running
+// reviewCheckScript after the loop.
+func reviewCheckNode() map[string]any {
+	return map[string]any{
+		"id":         "check",
+		"type":       "bash",
+		"script":     reviewCheckScript,
+		"depends_on": []any{"loop"},
+	}
+}
+
+// builtinLoopDef builds the outer shape (name, description, inputs, the loop
+// node with same-IDs stop-condition, then the final check node) shared by
+// both seeded review workflows. The body children differ between the two —
+// see callers.
 func builtinLoopDef(name, description, inputDesc string, body []any) map[string]any {
 	return map[string]any{
 		"name":        name,
@@ -1313,6 +1339,7 @@ func builtinLoopDef(name, description, inputDesc string, body []any) map[string]
 				"condition": "{{ or .Review.NoComments .Review.SameAsPrev }}",
 				"body":      body,
 			},
+			reviewCheckNode(),
 		},
 	}
 }
@@ -1429,6 +1456,90 @@ func seededReviewLoopFinalDedupShape(wfObj *hujson.Object) bool {
 	id, _ := memberString(dedupObj, "id")
 	script, _ := memberString(dedupObj, "script")
 	return id == "dedup" && script == reviewDedupScript && seededReviewLoopNode(nodesArr.Elements[0])
+}
+
+// patchReviewLoopFinalCheck moves the verification step of the seeded review
+// loops to their end: each iteration's `loop review:run` gets --no-verify
+// and a final check node runs `loop review:verify` once the loop is done.
+// It applies to review-loop and review-fix-loop while their only node is the
+// loop and its first body child still runs reviewRunScript; any other shape
+// is the user's and is left alone, as is a missing config or workflow.
+func patchReviewLoopFinalCheck(ctx context.Context, c *Ctx) error {
+	_, err := patchReviewLoopFinalCheckReport(ctx, c)
+	return err
+}
+
+// patchReviewLoopFinalCheckReport is the variant used by
+// RestoreBuiltinWorkflows: it returns the names of the workflows it patched.
+func patchReviewLoopFinalCheckReport(_ context.Context, c *Ctx) ([]string, error) {
+	v, configPath, err := loadConfigHJSON(c)
+	if err != nil || v == nil {
+		return nil, err
+	}
+	rootObj, ok := v.Value.(*hujson.Object)
+	if !ok {
+		return nil, fmt.Errorf("parsing %s: expected JSON object at top level", configPath)
+	}
+	wfsArr, ok := arrayValue(findObjectMember(rootObj, "workflows"))
+	if !ok {
+		return nil, nil
+	}
+	var ops []jsonPatchOp
+	var patched []string
+	for i := range wfsArr.Elements {
+		wfObj, ok := wfsArr.Elements[i].Value.(*hujson.Object)
+		if !ok {
+			continue
+		}
+		name, _ := memberString(wfObj, "name")
+		if (name != seededReviewLoopName && name != seededReviewFixLoopName) || !seededReviewLoopWithoutCheck(wfObj) {
+			continue
+		}
+		ops = append(ops,
+			jsonPatchOp{Op: "replace", Path: fmt.Sprintf("/workflows/%d/nodes/0/body/0/script", i), Value: reviewRunScriptNoVerify},
+			jsonPatchOp{Op: "add", Path: fmt.Sprintf("/workflows/%d/nodes/-", i), Value: reviewCheckNode()},
+		)
+		patched = append(patched, name)
+	}
+	if len(ops) == 0 {
+		return nil, nil
+	}
+	// The ops hold only fixed values, so marshaling cannot fail, and the
+	// pointers were just walked in the AST, so the patch applies.
+	patch, _ := json.Marshal(ops)
+	_ = v.Patch(patch)
+	if err := atomicWriteConfig(c.Sys, configPath, v.Pack(), 0644); err != nil {
+		return nil, fmt.Errorf("writing %s: %w", configPath, err)
+	}
+	return patched, nil
+}
+
+// seededReviewLoopWithoutCheck reports whether wfObj's nodes are a seeded
+// review loop's from before the final check: one node, the loop, whose
+// first body child is the review node running reviewRunScript.
+func seededReviewLoopWithoutCheck(wfObj *hujson.Object) bool {
+	nodesArr, ok := arrayValue(findObjectMember(wfObj, "nodes"))
+	if !ok || len(nodesArr.Elements) != 1 {
+		return false
+	}
+	loopObj, ok := nodesArr.Elements[0].Value.(*hujson.Object)
+	if !ok {
+		return false
+	}
+	if id, _ := memberString(loopObj, "id"); id != "loop" {
+		return false
+	}
+	bodyArr, ok := arrayValue(findObjectMember(loopObj, "body"))
+	if !ok || len(bodyArr.Elements) == 0 {
+		return false
+	}
+	childObj, ok := bodyArr.Elements[0].Value.(*hujson.Object)
+	if !ok {
+		return false
+	}
+	id, _ := memberString(childObj, "id")
+	script, _ := memberString(childObj, "script")
+	return id == "review" && script == reviewRunScript
 }
 
 // builtinReviewFixLoopDef defines the review → fix → verify loop. Same stop
