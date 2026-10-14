@@ -790,6 +790,7 @@ func (a *app) serve() error {
 	lifecycleMgr.SetReclaimScope(reclaimScope(store, cfg, listChildProjects))
 	lifecycleMgr.SetChildRebuilder(childImages.RebuildStale)
 	runner.SetImageGate(lifecycleMgr, a.version, cfg.ContainerImage)
+	runner.SetMissingImageBuilder(childImages)
 	if chromeProvider != nil {
 		chromeProvider.SetImageGate(lifecycleMgr)
 	}

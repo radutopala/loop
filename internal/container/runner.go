@@ -153,6 +153,9 @@ type DockerRunner struct {
 	imageGate   ImageGate
 	loopVersion string
 	baseImage   string
+	// missingImages, when set, builds a project image that doesn't exist
+	// yet before the container is created. Set via SetMissingImageBuilder.
+	missingImages MissingImageBuilder
 
 	// Gate approval wiring (stage 2 of agentgate). When both fields below are
 	// set, the runner constructs a per-container agentgate.Manager, registers
@@ -664,7 +667,7 @@ func (r *DockerRunner) createAndStartContainer(
 	}
 	keepMCPConfig = cfg.KeepMCPConfigs
 
-	if err := r.awaitImage(ctx, cfg.ContainerImage, onActivity); err != nil {
+	if err := r.awaitImage(ctx, cfg.ContainerImage, cfg.ContainerImageAutobuild, []string{workDir, parentDirPath}, onActivity); err != nil {
 		return "", "", "", false, err
 	}
 

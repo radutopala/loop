@@ -259,3 +259,112 @@ func (s *ChildImagesSuite) TestEmptyBaseImageNoop() {
 	m.RebuildStale(context.Background(), s.handoff)
 	s.client.AssertNotCalled(s.T(), "ImageList", mock.Anything, mock.Anything)
 }
+
+func (s *ChildImagesSuite) TestBuildMissing() {
+	const image = "proj-agent:latest"
+	labels := map[string]string{ParentIDLabel: "sha256:p"}
+	tests := []struct {
+		name      string
+		image     string
+		autobuild bool
+		dirs      []string
+		files     map[string]string
+		setup     func(c *MockDockerClient)
+		wantErr   string
+		wantBuild bool
+	}{
+		{name: "no image override", image: "", autobuild: true},
+		{name: "the base image itself", image: "loop-agent", autobuild: true},
+		{name: "autobuild off", image: image},
+		{
+			name: "image exists", image: image, autobuild: true,
+			setup: func(c *MockDockerClient) {
+				c.On("ImageList", mock.Anything, image).Return([]string{"sha256:c"}, nil)
+			},
+		},
+		{
+			name: "image list fails", image: image, autobuild: true,
+			setup: func(c *MockDockerClient) {
+				c.On("ImageList", mock.Anything, image).Return([]string(nil), errors.New("daemon down"))
+			},
+		},
+		{
+			name: "no Dockerfile", image: image, autobuild: true, dirs: []string{"/wt", ""},
+			setup: func(c *MockDockerClient) {
+				c.On("ImageList", mock.Anything, image).Return([]string{}, nil)
+			},
+		},
+		{
+			name: "Dockerfile not FROM the base", image: image, autobuild: true, dirs: []string{"/proj"},
+			files: map[string]string{"/proj": "FROM alpine\n"},
+			setup: func(c *MockDockerClient) {
+				c.On("ImageList", mock.Anything, image).Return([]string{}, nil)
+			},
+		},
+		{
+			name: "base image missing", image: image, autobuild: true, dirs: []string{"/proj"},
+			files: map[string]string{"/proj": "FROM loop-agent:latest\n"},
+			setup: func(c *MockDockerClient) {
+				c.On("ImageList", mock.Anything, image).Return([]string{}, nil)
+				c.On("ImageList", mock.Anything, "loop-agent:latest").Return([]string{}, nil)
+			},
+		},
+		{
+			name: "builds from the worktree's parent", image: image, autobuild: true, dirs: []string{"/proj/wt", "/proj"},
+			files: map[string]string{"/proj": "FROM loop-agent:latest\n"},
+			setup: func(c *MockDockerClient) {
+				c.On("ImageList", mock.Anything, image).Return([]string{}, nil)
+				c.On("ImageList", mock.Anything, "loop-agent:latest").Return([]string{"sha256:p"}, nil)
+				c.On("ImageBuildFileLabels", mock.Anything, "/proj/.loop/container", "Dockerfile", image, labels).Return(nil)
+			},
+			wantBuild: true,
+		},
+		{
+			name: "build fails", image: image, autobuild: true, dirs: []string{"/proj"},
+			files: map[string]string{"/proj": "FROM loop-agent:latest\n"},
+			setup: func(c *MockDockerClient) {
+				c.On("ImageList", mock.Anything, image).Return([]string{}, nil)
+				c.On("ImageList", mock.Anything, "loop-agent:latest").Return([]string{"sha256:p"}, nil)
+				c.On("ImageBuildFileLabels", mock.Anything, "/proj/.loop/container", "Dockerfile", image, labels).
+					Return(errors.New("RUN failed"))
+			},
+			wantErr:   "building image proj-agent:latest: RUN failed",
+			wantBuild: true,
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			for dir, content := range tc.files {
+				s.files[dfPath(dir)] = []byte(content)
+			}
+			if tc.setup != nil {
+				tc.setup(s.client)
+			}
+
+			m := s.newMgr(nil, nil)
+			err := m.BuildMissing(context.Background(), tc.image, tc.autobuild, tc.dirs, func() {
+				s.events = append(s.events, "build")
+			})
+			if tc.wantErr != "" {
+				require.EqualError(s.T(), err, tc.wantErr)
+			} else {
+				require.NoError(s.T(), err)
+			}
+			if tc.wantBuild {
+				require.Equal(s.T(), []string{"build", "begin " + image, "end " + image}, s.events)
+			} else {
+				require.Empty(s.T(), s.events)
+				s.client.AssertNotCalled(s.T(), "ImageBuildFileLabels", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+			}
+			s.client.AssertExpectations(s.T())
+		})
+	}
+}
+
+func (s *ChildImagesSuite) TestBuildMissingNoBase() {
+	m := s.newMgr(nil, nil)
+	m.baseImage = ""
+	require.NoError(s.T(), m.BuildMissing(context.Background(), "proj-agent:latest", true, []string{"/proj"}, func() {}))
+	s.client.AssertNotCalled(s.T(), "ImageList", mock.Anything, mock.Anything)
+}

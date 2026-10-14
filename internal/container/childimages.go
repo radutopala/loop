@@ -9,6 +9,7 @@ package container
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -114,22 +115,15 @@ func (m *ChildImageManager) RebuildStale(ctx context.Context, handoff func()) {
 		}
 		seen[p.Image] = true
 
-		dockerfile := filepath.Join(p.DirPath, childDockerfileRelPath)
-		data, err := m.readFile(dockerfile)
-		if err != nil {
-			m.logger.Debug("child images: no Dockerfile, skipping", "image", p.Image, "path", dockerfile)
-			continue
-		}
-		if !dockerfileFromBase(string(data), m.baseImage) {
-			m.logger.Info("child images: Dockerfile not based on Loop's image, skipping",
-				"image", p.Image, "path", dockerfile, "base", m.baseImage)
+		contextDir, ok := m.childContext(p.Image, p.DirPath)
+		if !ok {
 			continue
 		}
 
 		if labels, err := m.client.ImageInspectLabels(ctx, p.Image); err == nil && labels != nil && labels[ParentIDLabel] == parentID {
 			continue // already built on the current base
 		}
-		stale = append(stale, staleChild{image: p.Image, contextDir: filepath.Dir(dockerfile)})
+		stale = append(stale, staleChild{image: p.Image, contextDir: contextDir})
 	}
 
 	for i := range stale {
@@ -183,4 +177,71 @@ func normalizeImageRef(r string) string {
 		return r + ":latest"
 	}
 	return r
+}
+
+// childContext returns the build context of image's Dockerfile in dir,
+// .loop/container, when that Dockerfile has a stage FROM the base image.
+func (m *ChildImageManager) childContext(image, dir string) (string, bool) {
+	dockerfile := filepath.Join(dir, childDockerfileRelPath)
+	data, err := m.readFile(dockerfile)
+	if err != nil {
+		m.logger.Debug("child images: no Dockerfile, skipping", "image", image, "path", dockerfile)
+		return "", false
+	}
+	if !dockerfileFromBase(string(data), m.baseImage) {
+		m.logger.Info("child images: Dockerfile not based on Loop's image, skipping",
+			"image", image, "path", dockerfile, "base", m.baseImage)
+		return "", false
+	}
+	return filepath.Dir(dockerfile), true
+}
+
+// BuildMissing builds a project image that doesn't exist yet, so a project
+// that has just set container_image and added its Dockerfile runs on it
+// instead of failing to create the container; RebuildStale only runs after
+// a base image build. dirs are the dirs to look for .loop/container/Dockerfile
+// in, first match wins: a worktree's own, then its parent project's. It does
+// nothing when the image exists, isn't a project image, autobuild is off, no
+// Dockerfile FROM the base image is found, or the base image is missing (the
+// container create then fails with its own error). onBuild is called before
+// the build starts.
+func (m *ChildImageManager) BuildMissing(ctx context.Context, image string, autobuild bool, dirs []string, onBuild func()) error {
+	if image == "" || m.baseImage == "" || imageRefEquals(image, m.baseImage) || !autobuild {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Checked under the lock, so a run that waited for another run's build
+	// of the same image doesn't build it again.
+	if ids, err := m.client.ImageList(ctx, image); err != nil || len(ids) > 0 {
+		return nil
+	}
+	contextDir := ""
+	for _, dir := range dirs {
+		if dir == "" {
+			continue
+		}
+		if c, ok := m.childContext(image, dir); ok {
+			contextDir = c
+			break
+		}
+	}
+	if contextDir == "" {
+		return nil
+	}
+	parentIDs, err := m.client.ImageList(ctx, m.baseImage)
+	if err != nil || len(parentIDs) == 0 {
+		return nil
+	}
+
+	onBuild()
+	end := m.beginBuild(image)
+	defer end()
+	m.logger.Info("child images: building missing image", "image", image, "base", m.baseImage, "parent_id", parentIDs[0])
+	if err := m.client.ImageBuildFileLabels(ctx, contextDir, "Dockerfile", image, map[string]string{ParentIDLabel: parentIDs[0]}); err != nil {
+		return fmt.Errorf("building image %s: %w", image, err)
+	}
+	m.logger.Info("child images: built", "image", image)
+	return nil
 }
