@@ -622,20 +622,21 @@ func (s *MainSuite) TestNewRootCmd() {
 	require.True(s.T(), cmd.HasSubCommands())
 
 	want := map[string]bool{
-		"serve":            false,
-		"mcp":              false,
-		"daemon:start":     false,
-		"daemon:stop":      false,
-		"daemon:restart":   false,
-		"daemon:status":    false,
-		"onboard:global":   false,
-		"onboard:local":    false,
-		"version":          false,
-		"readme":           false,
-		"update":           false,
-		"mcp-browser":      false,
-		"api:rotate-token": false,
-		"app:url":          false,
+		"serve":                 false,
+		"mcp":                   false,
+		"daemon:start":          false,
+		"daemon:stop":           false,
+		"daemon:restart":        false,
+		"daemon:status":         false,
+		"backup:restore <file>": false,
+		"onboard:global":        false,
+		"onboard:local":         false,
+		"version":               false,
+		"readme":                false,
+		"update":                false,
+		"mcp-browser":           false,
+		"api:rotate-token":      false,
+		"app:url":               false,
 	}
 	for _, sub := range cmd.Commands() {
 		if _, ok := want[sub.Use]; ok {

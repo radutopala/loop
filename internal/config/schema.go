@@ -353,6 +353,76 @@ func buildSchema() *ConfigSchema {
 				},
 			},
 
+			// ── Backup section (nested object) ──
+			"backup": {
+				Type:        "object",
+				XSection:    "Backup",
+				XGlobalOnly: true,
+				Properties: map[string]*SchemaProperty{
+					"enabled": {
+						Type:        "boolean",
+						Title:       "Enabled",
+						Description: "Copy the Loop database and the playgrounds to the backup directory on a schedule. Off by default.",
+						XOrder:      1,
+						Default:     false,
+					},
+					"path": {
+						Type:         "string",
+						Title:        "Directory",
+						Description:  "Where the backups go, such as a folder Dropbox or OneDrive syncs. A leading ~/ is your home directory.",
+						XPlaceholder: "~/Dropbox/loop-backups",
+						XOrder:       2,
+					},
+					"times_per_day": {
+						Type:         "integer",
+						Title:        "Times per Day",
+						Description:  "Backups a day, spaced evenly; at most one an hour.",
+						Default:      DefaultBackupTimesPerDay,
+						XOrder:       3,
+						XPlaceholder: "1",
+					},
+					"keep_last": {
+						Type:         "integer",
+						Title:        "Keep Last",
+						Description:  "Keep the newest this many backups. 0 keeps none on this count; the other counts still apply.",
+						Default:      DefaultBackupKeepLast,
+						XPlaceholder: "3",
+						XOrder:       4,
+					},
+					"keep_daily": {
+						Type:         "integer",
+						Title:        "Keep Daily",
+						Description:  "Keep the newest backup of each of the last this many days. 0 turns it off.",
+						Default:      DefaultBackupKeepDaily,
+						XPlaceholder: "7",
+						XOrder:       5,
+					},
+					"keep_weekly": {
+						Type:         "integer",
+						Title:        "Keep Weekly",
+						Description:  "Keep the newest backup of each of the last this many weeks. 0 turns it off.",
+						Default:      DefaultBackupKeepWeekly,
+						XPlaceholder: "4",
+						XOrder:       6,
+					},
+					"keep_monthly": {
+						Type:         "integer",
+						Title:        "Keep Monthly",
+						Description:  "Keep the newest backup of each of the last this many months. 0 turns it off.",
+						Default:      DefaultBackupKeepMonthly,
+						XPlaceholder: "6",
+						XOrder:       7,
+					},
+					"recipient": {
+						Type:         "string",
+						Title:        "Encryption Public Key",
+						Description:  "The age public key (age1...) backups are encrypted to. Create a key above, or paste one made with age-keygen. Empty writes unencrypted backups.",
+						XPlaceholder: "age1...",
+						XOrder:       8,
+					},
+				},
+			},
+
 			// ── Review section (nested object) ──
 			"review": {
 				Type:     "object",

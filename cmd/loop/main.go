@@ -357,6 +357,7 @@ func (a *app) newRootCmd() *cobra.Command {
 	root.AddCommand(a.newDaemonStopCmd())
 	root.AddCommand(a.newDaemonRestartCmd())
 	root.AddCommand(a.newDaemonStatusCmd())
+	root.AddCommand(a.newBackupRestoreCmd())
 	root.AddCommand(a.newOnboardGlobalCmd())
 	root.AddCommand(a.newOnboardLocalCmd())
 	root.AddCommand(a.newVersionCmd())

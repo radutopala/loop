@@ -506,6 +506,39 @@ func (s *ConfigSuite) TestPlaygroundShareDefaultsDisabled() {
 	require.False(s.T(), cfg.PlaygroundShare.Enabled)
 }
 
+func (s *ConfigSuite) TestBackupConfigLoad() {
+	defaults := BackupRetention{KeepLast: DefaultBackupKeepLast, KeepDaily: DefaultBackupKeepDaily, KeepWeekly: DefaultBackupKeepWeekly, KeepMonthly: DefaultBackupKeepMonthly}
+	tests := []struct {
+		name   string
+		backup string
+		want   BackupConfig
+	}{
+		{"unset", ``, BackupConfig{TimesPerDay: DefaultBackupTimesPerDay, Retention: defaults}},
+		{
+			"set",
+			`, "backup": {"enabled": true, "path": "~/b", "times_per_day": 4, "keep_last": 1, "keep_daily": 2, "keep_weekly": 3, "keep_monthly": 12, "recipient": " age1abc "}`,
+			BackupConfig{Enabled: true, Path: "~/b", TimesPerDay: 4, Retention: BackupRetention{KeepLast: 1, KeepDaily: 2, KeepWeekly: 3, KeepMonthly: 12}, Recipient: "age1abc"},
+		},
+		{
+			"zero turns a tier off, negative too",
+			`, "backup": {"keep_last": 0, "keep_daily": -1}`,
+			BackupConfig{TimesPerDay: DefaultBackupTimesPerDay, Retention: BackupRetention{KeepWeekly: DefaultBackupKeepWeekly, KeepMonthly: DefaultBackupKeepMonthly}},
+		},
+		{"zero and negative times use the default", `, "backup": {"times_per_day": -1}`, BackupConfig{TimesPerDay: DefaultBackupTimesPerDay, Retention: defaults}},
+		{"capped at hourly", `, "backup": {"times_per_day": 100}`, BackupConfig{TimesPerDay: MaxBackupTimesPerDay, Retention: defaults}},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.loader.readFile = func(_ string) ([]byte, error) {
+				return []byte(`{"platforms": ["discord"], "discord_token": "t", "discord_app_id": "a"` + tt.backup + `}`), nil
+			}
+			cfg, err := s.loader.load()
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tt.want, cfg.Backup)
+		})
+	}
+}
+
 func (s *ConfigSuite) TestLearnConfigLoad() {
 	tests := []struct {
 		name string

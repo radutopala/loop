@@ -120,6 +120,7 @@ type Store interface {
 	InsertConfigRevision(ctx context.Context, rev *ConfigRevision, keep int) (bool, error)
 	ListConfigRevisions(ctx context.Context, path string) ([]*ConfigRevision, error)
 	GetConfigRevision(ctx context.Context, id int64) (*ConfigRevision, error)
+	ListConfigRevisionFiles(ctx context.Context, prefix string) ([]*ConfigRevisionFile, error)
 	InsertLearnPass(ctx context.Context, p *LearnPass) (*LearnPass, error)
 	GetLearnPassByTrigger(ctx context.Context, learnChannelID, triggerMsgID string) (*LearnPass, error)
 	UpdateLearnPass(ctx context.Context, id int64, status, errText string) error
@@ -128,6 +129,7 @@ type Store interface {
 	ActiveLearnPass(ctx context.Context, channelID, messageID string) (*LearnPass, error)
 	LearnPassRunning(ctx context.Context, learnChannelID string) (bool, error)
 	FailInterruptedLearnPasses(ctx context.Context) (int64, error)
+	BackupInto(ctx context.Context, path string) error
 	Close() error
 }
 
@@ -172,6 +174,7 @@ func (s *splitDB) Close() error {
 type SQLiteStore struct {
 	db      dbConn
 	writer  *sql.DB
+	reader  *sql.DB
 	nowFunc func() time.Time
 }
 
@@ -200,7 +203,7 @@ func newSQLiteStoreWith(openFunc func(string, string) (*sql.DB, error), dsn stri
 	}
 
 	db := &splitDB{writer: writer, reader: reader}
-	return &SQLiteStore{db: db, writer: writer, nowFunc: func() time.Time { return time.Now().UTC() }}, nil
+	return &SQLiteStore{db: db, writer: writer, reader: reader, nowFunc: func() time.Time { return time.Now().UTC() }}, nil
 }
 
 // WriterDB returns the underlying writer connection. This is used by
@@ -248,7 +251,7 @@ func initDB(sqlDB *sql.DB) error {
 
 // NewSQLiteStoreFromDB creates a SQLiteStore from an existing *sql.DB connection.
 func NewSQLiteStoreFromDB(sqlDB *sql.DB) *SQLiteStore {
-	return &SQLiteStore{db: sqlDB, writer: sqlDB, nowFunc: func() time.Time { return time.Now().UTC() }}
+	return &SQLiteStore{db: sqlDB, writer: sqlDB, reader: sqlDB, nowFunc: func() time.Time { return time.Now().UTC() }}
 }
 
 func (s *SQLiteStore) Close() error {

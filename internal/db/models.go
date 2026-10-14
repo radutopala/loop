@@ -438,6 +438,14 @@ type ConfigRevision struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// ConfigRevisionFile is a file with recorded revisions: how many it has
+// and when its newest one was stored.
+type ConfigRevisionFile struct {
+	Path      string    `json:"path"`
+	Revisions int       `json:"revisions"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 // The ConfigRevision sources Loop doesn't write itself.
 const (
 	ConfigSourceExternal = "external"

@@ -69,6 +69,7 @@ type jsonConfig struct {
 	Learn                      *jsonLearnConfig           `json:"learn"`
 	Explain                    *jsonExplainConfig         `json:"explain"`
 	Plugins                    *PluginsConfig             `json:"plugins"`
+	Backup                     *jsonBackupConfig          `json:"backup"`
 }
 
 // jsonMemoryConfig is the JSON representation of the memory block.
@@ -451,6 +452,20 @@ func (l *Loader) parse() (*Config, error) {
 
 	if jc.PlaygroundShare != nil {
 		cfg.PlaygroundShare.Enabled = ptrDefault(jc.PlaygroundShare.Enabled, false)
+	}
+
+	backup := cmp.Or(jc.Backup, &jsonBackupConfig{})
+	cfg.Backup = BackupConfig{
+		Enabled:     backup.Enabled,
+		Path:        backup.Path,
+		TimesPerDay: min(cmp.Or(max(backup.TimesPerDay, 0), DefaultBackupTimesPerDay), MaxBackupTimesPerDay),
+		Retention: BackupRetention{
+			KeepLast:    max(ptrDefault(backup.KeepLast, DefaultBackupKeepLast), 0),
+			KeepDaily:   max(ptrDefault(backup.KeepDaily, DefaultBackupKeepDaily), 0),
+			KeepWeekly:  max(ptrDefault(backup.KeepWeekly, DefaultBackupKeepWeekly), 0),
+			KeepMonthly: max(ptrDefault(backup.KeepMonthly, DefaultBackupKeepMonthly), 0),
+		},
+		Recipient: strings.TrimSpace(backup.Recipient),
 	}
 
 	learn := cmp.Or(jc.Learn, &jsonLearnConfig{})

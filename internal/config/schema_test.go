@@ -38,7 +38,7 @@ func (s *SchemaSuite) TestTopLevelProperties() {
 		"container_timeout_sec", "keep_mcp_configs",
 		"container_image_autobuild",
 		"claude_batch_disallowed_tools", "claude_retry",
-		"browser", "memory", "playground_share", "review",
+		"browser", "memory", "playground_share", "backup", "review",
 		"extra_dirs", "mounts", "copy_files",
 		"proxies",
 		"platforms",
@@ -140,6 +140,20 @@ func (s *SchemaSuite) TestPlaygroundShareNestedObject() {
 	enabled := prop.Properties["enabled"]
 	require.Equal(s.T(), "boolean", enabled.Type)
 	require.Equal(s.T(), false, enabled.Default)
+}
+
+func (s *SchemaSuite) TestBackupNestedObject() {
+	prop := GlobalConfigSchema().Properties["backup"]
+	require.NotNil(s.T(), prop)
+	require.Equal(s.T(), "object", prop.Type)
+	require.Equal(s.T(), "Backup", prop.XSection)
+	require.True(s.T(), prop.XGlobalOnly)
+	for _, key := range []string{"enabled", "path", "times_per_day", "keep_last", "keep_daily", "keep_weekly", "keep_monthly", "recipient"} {
+		require.Contains(s.T(), prop.Properties, key)
+	}
+	require.Equal(s.T(), "integer", prop.Properties["times_per_day"].Type)
+	require.Equal(s.T(), DefaultBackupTimesPerDay, prop.Properties["times_per_day"].Default)
+	require.Equal(s.T(), DefaultBackupKeepMonthly, prop.Properties["keep_monthly"].Default)
 }
 
 func (s *SchemaSuite) TestLearnNestedObject() {

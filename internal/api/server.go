@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"filippo.io/age"
+
 	"github.com/radutopala/loop/internal/agentregistry"
 	"github.com/radutopala/loop/internal/apiauth"
 	"github.com/radutopala/loop/internal/bot"
@@ -150,6 +152,8 @@ type Server struct {
 	uiStateWaitOverride     time.Duration                         // tests shorten GET /api/ui/state's wait
 	treeMaxOverride         int                                   // tests shorten GET /channel/tree's cap
 	history                 configHistory                         // records each config.json's revisions; see lockConfig
+	backup                  BackupRunner                          // writes database backups; nil disables /api/backup
+	newBackupKey            func() (*age.X25519Identity, error)   // generates the backups' key pair
 	messages                MessageSender
 	memoryIndexer           MemoryIndexer
 	termManager             TerminalManager
@@ -395,6 +399,7 @@ func NewServer(sched scheduler.Scheduler, channels ChannelEnsurer, threads Threa
 		threads:         threads,
 		messages:        messages,
 		removeMCPConfig: bot.RemoveMCPConfig,
+		newBackupKey:    age.GenerateX25519Identity,
 		deliverAsync:    func(f func()) { go f() },
 		worktreeCreator: &worktree.Creator{
 			Sys: sys,
@@ -664,8 +669,13 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/config/project/trust", s.handleTrustProjectConfig)
 	mux.HandleFunc("GET /api/config/history", s.handleGetConfigHistory)
 	mux.HandleFunc("GET /api/config/project/history", s.handleGetProjectConfigHistory)
+	mux.HandleFunc("GET /api/config/history/files", s.handleGetConfigHistoryFiles)
+	mux.HandleFunc("GET /api/config/project/history/files", s.handleGetProjectConfigHistoryFiles)
 	mux.HandleFunc("GET /api/config/history/{id}", s.handleGetConfigRevision)
 	mux.HandleFunc("POST /api/config/history/{id}/restore", s.handleRestoreConfigRevision)
+	mux.HandleFunc("GET /api/backup", s.handleGetBackup)
+	mux.HandleFunc("POST /api/backup", s.handleStartBackup)
+	mux.HandleFunc("POST /api/backup/key", s.handleCreateBackupKey)
 	mux.HandleFunc("GET /api/gate/approvals", s.handleListGateApprovals)
 	mux.HandleFunc("POST /api/gate/approvals/{id}", s.handleResolveGateApproval)
 	mux.HandleFunc("POST /api/gate/container-approval", s.handleContainerApproval)

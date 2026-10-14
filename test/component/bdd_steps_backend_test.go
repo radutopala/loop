@@ -3,6 +3,7 @@
 package component
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -89,8 +90,23 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I save the global config via API with the line "([^"]*)" appended$`, tc.saveGlobalConfigAppending)
 	ctx.Step(`^I append the line "([^"]*)" to the global config file outside Loop$`, tc.appendToGlobalConfigFile)
 	ctx.Step(`^the global config history should start with sources "([^"]*)"$`, tc.assertConfigHistoryStartsWith)
+	ctx.Step(`^I write "([^"]*)" to the global loop file "([^"]*)" outside Loop$`, tc.writeGlobalLoopFile)
+	ctx.Step(`^I delete the global loop file "([^"]*)" outside Loop$`, tc.deleteGlobalLoopFile)
+	ctx.Step(`^I remember the newest revision of the global loop file "([^"]*)" as "([^"]*)"$`, tc.rememberNewestLoopFileRevision)
+	ctx.Step(`^the global loop file "([^"]*)" history should be missing$`, tc.assertLoopFileHistoryMissing)
+	ctx.Step(`^the global loop file "([^"]*)" should contain "([^"]*)"$`, tc.assertGlobalLoopFileContains)
 	ctx.Step(`^the response diff should contain "([^"]*)"$`, tc.assertResponseDiffContains)
 	ctx.Step(`^the response diff should not contain "([^"]*)"$`, tc.assertResponseDiffNotContains)
+
+	// Backup steps
+	ctx.Step(`^there is no "([^"]*)" dir in the global loop dir$`, tc.removeGlobalLoopDir)
+	ctx.Step(`^I set the global backup config to the "([^"]*)" dir with:$`, tc.setGlobalBackupConfig)
+	ctx.Step(`^(\d+) backups? should be written to "([^"]*)" on schedule$`, tc.waitForScheduledBackups)
+	ctx.Step(`^(\d+) backups? should be written to "([^"]*)"$`, tc.waitForStartedBackups)
+	ctx.Step(`^the response's last backup should be the newest in "([^"]*)"$`, tc.assertBackupStatusLast)
+	ctx.Step(`^the newest backup in "([^"]*)" should be (an encrypted|a plain) zip holding "([^"]*)"$`, tc.assertNewestBackupHolds)
+	ctx.Step(`^the second of the newest backup in "([^"]*)" has passed$`, tc.waitPastNewestBackup)
+	ctx.Step(`^I create a backup key$`, tc.createBackupKey)
 
 	// WebSocket steps
 	ctx.Step(`^I connect to the events WebSocket$`, tc.connectEventsWS)
@@ -1558,44 +1574,131 @@ type configRevisionSummary struct {
 	Source string `json:"source"`
 }
 
+type configHistory struct {
+	Revisions []configRevisionSummary `json:"revisions"`
+	Missing   bool                    `json:"missing"`
+}
+
 // globalConfigHistory lists the global config's revisions, newest first.
 func (tc *TestContext) globalConfigHistory() ([]configRevisionSummary, error) {
-	if err := tc.doRequest(http.MethodGet, "/api/config/history", ""); err != nil {
+	h, err := tc.globalLoopFileHistory("")
+	if err != nil {
+		return nil, err
+	}
+	return h.Revisions, nil
+}
+
+// globalLoopFileHistory returns the history of a file of the global .loop
+// dir, the config when file is empty.
+func (tc *TestContext) globalLoopFileHistory(file string) (*configHistory, error) {
+	path := "/api/config/history"
+	if file != "" {
+		path += "?" + url.Values{"file": {file}}.Encode()
+	}
+	if err := tc.doRequest(http.MethodGet, path, ""); err != nil {
 		return nil, err
 	}
 	if tc.LastStatus != http.StatusOK {
 		return nil, fmt.Errorf("listing config history: status %d, body: %s", tc.LastStatus, string(tc.LastBody))
 	}
-	var resp struct {
-		Revisions []configRevisionSummary `json:"revisions"`
-	}
+	var resp configHistory
 	if err := json.Unmarshal(tc.LastBody, &resp); err != nil {
 		return nil, fmt.Errorf("decoding config history: %w", err)
 	}
-	return resp.Revisions, nil
+	return &resp, nil
 }
 
 // rememberNewestConfigRevision names the global config's newest revision,
 // waiting for the daemon's startup scan to record one.
 func (tc *TestContext) rememberNewestConfigRevision(name string) error {
-	deadline := time.Now().Add(10 * time.Second)
+	return tc.rememberNewestRevision("", name, 10*time.Second)
+}
+
+// rememberNewestLoopFileRevision names the newest revision of a file of
+// the global .loop dir. An edit outside Loop is recorded by the daemon's
+// scan, which runs every minute.
+func (tc *TestContext) rememberNewestLoopFileRevision(file, name string) error {
+	return tc.rememberNewestRevision(file, name, 75*time.Second)
+}
+
+// rememberNewestRevision names the newest revision of a file of the global
+// .loop dir, waiting up to timeout for one to be recorded.
+func (tc *TestContext) rememberNewestRevision(file, name string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
 	for {
-		revs, err := tc.globalConfigHistory()
+		h, err := tc.globalLoopFileHistory(file)
 		if err != nil {
 			return err
 		}
-		if len(revs) > 0 {
+		if len(h.Revisions) > 0 {
 			if tc.ConfigRevisions == nil {
 				tc.ConfigRevisions = map[string]int64{}
 			}
-			tc.ConfigRevisions[name] = revs[0].ID
+			tc.ConfigRevisions[name] = h.Revisions[0].ID
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("the global config has no revisions")
+			return fmt.Errorf("%q has no revisions", cmp.Or(file, "config.json"))
 		}
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(500 * time.Millisecond)
 	}
+}
+
+// globalLoopFile returns the path of a file of the global .loop dir, the
+// global config's dir.
+func (tc *TestContext) globalLoopFile(file string) (string, error) {
+	path, _, err := tc.globalConfigFile()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(filepath.Dir(path), filepath.FromSlash(file)), nil
+}
+
+// writeGlobalLoopFile writes a file of the global .loop dir directly, as an
+// editor outside Loop would.
+func (tc *TestContext) writeGlobalLoopFile(content, file string) error {
+	path, err := tc.globalLoopFile(file)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(content+"\n"), 0o644)
+}
+
+func (tc *TestContext) deleteGlobalLoopFile(file string) error {
+	path, err := tc.globalLoopFile(file)
+	if err != nil {
+		return err
+	}
+	return os.Remove(path)
+}
+
+func (tc *TestContext) assertLoopFileHistoryMissing(file string) error {
+	h, err := tc.globalLoopFileHistory(file)
+	if err != nil {
+		return err
+	}
+	if !h.Missing {
+		return fmt.Errorf("%q history: want missing", file)
+	}
+	return nil
+}
+
+func (tc *TestContext) assertGlobalLoopFileContains(file, want string) error {
+	path, err := tc.globalLoopFile(file)
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(string(data), want) {
+		return fmt.Errorf("%q: want %q in %q", file, want, string(data))
+	}
+	return nil
 }
 
 // globalConfigFile returns the global config's path and raw content.

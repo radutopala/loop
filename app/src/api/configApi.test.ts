@@ -1,6 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { configRevisionSourceLabel, fetchConfigHistory, fetchConfigRevision, fetchProjectTrust, ProjectTrustChangedError, restoreConfigRevision, trustProjectConfig } from "./configApi";
+import {
+  configRevisionSourceLabel,
+  fetchConfigHistory,
+  fetchConfigHistoryFiles,
+  fetchConfigRevision,
+  fetchProjectTrust,
+  ProjectTrustChangedError,
+  restoreConfigRevision,
+  trustProjectConfig,
+} from "./configApi";
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -65,9 +74,38 @@ describe("fetchConfigHistory", () => {
     expect(fetchMock.mock.calls[0]![0]).toBe("http://localhost:8222/api/config/project/history?channel_id=ch+1");
   });
 
+  it("fetches another file's history", async () => {
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify(history)));
+    await fetchConfigHistory(undefined, "templates/a.md");
+    expect(fetchMock.mock.calls[0]![0]).toBe("http://localhost:8222/api/config/history?file=templates%2Fa.md");
+    await fetchConfigHistory("ch-1", "shortcuts/b.md");
+    expect(fetchMock.mock.calls[1]![0]).toBe("http://localhost:8222/api/config/project/history?channel_id=ch-1&file=shortcuts%2Fb.md");
+  });
+
   it("throws on an error status", async () => {
     fetchMock.mockResolvedValue(new Response("", { status: 500, statusText: "boom" }));
     await expect(fetchConfigHistory()).rejects.toThrow("Failed to fetch config history: boom");
+  });
+});
+
+describe("fetchConfigHistoryFiles", () => {
+  const files = { root: "/p/.loop", files: [{ file: "config.json", revisions: 2, updated_at: "2026-10-09T10:00:00Z" }] };
+
+  it("fetches the global .loop dir's files", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify(files)));
+    await expect(fetchConfigHistoryFiles()).resolves.toEqual(files);
+    expect(fetchMock.mock.calls[0]![0]).toBe("http://localhost:8222/api/config/history/files");
+  });
+
+  it("fetches a project's files", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify(files)));
+    await fetchConfigHistoryFiles("ch 1");
+    expect(fetchMock.mock.calls[0]![0]).toBe("http://localhost:8222/api/config/project/history/files?channel_id=ch+1");
+  });
+
+  it("throws on an error status", async () => {
+    fetchMock.mockResolvedValue(new Response("", { status: 500, statusText: "boom" }));
+    await expect(fetchConfigHistoryFiles()).rejects.toThrow("Failed to fetch config history files: boom");
   });
 });
 

@@ -31,6 +31,7 @@ End-to-end walkthrough — a guided tour of every panel, recorded in one continu
 - [**Workflows**](workflows.md) — Declarative DAG-based pipelines with prompt, bash, loop, and approval nodes; parallel execution, retry, trigger rules
 - [**Plugins**](plugins.md) — OCI-image plugins in per-channel containers: manifest, Plugin API, scheduled actions, the Go SDK, panels and the `@radutopala/loop-plugin-ui` bridge
 - [**Daemon**](daemon.md) — Cross-platform service management (launchd, systemd, Windows SCM)
+- [**Backup**](backup.md) — Scheduled, optionally encrypted zips of the database and playgrounds in a directory such as a Dropbox or OneDrive folder, and `loop backup:restore`
 
 ## API & Data
 

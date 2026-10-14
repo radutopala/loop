@@ -574,6 +574,7 @@ For development: `make docker-build` builds from `container/Dockerfile` in the r
 | `loop daemon:stop` | `d:stop`, `down` | Stop and uninstall the daemon |
 | `loop daemon:restart` | `d:restart`, `restart` | Restart the daemon |
 | `loop daemon:status` | `d:status` | Show daemon status |
+| `loop backup:restore <file>` | | Restore the database and playgrounds from a backup, stopping and restarting the daemon (`--identity <file>` holds an encrypted backup's private key, or paste it when asked); see [docs/backup.md](docs/backup.md) |
 | `loop mcp-host-browser` | | Standalone MCP server for host Chrome browser automation |
 | `loop quality:scan` | | One-shot architectural quality scan (`--root <dir>`, `--max-files <n>`, `--json`); see [docs/quality.md](docs/quality.md) |
 | `loop review:run` | | Drive a channel's review pass via the daemon (`--channel-id`, `--api-url`, `--wait`, `--timeout`, `--no-verify`); used by the seeded `review-loop` / `review-fix-loop` workflows. See [docs/review.md](docs/review.md) |

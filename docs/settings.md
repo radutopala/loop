@@ -189,9 +189,16 @@ Only shown when a specific project channel is selected (via the gear icon on a c
 A **History** entry under both the Global and the Project group lists the revisions Loop recorded of that config file, newest first. Each row shows what wrote it (Settings, Learn, Shortcuts, Workflows, Built-ins, a restore, an edit made outside Loop, or the content Loop first saw), when, and the lines it added and removed.
 
 - Loop records a revision whenever the file's content changes: on its own writes, and within a minute of an edit made outside Loop, such as by hand or by an agent. Each file keeps its newest 200 revisions, stored in the Loop database.
+- The **File** picker switches to the files the config points at, in the same `.loop` dir: task templates (`templates/`), prompt shortcuts (`shortcuts/`), workflow node prompts (`workflows/`), review prompts (`review/`), bash shortcut commands (`bash-shortcuts/`) and chat component templates (`components/`), and the agent container's build files (`container/`). Symlinks, files over 1 MiB, files that aren't UTF-8 text, files holding a private key, and copies and leftovers (`*.bkp`, `*.bak`, `*.log`, `*.partial`, `.DS_Store`) aren't recorded. A file that was deleted is marked **(deleted)**, and restoring any of its revisions creates it again.
 - Selecting a revision shows the diff from the one before it. **Diff against** picks any other revision of the same file to compare it with instead, such as the current one to see what a restore would change.
-- **Restore this version** writes that revision back to the file, as a Settings save would, and records the restore as a new revision. A project config that was trusted stays trusted. The button is disabled while the config has unsaved edits.
-- Backed by `GET /api/config/history`, `GET /api/config/project/history`, `GET /api/config/history/{id}` and `POST /api/config/history/{id}/restore`.
+- **Restore this version** writes that revision back to the file, as a Settings save would, and records the restore as a new revision. A project config that was trusted stays trusted. The button is disabled while the config has unsaved edits, which only a restore of the config would lose.
+- Backed by `GET /api/config/history`, `GET /api/config/project/history`, their `/files` listings, `GET /api/config/history/{id}` and `POST /api/config/history/{id}/restore`.
+
+---
+
+### Backup
+
+The **Backup** section of the global config sets the [backup](backup.md): the directory to write to, such as a Dropbox or OneDrive folder, how many times a day, how many to keep in each retention tier, and the public key backups are encrypted to. Above the fields, a bar shows the newest backup, how many are kept and their total size, when the next is due and the last failure, with a **Back up now** button. Below it, a note says whether new backups are encrypted, next to **Create key**: Loop generates a key pair, saves the public key as `recipient` and shows the private key once to copy into a password manager. The button is disabled while the global config has unsaved edits. Backed by `GET /api/backup`, `POST /api/backup` and `POST /api/backup/key`.
 
 ---
 

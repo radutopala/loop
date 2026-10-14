@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatBytes } from "./Settings";
+import { formatBytes } from "./formatBytes";
 
 describe("formatBytes", () => {
   it("clamps zero, negatives, and non-finite values to 0 B", () => {

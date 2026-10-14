@@ -88,6 +88,24 @@
   //  "enabled": true
   //},
 
+  // Backup: zip ~/.loop/loop.db and the playgrounds into a directory on a
+  // schedule, such as a folder Dropbox or OneDrive syncs. times_per_day spaces
+  // the backups evenly over a day (at most 24). Older backups are pruned in
+  // tiers: the newest keep_last, plus the newest of each of the last keep_daily
+  // days, keep_weekly weeks and keep_monthly months (0 turns a tier off).
+  // recipient is an age public key (age1...) to encrypt backups to; create one
+  // in Settings → Backup. Disabled by default. See docs/backup.md.
+  //"backup": {
+  //  "enabled": true,
+  //  "path": "~/Dropbox/loop-backups",
+  //  "times_per_day": 4,
+  //  "keep_last": 3,
+  //  "keep_daily": 7,
+  //  "keep_weekly": 4,
+  //  "keep_monthly": 6,
+  //  "recipient": "age1..."
+  //},
+
   // Learn: after a chat run of at least min_turns turns, a hidden forked
   // session reviews it and proposes Loop changes — prompt/bash shortcuts,
   // scheduled tasks, gate rules, mounts, the thread's name and description —
