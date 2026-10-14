@@ -174,12 +174,35 @@ func (s *RunnerSuite) TestRunBashContextCancelled() {
 	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), testContainerName).Return(testContainerID, nil)
 	s.client.On("ContainerStart", ctx, testContainerID).Return(nil)
 	s.client.On("ContainerWait", ctx, testContainerID).Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+	s.client.On("ContainerStop", mock.Anything, testContainerID).Return(nil).Once()
+	s.client.On("ContainerLogs", mock.Anything, testContainerID).Return(strings.NewReader("so far\n"), nil).Once()
 
 	// Cancel context before waiting can complete.
 	cancel()
 
 	output, err := s.runner.RunBash(ctx, "sleep 999", "ch-1", "", "")
-	require.Error(s.T(), err)
+	require.Equal(s.T(), "so far\n", output)
+	require.ErrorIs(s.T(), err, context.Canceled)
+
+	s.client.AssertExpectations(s.T())
+	reg.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunBashContextCancelledLogsFail() {
+	ctx, cancel := context.WithCancel(context.Background())
+	reg := s.expectBashRegistry()
+
+	waitCh := make(chan WaitResponse) // never written to
+	errCh := make(chan error)         // never written to
+
+	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), testContainerName).Return(testContainerID, nil)
+	s.client.On("ContainerStart", ctx, testContainerID).Return(nil)
+	s.client.On("ContainerWait", ctx, testContainerID).Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+	s.client.On("ContainerStop", mock.Anything, testContainerID).Return(nil).Once()
+	s.client.On("ContainerLogs", mock.Anything, testContainerID).Return(nil, errors.New("gone")).Once()
+	cancel()
+
+	output, err := s.runner.RunBash(ctx, "sleep 999", "ch-1", "", "")
 	require.Empty(s.T(), output)
 	require.ErrorIs(s.T(), err, context.Canceled)
 
