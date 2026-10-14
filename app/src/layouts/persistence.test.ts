@@ -37,6 +37,19 @@ describe("renameLayout", () => {
   });
 });
 
+describe("loadChannelLayouts", () => {
+  it("knows a canvas saved without its type", () => {
+    const canvas = { type: "canvas", viewport: { x: 0, y: 0, zoom: 1 }, tiles: [] };
+    const chat = makeLeaf("chat", "chat");
+    localStorage.setItem(
+      "loop-workspace-layout",
+      JSON.stringify({ c1: { active: "Chat", order: ["Chat", "Canvas"], types: {}, layouts: { Chat: chat, Canvas: canvas } }, c2: { active: "Board", order: ["Board"], layouts: { Board: canvas } } }),
+    );
+    expect(loadChannelLayouts("c1")?.types).toEqual({ Canvas: "canvas" });
+    expect(loadChannelLayouts("c2")?.types).toEqual({ Board: "canvas" });
+  });
+});
+
 describe("deleteLayout", () => {
   it("forgets the tab's type", () => {
     saveLayoutType("c1", "Layout 1", "split");

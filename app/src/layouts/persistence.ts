@@ -191,6 +191,14 @@ function loadAll(): Record<string, ChannelLayouts> {
             // Missing order field — derive from layouts keys
             val.order = Object.keys(val.layouts);
           }
+          // A canvas saved without its type would load as a pane tree,
+          // which has no children to walk; the node itself says what it is.
+          if (val && typeof val === "object" && val.layouts) {
+            val.types = val.types ?? {};
+            for (const [name, node] of Object.entries(val.layouts as Record<string, LayoutRoot>)) {
+              if (node?.type === "canvas") val.types[name] = "canvas";
+            }
+          }
         }
         return parsed;
       }
