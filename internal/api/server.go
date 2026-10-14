@@ -153,6 +153,7 @@ type Server struct {
 	treeMaxOverride         int                                   // tests shorten GET /channel/tree's cap
 	history                 configHistory                         // records each config.json's revisions; see lockConfig
 	backup                  BackupRunner                          // writes database backups; nil disables /api/backup
+	monitors                MonitorManager                        // runs channels' watch scripts; nil disables /api/channels/{id}/monitors
 	newBackupKey            func() (*age.X25519Identity, error)   // generates the backups' key pair
 	messages                MessageSender
 	memoryIndexer           MemoryIndexer
@@ -433,6 +434,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	s.registerWorkflowRoutes(mux)
 	s.registerQualityRoutes(mux)
 	s.registerTicketRoutes(mux)
+	s.registerMonitorRoutes(mux)
 	s.registerSystemRoutes(mux)
 	return mux
 }

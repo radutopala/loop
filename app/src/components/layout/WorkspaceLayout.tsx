@@ -1316,6 +1316,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               trustPending={!!channel.trust_pending}
               onReviewTrust={onReviewProjectTrust}
               onSelectThread={onSelectThread}
+              subscribeChatEvents={subscribeChatEvents}
+              wsOpens={wsOpens}
             />
           </ExplainContext.Provider>
         </LearnContext.Provider>
@@ -1334,6 +1336,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       channel.trust_pending,
       onReviewProjectTrust,
       onSelectThread,
+      subscribeChatEvents,
+      wsOpens,
       shownComponent,
       closeComponent,
     ],

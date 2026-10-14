@@ -62,25 +62,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 			writeHTTPJSON(w, http.StatusOK, queuedMessageResponse{MsgID: msgID}, s.logger)
 			return
 		}
-		// Interrupt mode: ORDER MATTERS. The new (priority-bumped) row must be
-		// inserted BEFORE we cancel the active run — otherwise the cancelled
-		// run's drain loop can re-claim an older queued row in the window
-		// between cancel and insert, processing it ahead of the interrupt.
-		// Queued rows are preserved; markTriggerProcessed only marks the
-		// cancelled trigger itself.
-		if req.Interrupt && s.runCanceller != nil {
-			prio := 0
-			if s.store != nil {
-				if p, err := s.store.MaxQueuedPriority(r.Context(), req.ChannelID); err == nil {
-					prio = p + 1
-				}
-			}
-			s.msgHandler.HandleIncomingMessageWithPriority(context.Background(), req.ChannelID, "", req.Content, req.Mode, prio)
-			s.runCanceller.CancelActiveRun(req.ChannelID)
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		s.msgHandler.HandleIncomingMessage(context.Background(), req.ChannelID, "", req.Content, req.Mode)
+		s.enqueueMessage(r.Context(), req.ChannelID, req.Content, req.Mode, req.Interrupt)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -95,6 +77,48 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// enqueueMessage queues content for channelID's agent. With interrupt, it
+// jumps the queue and cancels the active run.
+func (s *Server) enqueueMessage(ctx context.Context, channelID, content, mode string, interrupt bool) {
+	// Interrupt mode: ORDER MATTERS. The new (priority-bumped) row must be
+	// inserted BEFORE we cancel the active run — otherwise the cancelled
+	// run's drain loop can re-claim an older queued row in the window
+	// between cancel and insert, processing it ahead of the interrupt.
+	// Queued rows are preserved; markTriggerProcessed only marks the
+	// cancelled trigger itself.
+	if interrupt && s.runCanceller != nil {
+		prio := 0
+		if s.store != nil {
+			if p, err := s.store.MaxQueuedPriority(ctx, channelID); err == nil {
+				prio = p + 1
+			}
+		}
+		s.msgHandler.HandleIncomingMessageWithPriority(context.Background(), channelID, "", content, mode, prio)
+		s.runCanceller.CancelActiveRun(channelID)
+		return
+	}
+	s.msgHandler.HandleIncomingMessage(context.Background(), channelID, "", content, mode)
+}
+
+// WakeChannel posts content to channelID as a message its agent answers, as
+// the monitor manager does when a watch script ends. With interrupt, the
+// message cancels the active run instead of waiting behind it.
+func (s *Server) WakeChannel(ctx context.Context, channelID, content string, interrupt bool) {
+	if s.msgHandler == nil {
+		s.logger.Warn("cannot wake channel: message handler not configured", "channel_id", channelID)
+		return
+	}
+	s.enqueueMessage(ctx, channelID, content, "", interrupt)
+}
+
+// PublishChannelEvent broadcasts a channel event to the UI.
+func (s *Server) PublishChannelEvent(channelID, eventType string, data any) {
+	if s.eventsHub == nil {
+		return
+	}
+	s.eventsHub.Broadcast(Event{Type: eventType, ChannelID: channelID, Data: data})
 }
 
 func (s *Server) handleDeleteQueuedMessage(w http.ResponseWriter, r *http.Request) {

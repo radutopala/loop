@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -794,4 +795,49 @@ func (s *ServerSuite) TestComposerHistoryStoreNotConfigured() {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
+}
+
+// --- WakeChannel / PublishChannelEvent tests ---
+
+func (s *ServerSuite) TestWakeChannel() {
+	s.Run("no handler", func() {
+		s.srv.WakeChannel(context.Background(), "ch-1", "done", false)
+	})
+	s.Run("queue", func() {
+		handler := new(MockIncomingMessageHandler)
+		s.srv.SetIncomingMessageHandler(handler)
+		handler.On("HandleIncomingMessage", mock.Anything, "ch-1", "", "done", "").Return()
+
+		s.srv.WakeChannel(context.Background(), "ch-1", "done", false)
+		handler.AssertExpectations(s.T())
+	})
+	s.Run("interrupt", func() {
+		handler := new(MockIncomingMessageHandler)
+		canceller := new(MockRunCanceller)
+		s.srv.SetIncomingMessageHandler(handler)
+		s.srv.SetRunCanceller(canceller)
+		var order []string
+		s.store.On("MaxQueuedPriority", mock.Anything, "ch-1").Return(4, nil)
+		handler.On("HandleIncomingMessageWithPriority", mock.Anything, "ch-1", "", "done", "", 5).
+			Run(func(_ mock.Arguments) { order = append(order, "insert") }).Return()
+		canceller.On("CancelActiveRun", "ch-1").
+			Run(func(_ mock.Arguments) { order = append(order, "cancel") }).Return(true)
+
+		s.srv.WakeChannel(context.Background(), "ch-1", "done", true)
+		require.Equal(s.T(), []string{"insert", "cancel"}, order)
+	})
+}
+
+func (s *ServerSuite) TestPublishChannelEvent() {
+	s.srv.PublishChannelEvent("ch-1", "monitor.started", nil)
+
+	s.srv.SetEventsHub(NewEventsHub(testLogger()))
+	var got []Event
+	s.srv.EventsHub().Observe(func(e Event) { got = append(got, e) })
+	s.srv.PublishChannelEvent("ch-1", "monitor.started", map[string]string{"id": "mon-a"})
+
+	require.Len(s.T(), got, 1)
+	require.Equal(s.T(), "monitor.started", got[0].Type)
+	require.Equal(s.T(), "ch-1", got[0].ChannelID)
+	require.Equal(s.T(), map[string]string{"id": "mon-a"}, got[0].Data)
 }

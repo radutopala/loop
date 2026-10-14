@@ -528,11 +528,21 @@ func (r *DockerRunner) RunBash(ctx context.Context, script, channelID, dirPath, 
 		return "", err
 	}
 
-	// Wait for the container to finish.
+	// Wait for the container to finish. A cancelled or timed-out ctx stops
+	// the container too, so the script doesn't run on until the registry
+	// removes it, and returns what the script printed so far.
 	waitCh, errCh := r.client.ContainerWait(ctx, containerID)
 	select {
 	case <-ctx.Done():
-		return "", ctx.Err()
+		stopCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		_ = r.client.ContainerStop(stopCtx, containerID)
+		var output string
+		if reader, logErr := r.client.ContainerLogs(stopCtx, containerID); logErr == nil {
+			data, _ := io.ReadAll(reader)
+			output = string(data)
+		}
+		return output, ctx.Err()
 	case err := <-errCh:
 		return "", fmt.Errorf("waiting for container: %w", err)
 	case wr := <-waitCh:

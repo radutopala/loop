@@ -631,6 +631,24 @@ An [explanation](chat.md#explain-a-turn) was queued, started, finished or failed
 
 ---
 
+### `monitor.started` / `monitor.finished`
+
+A [monitor](api.md#post-apichannelsidmonitors) started or ended in the channel. `monitor.started` carries the monitor, shaped as in [`GET /api/channels/{id}/monitors`](api.md#get-apichannelsidmonitors); `monitor.finished` carries how it ended. The chat lists running monitors above the composer from these.
+
+**Payload schema (`monitor.finished`):**
+
+```json
+{ "id": "mon-1a2b3c4d", "channel_id": "ch1", "status": "exited with status 0" }
+```
+
+| Field    | Type   | Description |
+|----------|--------|-------------|
+| `status` | string | `exited with status N`, `timed out after <duration>`, `cancelled`, or the error that stopped the container |
+
+**Scope:** Channel.
+
+---
+
 ### `container.registered`
 
 A new container was added to the registry (agent started, shell created, Chrome launched).

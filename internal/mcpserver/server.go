@@ -201,6 +201,21 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 	}, s.handleDeleteQueuedMessage)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "monitor",
+		Description: "Wait for something in the background without holding the channel: a CI run, a PR merge, a deploy, a file or log line appearing. The command runs with /bin/sh -c in a fresh agent container with this project's mounts, while your turn ends; when the script exits (or times out), the channel gets a message starting with [monitor <id>] with its exit status and the tail of its output, which starts your next turn. The message waits behind any run in progress; set interrupt to cancel that run instead, for results that change what you are doing. Write the command as a loop that exits once the condition holds, e.g. `until gh pr view 7 --json state -q .state | grep -q MERGED; do sleep 60; done`. Prefer this over sleep loops or background shells in your own turn. End your turn right after calling it. A channel runs at most 10 monitors at once.",
+	}, s.handleMonitor)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "list_monitors",
+		Description: "List the monitors running in the current channel/thread/worktree: each one's monitor_id, description, start time (UTC), timeout and command.",
+	}, s.handleListMonitors)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "cancel_monitor",
+		Description: "Stop a monitor running in the current channel/thread/worktree by monitor_id. A cancelled monitor sends no wake-up message.",
+	}, s.handleCancelMonitor)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "list_sessions",
 		Description: "List the Claude Code sessions in a channel's project dir, newest first, as the Sessions panel does: each one's session_id, when it was last written (UTC) and the start of its last message. The channel's current session is marked *, and one a thread already holds [thread].",
 	}, s.handleListSessions)

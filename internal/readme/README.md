@@ -1173,6 +1173,9 @@ In headless/Linux environments where Electron can't launch, `LOOP_NO_ELECTRON=1 
 | `queue_message` | Queue a follow-up prompt for yourself in the current channel/thread/worktree; `interrupt=true` cancels the active run and jumps the queue; `delay_seconds` holds it back and returns its `msg_id` |
 | `list_queued_messages` | List the messages waiting in the current channel's queue: `msg_id`, running/queued/delayed, and the start of each |
 | `delete_queued_message` | Remove a waiting message from the current channel's queue by `msg_id` (not the running one) |
+| `monitor` | Run a watch script (e.g. an `until` loop) in a fresh agent container while the turn ends; a `[monitor <id>]` message with its status and output wakes the agent when it exits or times out, queued or (with `interrupt`) cancelling the active run |
+| `list_monitors` | List the current channel's running monitors |
+| `cancel_monitor` | Stop a monitor by `monitor_id`, without waking the agent |
 | `list_sessions` | List the Claude sessions in a channel's project dir, newest first, the current one marked (`channel_id` optional — defaults to the current channel) |
 | `resume_session` | Make another of those sessions the channel's, so its next message resumes it; the agent's own channel switches when its run ends |
 | `run_review` | Start a PR review in this or another channel/thread, as the Review panel's Run button does (PR number, model, effort, mode, iterations) |

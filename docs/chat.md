@@ -837,6 +837,10 @@ The hold is a lease: the hook renews it every 2 minutes, and the backend drops i
 
 ---
 
+### Monitors
+
+Above the composer, one row per [monitor](api.md#post-apichannelsidmonitors) the channel's agent left running with the `monitor` MCP tool: its description, how long it has run, and a Cancel button that stops it without waking the agent. Hovering a row shows its command. Rows come from [`GET /api/channels/{id}/monitors`](api.md#get-apichannelsidmonitors), refetched on each WebSocket reconnect, and follow the [`monitor.started` / `monitor.finished`](events.md#monitorstarted--monitorfinished) events. A monitor that ends drops out; the message it wakes the agent with shows in the chat like any queued message.
+
 ## Docker Isolation Label
 
 Below the input area, a small label reads: "Running non-interactively in an isolated Docker container" with a monitor icon. The icon stroke color changes to green (`#48bb78`) when the agent is running.

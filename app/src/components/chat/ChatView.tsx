@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { forkAtMessage } from "../../api/channels";
 import type { RootEntry } from "../../api/files";
 import type { ChatState } from "../../hooks/useChatState";
+import type { ChatEventListener } from "../../hooks/useChatStateStore";
 import { useQueuedEdit } from "../../hooks/useQueuedEdit";
 import { useTheme } from "../../ThemeContext";
 import type { ColorPalette } from "../../theme";
@@ -14,6 +15,7 @@ import { ChatInput } from "./ChatInput";
 import type { ChatMessagesHandle } from "./ChatMessages";
 import { ChatMessages } from "./ChatMessages";
 import { draftText } from "./chatDrafts";
+import { MonitorsBar } from "./MonitorsBar";
 
 function buildStyles(colors: ColorPalette): Record<string, React.CSSProperties> {
   return {
@@ -96,9 +98,26 @@ interface ChatViewProps {
   onSelectThread?: (threadId: string) => void;
   /** Nobody writes in this chat: the note shows in place of the composer. */
   readOnlyNote?: string;
+  /** The channel's WS events; with it, the monitors its agent runs show above the composer. */
+  subscribeChatEvents?: (listener: ChatEventListener) => () => void;
+  /** Bumped on each WS (re)connect. */
+  wsOpens?: number;
 }
 
-export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScrollComplete, noAutoFocus, trustPending, onReviewTrust, onSelectThread, readOnlyNote }: ChatViewProps) {
+export function ChatView({
+  channelId,
+  chatState,
+  roots,
+  scrollToMessageId,
+  onScrollComplete,
+  noAutoFocus,
+  trustPending,
+  onReviewTrust,
+  onSelectThread,
+  readOnlyNote,
+  subscribeChatEvents,
+  wsOpens,
+}: ChatViewProps) {
   const { colors, fontSizes } = useTheme();
   const styles = buildStyles(colors);
   const { items, liveTail, messages, loading, isRunning } = chatState;
@@ -227,6 +246,7 @@ export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScr
           </div>
         </>
       )}
+      {channelId && subscribeChatEvents && <MonitorsBar channelId={channelId} subscribeChatEvents={subscribeChatEvents} wsOpens={wsOpens} />}
       {readOnlyNote !== undefined ? (
         <div data-testid="chat-read-only" style={{ ...styles.isolationLabel, padding: "8px 12px" }}>
           {readOnlyNote}

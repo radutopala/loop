@@ -600,9 +600,9 @@ func stringDefault(val, def string) string {
 // rely on a persistent interactive harness that one-shot mode lacks: the
 // container exits at end of turn, so they silently park work that never
 // resumes. ScheduleWakeup and the Cron* tools schedule future re-invocations
-// that never fire. Monitor arms a background watcher whose events are delivered
-// across turns — once the agent's single turn ends, the container exits and the
-// watch dies mid-stream, dropping the remaining events. Override via the
+// that never fire. Monitor keeps the run, and so the channel, busy for as long
+// as the watch lasts; Loop's own monitor MCP tool runs the watch outside the
+// run and wakes the channel when it ends. Override via the
 // `claude_batch_disallowed_tools` config key (global/project/worktree).
 // ReportFindings is denied for a different reason: it reports code-review
 // findings into a harness UI channel that batch runs don't render, so an

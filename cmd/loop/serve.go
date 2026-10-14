@@ -33,6 +33,7 @@ import (
 	"github.com/radutopala/loop/internal/local"
 	"github.com/radutopala/loop/internal/logging"
 	"github.com/radutopala/loop/internal/memory"
+	"github.com/radutopala/loop/internal/monitor"
 	"github.com/radutopala/loop/internal/orchestrator"
 	"github.com/radutopala/loop/internal/osutil"
 	"github.com/radutopala/loop/internal/quality/engine"
@@ -852,6 +853,8 @@ func (a *app) serve() error {
 	executor.SetChannelLocks(orch.ChannelLocksMap())
 	executor.SetCardParker(orch)
 	apiSrv.SetIncomingMessageHandler(chatBot)
+	monitors := monitor.NewManager(runner, apiSrv.WakeChannel, apiSrv.PublishChannelEvent, logger)
+	apiSrv.SetMonitors(monitors)
 	apiSrv.SetRunCanceller(orch)
 	apiSrv.SetExplainer(orch)
 	apiSrv.SetLearnTurner(orch)
@@ -960,6 +963,9 @@ func (a *app) serve() error {
 	if plug != nil {
 		plug.stop(shutdownCtx)
 	}
+
+	// Stops the monitors' containers; a monitor stopped this way wakes nobody.
+	monitors.Stop()
 
 	if err := orch.Stop(); err != nil {
 		slog.Error("shutdown error", "error", err)

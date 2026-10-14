@@ -910,6 +910,62 @@ The write only matches a row that is still waiting (`is_running = 0 AND is_proce
 
 ---
 
+### `POST /api/channels/{id}/monitors`
+
+Start a monitor: a watch script that runs in the background, so the agent's run can end while it waits. This is what the [`monitor`](mcpserver.md#communication) MCP tool calls. The script runs with `/bin/sh -c` in a fresh agent container for the channel, like a scheduled bash task, with the channel's dir and mounts, and the request returns at once. When the script exits or times out, a message is queued in the channel, as `queue_message` would, which starts the agent's next turn:
+
+```
+[monitor mon-1a2b3c4d] "PR 7 merged" exited with status 0. Output:
+```
+followed by the last 4000 bytes of the script's output in a code block (or ` No output.`). The status reads `exited with status N`, `timed out after 1h0m0s`, or the error that stopped the container.
+
+**Request Body:**
+```json
+{ "command": "until gh pr view 7 --json state -q .state | grep -q MERGED; do sleep 60; done", "description": "PR 7 merged", "timeout_sec": 3600, "interrupt": false }
+```
+
+| Field         | Type   | Required | Description |
+|---------------|--------|----------|-------------|
+| `command`     | string | yes      | The script |
+| `description` | string | yes      | What it waits for; shown in the chat and the wake-up message |
+| `timeout_sec` | int    | no       | Stop the script after this long. `0` means one hour; at most 24 hours |
+| `interrupt`   | bool   | no       | Send the wake-up message as an interrupt, like [`POST /api/messages`](#post-apimessages) with `interrupt`: it jumps the queue and cancels the agent's active run. Default `false`: it queues behind that run |
+
+**Response (201):** the monitor, shaped as in [`GET /api/channels/{id}/monitors`](#get-apichannelsidmonitors).
+
+**Behavior notes:** Broadcasts [`monitor.started`](events.md#monitorstarted--monitorfinished) now and `monitor.finished` when the script ends. Monitors live in the daemon's memory: a cancelled one, and every one still running when the daemon stops, ends without a wake-up message. A container approval for the script's container shows in the channel's chat like any other.
+
+**Errors:** `400` on an invalid body, a blank `command` or `description`, a negative `timeout_sec`, or a channel that doesn't exist. `409` if the channel already runs 10 monitors. `503` while the daemon shuts down. `501` if monitors are not configured.
+
+---
+
+### `GET /api/channels/{id}/monitors`
+
+List the channel's running monitors, oldest first.
+
+**Response (200):**
+```json
+{
+  "monitors": [
+    { "id": "mon-1a2b3c4d", "channel_id": "ch1", "description": "PR 7 merged", "command": "until …; do sleep 60; done", "started_at": "2026-01-02T03:04:05Z", "timeout_sec": 3600, "interrupt": false }
+  ]
+}
+```
+
+**Errors:** `501` if monitors are not configured.
+
+---
+
+### `DELETE /api/channels/{id}/monitors/{monitor_id}`
+
+Stop a monitor's container without waking the agent. The chat's monitor row has a Cancel button for this.
+
+**Response:** `204 No Content`.
+
+**Errors:** `404` if the channel has no such running monitor. `501` if monitors are not configured.
+
+---
+
 ### `GET /api/channels/{id}/timeline`
 
 List the channel's interleaved timeline — chat messages plus persisted agent events (thinking blocks, tool calls, tool results) — in canonical chain order. Each row carries a `kind` discriminator and a per-channel `chain_position`.
