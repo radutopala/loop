@@ -31,3 +31,6 @@ Feature: Settings Backup Journey
     When I click button "I saved it" in the settings panel
     Then I wait for text "Save this private key" to disappear
     And the element "[data-testid='backup-create-key']" should contain text "Create a new key"
+
+    When I remove the global backup config
+    Then the response status should be 204

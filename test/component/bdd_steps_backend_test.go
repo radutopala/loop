@@ -107,6 +107,7 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^the newest backup in "([^"]*)" should be (an encrypted|a plain) zip holding "([^"]*)"$`, tc.assertNewestBackupHolds)
 	ctx.Step(`^the second of the newest backup in "([^"]*)" has passed$`, tc.waitPastNewestBackup)
 	ctx.Step(`^I create a backup key$`, tc.createBackupKey)
+	ctx.Step(`^I remove the global backup config$`, tc.removeGlobalBackupConfig)
 
 	// WebSocket steps
 	ctx.Step(`^I connect to the events WebSocket$`, tc.connectEventsWS)

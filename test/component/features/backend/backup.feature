@@ -50,11 +50,8 @@ Feature: Backup
     And the response JSON "count" should be "1"
     And the response's last backup should be the newest in "bdd-backups"
 
-    # Turned off again, so later scenarios don't back up.
-    When I set the global backup config to the "bdd-backups" dir with:
-      """
-      {"enabled": false}
-      """
+    # Removed again, so later scenarios don't back up or see it.
+    When I remove the global backup config
     Then the response status should be 204
 
   Scenario: Backups are encrypted to the key Loop creates
@@ -95,8 +92,5 @@ Feature: Backup
       """
     Then the response status should be 400
 
-    When I set the global backup config to the "bdd-backups" dir with:
-      """
-      {"enabled": false}
-      """
+    When I remove the global backup config
     Then the response status should be 204

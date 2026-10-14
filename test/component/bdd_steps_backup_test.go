@@ -44,14 +44,35 @@ func (tc *TestContext) setGlobalBackupConfig(dir string, settings *godog.DocStri
 	if err != nil {
 		return err
 	}
-	if start, end := strings.Index(raw, backupBlockStart), strings.Index(raw, backupBlockEnd); start >= 0 && end > start {
-		raw = raw[:start] + raw[end+len(backupBlockEnd)+1:]
-	}
+	raw = withoutBackupBlock(raw)
 	open := strings.Index(raw, "{")
 	if open < 0 {
 		return fmt.Errorf("global config isn't an object: %q", raw)
 	}
-	content := raw[:open+1] + "\n" + backupBlockStart + "\n\"backup\": " + string(block) + ",\n" + backupBlockEnd + "\n" + raw[open+1:]
+	return tc.saveGlobalConfig(raw[:open+1] + "\n" + backupBlockStart + "\n\"backup\": " + string(block) + ",\n" + backupBlockEnd + "\n" + raw[open+1:])
+}
+
+// removeGlobalBackupConfig drops the block setGlobalBackupConfig added, so
+// later scenarios see the global config without it.
+func (tc *TestContext) removeGlobalBackupConfig() error {
+	_, raw, err := tc.globalConfigFile()
+	if err != nil {
+		return err
+	}
+	return tc.saveGlobalConfig(withoutBackupBlock(raw))
+}
+
+// withoutBackupBlock returns raw without the block setGlobalBackupConfig
+// added.
+func withoutBackupBlock(raw string) string {
+	if start, end := strings.Index(raw, backupBlockStart), strings.Index(raw, backupBlockEnd); start >= 0 && end > start {
+		return raw[:start] + raw[end+len(backupBlockEnd)+1:]
+	}
+	return raw
+}
+
+// saveGlobalConfig saves content as the global config through the API.
+func (tc *TestContext) saveGlobalConfig(content string) error {
 	body, err := json.Marshal(map[string]string{"content": content})
 	if err != nil {
 		return err
