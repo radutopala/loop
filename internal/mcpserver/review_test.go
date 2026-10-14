@@ -360,3 +360,59 @@ func (s *ReviewToolSuite) TestReviewCommentToolsErrors() {
 		s.Run(spec.tool, func() { s.runToolErrorCases(spec) })
 	}
 }
+
+func (s *ReviewToolSuite) TestRunReview() {
+	cases := []struct {
+		name     string
+		args     map[string]any
+		resp     string
+		wantURL  string
+		wantBody map[string]any
+		want     string
+	}{
+		{
+			name:     "this channel, its agent",
+			args:     map[string]any{"pr_number": 7},
+			resp:     `{"run_id":"r1","workflow_name":"review-loop","model":"","effort":""}`,
+			wantURL:  "http://localhost:8222/api/channels/test-channel/review/start",
+			wantBody: map[string]any{"pr_number": float64(7), "model": "", "effort": "", "mode": "", "max_iterations": float64(0)},
+			want:     "Review of PR #7 started in channel test-channel: workflow review-loop, run ID r1, model default, effort default. Use get_workflow_run to check progress.",
+		},
+		{
+			name:     "another thread, fix loop",
+			args:     map[string]any{"pr_number": 9, "channel_id": "th 2", "model": "opus", "effort": "high", "mode": "review-fix", "max_iterations": 3},
+			resp:     `{"run_id":"r2","workflow_name":"review-fix-loop","model":"opus","effort":"high"}`,
+			wantURL:  "http://localhost:8222/api/channels/th%202/review/start",
+			wantBody: map[string]any{"pr_number": float64(9), "model": "opus", "effort": "high", "mode": "review-fix", "max_iterations": float64(3)},
+			want:     "Review of PR #9 started in channel th 2: workflow review-fix-loop, run ID r2, model opus, effort high. Use get_workflow_run to check progress.",
+		},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			var gotURL, gotMethod string
+			var gotBody map[string]any
+			s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+				gotURL, gotMethod = req.URL.String(), req.Method
+				raw, _ := io.ReadAll(req.Body)
+				require.NoError(s.T(), json.Unmarshal(raw, &gotBody))
+				return jsonResponse(http.StatusCreated, tc.resp), nil
+			}
+			text, isError := s.callTool("run_review", tc.args)
+			require.False(s.T(), isError)
+			require.Equal(s.T(), "POST", gotMethod)
+			require.Equal(s.T(), tc.wantURL, gotURL)
+			require.Equal(s.T(), tc.wantBody, gotBody)
+			require.Equal(s.T(), tc.want, text)
+		})
+	}
+}
+
+func (s *ReviewToolSuite) TestRunReviewErrors() {
+	s.runToolErrorCases(toolErrorSpec{
+		tool:         "run_review",
+		args:         map[string]any{"pr_number": 7},
+		apiStatus:    409,
+		apiBody:      `review run in flight for this channel`,
+		decodeStatus: http.StatusCreated,
+	})
+}

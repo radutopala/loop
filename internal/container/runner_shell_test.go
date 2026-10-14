@@ -904,6 +904,7 @@ func (s *RunnerSuite) TestBuildClaudeCmdReadOnlyAllowTools() {
 	require.NotContains(s.T(), denied, "mcp__loop__update_review_comment")
 	require.Contains(s.T(), denied, "mcp__loop__push_review_comment")
 	require.Contains(s.T(), denied, "mcp__loop__dedup_review_findings")
+	require.Contains(s.T(), denied, "mcp__loop__run_review")
 	require.Len(s.T(), denied, len(readOnlyDisallowedTools)-1)
 	require.Contains(s.T(), readOnlyDisallowedTools, "mcp__loop__update_review_comment")
 }

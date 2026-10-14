@@ -89,8 +89,8 @@ type mockPR struct {
 	mock.Mock
 }
 
-func (m *mockPR) Add(ctx context.Context, parentDir string, prNum int) (string, error) {
-	args := m.Called(ctx, parentDir, prNum)
+func (m *mockPR) Add(ctx context.Context, parentDir string, prNum int, channelID string) (string, error) {
+	args := m.Called(ctx, parentDir, prNum, channelID)
 	return args.String(0), args.Error(1)
 }
 
@@ -310,7 +310,7 @@ func (s *ReviewHandlerSuite) TestLoadWorktreeError() {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
 	s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 7).Return(&githubapi.PRInfo{Number: 7, BaseRef: "main"}, nil)
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("abc", nil)
-	s.wt.On("Add", mock.Anything, "/repo", 7).Return("", errors.New("git failed"))
+	s.wt.On("Add", mock.Anything, "/repo", 7, mock.Anything).Return("", errors.New("git failed"))
 	w := s.postJSON("/api/channels/ch1/review/load", map[string]any{"pr_number": 7})
 	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
 }
@@ -319,7 +319,7 @@ func (s *ReviewHandlerSuite) TestLoadDiffError() {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
 	s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 7).Return(&githubapi.PRInfo{Number: 7, BaseRef: "main"}, nil)
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("abc", nil)
-	s.wt.On("Add", mock.Anything, "/repo", 7).Return("/repo/.worktrees/pr-7", nil)
+	s.wt.On("Add", mock.Anything, "/repo", 7, mock.Anything).Return("/repo/.worktrees/pr-7", nil)
 	// Comment fetch happens before Diff so its mock has to be in place.
 	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return((*githubapi.RepoSlug)(nil), errors.New("no slug"))
 	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return(nil, errors.New("diff failed"))
@@ -333,7 +333,7 @@ func (s *ReviewHandlerSuite) TestLoadHappyPath() {
 	pr := &githubapi.PRInfo{Number: 7, URL: "https://github.com/x/y/pull/7", HeadRef: "feat-x", BaseRef: "main", State: "OPEN"}
 	s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 7).Return(pr, nil)
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("deadbeef", nil)
-	s.wt.On("Add", mock.Anything, "/repo", 7).Return("/repo/.worktrees/pr-7", nil)
+	s.wt.On("Add", mock.Anything, "/repo", 7, mock.Anything).Return("/repo/.worktrees/pr-7", nil)
 	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("diff text"), nil)
 	// No pre-existing GH comments — slug fetch fails so the best-effort
 	// path short-circuits and Load still succeeds.
@@ -357,7 +357,7 @@ func (s *ReviewHandlerSuite) TestLoadSeedsGitHubComments() {
 	pr := &githubapi.PRInfo{Number: 7, BaseRef: "main"}
 	s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 7).Return(pr, nil)
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("deadbeef", nil)
-	s.wt.On("Add", mock.Anything, "/repo", 7).Return("/repo/.worktrees/pr-7", nil)
+	s.wt.On("Add", mock.Anything, "/repo", 7, mock.Anything).Return("/repo/.worktrees/pr-7", nil)
 	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("diff"), nil)
 	slug := &githubapi.RepoSlug{Owner: "acme", Name: "widgets"}
 	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return(slug, nil)
@@ -388,7 +388,7 @@ func (s *ReviewHandlerSuite) TestLoadCommentFetchFailureIsNonFatal() {
 	pr := &githubapi.PRInfo{Number: 7, BaseRef: "main"}
 	s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 7).Return(pr, nil)
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("deadbeef", nil)
-	s.wt.On("Add", mock.Anything, "/repo", 7).Return("/repo/.worktrees/pr-7", nil)
+	s.wt.On("Add", mock.Anything, "/repo", 7, mock.Anything).Return("/repo/.worktrees/pr-7", nil)
 	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("d"), nil)
 	slug := &githubapi.RepoSlug{Owner: "o", Name: "n"}
 	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return(slug, nil)
@@ -479,7 +479,7 @@ func (s *ReviewHandlerSuite) TestLoadRemovesPreviousWorktreeOnOverwrite() {
 	pr := &githubapi.PRInfo{Number: 200, BaseRef: "main", State: "OPEN"}
 	s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 200).Return(pr, nil)
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 200).Return("sha", nil)
-	s.wt.On("Add", mock.Anything, "/repo", 200).Return("/repo/.worktrees/pr-200", nil)
+	s.wt.On("Add", mock.Anything, "/repo", 200, mock.Anything).Return("/repo/.worktrees/pr-200", nil)
 	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-200", "main", mock.Anything).Return([]byte("d"), nil)
 	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return((*githubapi.RepoSlug)(nil), errors.New("no slug"))
 
@@ -501,7 +501,7 @@ func (s *ReviewHandlerSuite) TestLoadPreviousWorktreeRemoveErrorIsNonFatal() {
 	pr := &githubapi.PRInfo{Number: 200, BaseRef: "main"}
 	s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 200).Return(pr, nil)
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 200).Return("sha", nil)
-	s.wt.On("Add", mock.Anything, "/repo", 200).Return("/repo/.worktrees/pr-200", nil)
+	s.wt.On("Add", mock.Anything, "/repo", 200, mock.Anything).Return("/repo/.worktrees/pr-200", nil)
 	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-200", "main", mock.Anything).Return([]byte("d"), nil)
 	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return((*githubapi.RepoSlug)(nil), errors.New("no slug"))
 
@@ -517,7 +517,7 @@ func (s *ReviewHandlerSuite) TestLoadLoopDirFallback() {
 	pr := &githubapi.PRInfo{Number: 7, BaseRef: "main"}
 	s.gh.On("FetchPRByNumber", mock.Anything, "/loop/ch1/work", "", 7).Return(pr, nil)
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/loop/ch1/work", "", 7).Return("abc", nil)
-	s.wt.On("Add", mock.Anything, "/loop/ch1/work", 7).Return("/loop/ch1/work/.worktrees/pr-7", nil)
+	s.wt.On("Add", mock.Anything, "/loop/ch1/work", 7, mock.Anything).Return("/loop/ch1/work/.worktrees/pr-7", nil)
 	s.wt.On("Diff", mock.Anything, "/loop/ch1/work", "/loop/ch1/work/.worktrees/pr-7", "main", mock.Anything).Return([]byte("d"), nil)
 	s.gh.On("FetchRepoSlug", mock.Anything, "/loop/ch1/work", "").Return((*githubapi.RepoSlug)(nil), errors.New("no slug"))
 	w := s.postJSON("/api/channels/ch1/review/load", map[string]any{"pr_number": 7})
