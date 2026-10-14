@@ -162,6 +162,7 @@ type Server struct {
 	containerRegistry       ContainerManager
 	containerKeepAlive      time.Duration  // how long a deleted channel's containers stay before removal
 	shellMu                 sync.Mutex     // orders releaseShell and claimShell
+	reviewStarting          sync.Map       // channel id → struct{} while handleReviewStart runs
 	termClaims              terminalClaims // when the app last held each terminal session
 	activeChatLister        ActiveChatLister
 	branchPoller            *BranchPoller
@@ -519,6 +520,7 @@ func (s *Server) registerReviewRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/channels/{id}/review", s.review.handleReviewGet)
 	mux.HandleFunc("DELETE /api/channels/{id}/review", s.review.handleReviewDelete)
 	mux.HandleFunc("POST /api/channels/{id}/review/run", s.review.handleReviewRun)
+	mux.HandleFunc("POST /api/channels/{id}/review/start", s.handleReviewStart)
 	mux.HandleFunc("POST /api/channels/{id}/review/dedup", s.review.handleReviewDedup)
 	mux.HandleFunc("POST /api/channels/{id}/review/verify", s.review.handleReviewVerify)
 	mux.HandleFunc("POST /api/channels/{id}/review/stop", s.review.handleReviewStop)

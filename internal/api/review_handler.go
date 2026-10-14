@@ -89,28 +89,35 @@ func (s *reviewService) handleReviewLoad(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "pr_number is required", http.StatusBadRequest)
 		return
 	}
-
-	ch, err := s.deps.store.GetChannel(r.Context(), channelID)
-	if err != nil {
-		http.Error(w, "failed to look up channel", http.StatusInternalServerError)
+	if _, err := s.loadPR(r.Context(), channelID, req.PRNumber); err != nil {
+		respondReviewError(w, err)
 		return
 	}
+	writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: true, Session: s.sessions.Get(channelID)}, s.deps.logger)
+}
+
+// loadPR checks PR prNumber out for channelID's review and replaces the
+// channel's session with a ready one. Errors that call for a status other
+// than 500 are *reviewHTTPError; respondReviewError answers either kind.
+func (s *reviewService) loadPR(ctx context.Context, channelID string, prNumber int) (*review.Session, error) {
+	ch, err := s.deps.store.GetChannel(ctx, channelID)
+	if err != nil {
+		return nil, &reviewHTTPError{http.StatusInternalServerError, "failed to look up channel"}
+	}
 	if ch == nil {
-		http.Error(w, "channel not found", http.StatusNotFound)
-		return
+		return nil, &reviewHTTPError{http.StatusNotFound, "channel not found"}
 	}
 	dirPath := ch.DirPath
 	if dirPath == "" && s.deps.loopDir != "" {
 		dirPath = filepath.Join(s.deps.loopDir, ch.ChannelID, "work")
 	}
 	if dirPath == "" {
-		http.Error(w, "channel has no dir_path", http.StatusBadRequest)
-		return
+		return nil, &reviewHTTPError{http.StatusBadRequest, "channel has no dir_path"}
 	}
 
-	parentDirPath := s.deps.workspace.resolveParentDirPath(r.Context(), channelID)
-	if !s.requireReviewEnabled(w, dirPath, parentDirPath) {
-		return
+	parentDirPath := s.deps.workspace.resolveParentDirPath(ctx, channelID)
+	if !s.deps.configs.reviewEnabled(dirPath, parentDirPath) {
+		return nil, &reviewHTTPError{http.StatusForbidden, errReviewDisabled.Error()}
 	}
 	ghUser := s.deps.configs.ghUser(dirPath, parentDirPath)
 
@@ -118,8 +125,7 @@ func (s *reviewService) handleReviewLoad(w http.ResponseWriter, r *http.Request)
 	// otherwise stomp the new StatusLoading session on completion, and
 	// emit comments from the previous PR into the new session.
 	if s.isReviewRunActive(channelID) {
-		http.Error(w, "review run in flight for this channel", http.StatusConflict)
-		return
+		return nil, &reviewHTTPError{http.StatusConflict, "review run in flight for this channel"}
 	}
 
 	// If we're replacing an existing session, drop its on-disk worktree
@@ -128,7 +134,7 @@ func (s *reviewService) handleReviewLoad(w http.ResponseWriter, r *http.Request)
 	// never explicitly closed. Best-effort: a remove failure is logged
 	// but does not block the new Load.
 	if prev := s.sessions.Get(channelID); prev != nil && prev.WorktreePath != "" {
-		if err := s.worktree.Remove(r.Context(), dirPath, prev.WorktreePath); err != nil {
+		if err := s.worktree.Remove(ctx, dirPath, prev.WorktreePath); err != nil {
 			s.deps.logger.Warn("review worktree remove failed on load overwrite",
 				"channel_id", channelID, "path", prev.WorktreePath, "err", err)
 		}
@@ -138,32 +144,28 @@ func (s *reviewService) handleReviewLoad(w http.ResponseWriter, r *http.Request)
 	// gh + git work runs.
 	s.sessions.Put(channelID, &review.Session{Status: review.StatusLoading})
 
-	pr, err := s.client.FetchPRByNumber(r.Context(), dirPath, ghUser, req.PRNumber)
-	if err != nil {
+	fail := func(err error) (*review.Session, error) {
 		s.sessions.UpdateStatus(channelID, review.StatusError, errorMessage(err))
-		respondReviewError(w, err)
-		return
+		return nil, err
+	}
+	pr, err := s.client.FetchPRByNumber(ctx, dirPath, ghUser, prNumber)
+	if err != nil {
+		return fail(err)
 	}
 	if pr == nil {
-		s.sessions.UpdateStatus(channelID, review.StatusError, "PR not found")
-		http.Error(w, "PR not found", http.StatusNotFound)
-		return
+		return fail(&reviewHTTPError{http.StatusNotFound, "PR not found"})
 	}
 
-	headSHA, err := s.client.FetchPRHeadSHA(r.Context(), dirPath, ghUser, req.PRNumber)
+	headSHA, err := s.client.FetchPRHeadSHA(ctx, dirPath, ghUser, prNumber)
 	if err != nil {
-		s.sessions.UpdateStatus(channelID, review.StatusError, errorMessage(err))
-		respondReviewError(w, err)
-		return
+		return fail(err)
 	}
 
 	// Check out the PR head locally first so the diff (and the review
 	// agent) can read the actual files in their post-merge form.
-	worktreePath, err := s.worktree.Add(r.Context(), dirPath, req.PRNumber)
+	worktreePath, err := s.worktree.Add(ctx, dirPath, prNumber, channelID)
 	if err != nil {
-		s.sessions.UpdateStatus(channelID, review.StatusError, errorMessage(err))
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return fail(err)
 	}
 
 	// Seed the comment list with any inline review comments already filed
@@ -176,13 +178,11 @@ func (s *reviewService) handleReviewLoad(w http.ResponseWriter, r *http.Request)
 	//
 	// Fetched before Diff so the worktree can widen `-U` enough to absorb
 	// any out-of-hunk comment lines into the rendered diff.
-	ghComments := s.fetchExistingReviewComments(r.Context(), dirPath, ghUser, req.PRNumber)
+	ghComments := s.fetchExistingReviewComments(ctx, dirPath, ghUser, prNumber)
 
-	diff, err := s.worktree.Diff(r.Context(), dirPath, worktreePath, pr.BaseRef, ghComments)
+	diff, err := s.worktree.Diff(ctx, dirPath, worktreePath, pr.BaseRef, ghComments)
 	if err != nil {
-		s.sessions.UpdateStatus(channelID, review.StatusError, errorMessage(err))
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return fail(err)
 	}
 
 	sess := &review.Session{
@@ -198,7 +198,7 @@ func (s *reviewService) handleReviewLoad(w http.ResponseWriter, r *http.Request)
 		ForkMode: review.ForkCurrent,
 	}
 	s.sessions.Put(channelID, sess)
-	writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: true, Session: s.sessions.Get(channelID)}, s.deps.logger)
+	return sess, nil
 }
 
 // handleReviewSync re-fetches the PR head, the diff, and the GitHub
@@ -1362,10 +1362,16 @@ const reviewSubagentContext = "Review pipeline context (authoritative, supplied 
 // it means.
 const reviewLineRule = "Line numbers: `git diff` output has none, and counting from hunk headers drifts. Before reporting a finding, confirm its `line` with a numbered read of the file at HEAD (the Read tool, `grep -n` or `nl -ba`), and point it at the statement the finding is about, never at a blank line or a lone closing brace."
 
-// respondReviewError maps gh-specific errors to the right HTTP status
-// before bubbling up the message, so the FE can distinguish gh-missing
-// (degrade gracefully) from a real fetch failure.
+// respondReviewError answers a *reviewHTTPError with its status and maps
+// gh-specific errors to the right HTTP status before bubbling up the
+// message, so the FE can distinguish gh-missing (degrade gracefully) from a
+// real fetch failure.
 func respondReviewError(w http.ResponseWriter, err error) {
+	var herr *reviewHTTPError
+	if errors.As(err, &herr) {
+		http.Error(w, herr.msg, herr.status)
+		return
+	}
 	if errors.Is(err, githubapi.ErrGhNotInstalled) {
 		http.Error(w, "gh CLI not installed", http.StatusServiceUnavailable)
 		return

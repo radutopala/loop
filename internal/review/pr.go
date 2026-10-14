@@ -22,11 +22,16 @@ type CommandRunner func(ctx context.Context, dir, name string, args ...string) (
 // merge-base unified patch between origin/<baseRef> and the worktree's
 // HEAD — the same view GitHub shows on the PR.
 type PR interface {
-	Add(ctx context.Context, parentDir string, prNum int) (worktreePath string, err error)
+	Add(ctx context.Context, parentDir string, prNum int, channelID string) (worktreePath string, err error)
 	Refresh(ctx context.Context, parentDir, worktreePath string, prNum int) error
 	Diff(ctx context.Context, parentDir, worktreePath, baseRef string, comments []*Comment) ([]byte, error)
 	Remove(ctx context.Context, parentDir, worktreePath string) error
 }
+
+// unsafeDirChars are the characters a channel id may carry (a Slack
+// thread's has a colon and a dot) that don't belong in a worktree's dir
+// name: a colon splits a docker bind-mount spec.
+var unsafeDirChars = regexp.MustCompile(`[^A-Za-z0-9_-]`)
 
 // GitPR is the default PR implementation backed by shelling out to git.
 type GitPR struct {
@@ -34,13 +39,16 @@ type GitPR struct {
 }
 
 // Add fetches the PR head from origin (refs/pull/<n>/head) and creates a
-// detached worktree at <parentDir>/.worktrees/pr-<n>. Idempotent: if the
-// worktree already exists, the existing path is returned.
-func (g *GitPR) Add(ctx context.Context, parentDir string, prNum int) (string, error) {
-	if parentDir == "" || prNum <= 0 {
-		return "", fmt.Errorf("parentDir and prNum are required")
+// detached worktree at <parentDir>/.worktrees/pr-<n>-<channel>. Each channel
+// gets its own, so threads of one repo can review the same PR side by side
+// without one's close removing the other's checkout or one's fix commits
+// landing in the other's. Idempotent: if the worktree already exists, the
+// existing path is returned.
+func (g *GitPR) Add(ctx context.Context, parentDir string, prNum int, channelID string) (string, error) {
+	if parentDir == "" || prNum <= 0 || channelID == "" {
+		return "", fmt.Errorf("parentDir, prNum and channelID are required")
 	}
-	worktreePath := filepath.Join(parentDir, ".worktrees", fmt.Sprintf("pr-%d", prNum))
+	worktreePath := filepath.Join(parentDir, ".worktrees", fmt.Sprintf("pr-%d-%s", prNum, unsafeDirChars.ReplaceAllString(channelID, "-")))
 
 	// git fetch origin refs/pull/<n>/head — pulls the latest PR head into FETCH_HEAD.
 	fetchSpec := fmt.Sprintf("refs/pull/%d/head", prNum)

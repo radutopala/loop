@@ -2372,12 +2372,35 @@ not exist. `500` on `gh` failure. `503` (`gh CLI not installed`) when the
 
 ### `POST /api/channels/{id}/review/load`
 
-Load a PR's diff into a local worktree under the channel's `dir_path`.
+Load a PR's diff into a local worktree under the channel's `dir_path`
+(`.worktrees/pr-<n>-<channel id>`, one per channel).
 Body: `{"pr_number": 42}`. Replaces any existing session for the channel.
 
 Response: `{"present": true, "session": { ... }}` — the full session, mirroring `review.Session` in `internal/review/session.go`.
 
 **Errors:** `400` on invalid `pr_number` or missing `dir_path`. `404` if the PR does not exist. `500` on `gh`/git failure.
+
+### `POST /api/channels/{id}/review/start`
+
+Do what the Review panel's Run button does, in one call: load the PR unless
+the session is already ready on it, record the model and effort on the
+session, and start the review workflow. Used by the `run_review` MCP tool.
+
+Body: `{"pr_number": 42, "model": "opus", "effort": "high", "mode": "review", "max_iterations": 1}`.
+Only `pr_number` is required. `model` and `effort` default to the
+channel's own overrides, and empty after that means the config default.
+`mode` is `review` (default, the `review-loop` workflow) or `review-fix`
+(`review-fix-loop`). `max_iterations` is 1–10, default `1`.
+
+Response (`201`): `{"run_id": "...", "workflow_name": "review-loop", "model": "opus", "effort": "high", "session": { ... }}`.
+A Review panel on the channel picks the run up from its
+`workflow.run_started` event, or from the run list when it opens later.
+
+**Errors:** `400` on an invalid body, mode, `max_iterations` or effort.
+`404` if the channel or the PR does not exist. `409` while the channel has
+a review run in flight, a session loading or reviewing, a `review-loop` /
+`review-fix-loop` run running or paused, or another start in progress.
+Load errors as for [`POST .../review/load`](#post-apichannelsidreviewload).
 
 ### `GET /api/channels/{id}/review`
 

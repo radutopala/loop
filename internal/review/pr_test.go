@@ -60,22 +60,31 @@ func joinArgs(args []string) string {
 
 func (s *PRSuite) TestAddRequiresInputs() {
 	g := &GitPR{Run: (&recordingRunner{}).run}
-	_, err := g.Add(context.Background(), "", 1)
+	_, err := g.Add(context.Background(), "", 1, "ch1")
 	require.Error(s.T(), err)
-	_, err = g.Add(context.Background(), "/repo", 0)
+	_, err = g.Add(context.Background(), "/repo", 0, "ch1")
+	require.Error(s.T(), err)
+	_, err = g.Add(context.Background(), "/repo", 1, "")
 	require.Error(s.T(), err)
 }
 
 func (s *PRSuite) TestAddHappyPath() {
 	rr := &recordingRunner{}
 	g := &GitPR{Run: rr.run}
-	path, err := g.Add(context.Background(), "/repo", 42)
+	path, err := g.Add(context.Background(), "/repo", 42, "ch1")
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), filepath.Join("/repo", ".worktrees", "pr-42"), path)
+	require.Equal(s.T(), filepath.Join("/repo", ".worktrees", "pr-42-ch1"), path)
 	require.Len(s.T(), rr.calls, 2)
 	require.Equal(s.T(), []string{"fetch", "origin", "refs/pull/42/head"}, rr.calls[0].args)
 	require.Equal(s.T(), "/repo", rr.calls[0].dir)
-	require.Equal(s.T(), []string{"worktree", "add", "--detach", filepath.Join("/repo", ".worktrees", "pr-42"), "FETCH_HEAD"}, rr.calls[1].args)
+	require.Equal(s.T(), []string{"worktree", "add", "--detach", filepath.Join("/repo", ".worktrees", "pr-42-ch1"), "FETCH_HEAD"}, rr.calls[1].args)
+}
+
+func (s *PRSuite) TestAddNamesTheWorktreeAfterTheChannel() {
+	g := &GitPR{Run: (&recordingRunner{}).run}
+	path, err := g.Add(context.Background(), "/repo", 5, "C0AB12:1771.5")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), filepath.Join("/repo", ".worktrees", "pr-5-C0AB12-1771-5"), path)
 }
 
 func (s *PRSuite) TestAddFetchError() {
@@ -85,12 +94,12 @@ func (s *PRSuite) TestAddFetchError() {
 		},
 	}
 	g := &GitPR{Run: rr.run}
-	_, err := g.Add(context.Background(), "/repo", 7)
+	_, err := g.Add(context.Background(), "/repo", 7, "ch1")
 	require.ErrorContains(s.T(), err, "network down")
 }
 
 func (s *PRSuite) TestAddWorktreeAlreadyExistsIsOK() {
-	target := filepath.Join("/repo", ".worktrees", "pr-9")
+	target := filepath.Join("/repo", ".worktrees", "pr-9-ch1")
 	rr := &recordingRunner{
 		response: map[string]callResponse{
 			fmt.Sprintf("git worktree add --detach %s FETCH_HEAD", target): {
@@ -100,13 +109,13 @@ func (s *PRSuite) TestAddWorktreeAlreadyExistsIsOK() {
 		},
 	}
 	g := &GitPR{Run: rr.run}
-	path, err := g.Add(context.Background(), "/repo", 9)
+	path, err := g.Add(context.Background(), "/repo", 9, "ch1")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), target, path)
 }
 
 func (s *PRSuite) TestAddWorktreeOtherErrorPropagates() {
-	target := filepath.Join("/repo", ".worktrees", "pr-9")
+	target := filepath.Join("/repo", ".worktrees", "pr-9-ch1")
 	rr := &recordingRunner{
 		response: map[string]callResponse{
 			fmt.Sprintf("git worktree add --detach %s FETCH_HEAD", target): {
@@ -116,7 +125,7 @@ func (s *PRSuite) TestAddWorktreeOtherErrorPropagates() {
 		},
 	}
 	g := &GitPR{Run: rr.run}
-	_, err := g.Add(context.Background(), "/repo", 9)
+	_, err := g.Add(context.Background(), "/repo", 9, "ch1")
 	require.ErrorContains(s.T(), err, "bad object")
 }
 

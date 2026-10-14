@@ -27,7 +27,10 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
    and renders them as a clickable list; the user picks one. The backend:
    - Looks the PR up via `gh pr view <number>` for metadata and base/head refs.
    - Resolves the head SHA via `gh pr view --json headRefOid`.
-   - Creates a worktree off the PR head branch under the channel's `dir_path`.
+   - Creates a worktree off the PR head under the channel's `dir_path`, at
+     `.worktrees/pr-<n>-<channel id>`. Each channel gets its own, so threads
+     of one project can review the same PR at once without one's close
+     removing the other's checkout.
    - Fetches the base ref into the parent repo (`git fetch origin <base>`) so
      `origin/<base>` resolves locally for the Run step.
 2. **Run** — the user clicks the primary **Run** button. The button is a
@@ -389,6 +392,10 @@ no row to render under and is excluded from the count — the backend widens
 
 ## Concurrency
 
+Each channel and thread has its own review session and PR worktree, so
+several threads of one project can each run a review at once, on the same
+PR or on different ones.
+
 A second `POST /review/run` while the first is still in flight returns
 `202 {"status":"in_progress"}` without restarting the agent. Comments
 keep streaming through the existing run.
@@ -485,6 +492,17 @@ group so a pass can be audited:
 failed stays in the panel and is listed under `errors`. Neither case fails
 the command. A run already in flight on the channel makes it fail with a
 `409`.
+
+An agent starts a review with the `run_review` MCP tool, which does what
+the Run button does through
+[`POST /api/channels/{id}/review/start`](api.md#post-apichannelsidreviewstart):
+it loads the PR unless the session is already on it, records the model and
+effort (the channel's own by default) and starts `review-loop`, or
+`review-fix-loop` with `mode: "review-fix"`. It takes another channel or
+thread's id too, so an agent can run reviews in several threads at once. A
+Review panel open on that channel, or opened later while the run is live,
+shows the run as if its Run button had started it: the chip, the run
+drawer, the Stop button and the session's comments.
 
 Agents reach their own channel's session through MCP tools:
 `get_review_comments` reads the PR and its comments (without the diff),

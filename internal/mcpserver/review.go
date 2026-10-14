@@ -1,6 +1,7 @@
 package mcpserver
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -14,9 +15,13 @@ import (
 // registerReviewTools adds the review-session tools. Registered
 // unconditionally: outside a review run the daemon answers 404 (no review
 // session for the channel) and the tool surfaces that as an error result.
-// Every one of them acts on the agent's own channel; the daemon holds the
-// ones that change comments to it too.
+// Every one of them but run_review acts on the agent's own channel; the
+// daemon holds the ones that change comments to it too.
 func (s *Server) registerReviewTools() {
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "run_review",
+		Description: "Start a PR review, as the Review panel's Run button does: loads the PR into the channel's review session (unless it is already loaded) and starts the review-loop workflow, or review-fix-loop with mode review-fix. Model and effort default to the channel's own; empty there means the config default. Defaults to this channel; give another channel or thread's id to review there, so several threads can each review a PR at once. Returns the workflow run id; follow it with get_workflow_run, and read the findings with get_review_comments once it finishes. Fails while that channel has a review loading or running.",
+	}, s.handleRunReview)
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "report_review_findings",
 		Description: "Report code-review findings for the current channel's PR review session. Each finding needs the repo-relative file path, the 1-based line number, and a body describing the bug, the concrete inputs/state that trigger it, and the wrong output or crash, plus an optional category slug. Side is RIGHT for added/modified lines (default) or LEFT for lines removed from the base. Call once with the full list; a finding reported twice verbatim is skipped server-side.",
@@ -45,6 +50,41 @@ func (s *Server) registerReviewTools() {
 		Name:        "push_all_review_comments",
 		Description: "Post every unpushed agent comment in this channel's review session to the PR on GitHub, as the configured gh user. Comments the dedup pass marked false_positive or already_fixed are skipped. Reports how many were pushed, skipped and which failed.",
 	}, s.handlePushAllReviewComments)
+}
+
+type runReviewInput struct {
+	PRNumber      int    `json:"pr_number" jsonschema:"required,Number of the pull request to review"`
+	Model         string `json:"model,omitempty" jsonschema:"Model for the review, e.g. opus or sonnet; defaults to the channel's"`
+	Effort        string `json:"effort,omitempty" jsonschema:"Reasoning effort: low, medium, high, xhigh or max; defaults to the channel's"`
+	Mode          string `json:"mode,omitempty" jsonschema:"review (default) to only review, or review-fix to fix the findings and review again"`
+	MaxIterations int    `json:"max_iterations,omitempty" jsonschema:"Number of passes, 1-10 (default 1)"`
+	ChannelID     string `json:"channel_id,omitempty" jsonschema:"Channel or thread to run the review in; defaults to this one"`
+}
+
+func (s *Server) handleRunReview(_ context.Context, _ *mcp.CallToolRequest, input runReviewInput) (*mcp.CallToolResult, any, error) {
+	channelID := cmp.Or(input.ChannelID, s.channelID)
+	s.logger.Info("mcp tool call", "tool", "run_review", "channel_id", channelID, "pr", input.PRNumber)
+
+	data, _ := json.Marshal(map[string]any{
+		"pr_number":      input.PRNumber,
+		"model":          input.Model,
+		"effort":         input.Effort,
+		"mode":           input.Mode,
+		"max_iterations": input.MaxIterations,
+	})
+	apiURL := fmt.Sprintf("%s/api/channels/%s/review/start", s.apiURL, url.PathEscape(channelID))
+	type startResult struct {
+		RunID        string `json:"run_id"`
+		WorkflowName string `json:"workflow_name"`
+		Model        string `json:"model"`
+		Effort       string `json:"effort"`
+	}
+	result, errResult, err := doAPICall[startResult](s, "POST", apiURL, http.StatusCreated, data)
+	if errResult != nil || err != nil {
+		return errResult, nil, err
+	}
+	return textResult(fmt.Sprintf("Review of PR #%d started in channel %s: workflow %s, run ID %s, model %s, effort %s. Use get_workflow_run to check progress.",
+		input.PRNumber, channelID, result.WorkflowName, result.RunID, cmp.Or(result.Model, "default"), cmp.Or(result.Effort, "default"))), nil, nil
 }
 
 type reviewFindingInput struct {

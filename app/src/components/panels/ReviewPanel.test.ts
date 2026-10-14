@@ -7,9 +7,11 @@ import {
   buildCheckAllPrompt,
   buildDiscussDraft,
   isActionable,
+  liveReviewRun,
   reviewEffortOptions,
   reviewModelOptions,
   skippedNote,
+  startedReviewRun,
   WHY_QUESTION,
   withoutComment,
   withUpdatedComment,
@@ -376,5 +378,40 @@ describe("withUpdatedComment", () => {
 
   it("keeps a missing session missing", () => {
     expect(withUpdatedComment(null, { id: "a", body: "x" })).toBeNull();
+  });
+});
+
+describe("liveReviewRun", () => {
+  it("finds the channel's running or paused review run, with its mode", () => {
+    expect(
+      liveReviewRun([
+        { id: "w1", workflow_name: "deploy", status: "running" },
+        { id: "w2", workflow_name: "review-loop", status: "completed" },
+        { id: "w3", workflow_name: "review-fix-loop", status: "paused" },
+      ]),
+    ).toEqual({ runId: "w3", mode: "review-fix" });
+    expect(liveReviewRun([{ id: "w4", workflow_name: "review-loop", status: "running" }])).toEqual({ runId: "w4", mode: "review-only" });
+  });
+
+  it("is null when no review is live", () => {
+    expect(liveReviewRun([{ id: "w2", workflow_name: "review-loop", status: "failed" }])).toBeNull();
+    expect(liveReviewRun([])).toBeNull();
+  });
+});
+
+describe("startedReviewRun", () => {
+  const started = (data: unknown, type = "workflow.run_started") => ({ type, data }) as Parameters<typeof startedReviewRun>[0];
+
+  it("picks up a review run starting in this channel", () => {
+    expect(startedReviewRun(started({ run_id: "r1", workflow_name: "review-loop", channel_id: "ch1" }), "ch1")).toEqual({ runId: "r1", mode: "review-only" });
+    expect(startedReviewRun(started({ run_id: "r2", workflow_name: "review-fix-loop", channel_id: "ch1" }), "ch1")).toEqual({ runId: "r2", mode: "review-fix" });
+  });
+
+  it("ignores other events, channels and workflows", () => {
+    expect(startedReviewRun(started({ run_id: "r1", workflow_name: "review-loop", channel_id: "ch1" }, "workflow.run_completed"), "ch1")).toBeNull();
+    expect(startedReviewRun(started({ run_id: "r1", workflow_name: "review-loop", channel_id: "ch2" }), "ch1")).toBeNull();
+    expect(startedReviewRun(started({ run_id: "r1", workflow_name: "deploy", channel_id: "ch1" }), "ch1")).toBeNull();
+    expect(startedReviewRun(started({ workflow_name: "review-loop", channel_id: "ch1" }), "ch1")).toBeNull();
+    expect(startedReviewRun(started(undefined), "ch1")).toBeNull();
   });
 });

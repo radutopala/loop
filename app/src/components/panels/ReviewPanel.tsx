@@ -19,7 +19,7 @@ import {
   stopReview,
   syncReviewSession,
 } from "../../api/review";
-import { cancelWorkflowRun, FetchWorkflowRunError, fetchWorkflowRun, startWorkflowRun } from "../../api/workflows";
+import { cancelWorkflowRun, FetchWorkflowRunError, fetchWorkflowRun, fetchWorkflowRuns, startWorkflowRun, type WorkflowRun } from "../../api/workflows";
 import type { ChatEventListener } from "../../hooks/useChatStateStore";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
@@ -37,6 +37,34 @@ const REVIEW_MAX_ITER_STORAGE_KEY = "loop.review.maxIter";
 
 const REVIEW_LOOP_WORKFLOW = "review-loop";
 const REVIEW_FIX_LOOP_WORKFLOW = "review-fix-loop";
+
+function isReviewWorkflow(name: string | undefined): name is string {
+  return name === REVIEW_LOOP_WORKFLOW || name === REVIEW_FIX_LOOP_WORKFLOW;
+}
+
+/** A review run the panel didn't start but should show. */
+export interface AdoptableReviewRun {
+  runId: string;
+  mode: ReviewMode;
+}
+
+function adoptable(runId: string, workflowName: string): AdoptableReviewRun {
+  return { runId, mode: workflowName === REVIEW_FIX_LOOP_WORKFLOW ? "review-fix" : "review-only" };
+}
+
+/** The channel's review workflow run that is still running or paused, if any. */
+export function liveReviewRun(runs: Pick<WorkflowRun, "id" | "workflow_name" | "status">[]): AdoptableReviewRun | null {
+  const run = runs.find((r) => isReviewWorkflow(r.workflow_name) && (r.status === "running" || r.status === "paused"));
+  return run ? adoptable(run.id, run.workflow_name) : null;
+}
+
+/** The review run a workflow.run_started event starts in channelId, if it is one. */
+export function startedReviewRun(event: WSEvent, channelId: string): AdoptableReviewRun | null {
+  if (event.type !== "workflow.run_started") return null;
+  const d = event.data as { run_id?: string; workflow_name?: string; channel_id?: string } | undefined;
+  if (!d?.run_id || d.channel_id !== channelId || !isReviewWorkflow(d.workflow_name)) return null;
+  return adoptable(d.run_id, d.workflow_name);
+}
 
 // Per-channel sessionStorage key for the currently active review-loop run.
 // We store this in sessionStorage (not localStorage) so unrelated tabs don't
@@ -554,6 +582,63 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
       window.removeEventListener("storage", onStorage);
     };
   }, [channelId]);
+
+  // Adopt a review run started elsewhere (the run_review MCP tool, the CLI,
+  // another window) as if the Run button had started it: on mount when a
+  // review workflow is already running or paused for the channel, and when
+  // one starts while the panel is open. A run started elsewhere may have
+  // loaded a PR too, so the live case re-reads the session.
+  const loopRunIdRef = useRef(loopRunId);
+  useEffect(() => {
+    loopRunIdRef.current = loopRunId;
+  }, [loopRunId]);
+  const adoptRun = useCallback(
+    ({ runId, mode }: AdoptableReviewRun, rereadSession: boolean) => {
+      if (loopRunIdRef.current === runId) return;
+      loopRunIdRef.current = runId;
+      if (typeof window !== "undefined") {
+        window.sessionStorage.setItem(reviewRunIdKey(channelId), runId);
+        window.sessionStorage.setItem(reviewDrawerRunIdKey(channelId), runId);
+      }
+      broadcastReviewRunIdChange(channelId, runId);
+      setDrawerRunId(runId);
+      setLoopRunId(runId);
+      setLoopActive(true);
+      setLoopChip("running");
+      setMode(mode);
+      if (!rereadSession) return;
+      getReviewSession(channelId)
+        .then((resp) => {
+          if (!resp.present || !resp.session) return;
+          setSession(resp.session);
+          setForkModeDraft(resp.session.fork_mode ?? "");
+          setForkDraft(resp.session.fork_session_id ?? "");
+        })
+        .catch(() => {});
+    },
+    [channelId],
+  );
+  useEffect(() => {
+    if (loopRunIdRef.current) return;
+    let cancelled = false;
+    fetchWorkflowRuns(channelId, 20)
+      .then((runs) => {
+        if (cancelled || loopRunIdRef.current) return;
+        const run = liveReviewRun(runs);
+        if (run) adoptRun(run, false);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [channelId, adoptRun]);
+  useEffect(() => {
+    if (!subscribeChatEvents) return;
+    return subscribeChatEvents((event: WSEvent) => {
+      const run = startedReviewRun(event, channelId);
+      if (run) adoptRun(run, true);
+    });
+  }, [channelId, subscribeChatEvents, adoptRun]);
 
   // Hydration resync: when the panel mounts (or the channel changes) with
   // a sessionStorage-recovered run id, ask the daemon for the current
