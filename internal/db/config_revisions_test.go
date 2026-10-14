@@ -64,6 +64,35 @@ func (s *IntegrationSuite) TestConfigRevisions() {
 	require.Nil(s.T(), missing)
 }
 
+// TestConfigRevisionFiles lists the files with revisions under a prefix,
+// each with its revision count and newest revision's time.
+func (s *IntegrationSuite) TestConfigRevisionFiles() {
+	store, err := NewSQLiteStore(filepath.Join(s.T().TempDir(), "loop.db"))
+	require.NoError(s.T(), err)
+	defer store.Close()
+	ctx := context.Background()
+
+	for _, r := range [][2]string{
+		{"/r/templates/a.md", "1"}, {"/r/config.json", "1"}, {"/r/templates/a.md", "2"}, {"/r2/config.json", "1"},
+	} {
+		_, err := store.InsertConfigRevision(ctx, &ConfigRevision{Path: r[0], Content: r[1], Hash: r[1], Source: ConfigSourceExternal}, 10)
+		require.NoError(s.T(), err)
+	}
+
+	files, err := store.ListConfigRevisionFiles(ctx, "/r/")
+	require.NoError(s.T(), err)
+	require.Len(s.T(), files, 2)
+	require.Equal(s.T(), "/r/config.json", files[0].Path)
+	require.Equal(s.T(), 1, files[0].Revisions)
+	require.Equal(s.T(), "/r/templates/a.md", files[1].Path)
+	require.Equal(s.T(), 2, files[1].Revisions)
+	require.False(s.T(), files[1].UpdatedAt.IsZero())
+
+	none, err := store.ListConfigRevisionFiles(ctx, "/none/")
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), none)
+}
+
 func (s *StoreSuite) TestConfigRevisionStoreErrors() {
 	ctx := context.Background()
 	boom := errors.New("boom")
@@ -102,6 +131,17 @@ func (s *StoreSuite) TestConfigRevisionStoreErrors() {
 		s.mock.ExpectQuery(`FROM config_revisions WHERE id = \?`).WillReturnError(boom)
 		_, err := s.store.GetConfigRevision(ctx, 1)
 		require.ErrorIs(s.T(), err, boom)
+	})
+	s.Run("files query", func() {
+		s.mock.ExpectQuery(`SELECT r.path, c.n, r.created_at FROM config_revisions`).WillReturnError(boom)
+		_, err := s.store.ListConfigRevisionFiles(ctx, "/r/")
+		require.ErrorIs(s.T(), err, boom)
+	})
+	s.Run("files scan", func() {
+		s.mock.ExpectQuery(`SELECT r.path, c.n, r.created_at FROM config_revisions`).
+			WillReturnRows(sqlmock.NewRows([]string{"path", "n", "created_at"}).AddRow("/r/config.json", "x", time.Now()))
+		_, err := s.store.ListConfigRevisionFiles(ctx, "/r/")
+		require.Error(s.T(), err)
 	})
 	require.NoError(s.T(), s.mock.ExpectationsWereMet())
 }

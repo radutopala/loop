@@ -20,6 +20,7 @@ import (
 	"github.com/radutopala/loop/internal/agentgate"
 	"github.com/radutopala/loop/internal/agentregistry"
 	"github.com/radutopala/loop/internal/api"
+	"github.com/radutopala/loop/internal/backup"
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/browser"
 	"github.com/radutopala/loop/internal/config"
@@ -755,6 +756,19 @@ func (a *app) serve() error {
 	branchPoller.SetOnDirChange(apiSrv.InvalidatePRCacheForDir)
 	go branchPoller.Run(ctx)
 	go apiSrv.RunConfigHistory(ctx, time.Minute)
+	home, _ := a.sys.UserHomeDir()
+	backups := backup.NewRunner(backup.Deps{
+		Store:    store,
+		Config:   reloadConfig,
+		LoopDir:  cfg.LoopDir,
+		WorkDir:  filepath.Dir(cfg.DBPath),
+		Home:     home,
+		Version:  a.version,
+		Projects: apiSrv.ProjectDirs,
+		Logger:   logger,
+	})
+	apiSrv.SetBackup(backups)
+	go backups.Run(ctx, time.Minute)
 	containerReg.SetBroadcaster(eventsHub)
 	// Unconditional: the local bot renders ask/plan cards through the hub
 	// even when no gate is enabled.

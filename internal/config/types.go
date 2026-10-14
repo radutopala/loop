@@ -306,6 +306,58 @@ type jsonPlaygroundShareConfig struct {
 	Enabled *bool `json:"enabled"`
 }
 
+// Default backup schedule: one backup a day, at most one an hour, and the
+// retention tiers' defaults: the newest 3, then the newest of each of the
+// last 7 days, 4 weeks and 6 months.
+const (
+	DefaultBackupTimesPerDay = 1
+	MaxBackupTimesPerDay     = 24
+	DefaultBackupKeepLast    = 3
+	DefaultBackupKeepDaily   = 7
+	DefaultBackupKeepWeekly  = 4
+	DefaultBackupKeepMonthly = 6
+)
+
+// BackupConfig schedules copies of the Loop database and the playgrounds to
+// a directory, such as one a Dropbox or OneDrive client syncs. It's global
+// only.
+type BackupConfig struct {
+	Enabled bool
+	// Path is the directory the backups go to; a leading ~/ is the home
+	// directory.
+	Path string
+	// TimesPerDay spaces the backups evenly over a day; 0 uses
+	// DefaultBackupTimesPerDay, and it's capped at MaxBackupTimesPerDay.
+	TimesPerDay int
+	// The retention tiers: a backup is kept while any tier keeps it. A tier
+	// set to 0 keeps none.
+	Retention BackupRetention
+	// Recipient is the age public key (age1...) the backups are encrypted
+	// to; empty writes them unencrypted.
+	Recipient string
+}
+
+// BackupRetention is how many backups each tier keeps: the newest
+// KeepLast, and the newest of each of the last KeepDaily days, KeepWeekly
+// weeks and KeepMonthly months.
+type BackupRetention struct {
+	KeepLast    int
+	KeepDaily   int
+	KeepWeekly  int
+	KeepMonthly int
+}
+
+type jsonBackupConfig struct {
+	Enabled     bool   `json:"enabled"`
+	Path        string `json:"path"`
+	TimesPerDay int    `json:"times_per_day"`
+	KeepLast    *int   `json:"keep_last"`
+	KeepDaily   *int   `json:"keep_daily"`
+	KeepWeekly  *int   `json:"keep_weekly"`
+	KeepMonthly *int   `json:"keep_monthly"`
+	Recipient   string `json:"recipient"`
+}
+
 // BrowserConfig groups all browser-related settings.
 type BrowserConfig struct {
 	Enabled     bool
@@ -542,6 +594,7 @@ type Config struct {
 	GitHub                     GitHubConfig
 	Review                     ReviewConfig
 	PlaygroundShare            PlaygroundShareConfig
+	Backup                     BackupConfig
 	Learn                      LearnConfig
 	Explain                    ExplainConfig
 	Plugins                    PluginsConfig

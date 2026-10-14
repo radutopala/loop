@@ -59,3 +59,32 @@ Feature: Config history
       {}
       """
     Then the response status should be 404
+
+  # The daemon's scan records edits made outside Loop each minute.
+  @slow
+  Scenario: Files the config points at are recorded and a deleted one is restored
+    When I write "bdd prompt v1" to the global loop file "templates/bdd-history.md" outside Loop
+    And I remember the newest revision of the global loop file "templates/bdd-history.md" as "prompt"
+    And I send a GET request to "/api/config/history/files"
+    Then the response status should be 200
+    And the response should contain "templates/bdd-history.md"
+    When I send a GET request to "/api/config/history/{rev:prompt}"
+    Then the response status should be 200
+    And the response diff should contain "+bdd prompt v1"
+
+    # A deleted file is restored from its newest revision.
+    When I delete the global loop file "templates/bdd-history.md" outside Loop
+    Then the global loop file "templates/bdd-history.md" history should be missing
+    When I send a POST request to "/api/config/history/{rev:prompt}/restore" with body:
+      """
+      {}
+      """
+    Then the response status should be 204
+    And the global loop file "templates/bdd-history.md" should contain "bdd prompt v1"
+    And I delete the global loop file "templates/bdd-history.md" outside Loop
+
+    # Files outside the dirs the config points into aren't served.
+    When I send a GET request to "/api/config/history?file=playground/x.md"
+    Then the response status should be 400
+    When I send a GET request to "/api/config/history?file=../config.json"
+    Then the response status should be 400

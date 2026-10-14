@@ -161,8 +161,10 @@ export interface ConfigRevisionSummary {
 
 export interface ConfigHistory {
   path: string;
-  /** Newest first; the first one is what the file holds now. */
+  /** Newest first; the first one is what the file holds now, unless it's missing. */
   revisions: ConfigRevisionSummary[];
+  /** The file is gone, so even its newest revision can be restored. */
+  missing?: boolean;
 }
 
 export interface ConfigRevision {
@@ -176,11 +178,42 @@ export interface ConfigRevision {
   diff: string;
 }
 
-/** The global config's history, or the project config's when channelId is set. */
-export async function fetchConfigHistory(channelId?: string): Promise<ConfigHistory> {
-  const url = channelId ? `${getApiUrl()}/api/config/project/history?${new URLSearchParams({ channel_id: channelId })}` : `${getApiUrl()}/api/config/history`;
-  const res = await apiFetch(url);
+export interface ConfigHistoryFile {
+  /** Relative to the .loop dir, with slashes: config.json, templates/x.md, ... */
+  file: string;
+  revisions: number;
+  updated_at: string;
+}
+
+export interface ConfigHistoryFiles {
+  root: string;
+  files: ConfigHistoryFile[];
+}
+
+/** The history URL of the global .loop dir, or of the project's when channelId is set, with its query. */
+function configHistoryUrl(suffix: string, channelId?: string, file?: string): string {
+  const params = new URLSearchParams();
+  if (channelId) params.set("channel_id", channelId);
+  if (file) params.set("file", file);
+  const query = params.toString() ? `?${params}` : "";
+  return `${getApiUrl()}/api/config${channelId ? "/project" : ""}/history${suffix}${query}`;
+}
+
+/**
+ * The global config's history, or the project config's when channelId is
+ * set; file names another recorded file of that .loop dir, such as a
+ * template under templates/ or a bash shortcut's script.
+ */
+export async function fetchConfigHistory(channelId?: string, file?: string): Promise<ConfigHistory> {
+  const res = await apiFetch(configHistoryUrl("", channelId, file));
   if (!res.ok) throw new Error(`Failed to fetch config history: ${res.statusText}`);
+  return res.json();
+}
+
+/** The files of the global .loop dir, or the project's when channelId is set, with recorded revisions. */
+export async function fetchConfigHistoryFiles(channelId?: string): Promise<ConfigHistoryFiles> {
+  const res = await apiFetch(configHistoryUrl("/files", channelId));
+  if (!res.ok) throw new Error(`Failed to fetch config history files: ${res.statusText}`);
   return res.json();
 }
 
@@ -192,7 +225,7 @@ export async function fetchConfigRevision(id: number, against?: number): Promise
   return res.json();
 }
 
-/** Writes the revision's content back to its config file. */
+/** Writes the revision's content back to its file. */
 export async function restoreConfigRevision(id: number): Promise<void> {
   const res = await apiFetch(`${getApiUrl()}/api/config/history/${id}/restore`, { method: "POST" });
   if (!res.ok) throw new Error(`Failed to restore config revision: ${res.statusText}`);

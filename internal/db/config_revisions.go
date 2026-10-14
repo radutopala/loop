@@ -81,3 +81,27 @@ func scanConfigRevision(row rowScanner) (*ConfigRevision, error) {
 	}
 	return &rev, nil
 }
+
+// ListConfigRevisionFiles returns each file with revisions whose path
+// starts with prefix, by path: its revision count and when its newest
+// revision was stored.
+func (s *SQLiteStore) ListConfigRevisionFiles(ctx context.Context, prefix string) ([]*ConfigRevisionFile, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT r.path, c.n, r.created_at FROM config_revisions r
+		 JOIN (SELECT MAX(id) AS id, COUNT(*) AS n FROM config_revisions
+		       WHERE substr(path, 1, length(?)) = ? GROUP BY path) c ON r.id = c.id
+		 ORDER BY r.path`, prefix, prefix)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*ConfigRevisionFile
+	for rows.Next() {
+		var f ConfigRevisionFile
+		if err := rows.Scan(&f.Path, &f.Revisions, &f.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, &f)
+	}
+	return out, rows.Err()
+}

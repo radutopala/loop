@@ -349,6 +349,10 @@ func (m *MockStore) ListChannelIDsByParentID(ctx context.Context, parentID strin
 	return args.Get(0).([]string), args.Error(1)
 }
 
+func (m *MockStore) BackupInto(ctx context.Context, path string) error {
+	return m.Called(ctx, path).Error(0)
+}
+
 func (m *MockStore) Close() error {
 	return m.Called().Error(0)
 }
@@ -633,6 +637,12 @@ func (m *MockStore) ListConfigRevisions(ctx context.Context, path string) ([]*db
 func (m *MockStore) GetConfigRevision(ctx context.Context, id int64) (*db.ConfigRevision, error) {
 	args := m.Called(ctx, id)
 	v, _ := args.Get(0).(*db.ConfigRevision)
+	return v, args.Error(1)
+}
+
+func (m *MockStore) ListConfigRevisionFiles(ctx context.Context, prefix string) ([]*db.ConfigRevisionFile, error) {
+	args := m.Called(ctx, prefix)
+	v, _ := args.Get(0).([]*db.ConfigRevisionFile)
 	return v, args.Error(1)
 }
 

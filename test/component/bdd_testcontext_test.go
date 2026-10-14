@@ -26,6 +26,11 @@ type TestContext struct {
 	LastBody     []byte
 	LastStatus   int
 	LastJSON     map[string]any
+	// seenBackups are the backup files a backup scenario has seen.
+	seenBackups []string
+	// backupIdentity is the private key of the backup key the scenario
+	// created.
+	backupIdentity string
 
 	// ContentLinkBase is the base_url of the content link a scenario minted
 	// last; later fetches under it replace the last response.

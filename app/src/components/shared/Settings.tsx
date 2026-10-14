@@ -7,21 +7,14 @@ import { DEFAULT_FONT_SIZES, useTheme } from "../../ThemeContext";
 import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
 import type { Channel, DaemonInfo, DockerReclaimable, DockerReclaimResult, ImageBuildStatusData, ImageStatusResponse, ImageUpdateAvailableData } from "../../types";
+import { formatBytes } from "../../utils/formatBytes";
 import { logErr } from "../../utils/log";
 import { ChannelHeaderInfo } from "../layout/ChannelHeaderInfo";
+import { BackupBar } from "./BackupBar";
 import { ConfigForm, type ConfigFormHandle, getSections } from "./ConfigForm";
 import { ConfigHistory } from "./ConfigHistory";
 import { GlobalPluginsSection, ProjectPluginsSection } from "./PluginsSection";
 import { ProjectTrustNotice } from "./ProjectTrustNotice";
-
-// formatBytes renders a byte count as a compact human-readable size.
-export function formatBytes(n: number): string {
-  if (!Number.isFinite(n) || n <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  const i = Math.min(units.length - 1, Math.floor(Math.log(n) / Math.log(1024)));
-  const val = n / 1024 ** i;
-  return `${val >= 10 || i === 0 ? Math.round(val) : val.toFixed(1)} ${units[i]}`;
-}
 
 const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
 
@@ -507,6 +500,7 @@ export function Settings({
                       const k: BuiltinKind = activeSection === "Workflows" ? "workflows" : "shortcuts";
                       return <RestoreBuiltinsBar colors={colors} kind={k} restoring={restoringByKind[k]} message={restoreMsgByKind[k]} onClick={handleRestoreBuiltins} />;
                     })()}
+                  {activeSection === "Backup" && <BackupBar colors={colors} refreshKey={globalConfig} dirty={globalDirty} onKeyCreated={handleGlobalRestored} />}
                   <ConfigForm
                     ref={globalFormRef}
                     title="Global Config"

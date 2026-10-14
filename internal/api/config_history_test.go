@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/stretchr/testify/mock"
@@ -170,21 +171,26 @@ func (s *ServerSuite) TestRestoreGlobalConfigSkipsTrust() {
 
 func (s *ServerSuite) TestScanConfigHistoryProjects() {
 	s.useConfigHistory()
-	s.srv.loopDir = s.T().TempDir()
+	// A project in the home dir shares its .loop dir with the global config.
+	home := s.T().TempDir()
+	s.srv.loopDir = filepath.Join(home, ".loop")
+	s.writeProject(home, "{\"global\": 1}\n")
 	shared := s.T().TempDir()
 	s.writeProject(shared, "{}\n")
 	s.writeProject(filepath.Join(s.srv.loopDir, "ch-3", "work"), "{\"x\": 1}\n")
 	s.store.On("ListChannels", mock.Anything).Return([]*db.Channel{
-		{ChannelID: "ch-1"}, {ChannelID: "ch-2"}, {ChannelID: "ch-3"}, {ChannelID: "gone"},
+		{ChannelID: "ch-1"}, {ChannelID: "ch-2"}, {ChannelID: "ch-3"}, {ChannelID: "home"}, {ChannelID: "gone"},
 	}, nil)
 	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: shared}, nil)
 	s.store.On("GetChannel", mock.Anything, "ch-2").Return(&db.Channel{ChannelID: "ch-2", DirPath: shared}, nil)
 	s.store.On("GetChannel", mock.Anything, "ch-3").Return(&db.Channel{ChannelID: "ch-3"}, nil)
+	s.store.On("GetChannel", mock.Anything, "home").Return(&db.Channel{ChannelID: "home", DirPath: home}, nil)
 	s.store.On("GetChannel", mock.Anything, "gone").Return(nil, nil)
 
 	s.srv.scanConfigHistory(context.Background())
 
 	for _, path := range []string{
+		filepath.Join(s.srv.loopDir, "config.json"),
 		filepath.Join(shared, ".loop", "config.json"),
 		filepath.Join(s.srv.loopDir, "ch-3", "work", ".loop", "config.json"),
 	} {
@@ -258,6 +264,8 @@ func (s *ServerSuite) TestConfigHistoryNotConfigured() {
 	for _, req := range [][2]string{
 		{"GET", "/api/config/history"},
 		{"GET", "/api/config/project/history?channel_id=ch-1"},
+		{"GET", "/api/config/history/files"},
+		{"GET", "/api/config/project/history/files?channel_id=ch-1"},
 		{"GET", "/api/config/history/1"},
 		{"POST", "/api/config/history/1/restore"},
 	} {
@@ -280,6 +288,15 @@ func (s *ServerSuite) TestConfigHistoryErrors() {
 			s.srv.loopDir = ""
 		}, http.StatusInternalServerError},
 		{"project channel", "GET", "/api/config/project/history", nil, http.StatusBadRequest},
+		{"files loop dir", "GET", "/api/config/history/files", func(*testutil.MockStore) {
+			s.srv.loopDir = ""
+		}, http.StatusInternalServerError},
+		{"files project channel", "GET", "/api/config/project/history/files", nil, http.StatusBadRequest},
+		{"files list", "GET", "/api/config/history/files", func(store *testutil.MockStore) {
+			store.On("ListConfigRevisionFiles", mock.Anything, "/home/testuser/.loop/").Return(nil, boom)
+		}, http.StatusInternalServerError},
+		{"file outside the tracked dirs", "GET", "/api/config/history?file=other/x.md", nil, http.StatusBadRequest},
+		{"file escaping the loop dir", "GET", "/api/config/history?file=templates/../../x", nil, http.StatusBadRequest},
 		{"list", "GET", "/api/config/history", func(store *testutil.MockStore) {
 			store.On("ListConfigRevisions", mock.Anything, rev.Path).Return(nil, boom)
 		}, http.StatusInternalServerError},
@@ -315,6 +332,18 @@ func (s *ServerSuite) TestConfigHistoryErrors() {
 		{"restore not a config", "POST", "/api/config/history/1/restore", func(store *testutil.MockStore) {
 			store.On("GetConfigRevision", mock.Anything, int64(1)).Return(&db.ConfigRevision{ID: 1, Path: "/etc/config.json"}, nil)
 		}, http.StatusBadRequest},
+		{"restore a file outside the tracked dirs", "POST", "/api/config/history/1/restore", func(store *testutil.MockStore) {
+			store.On("GetConfigRevision", mock.Anything, int64(1)).Return(&db.ConfigRevision{ID: 1, Path: "/work/.loop/other/x.md"}, nil)
+		}, http.StatusBadRequest},
+		{"restore a referenced file write", "POST", "/api/config/history/1/restore", func(store *testutil.MockStore) {
+			path := "/work/.loop/templates/a.md"
+			store.On("GetConfigRevision", mock.Anything, int64(1)).Return(&db.ConfigRevision{ID: 1, Path: path}, nil)
+			sys := new(testutil.MockSystem)
+			sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
+			sys.On("ReadFile", path).Return(nil, os.ErrNotExist)
+			sys.On("WriteFile", path, mock.Anything, mock.Anything).Return(boom)
+			s.srv.sys = sys
+		}, http.StatusInternalServerError},
 		{"restore mkdir", "POST", "/api/config/history/1/restore", func(store *testutil.MockStore) {
 			store.On("GetConfigRevision", mock.Anything, int64(1)).Return(rev, nil)
 			sys := new(testutil.MockSystem)
@@ -343,4 +372,136 @@ func (s *ServerSuite) TestConfigHistoryErrors() {
 			require.Equal(s.T(), c.want, rec.Code, rec.Body.String())
 		})
 	}
+}
+
+func (s *ServerSuite) TestConfigHistoryRel() {
+	cases := []struct {
+		rel  string
+		want string
+		ok   bool
+	}{
+		{rel: "config.json", want: "config.json", ok: true},
+		{rel: "templates/a.md", want: filepath.Join("templates", "a.md"), ok: true},
+		{rel: "shortcuts/sub/./b.md", want: filepath.Join("shortcuts", "sub", "b.md"), ok: true},
+		{rel: "components/math/shell.html", want: filepath.Join("components", "math", "shell.html"), ok: true},
+		{rel: "container/Dockerfile", want: filepath.Join("container", "Dockerfile"), ok: true},
+		{rel: "container/Dockerfile.bkp"},
+		{rel: "templates/a.md.bak"},
+		{rel: "container/build.log"},
+		{rel: "shortcuts/.DS_Store"},
+		{rel: "templates"},
+		{rel: "templates/"},
+		{rel: "other/a.md"},
+		{rel: "sub/config.json"},
+		{rel: "/templates/a.md"},
+		{rel: "templates/../../a.md"},
+		{rel: "templates/../config.json"},
+	}
+	for _, tc := range cases {
+		s.Run(tc.rel, func() {
+			got, ok := configHistoryRel(tc.rel)
+			require.Equal(s.T(), tc.ok, ok)
+			require.Equal(s.T(), tc.want, got)
+		})
+	}
+}
+
+// configHistoryFilesAt fetches a .loop dir's files with history.
+func (s *ServerSuite) configHistoryFilesAt(url string) configHistoryFilesResponse {
+	rec := s.testRequest("GET", url, "")
+	require.Equal(s.T(), http.StatusOK, rec.Code, rec.Body.String())
+	var resp configHistoryFilesResponse
+	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
+	return resp
+}
+
+func fileNames(r configHistoryFilesResponse) []string {
+	var out []string
+	for _, f := range r.Files {
+		out = append(out, f.File)
+	}
+	return out
+}
+
+// writeFile writes content to path, creating its dir.
+func (s *ServerSuite) writeFile(path, content string) {
+	require.NoError(s.T(), os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(s.T(), os.WriteFile(path, []byte(content), 0o644))
+}
+
+// TestConfigHistoryReferencedFiles records the files the configs point at
+// along with the configs: their history lists, diffs and restores like a
+// config's, and a restore brings back a deleted file.
+func (s *ServerSuite) TestConfigHistoryReferencedFiles() {
+	s.useConfigHistory()
+	loop := s.srv.loopDir
+	project := s.T().TempDir()
+	s.writeFile(filepath.Join(loop, "config.json"), "{}\n")
+	s.writeFile(filepath.Join(loop, "templates", "heartbeat.md"), "check in\n")
+	s.writeFile(filepath.Join(loop, "shortcuts", "sub", "fix.md"), "fix it\n")
+	s.writeFile(filepath.Join(loop, "components", "math", "shell.html"), "<div></div>\n")
+	s.writeFile(filepath.Join(loop, "review", "big.md"), strings.Repeat("x", configHistoryMaxFile+1))
+	s.writeFile(filepath.Join(loop, "review", "image.bin"), "\xff\xfe")
+	s.writeFile(filepath.Join(loop, "playground", "page.md"), "not a config file\n")
+	s.writeFile(filepath.Join(loop, "container", "Dockerfile"), "FROM scratch\n")
+	s.writeFile(filepath.Join(loop, "container", "Dockerfile.bkp"), "FROM older\n")
+	s.writeFile(filepath.Join(loop, "container", "deploy.pem"), "-----BEGIN RSA PRIVATE KEY-----\n")
+	s.writeFile(filepath.Join(loop, "container", "age.txt"), "AGE-SECRET-KEY-1ABC\n")
+	require.NoError(s.T(), os.Symlink(filepath.Join(loop, "templates", "heartbeat.md"), filepath.Join(loop, "templates", "link.md")))
+	// A project under the loop dir: its files aren't the loop dir's.
+	nested := filepath.Join(loop, "ch-2", "work")
+	s.writeProject(nested, "{}\n")
+	s.writeProject(project, "{}\n")
+	s.writeFile(filepath.Join(project, ".loop", "shortcuts", "p.md"), "project prompt\n")
+	s.store.On("ListChannels", mock.Anything).Return([]*db.Channel{{ChannelID: "ch-1"}, {ChannelID: "ch-2"}}, nil)
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: project}, nil)
+	s.store.On("GetChannel", mock.Anything, "ch-2").Return(&db.Channel{ChannelID: "ch-2", DirPath: nested}, nil)
+
+	s.srv.scanConfigHistory(context.Background())
+
+	global := s.configHistoryFilesAt("/api/config/history/files")
+	require.Equal(s.T(), loop, global.Root)
+	require.Equal(s.T(), []string{"components/math/shell.html", "config.json", "container/Dockerfile", "shortcuts/sub/fix.md", "templates/heartbeat.md"}, fileNames(global))
+	require.Equal(s.T(), 1, global.Files[0].Revisions)
+	require.False(s.T(), global.Files[0].UpdatedAt.IsZero())
+	proj := s.configHistoryFilesAt("/api/config/project/history/files?channel_id=ch-1")
+	require.Equal(s.T(), filepath.Join(project, ".loop"), proj.Root)
+	require.Equal(s.T(), []string{"config.json", "shortcuts/p.md"}, fileNames(proj))
+
+	// An edit made outside Loop shows up on the next scan.
+	prompt := filepath.Join(loop, "templates", "heartbeat.md")
+	s.writeFile(prompt, "check in twice\n")
+	s.srv.scanConfigHistory(context.Background())
+	h := s.configHistory("/api/config/history?file=templates/heartbeat.md")
+	require.Equal(s.T(), prompt, h.Path)
+	require.Equal(s.T(), []string{db.ConfigSourceExternal, db.ConfigSourceInitial}, historySources(h))
+	require.Contains(s.T(), s.configRevisionAt(h.Revisions[0].ID).Diff, "+check in twice")
+	require.Len(s.T(), s.configHistory("/api/config/project/history?channel_id=ch-1&file=shortcuts/p.md").Revisions, 1)
+
+	// Restoring the first revision brings back a deleted file.
+	require.False(s.T(), h.Missing)
+	require.NoError(s.T(), os.RemoveAll(filepath.Join(loop, "templates")))
+	require.True(s.T(), s.configHistory("/api/config/history?file=templates/heartbeat.md").Missing)
+	first := h.Revisions[1].ID
+	rec := s.testRequest("POST", "/api/config/history/"+strconv.FormatInt(first, 10)+"/restore", "")
+	require.Equal(s.T(), http.StatusNoContent, rec.Code, rec.Body.String())
+	data, err := os.ReadFile(prompt)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "check in\n", string(data))
+	h = s.configHistory("/api/config/history?file=templates/heartbeat.md")
+	require.Equal(s.T(), "restore:"+strconv.FormatInt(first, 10), h.Revisions[0].Source)
+	require.False(s.T(), h.Missing)
+
+	// So does restoring the newest revision, the one it was deleted at.
+	require.NoError(s.T(), os.Remove(prompt))
+	rec = s.testRequest("POST", "/api/config/history/"+strconv.FormatInt(h.Revisions[0].ID, 10)+"/restore", "")
+	require.Equal(s.T(), http.StatusNoContent, rec.Code, rec.Body.String())
+	data, err = os.ReadFile(prompt)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "check in\n", string(data))
+
+	// A project's file restores into the project.
+	p := s.configHistory("/api/config/project/history?channel_id=ch-1&file=shortcuts/p.md")
+	rec = s.testRequest("POST", "/api/config/history/"+strconv.FormatInt(p.Revisions[0].ID, 10)+"/restore", "")
+	require.Equal(s.T(), http.StatusNoContent, rec.Code, rec.Body.String())
 }

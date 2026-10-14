@@ -3676,9 +3676,17 @@ Trust the project config as reviewed. Owner-only.
 
 ### `GET /api/config/history`
 
-The global config's revisions, newest first. Owner-only.
+The global config's revisions, newest first, or those of another file of `~/.loop`. Owner-only.
 
 Loop records a revision of `~/.loop/config.json` and of each channel's project `.loop/config.json` whenever the content changes: on its own writes (Settings, learn, shortcut, workflow and built-in edits, restores), and within a minute of an edit made outside Loop. Each file keeps its newest 200 revisions.
+
+The files the configs point at are recorded the same way: everything under `templates/` (task templates), `shortcuts/` (prompt shortcuts), `workflows/` (workflow node prompts), `review/` (review prompts), `bash-shortcuts/` (bash shortcut commands) and `components/` (chat component templates) of each `.loop` dir. Loop doesn't write them itself, so their revisions come from edits made outside Loop and from restores. Symlinks, files over 1 MiB and files that aren't UTF-8 text are skipped.
+
+**Query Parameters:**
+
+| Param  | Type   | Required | Description |
+|--------|--------|----------|-------------|
+| `file` | string | no       | The file, relative to the `.loop` dir with `/` separators, such as `templates/heartbeat.md`. Default `config.json` |
 
 **Response (200):**
 ```json
@@ -3695,6 +3703,32 @@ Loop records a revision of `~/.loop/config.json` and of each channel's project `
 |---|---|
 | `source` | What wrote the content: `settings`, `learn`, `shortcuts`, `workflows`, `builtins`, `restore:<id>`, `external` for an edit made outside Loop, or `initial` for the content Loop first saw |
 | `added`, `removed` | Lines changed from the revision before it; the oldest revision counts every line as added |
+| `missing` | `true` when the file no longer exists, so even its newest revision can be restored; omitted otherwise |
+
+**Errors:** `400` if `file` isn't `config.json` or a file under one of the dirs above. `500` if the loop directory isn't configured. `501` if config history isn't configured.
+
+---
+
+### `GET /api/config/history/files`
+
+The files of `~/.loop` with recorded revisions, by path. Owner-only. A project's `.loop` dir under `~/.loop` isn't included.
+
+**Response (200):**
+```json
+{
+  "root": "/home/user/.loop",
+  "files": [
+    {"file": "config.json", "revisions": 12, "updated_at": "2026-10-09T10:00:00Z"},
+    {"file": "templates/heartbeat.md", "revisions": 2, "updated_at": "2026-10-08T15:30:00Z"}
+  ]
+}
+```
+
+| Field | Description |
+|---|---|
+| `file` | Relative to `root`, with `/` separators; the `file` to pass to [`GET /api/config/history`](#get-apiconfighistory) |
+| `revisions` | How many revisions are kept |
+| `updated_at` | When the newest one was recorded |
 
 **Errors:** `500` if the loop directory isn't configured. `501` if config history isn't configured.
 
@@ -3702,13 +3736,28 @@ Loop records a revision of `~/.loop/config.json` and of each channel's project `
 
 ### `GET /api/config/project/history`
 
-The project config's revisions, as for [`GET /api/config/history`](#get-apiconfighistory). Owner-only.
+The project config's revisions, or those of another file of the project's `.loop` dir, as for [`GET /api/config/history`](#get-apiconfighistory). Owner-only.
 
 **Query Parameters:**
 
 | Param        | Type   | Required | Description |
 |--------------|--------|----------|-------------|
 | `channel_id` | string | yes      | Channel ID; worktree channels use their root project's config |
+| `file`       | string | no       | As for [`GET /api/config/history`](#get-apiconfighistory). Default `config.json` |
+
+**Errors:** `400` if `channel_id` is missing or the channel isn't found, or for an invalid `file`. `501` if config history isn't configured.
+
+---
+
+### `GET /api/config/project/history/files`
+
+The files of the project's `.loop` dir with recorded revisions, as for [`GET /api/config/history/files`](#get-apiconfighistoryfiles). Owner-only.
+
+**Query Parameters:**
+
+| Param        | Type   | Required | Description |
+|--------------|--------|----------|-------------|
+| `channel_id` | string | yes      | Channel ID; worktree channels use their root project's `.loop` dir |
 
 **Errors:** `400` if `channel_id` is missing or the channel isn't found. `501` if config history isn't configured.
 
@@ -3745,11 +3794,70 @@ One revision with its content and the diff from the revision before it. Owner-on
 
 ### `POST /api/config/history/{id}/restore`
 
-Write a revision's content back to its config file. Owner-only. The restore is recorded as a revision with source `restore:<id>`, and a project config that was trusted stays trusted, as with [`PUT /api/config/project`](#put-apiconfigproject).
+Write a revision's content back to its file. Owner-only. The restore is recorded as a revision with source `restore:<id>`, unless the content is already the newest revision's, and a project config that was trusted stays trusted, as with [`PUT /api/config/project`](#put-apiconfigproject). A file other than the config is created again, with its directory, if it was deleted; restoring one doesn't change the project config's trust.
 
 **Response:** `204 No Content`
 
-**Errors:** `400` for an invalid id. `404` if there's no such revision. `501` if config history isn't configured.
+**Errors:** `400` for an invalid id, or a revision of a file that's no longer one of the files above. `404` if there's no such revision. `500` if the loop directory isn't configured or the file can't be written. `501` if config history isn't configured.
+
+---
+
+### `GET /api/backup`
+
+The backup's settings, the newest backup and the last failure. Owner-only. See [Backup](backup.md).
+
+**Response (200):**
+```json
+{
+  "enabled": true,
+  "dir": "/home/user/Dropbox/loop-backups",
+  "times_per_day": 2,
+  "keep_last": 3,
+  "keep_daily": 7,
+  "keep_weekly": 4,
+  "keep_monthly": 6,
+  "recipient": "age1...",
+  "running": false,
+  "last": {"file": "loop-20261014T080000Z.zip.age", "path": "/home/user/Dropbox/loop-backups/loop-20261014T080000Z.zip.age", "at": "2026-10-14T08:00:00Z", "size": 52428800, "encrypted": true},
+  "count": 12,
+  "total_size": 629145600,
+  "next_at": "2026-10-14T20:00:00Z"
+}
+```
+
+| Field | Description |
+|---|---|
+| `dir` | The backup directory, with `~/` expanded; omitted when no `path` is set |
+| `keep_last`, `keep_daily`, `keep_weekly`, `keep_monthly` | The retention tiers; `0` turns a tier off |
+| `recipient` | The public key new backups are encrypted to; omitted when they aren't encrypted |
+| `running` | A backup is being written |
+| `last` | The newest backup in `dir`; omitted when there's none. `encrypted` is set for a `.zip.age` |
+| `count`, `total_size` | How many backups are in `dir`, and their size in bytes |
+| `next_at` | When the next scheduled backup is due; omitted when backups aren't enabled |
+| `error`, `error_at` | Why the last backup failed and when, until one succeeds; `error` alone when the settings or the directory can't be read |
+
+**Errors:** `501` if backups aren't configured.
+
+---
+
+### `POST /api/backup`
+
+Start a backup now, whether or not scheduled backups are enabled. Owner-only. Returns `202` at once; [`GET /api/backup`](#get-apibackup) reports `running` until it's done.
+
+**Errors:** `400` if no `path` is set, it isn't absolute, or `recipient` isn't an age public key. `409` if a backup is already running. `501` if backups aren't configured.
+
+---
+
+### `POST /api/backup/key`
+
+Generate a key pair to encrypt backups with, and set its public key as the global config's `backup.recipient`, replacing any earlier one. Owner-only. The private key is returned only here: Loop keeps no copy, and encrypted backups can't be restored without it.
+
+**Response (200):**
+```json
+{"recipient": "age1...", "identity": "AGE-SECRET-KEY-1..."}
+```
+
+**Errors:** `500` if the loop directory isn't configured, or the key can't be generated or saved.
 
 ---
 
