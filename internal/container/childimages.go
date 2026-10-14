@@ -9,7 +9,9 @@ package container
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -55,6 +57,9 @@ type ChildImageManager struct {
 	// readFile is injectable for tests; nil → os.ReadFile.
 	readFile func(string) ([]byte, error)
 
+	// writeFile writes a file, creating its dir. Injectable for tests.
+	writeFile func(path string, data []byte) error
+
 	mu sync.Mutex // serializes cascades
 }
 
@@ -67,6 +72,7 @@ func NewChildImageManager(client DockerClient, baseImage string, listProjects fu
 		listProjects: listProjects,
 		beginBuild:   beginBuild,
 		readFile:     os.ReadFile,
+		writeFile:    writeFileMkdir,
 	}
 }
 
@@ -115,8 +121,8 @@ func (m *ChildImageManager) RebuildStale(ctx context.Context, handoff func()) {
 		}
 		seen[p.Image] = true
 
-		contextDir, ok := m.childContext(p.Image, p.DirPath)
-		if !ok {
+		contextDir, err := m.childContext(p.Image, p.DirPath)
+		if err != nil {
 			continue
 		}
 
@@ -179,32 +185,56 @@ func normalizeImageRef(r string) string {
 	return r
 }
 
+// errNotFromBase is childContext's error for a Dockerfile with no stage
+// FROM the base image.
+var errNotFromBase = errors.New("dockerfile not based on Loop's image")
+
 // childContext returns the build context of image's Dockerfile in dir,
-// .loop/container, when that Dockerfile has a stage FROM the base image.
-func (m *ChildImageManager) childContext(image, dir string) (string, bool) {
+// .loop/container, when that Dockerfile has a stage FROM the base image. It
+// returns the read error when there's no Dockerfile, errNotFromBase when
+// it isn't FROM the base.
+func (m *ChildImageManager) childContext(image, dir string) (string, error) {
 	dockerfile := filepath.Join(dir, childDockerfileRelPath)
 	data, err := m.readFile(dockerfile)
 	if err != nil {
 		m.logger.Debug("child images: no Dockerfile, skipping", "image", image, "path", dockerfile)
-		return "", false
+		return "", err
 	}
 	if !dockerfileFromBase(string(data), m.baseImage) {
 		m.logger.Info("child images: Dockerfile not based on Loop's image, skipping",
 			"image", image, "path", dockerfile, "base", m.baseImage)
-		return "", false
+		return "", errNotFromBase
 	}
-	return filepath.Dir(dockerfile), true
+	return filepath.Dir(dockerfile), nil
+}
+
+// writeFileMkdir writes data to path, creating path's dir first.
+func writeFileMkdir(path string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
+}
+
+// defaultDockerfile is the Dockerfile BuildMissing writes for a project that
+// sets container_image but has none: just Loop's image, to add to.
+func defaultDockerfile(base string) string {
+	return "# Written by Loop: this project sets container_image, and Loop builds that\n" +
+		"# image from this file. Add what the project's agents need below; Loop\n" +
+		"# rebuilds the image whenever its own agent image changes.\n" +
+		"FROM " + base + "\n"
 }
 
 // BuildMissing builds a project image that doesn't exist yet, so a project
-// that has just set container_image and added its Dockerfile runs on it
-// instead of failing to create the container; RebuildStale only runs after
-// a base image build. dirs are the dirs to look for .loop/container/Dockerfile
-// in, first match wins: a worktree's own, then its parent project's. It does
-// nothing when the image exists, isn't a project image, autobuild is off, no
-// Dockerfile FROM the base image is found, or the base image is missing (the
-// container create then fails with its own error). onBuild is called before
-// the build starts.
+// that has just set container_image runs on it instead of failing to create
+// the container; RebuildStale only runs after a base image build. dirs are
+// the dirs to look for .loop/container/Dockerfile in, first match wins: a
+// worktree's own, then its parent project's. When none of them has a
+// Dockerfile, one FROM the base image is written to the last of dirs, the
+// project's. It does nothing when the image exists, isn't a project image,
+// autobuild is off, the base image is missing (the container create then
+// fails with its own error), or a Dockerfile exists but isn't FROM the base.
+// onBuild is called before the build starts.
 func (m *ChildImageManager) BuildMissing(ctx context.Context, image string, autobuild bool, dirs []string, onBuild func()) error {
 	if image == "" || m.baseImage == "" || imageRefEquals(image, m.baseImage) || !autobuild {
 		return nil
@@ -217,22 +247,36 @@ func (m *ChildImageManager) BuildMissing(ctx context.Context, image string, auto
 	if ids, err := m.client.ImageList(ctx, image); err != nil || len(ids) > 0 {
 		return nil
 	}
-	contextDir := ""
+	parentIDs, err := m.client.ImageList(ctx, m.baseImage)
+	if err != nil || len(parentIDs) == 0 {
+		return nil
+	}
+
+	contextDir, projectDir, anyDockerfile := "", "", false
 	for _, dir := range dirs {
 		if dir == "" {
 			continue
 		}
-		if c, ok := m.childContext(image, dir); ok {
+		projectDir = dir
+		c, err := m.childContext(image, dir)
+		if err == nil {
 			contextDir = c
 			break
 		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			anyDockerfile = true
+		}
 	}
 	if contextDir == "" {
-		return nil
-	}
-	parentIDs, err := m.client.ImageList(ctx, m.baseImage)
-	if err != nil || len(parentIDs) == 0 {
-		return nil
+		if anyDockerfile || projectDir == "" {
+			return nil
+		}
+		dockerfile := filepath.Join(projectDir, childDockerfileRelPath)
+		if err := m.writeFile(dockerfile, []byte(defaultDockerfile(m.baseImage))); err != nil {
+			return fmt.Errorf("writing %s: %w", dockerfile, err)
+		}
+		m.logger.Info("child images: wrote a Dockerfile FROM the base image", "image", image, "path", dockerfile)
+		contextDir = filepath.Dir(dockerfile)
 	}
 
 	onBuild()

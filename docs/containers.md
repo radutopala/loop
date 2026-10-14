@@ -45,7 +45,9 @@ rebuild from the UI/API — so they never linger on an old base:
 - A child image that doesn't exist yet, say right after a project sets
   `container_image`, is built by the first agent run that needs it, before its
   container is created. A worktree uses its own Dockerfile, or else its
-  project's.
+  project's. When there's no Dockerfile at all, Loop writes one to the
+  project's `.loop/container/Dockerfile` with just `FROM` the base image, to
+  add to.
 - Opt out per project with `"container_image_autobuild": false`.
 
 Running containers are unaffected; the next agent run picks up the new image.

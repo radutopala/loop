@@ -3,7 +3,10 @@ package container
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -16,8 +19,10 @@ type ChildImagesSuite struct {
 	suite.Suite
 	client *MockDockerClient
 	files  map[string][]byte
-	// events records build marks and handoffs, in order.
+	// events records build marks, handoffs and file writes, in order.
 	events []string
+	// writeErr fails the manager's file writes.
+	writeErr error
 }
 
 func TestChildImagesSuite(t *testing.T) {
@@ -28,6 +33,7 @@ func (s *ChildImagesSuite) SetupTest() {
 	s.client = new(MockDockerClient)
 	s.files = map[string][]byte{}
 	s.events = nil
+	s.writeErr = nil
 }
 
 // handoff is the RebuildStale handoff, recorded in events.
@@ -49,7 +55,15 @@ func (s *ChildImagesSuite) newMgr(projects []ChildProject, listErr error) *Child
 		if b, ok := s.files[path]; ok {
 			return b, nil
 		}
-		return nil, errors.New("not found")
+		return nil, fs.ErrNotExist
+	}
+	m.writeFile = func(path string, data []byte) error {
+		if s.writeErr != nil {
+			return s.writeErr
+		}
+		s.files[path] = data
+		s.events = append(s.events, "write "+path)
+		return nil
 	}
 	return m
 }
@@ -263,15 +277,28 @@ func (s *ChildImagesSuite) TestEmptyBaseImageNoop() {
 func (s *ChildImagesSuite) TestBuildMissing() {
 	const image = "proj-agent:latest"
 	labels := map[string]string{ParentIDLabel: "sha256:p"}
+	missing := func(c *MockDockerClient) {
+		c.On("ImageList", mock.Anything, image).Return([]string{}, nil)
+		c.On("ImageList", mock.Anything, "loop-agent:latest").Return([]string{"sha256:p"}, nil)
+	}
+	builds := func(contextDir string, err error) func(c *MockDockerClient) {
+		return func(c *MockDockerClient) {
+			missing(c)
+			c.On("ImageBuildFileLabels", mock.Anything, contextDir, "Dockerfile", image, labels).Return(err)
+		}
+	}
 	tests := []struct {
-		name      string
-		image     string
-		autobuild bool
-		dirs      []string
-		files     map[string]string
-		setup     func(c *MockDockerClient)
-		wantErr   string
-		wantBuild bool
+		name       string
+		image      string
+		autobuild  bool
+		dirs       []string
+		files      map[string]string
+		readErr    error
+		writeErr   error
+		setup      func(c *MockDockerClient)
+		wantErr    string
+		wantEvents []string
+		wantFiles  map[string]string
 	}{
 		{name: "no image override", image: "", autobuild: true},
 		{name: "the base image itself", image: "loop-agent", autobuild: true},
@@ -289,47 +316,51 @@ func (s *ChildImagesSuite) TestBuildMissing() {
 			},
 		},
 		{
-			name: "no Dockerfile", image: image, autobuild: true, dirs: []string{"/wt", ""},
-			setup: func(c *MockDockerClient) {
-				c.On("ImageList", mock.Anything, image).Return([]string{}, nil)
-			},
-		},
-		{
-			name: "Dockerfile not FROM the base", image: image, autobuild: true, dirs: []string{"/proj"},
-			files: map[string]string{"/proj": "FROM alpine\n"},
-			setup: func(c *MockDockerClient) {
-				c.On("ImageList", mock.Anything, image).Return([]string{}, nil)
-			},
-		},
-		{
 			name: "base image missing", image: image, autobuild: true, dirs: []string{"/proj"},
-			files: map[string]string{"/proj": "FROM loop-agent:latest\n"},
 			setup: func(c *MockDockerClient) {
 				c.On("ImageList", mock.Anything, image).Return([]string{}, nil)
 				c.On("ImageList", mock.Anything, "loop-agent:latest").Return([]string{}, nil)
 			},
 		},
+		{name: "no dirs", image: image, autobuild: true, dirs: []string{""}, setup: missing},
+		{
+			name: "Dockerfile not FROM the base", image: image, autobuild: true, dirs: []string{"/proj"},
+			files: map[string]string{"/proj": "FROM alpine\n"},
+			setup: missing,
+		},
+		{
+			name: "worktree Dockerfile not FROM the base, none in the project", image: image, autobuild: true,
+			dirs:  []string{"/proj/wt", "/proj"},
+			files: map[string]string{"/proj/wt": "FROM alpine\n"},
+			setup: missing,
+		},
+		{
+			name: "Dockerfile unreadable", image: image, autobuild: true, dirs: []string{"/proj"},
+			readErr: fs.ErrPermission, setup: missing,
+		},
 		{
 			name: "builds from the worktree's parent", image: image, autobuild: true, dirs: []string{"/proj/wt", "/proj"},
-			files: map[string]string{"/proj": "FROM loop-agent:latest\n"},
-			setup: func(c *MockDockerClient) {
-				c.On("ImageList", mock.Anything, image).Return([]string{}, nil)
-				c.On("ImageList", mock.Anything, "loop-agent:latest").Return([]string{"sha256:p"}, nil)
-				c.On("ImageBuildFileLabels", mock.Anything, "/proj/.loop/container", "Dockerfile", image, labels).Return(nil)
-			},
-			wantBuild: true,
+			files:      map[string]string{"/proj": "FROM loop-agent:latest\n"},
+			setup:      builds("/proj/.loop/container", nil),
+			wantEvents: []string{"build", "begin " + image, "end " + image},
+		},
+		{
+			name: "writes a Dockerfile into the project", image: image, autobuild: true, dirs: []string{"/proj/wt", "/proj"},
+			setup:      builds("/proj/.loop/container", nil),
+			wantEvents: []string{"write " + dfPath("/proj"), "build", "begin " + image, "end " + image},
+			wantFiles:  map[string]string{dfPath("/proj"): defaultDockerfile("loop-agent:latest")},
+		},
+		{
+			name: "writing the Dockerfile fails", image: image, autobuild: true, dirs: []string{"/proj", ""},
+			writeErr: fs.ErrPermission, setup: missing,
+			wantErr: "writing /proj/.loop/container/Dockerfile: permission denied",
 		},
 		{
 			name: "build fails", image: image, autobuild: true, dirs: []string{"/proj"},
-			files: map[string]string{"/proj": "FROM loop-agent:latest\n"},
-			setup: func(c *MockDockerClient) {
-				c.On("ImageList", mock.Anything, image).Return([]string{}, nil)
-				c.On("ImageList", mock.Anything, "loop-agent:latest").Return([]string{"sha256:p"}, nil)
-				c.On("ImageBuildFileLabels", mock.Anything, "/proj/.loop/container", "Dockerfile", image, labels).
-					Return(errors.New("RUN failed"))
-			},
-			wantErr:   "building image proj-agent:latest: RUN failed",
-			wantBuild: true,
+			files:      map[string]string{"/proj": "FROM loop-agent:latest\n"},
+			setup:      builds("/proj/.loop/container", errors.New("RUN failed")),
+			wantErr:    "building image proj-agent:latest: RUN failed",
+			wantEvents: []string{"build", "begin " + image, "end " + image},
 		},
 	}
 	for _, tc := range tests {
@@ -338,11 +369,15 @@ func (s *ChildImagesSuite) TestBuildMissing() {
 			for dir, content := range tc.files {
 				s.files[dfPath(dir)] = []byte(content)
 			}
+			s.writeErr = tc.writeErr
 			if tc.setup != nil {
 				tc.setup(s.client)
 			}
 
 			m := s.newMgr(nil, nil)
+			if tc.readErr != nil {
+				m.readFile = func(string) ([]byte, error) { return nil, tc.readErr }
+			}
 			err := m.BuildMissing(context.Background(), tc.image, tc.autobuild, tc.dirs, func() {
 				s.events = append(s.events, "build")
 			})
@@ -351,15 +386,31 @@ func (s *ChildImagesSuite) TestBuildMissing() {
 			} else {
 				require.NoError(s.T(), err)
 			}
-			if tc.wantBuild {
-				require.Equal(s.T(), []string{"build", "begin " + image, "end " + image}, s.events)
-			} else {
-				require.Empty(s.T(), s.events)
+			require.Equal(s.T(), tc.wantEvents, s.events)
+			for path, content := range tc.wantFiles {
+				require.Equal(s.T(), content, string(s.files[path]))
+			}
+			if tc.wantEvents == nil {
 				s.client.AssertNotCalled(s.T(), "ImageBuildFileLabels", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 			}
 			s.client.AssertExpectations(s.T())
 		})
 	}
+}
+
+func (s *ChildImagesSuite) TestDefaultDockerfileIsFromBase() {
+	require.True(s.T(), dockerfileFromBase(defaultDockerfile("loop-agent:latest"), "loop-agent:latest"))
+}
+
+func TestWriteFileMkdir(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".loop", "container", "Dockerfile")
+	require.NoError(t, writeFileMkdir(path, []byte("FROM loop-agent:latest\n")))
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, "FROM loop-agent:latest\n", string(got))
+
+	// The dir can't be created under a file.
+	require.Error(t, writeFileMkdir(filepath.Join(path, "Dockerfile"), nil))
 }
 
 func (s *ChildImagesSuite) TestBuildMissingNoBase() {
