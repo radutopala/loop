@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -399,14 +400,27 @@ func (s *RestoreSuite) TestPlaygroundFailures() {
 }
 
 func (s *RestoreSuite) TestUnsafePath() {
-	s.write(false,
-		entry{dbEntry, sqliteHeader},
-		entry{globalPlaygrounds + "/snake/../../../evil", "x"},
-		entry{manifestEntry, s.manifestOf()},
-	)
-	_, err := s.restorer.Restore(s.options())
-	require.EqualError(s.T(), err, `the backup has an unsafe path "playground/global/snake/../../../evil"`)
-	require.NoFileExists(s.T(), filepath.Join(s.home, "evil"))
+	for _, name := range []string{
+		globalPlaygrounds + "/snake/../../../evil",
+		globalPlaygrounds + "/../evil",
+		globalPlaygrounds + "/..",
+		globalPlaygrounds + "//evil",
+	} {
+		s.Run(name, func() {
+			s.SetupTest()
+			s.write(false,
+				entry{dbEntry, sqliteHeader},
+				entry{name, "x"},
+				entry{manifestEntry, s.manifestOf()},
+			)
+			res, err := s.restorer.Restore(s.options())
+			require.EqualError(s.T(), err, fmt.Sprintf("the backup has an unsafe path %q", name))
+			require.Empty(s.T(), res.Kept)
+			require.Empty(s.T(), res.Restored)
+			require.NoFileExists(s.T(), filepath.Join(s.home, "evil"))
+			require.NoFileExists(s.T(), filepath.Join(s.loopDir, "evil"))
+		})
+	}
 }
 
 func (s *RestoreSuite) TestSkipsDirEntries() {

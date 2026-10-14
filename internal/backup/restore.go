@@ -262,19 +262,25 @@ func (r *Restorer) restorePlaygrounds(zr *zip.Reader, m Manifest, loopDir string
 		if !p.Global {
 			target = filepath.Join(p.Project, ".loop", "playground")
 		}
-		// Each playground's files, by its name, in the backup's order.
+		// Each playground's files, by its name, in the backup's order. Every
+		// path is checked before it's used: Go's zip reader doesn't refuse
+		// ones that leave the dir.
 		var names []string
-		files := map[string][]*zip.File{}
+		files := map[string][]playgroundFile{}
 		for _, f := range zr.File {
-			rel, ok := strings.CutPrefix(f.Name, p.Folder+"/")
-			name, _, _ := strings.Cut(rel, "/")
-			if !ok || strings.HasSuffix(rel, "/") || name == "" {
+			slashed, ok := strings.CutPrefix(f.Name, p.Folder+"/")
+			if !ok || slashed == "" || strings.HasSuffix(slashed, "/") {
 				continue
 			}
+			rel := filepath.FromSlash(slashed)
+			if !filepath.IsLocal(rel) {
+				return fmt.Errorf("the backup has an unsafe path %q", f.Name)
+			}
+			name, _, _ := strings.Cut(filepath.ToSlash(filepath.Clean(rel)), "/")
 			if files[name] == nil {
 				names = append(names, name)
 			}
-			files[name] = append(files[name], f)
+			files[name] = append(files[name], playgroundFile{f, rel})
 		}
 		for _, name := range names {
 			dest := filepath.Join(target, name)
@@ -282,12 +288,8 @@ func (r *Restorer) restorePlaygrounds(zr *zip.Reader, m Manifest, loopDir string
 				res.Kept = append(res.Kept, dest)
 				continue
 			}
-			for _, f := range files[name] {
-				rel := filepath.FromSlash(strings.TrimPrefix(f.Name, p.Folder+"/"))
-				if !filepath.IsLocal(rel) {
-					return fmt.Errorf("the backup has an unsafe path %q", f.Name)
-				}
-				if err := r.writeFile(f, filepath.Join(target, rel)); err != nil {
+			for _, pf := range files[name] {
+				if err := r.writeFile(pf.f, filepath.Join(target, pf.rel)); err != nil {
 					return fmt.Errorf("restoring the playground %s: %w", dest, err)
 				}
 			}
@@ -295,6 +297,13 @@ func (r *Restorer) restorePlaygrounds(zr *zip.Reader, m Manifest, loopDir string
 		}
 	}
 	return nil
+}
+
+// playgroundFile is a playground's file in a backup, with its path
+// relative to the playground dir, checked to stay in it.
+type playgroundFile struct {
+	f   *zip.File
+	rel string
 }
 
 // writeFile writes f's content to the new file dest.
