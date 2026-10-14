@@ -13,6 +13,18 @@ type ImageGate interface {
 	WaitBuilds(ctx context.Context, images []string, onWait func(image string)) error
 }
 
+// MissingImageBuilder builds a project image that doesn't exist yet; see
+// ChildImageManager.BuildMissing.
+type MissingImageBuilder interface {
+	BuildMissing(ctx context.Context, image string, autobuild bool, dirs []string, onBuild func()) error
+}
+
+// SetMissingImageBuilder makes container creation build its project image
+// first when that image doesn't exist yet.
+func (r *DockerRunner) SetMissingImageBuilder(b MissingImageBuilder) {
+	r.missingImages = b
+}
+
 // SetImageGate makes container creation wait out builds of its image and of
 // baseImage, the agent image project images are built FROM, and refuse
 // images built by an older loop than loopVersion, the daemon's own.
@@ -33,25 +45,40 @@ func (r *DockerRunner) SetImageGate(gate ImageGate, loopVersion, baseImage strin
 // the check turns that into an error that says what to do. Project images
 // FROM the agent image inherit its loop.version label, so they're checked
 // too. Images without the label, and non-release versions, aren't compared.
-func (r *DockerRunner) awaitImage(ctx context.Context, image string, onActivity func(activity, detail string)) error {
-	if r.imageGate == nil {
-		return nil
-	}
+//
+// A project image that doesn't exist yet is then built, from the first of
+// dirs with a .loop/container/Dockerfile FROM the base image (see
+// MissingImageBuilder); after the wait, so it's built on the current base.
+func (r *DockerRunner) awaitImage(ctx context.Context, image string, autobuild bool, dirs []string, onActivity func(activity, detail string)) error {
 	if onActivity == nil {
 		onActivity = func(string, string) {}
 	}
-	waited := false
-	err := r.imageGate.WaitBuilds(ctx, []string{image, r.baseImage}, func(building string) {
-		waited = true
-		onActivity("image_build", fmt.Sprintf("Waiting for the %s image build to finish", building))
-	})
-	if err != nil {
-		return fmt.Errorf("waiting for the image build: %w", err)
+	busy := false
+	if r.imageGate != nil {
+		err := r.imageGate.WaitBuilds(ctx, []string{image, r.baseImage}, func(building string) {
+			busy = true
+			onActivity("image_build", fmt.Sprintf("Waiting for the %s image build to finish", building))
+		})
+		if err != nil {
+			return fmt.Errorf("waiting for the image build: %w", err)
+		}
 	}
-	if waited {
-		// Replaces the waiting notice, which would otherwise stay up until
-		// the agent's first reply; the chat shows nothing for this one.
+	if r.missingImages != nil {
+		err := r.missingImages.BuildMissing(ctx, image, autobuild, dirs, func() {
+			busy = true
+			onActivity("image_build", fmt.Sprintf("Building the %s image", image))
+		})
+		if err != nil {
+			return err
+		}
+	}
+	if busy {
+		// Replaces the waiting/building notice, which would otherwise stay
+		// up until the agent's first reply; the chat shows nothing for this one.
 		onActivity("image_ready", "")
+	}
+	if r.imageGate == nil {
+		return nil
 	}
 	labels, err := r.client.ImageInspectLabels(ctx, image)
 	if err != nil {

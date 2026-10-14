@@ -28,6 +28,96 @@ func (g *fakeImageGate) WaitBuilds(_ context.Context, images []string, onWait fu
 	return g.err
 }
 
+// fakeMissingImageBuilder is a MissingImageBuilder that reports a build when
+// build is set, then returns err. It records what it was asked to build.
+type fakeMissingImageBuilder struct {
+	build     bool
+	err       error
+	image     string
+	autobuild bool
+	dirs      []string
+}
+
+func (b *fakeMissingImageBuilder) BuildMissing(_ context.Context, image string, autobuild bool, dirs []string, onBuild func()) error {
+	b.image, b.autobuild, b.dirs = image, autobuild, dirs
+	if b.build {
+		onBuild()
+	}
+	return b.err
+}
+
+func (s *RunnerSuite) TestRunBuildsMissingImage() {
+	tests := []struct {
+		name           string
+		gate           *fakeImageGate
+		builder        *fakeMissingImageBuilder
+		wantActivities [][2]string
+	}{
+		{
+			name:    "builds without a gate",
+			builder: &fakeMissingImageBuilder{build: true},
+			wantActivities: [][2]string{
+				{"image_build", "Building the loop-agent:latest image"},
+				{"image_ready", ""},
+			},
+		},
+		{
+			name:    "waits for the base, then builds",
+			gate:    &fakeImageGate{building: []string{"loop-agent:base"}},
+			builder: &fakeMissingImageBuilder{build: true},
+			wantActivities: [][2]string{
+				{"image_build", "Waiting for the loop-agent:base image build to finish"},
+				{"image_build", "Building the loop-agent:latest image"},
+				{"image_ready", ""},
+			},
+		},
+		{
+			name:    "nothing to build",
+			builder: &fakeMissingImageBuilder{},
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			ctx := context.Background()
+			if tc.gate != nil {
+				s.runner.SetImageGate(tc.gate, "2026.9.36", "loop-agent:base")
+				s.client.On("ImageInspectLabels", ctx, "loop-agent:latest").Return(map[string]string{}, nil)
+			}
+			s.runner.SetMissingImageBuilder(tc.builder)
+			s.setupMockAttempts(ctx, `{"type":"result","result":"ok","session_id":"sess-1","is_error":false}`)
+
+			var activities [][2]string
+			resp, err := s.runner.Run(ctx, &agent.AgentRequest{
+				Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
+				ChannelID: "ch-1",
+				OnActivity: func(activity, detail string) {
+					if activity == "image_build" || activity == "image_ready" {
+						activities = append(activities, [2]string{activity, detail})
+					}
+				},
+			})
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), "ok", resp.Response)
+			require.Equal(s.T(), tc.wantActivities, activities)
+			require.Equal(s.T(), "loop-agent:latest", tc.builder.image)
+			// The run's own dir, then the parent project's (none here).
+			require.Len(s.T(), tc.builder.dirs, 2)
+			require.NotEmpty(s.T(), tc.builder.dirs[0])
+			require.Empty(s.T(), tc.builder.dirs[1])
+		})
+	}
+}
+
+func (s *RunnerSuite) TestRunFailsMissingImageBuild() {
+	ctx := context.Background()
+	s.runner.SetMissingImageBuilder(&fakeMissingImageBuilder{build: true, err: errors.New("building image loop-agent:latest: RUN failed")})
+
+	_, err := s.runner.RunBash(ctx, "true", "ch-1", "", "")
+	require.ErrorContains(s.T(), err, "building image loop-agent:latest: RUN failed")
+	s.client.AssertNotCalled(s.T(), "ContainerCreate", mock.Anything, mock.Anything, mock.Anything)
+}
+
 func (s *RunnerSuite) TestRunWaitsForImageBuild() {
 	ctx := context.Background()
 	gate := &fakeImageGate{building: []string{"loop-agent:base", "loop-agent:latest"}}
