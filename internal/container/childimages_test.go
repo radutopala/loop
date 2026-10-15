@@ -95,6 +95,53 @@ func (s *ChildImagesSuite) TestSkipsFreshChild() {
 	s.client.AssertNotCalled(s.T(), "ImageBuildFileLabels", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
+func (s *ChildImagesSuite) TestSkipsChildBuiltMeanwhile() {
+	s.files[dfPath("/proj")] = []byte("FROM loop-agent:latest\n")
+	s.client.On("ImageList", mock.Anything, "loop-agent:latest").Return([]string{"sha256:parent1"}, nil)
+	// Stale when the cascade looks, built on the new base (by a run's
+	// BuildMissing) by the time its turn comes.
+	s.client.On("ImageInspectLabels", mock.Anything, "proj-agent:latest").
+		Return(map[string]string{ParentIDLabel: "sha256:old"}, nil).Once()
+	s.client.On("ImageInspectLabels", mock.Anything, "proj-agent:latest").
+		Return(map[string]string{ParentIDLabel: "sha256:parent1"}, nil).Once()
+
+	m := s.newMgr([]ChildProject{{DirPath: "/proj", Image: "proj-agent:latest", Autobuild: true}}, nil)
+	m.RebuildStale(context.Background(), s.handoff)
+	s.client.AssertNotCalled(s.T(), "ImageBuildFileLabels", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	require.Equal(s.T(), []string{"begin proj-agent:latest", "handoff", "end proj-agent:latest"}, s.events)
+}
+
+func (s *ChildImagesSuite) TestCascadeHoldsOnlyTheImageItBuilds() {
+	s.files[dfPath("/slow")] = []byte("FROM loop-agent:latest\n")
+	s.client.On("ImageList", mock.Anything, "loop-agent:latest").Return([]string{"sha256:parent1"}, nil)
+	s.client.On("ImageInspectLabels", mock.Anything, "slow-agent:latest").Return(nil, errors.New("no such image"))
+	building := make(chan struct{})
+	release := make(chan struct{})
+	s.client.On("ImageBuildFileLabels", mock.Anything, "/slow/.loop/container", "Dockerfile", "slow-agent:latest",
+		map[string]string{ParentIDLabel: "sha256:parent1"}).
+		Run(func(mock.Arguments) {
+			close(building)
+			<-release
+		}).Return(nil)
+	s.client.On("ImageList", mock.Anything, "proj-agent:latest").Return([]string{"sha256:c"}, nil)
+
+	m := s.newMgr([]ChildProject{{DirPath: "/slow", Image: "slow-agent:latest", Autobuild: true}}, nil)
+	done := make(chan struct{})
+	go func() {
+		m.RebuildStale(context.Background(), func() {})
+		close(done)
+	}()
+	<-building
+
+	// A run on another project's image goes on while the cascade builds.
+	require.NoError(s.T(), m.BuildMissing(context.Background(), "proj-agent:latest", true, []string{"/proj"}, func() {
+		s.Fail("proj-agent:latest exists; nothing to build")
+	}))
+	close(release)
+	<-done
+	s.client.AssertExpectations(s.T())
+}
+
 func (s *ChildImagesSuite) TestRebuildsUnlabeledChild() {
 	// Pre-feature child images have no parent label → treated as stale once.
 	s.files[dfPath("/proj")] = []byte("FROM loop-agent\n")

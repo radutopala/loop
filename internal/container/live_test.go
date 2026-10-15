@@ -982,3 +982,46 @@ func TestStreamSystemTurnStart(t *testing.T) {
 		})
 	}
 }
+
+// blockingImageBuilder is a MissingImageBuilder whose build runs until
+// release is closed.
+type blockingImageBuilder struct {
+	building chan struct{}
+	release  chan struct{}
+}
+
+func (b *blockingImageBuilder) BuildMissing(_ context.Context, _ string, _ bool, _ []string, onBuild func()) error {
+	onBuild()
+	close(b.building)
+	<-b.release
+	return nil
+}
+
+func (s *RunnerSuite) TestStartLiveWaitsForImageBuildAlone() {
+	s.setupLive(0)
+	b := &blockingImageBuilder{building: make(chan struct{}), release: make(chan struct{})}
+	s.runner.SetMissingImageBuilder(b)
+	proc := newFakeLiveProc()
+	created := s.expectLiveSpawn("live-1", proc)
+
+	activities := make(chan [2]string, 4)
+	req := liveReq(func(r *agent.AgentRequest) {
+		r.OnActivity = func(activity, detail string) { activities <- [2]string{activity, detail} }
+	})
+	started := make(chan error, 1)
+	go func() { started <- s.runner.StartLive(context.Background(), req, agent.LiveHooks{}) }()
+	waitFor(s.T(), b.building)
+
+	// The build says what the start waits for, and holds only its channel.
+	require.Equal(s.T(), [2]string{"image_build", "Building the loop-agent:latest image"}, waitFor(s.T(), activities))
+	require.ErrorIs(s.T(), s.runner.StartLive(context.Background(), liveReq(nil), agent.LiveHooks{}), ErrLiveSessionRunning)
+	_, running := s.runner.LiveInfo("ch-2")
+	require.False(s.T(), running)
+	require.Empty(s.T(), s.runner.LiveChannels())
+
+	close(b.release)
+	require.NoError(s.T(), waitFor(s.T(), started))
+	waitFor(s.T(), created)
+	require.Equal(s.T(), [2]string{"image_ready", ""}, waitFor(s.T(), activities))
+	require.Equal(s.T(), []string{"ch-1"}, s.runner.LiveChannels())
+}

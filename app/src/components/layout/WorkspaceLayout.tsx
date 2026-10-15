@@ -93,7 +93,7 @@ import { ExplainPane } from "./ExplainPane";
 import { HeaderBranchPicker } from "./HeaderBranchPicker";
 import { LearnPane } from "./LearnPane";
 import { LEARN_SPLIT_MS, LEARN_SPLIT_SLOT_ID, LearnSplit, type SideView } from "./LearnSplit";
-import { SideChatPane } from "./SideChatPane";
+import { SideChatPane, type SideChatView, sideChatViewSlotId } from "./SideChatPane";
 
 type AgentState = "running" | "stopped" | "none";
 
@@ -121,6 +121,9 @@ function initIdCounter(channelId: string, tree: PaneNode) {
 }
 
 /** A canvas with no tiles yet. */
+const NO_SINGLETONS = new Set<never>();
+const noop = () => {};
+
 const EMPTY_CANVAS: CanvasNode = { type: "canvas", viewport: { x: 0, y: 0, zoom: 1 }, tiles: [] };
 
 /** The plugin panels the tiles show, as plugin/panel. */
@@ -439,6 +442,30 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   // the way it came.
   const [learnDocked, setLearnDocked] = useState(false);
   const learnOverlay = learnSplit.mounted && !learnDocked;
+  // The side chats' Explain and Learn views (see SideChatView), by pane,
+  // shown the Learn view's way: over the layout, or docked to the pane's
+  // tile on a canvas. One view is up at a time, the chat's or a side chat's.
+  const [sideChatViews, setSideChatViews] = useState<Record<string, SideChatView>>({});
+  const sideChatViewsRef = useRef(sideChatViews);
+  sideChatViewsRef.current = sideChatViews;
+  const reportSideChatView = useCallback((leafId: string, view: SideChatView | null) => {
+    setSideChatViews((prev) => {
+      if (view) return { ...prev, [leafId]: view };
+      if (!(leafId in prev)) return prev;
+      const { [leafId]: _, ...rest } = prev;
+      return rest;
+    });
+  }, []);
+  const openSideChatLeafId = Object.keys(sideChatViews).find((id) => sideChatViews[id]?.open);
+  const sideChatSplit = usePresence(!!openSideChatLeafId, learnMs);
+  const sideChatSplitRef = useRef<HTMLDivElement>(null);
+  // It keeps the side chat while it fades out.
+  const lastSideChatLeafIdRef = useRef(openSideChatLeafId);
+  if (openSideChatLeafId) lastSideChatLeafIdRef.current = openSideChatLeafId;
+  const shownSideChatLeafId = openSideChatLeafId ?? (sideChatSplit.mounted ? lastSideChatLeafIdRef.current : undefined);
+  const shownSideChat = shownSideChatLeafId ? sideChatViews[shownSideChatLeafId] : undefined;
+  const sideChatDocked = layoutType === "canvas";
+  const sideChatOverlay = !!shownSideChat && sideChatSplit.mounted && !sideChatDocked;
 
   // Editor + file-tree shared state. Hoisted here so both panels (rendered
   // independently inside the layout) stay in sync, and so tab/cursor state
@@ -1264,6 +1291,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       setSideView(view);
       setLearnDocked(docked);
       setLearnOpen(true);
+      for (const side of Object.values(sideChatViewsRef.current)) if (side.open) side.close();
     },
     [chatHost, layoutType],
   );
@@ -1305,6 +1333,32 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       clearTimeout(timer);
     };
   }, [learnOpen, closeLearn]);
+  // A side chat's view opening closes the others, and, over the layout,
+  // takes focus to its composer (see openSide). Escape closes it, as the
+  // chat's.
+  useEffect(() => {
+    if (!openSideChatLeafId) return;
+    setLearnOpen(false);
+    for (const [id, side] of Object.entries(sideChatViewsRef.current)) if (id !== openSideChatLeafId && side.open) side.close();
+    const host = sideChatViewsRef.current[openSideChatLeafId]?.chatHost;
+    const focused = document.activeElement;
+    if (host && layoutType !== "canvas" && (!focused || !host.contains(focused))) {
+      host.querySelector<HTMLTextAreaElement>("textarea")?.focus({ preventScroll: true });
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || hiddenRef.current) return;
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (!e.defaultPrevented) sideChatViewsRef.current[openSideChatLeafId]?.close();
+      });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      clearTimeout(timer);
+    };
+  }, [openSideChatLeafId, layoutType]);
   const chatLeafId = useMemo(
     () => (layoutType === "canvas" ? canvasState?.tiles.find((t) => t.panel === "chat")?.id : tree ? collectLeaves(tree).find((l) => l.panel === "chat")?.id : undefined),
     [layoutType, canvasState, tree],
@@ -1391,6 +1445,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               getChatState={getChatState}
               onChatStateUnmount={onChatStateUnmount}
               wsOpens={wsOpens}
+              onSideView={reportSideChatView}
+              sideViewPlace={leaf.id === shownSideChatLeafId && sideChatSplit.mounted ? (sideChatDocked ? "dock" : "overlay") : null}
             />
           );
         case "editor":
@@ -1566,6 +1622,10 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       getChatState,
       onChatStateUnmount,
       wsOpens,
+      reportSideChatView,
+      shownSideChatLeafId,
+      sideChatSplit.mounted,
+      sideChatDocked,
     ],
   );
 
@@ -1998,7 +2058,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                 position: "relative",
               }}
               // Nor can it be clicked or reached from the keyboard.
-              inert={learnOverlay}
+              inert={learnOverlay || sideChatOverlay}
             >
               {layoutType === "canvas" ? (
                 <CanvasLayout
@@ -2009,7 +2069,21 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                   onCanvasChange={handleCanvasChange}
                   controlRef={canvasControlRef}
                   hiddenPanels={hiddenPanels}
-                  learnDock={learnDocked && learnSplit.mounted ? { shown: learnSplit.shown, ms: learnMs, view: sideView, running: sideRunning, pane: learnPane, ref: learnSplitRef } : undefined}
+                  learnDock={
+                    learnDocked && learnSplit.mounted
+                      ? { shown: learnSplit.shown, ms: learnMs, view: sideView, running: sideRunning, pane: learnPane, ref: learnSplitRef }
+                      : shownSideChat && shownSideChatLeafId && sideChatSplit.mounted
+                        ? {
+                            tileId: shownSideChatLeafId,
+                            shown: sideChatSplit.shown,
+                            ms: learnMs,
+                            view: shownSideChat.view,
+                            running: shownSideChat.running,
+                            pane: <ChatSlot host={shownSideChat.paneHost} active onAttach={noop} />,
+                            ref: sideChatSplitRef,
+                          }
+                        : undefined
+                  }
                 />
               ) : !tree ? (
                 <EmptyLayoutPicker onAdd={handleEmptyAdd} hiddenPanels={hiddenPanels} />
@@ -2100,6 +2174,19 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                   </>
                 }
                 learnPane={learnPane}
+              />
+            )}
+            {sideChatOverlay && shownSideChat && shownSideChatLeafId && (
+              <LearnSplit
+                ref={sideChatSplitRef}
+                testId="side-chat-split"
+                shown={sideChatSplit.shown}
+                ms={learnMs}
+                view={shownSideChat.view}
+                running={shownSideChat.running}
+                chatHeader={<PaneLeafHeader leafId={sideChatViewSlotId(shownSideChatLeafId)} panel="chat-side" openMode={shownSideChat.openMode} usedSingletons={NO_SINGLETONS} />}
+                chat={<ChatSlot host={shownSideChat.chatHost} active onAttach={noop} />}
+                learnPane={<ChatSlot host={shownSideChat.paneHost} active onAttach={noop} />}
               />
             )}
             <NotificationDrawer open={notificationsOpen} channelId={channelId} channelName={channel.name} dirPath={dirPath} onClose={closeNotifications} />

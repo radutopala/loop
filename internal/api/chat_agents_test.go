@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"time"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -16,17 +17,26 @@ import (
 	"github.com/radutopala/loop/internal/orchestrator"
 )
 
+// The times of chatStore's ch-1 and side-1.
+var (
+	chatCreated = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	chatUpdated = time.Date(2026, 1, 3, 3, 4, 5, 0, time.UTC)
+	sideCreated = time.Date(2026, 1, 4, 3, 4, 5, 0, time.UTC)
+	sideUpdated = time.Date(2026, 1, 5, 3, 4, 5, 0, time.UTC)
+)
+
 // chatStore gives the server a store with channel ch-1, its side chat
 // side-1, and side chat side-9 of another channel.
 func (s *ServerSuite) chatStore() *MockChannelLister {
 	store := new(MockChannelLister)
 	s.srv.store = store
-	store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1"}, nil).Maybe()
-	store.On("GetChannel", mock.Anything, "side-1").Return(&db.Channel{ChannelID: "side-1", Kind: db.ChannelKindSide, ParentID: "ch-1", Name: "Side"}, nil).Maybe()
+	side := &db.Channel{ChannelID: "side-1", Kind: db.ChannelKindSide, ParentID: "ch-1", Name: "Side", CreatedAt: sideCreated, UpdatedAt: sideUpdated}
+	store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", CreatedAt: chatCreated, UpdatedAt: chatUpdated}, nil).Maybe()
+	store.On("GetChannel", mock.Anything, "side-1").Return(side, nil).Maybe()
 	store.On("GetChannel", mock.Anything, "side-9").Return(&db.Channel{ChannelID: "side-9", Kind: db.ChannelKindSide, ParentID: "ch-9"}, nil).Maybe()
 	store.On("GetChannel", mock.Anything, "side-x1").Return(&db.Channel{ChannelID: "side-x1"}, nil).Maybe()
 	store.On("GetChannel", mock.Anything, mock.Anything).Return(nil, nil).Maybe()
-	store.On("ListSideChats", mock.Anything, "ch-1").Return([]*db.Channel{{ChannelID: "side-1", Kind: db.ChannelKindSide, ParentID: "ch-1", Name: "Side"}}, nil).Maybe()
+	store.On("ListSideChats", mock.Anything, "ch-1").Return([]*db.Channel{side}, nil).Maybe()
 	return store
 }
 
@@ -85,6 +95,20 @@ func (s *ServerSuite) TestAgentListChatAgents() {
 			require.Equal(s.T(), tt.want, got)
 		})
 	}
+}
+
+func (s *ServerSuite) TestAgentListChatAgentTimes() {
+	s.srv.SetAgentRegistry(agentregistry.New())
+	s.chatStore()
+	s.srv.live = nil
+
+	code, agents := s.listAgents("ch-1")
+	require.Equal(s.T(), http.StatusOK, code)
+	require.Len(s.T(), agents, 2)
+	require.Equal(s.T(), chatCreated, agents[0].CreatedAt.UTC())
+	require.Equal(s.T(), chatUpdated, agents[0].UpdatedAt.UTC())
+	require.Equal(s.T(), sideCreated, agents[1].CreatedAt.UTC())
+	require.Equal(s.T(), sideUpdated, agents[1].UpdatedAt.UTC())
 }
 
 func (s *ServerSuite) TestAgentListChatAgentsWithoutStore() {

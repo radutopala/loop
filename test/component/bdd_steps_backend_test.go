@@ -74,6 +74,7 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^the current channel has a finished turn "([^"]*)" replying "([^"]*)" in session "([^"]*)"$`, tc.seedTurnInSession)
 	ctx.Step(`^the current channel's learn passes review turns (\d+) and (\d+), and none is superseded$`, tc.assertLearnPassesPerTurn)
 	ctx.Step(`^the turn has an explanation:$`, tc.seedExplanation)
+	ctx.Step(`^the current channel becomes its side chat$`, tc.useSideChat)
 	ctx.Step(`^the turn has a "([^"]*)" learn pass$`, tc.seedLearnPass)
 
 	// Ticket setup steps
@@ -1375,6 +1376,24 @@ func (tc *TestContext) withdrawLearnProposal(title, reason string) error {
 	if tc.LastStatus != http.StatusCreated {
 		return fmt.Errorf("withdrawing proposal %d: status %d: %s", id, tc.LastStatus, tc.LastBody)
 	}
+	return nil
+}
+
+// useSideChat makes the current channel's only side chat (a chat-side
+// pane's) the current channel, for the steps after it to seed and inject
+// into.
+func (tc *TestContext) useSideChat() error {
+	if err := tc.doRequest("GET", "/api/channels/{channel_id}/side-chats", ""); err != nil {
+		return err
+	}
+	var sides []db.Channel
+	if err := json.Unmarshal(tc.LastBody, &sides); err != nil {
+		return fmt.Errorf("decoding side chats: %w: %s", err, tc.LastBody)
+	}
+	if len(sides) != 1 {
+		return fmt.Errorf("want one side chat, got %d: %s", len(sides), tc.LastBody)
+	}
+	tc.ChannelID = sides[0].ChannelID
 	return nil
 }
 

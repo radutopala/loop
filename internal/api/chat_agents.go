@@ -49,25 +49,25 @@ func (s *Server) chatAgents(ctx context.Context, group string) ([]*agentregistry
 	if err != nil || ch == nil {
 		return nil, err
 	}
-	chats := []*agentregistry.AgentInfo{s.chatAgent(ctx, agent.ChatAgentID, ch.ChannelID, "Chat")}
+	chats := []*agentregistry.AgentInfo{s.chatAgent(ctx, agent.ChatAgentID, ch, "Chat")}
 	sides, err := s.store.ListSideChats(ctx, group)
 	if err != nil {
 		return nil, err
 	}
 	for _, side := range sides {
-		chats = append(chats, s.chatAgent(ctx, side.ChannelID, side.ChannelID, side.Name))
+		chats = append(chats, s.chatAgent(ctx, side.ChannelID, side, side.Name))
 	}
 	return chats, nil
 }
 
-// chatAgent describes the chat of channelID as an agent, running while its
-// live session takes a turn.
-func (s *Server) chatAgent(ctx context.Context, agentID, channelID, name string) *agentregistry.AgentInfo {
+// chatAgent describes the chat of ch as an agent, running while its live
+// session takes a turn. Its times are the channel's.
+func (s *Server) chatAgent(ctx context.Context, agentID string, ch *db.Channel, name string) *agentregistry.AgentInfo {
 	status := "idle"
-	if s.live != nil && s.live.LiveSession(ctx, channelID).Busy {
+	if s.live != nil && s.live.LiveSession(ctx, ch.ChannelID).Busy {
 		status = "running"
 	}
-	return &agentregistry.AgentInfo{AgentID: agentID, ChannelID: channelID, Name: name, Status: status}
+	return &agentregistry.AgentInfo{AgentID: agentID, ChannelID: ch.ChannelID, Name: name, Status: status, CreatedAt: ch.CreatedAt, UpdatedAt: ch.UpdatedAt}
 }
 
 // chatTarget returns the channel of the chat agentID names in group, or ""

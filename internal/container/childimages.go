@@ -60,7 +60,31 @@ type ChildImageManager struct {
 	// writeFile writes a file, creating its dir. Injectable for tests.
 	writeFile func(path string, data []byte) error
 
-	mu sync.Mutex // serializes cascades
+	cascadeMu sync.Mutex // serializes cascades
+
+	// imagesMu guards images, which holds a lock per project image: a
+	// build of it (the cascade's or BuildMissing's) holds it, so one image
+	// is built once at a time, while builds of other images, and runs on
+	// them, go on.
+	imagesMu sync.Mutex
+	images   map[string]*sync.Mutex
+}
+
+// lockImage locks image's build lock, returning its unlock.
+func (m *ChildImageManager) lockImage(image string) (unlock func()) {
+	m.imagesMu.Lock()
+	if m.images == nil {
+		m.images = map[string]*sync.Mutex{}
+	}
+	ref := normalizeImageRef(image)
+	l, ok := m.images[ref]
+	if !ok {
+		l = &sync.Mutex{}
+		m.images[ref] = l
+	}
+	m.imagesMu.Unlock()
+	l.Lock()
+	return l.Unlock
 }
 
 // NewChildImageManager creates a manager for the given base image.
@@ -88,8 +112,8 @@ func NewChildImageManager(client DockerClient, baseImage string, listProjects fu
 // that image's rebuild and nothing else. handoff is called exactly once,
 // also when there is nothing to rebuild.
 func (m *ChildImageManager) RebuildStale(ctx context.Context, handoff func()) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.cascadeMu.Lock()
+	defer m.cascadeMu.Unlock()
 	handoff = sync.OnceFunc(handoff)
 	defer handoff()
 
@@ -138,16 +162,25 @@ func (m *ChildImageManager) RebuildStale(ctx context.Context, handoff func()) {
 	handoff()
 
 	for _, c := range stale {
-		m.logger.Info("child images: rebuilding on new base",
-			"image", c.image, "base", m.baseImage, "parent_id", parentID)
-		err := m.client.ImageBuildFileLabels(ctx, c.contextDir, "Dockerfile", c.image, map[string]string{ParentIDLabel: parentID})
+		m.rebuildChild(ctx, c.image, c.contextDir, parentID)
 		c.end()
-		if err != nil {
-			m.logger.Error("child images: rebuild failed", "image", c.image, "error", err)
-			continue
-		}
-		m.logger.Info("child images: rebuilt", "image", c.image)
 	}
+}
+
+// rebuildChild rebuilds image on base parentID under its build lock,
+// unless a build that held it first (BuildMissing's) already did.
+func (m *ChildImageManager) rebuildChild(ctx context.Context, image, contextDir, parentID string) {
+	defer m.lockImage(image)()
+	if labels, err := m.client.ImageInspectLabels(ctx, image); err == nil && labels != nil && labels[ParentIDLabel] == parentID {
+		return
+	}
+	m.logger.Info("child images: rebuilding on new base",
+		"image", image, "base", m.baseImage, "parent_id", parentID)
+	if err := m.client.ImageBuildFileLabels(ctx, contextDir, "Dockerfile", image, map[string]string{ParentIDLabel: parentID}); err != nil {
+		m.logger.Error("child images: rebuild failed", "image", image, "error", err)
+		return
+	}
+	m.logger.Info("child images: rebuilt", "image", image)
 }
 
 // fromLineRe matches Dockerfile FROM instructions, capturing the image ref
@@ -239,10 +272,9 @@ func (m *ChildImageManager) BuildMissing(ctx context.Context, image string, auto
 	if image == "" || m.baseImage == "" || imageRefEquals(image, m.baseImage) || !autobuild {
 		return nil
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	defer m.lockImage(image)()
 
-	// Checked under the lock, so a run that waited for another run's build
+	// Checked under the image's lock, so a run that waited for another run's build
 	// of the same image doesn't build it again.
 	if ids, err := m.client.ImageList(ctx, image); err != nil || len(ids) > 0 {
 		return nil
