@@ -599,6 +599,7 @@ func (s *OrchestratorSuite) TestWarmLiveSession() {
 		chErr    error
 		recent   error
 		startErr error
+		activity string
 		started  bool
 		wantErr  string
 	}{
@@ -610,7 +611,9 @@ func (s *OrchestratorSuite) TestWarmLiveSession() {
 		{name: "request error", channel: local, recent: errors.New("recent failed"), wantErr: "recent failed"},
 		{name: "not live", channel: &db.Channel{ChannelID: "ch-1", Platform: types.PlatformDiscord}},
 		{name: "start fails", channel: local, startErr: errors.New("spawn failed"), wantErr: "spawn failed"},
-		{name: "started", channel: local, started: true},
+		// The turn being typed starts the session, and shows the build.
+		{name: "image build", channel: local, activity: "image_build", startErr: context.Canceled},
+		{name: "started", channel: local, activity: "image_ready", started: true},
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
@@ -625,12 +628,21 @@ func (s *OrchestratorSuite) TestWarmLiveSession() {
 			}
 			s.store.On("GetChannel", mock.Anything, "ch-1").Return(tt.channel, tt.chErr)
 			s.store.On("GetRecentMessages", mock.Anything, "ch-1", mock.Anything).Return([]*db.Message{}, tt.recent)
+			var startCtx context.Context
 			lr.On("StartLive", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 				return req.Live && req.AuthorID == "user-1" && req.SessionID == "sess-1"
-			}), mock.Anything).Return(tt.startErr)
+			}), mock.Anything).Run(func(args mock.Arguments) {
+				startCtx = args.Get(0).(context.Context)
+				if tt.activity != "" {
+					args.Get(1).(*agent.AgentRequest).OnActivity(tt.activity, "")
+				}
+			}).Return(tt.startErr)
 			lr.On("LiveInfo", "ch-1").Return(agent.LiveInfo{ChannelID: "ch-1", SessionID: "sess-1"}, true)
 
 			started, err := s.orch.WarmLiveSession(s.ctx, "ch-1", "user-1")
+			if startCtx != nil {
+				require.Equal(s.T(), tt.activity == "image_build", startCtx.Err() != nil)
+			}
 			if tt.wantErr != "" {
 				require.EqualError(s.T(), err, tt.wantErr)
 			} else {

@@ -52,12 +52,16 @@ func (s *Server) registerReviewTools() {
 	}, s.handlePushAllReviewComments)
 }
 
+// defaultMCPReviewIterations is run_review's number of passes when the
+// agent gives none; the Review panel's default stays 1.
+const defaultMCPReviewIterations = 3
+
 type runReviewInput struct {
 	PRNumber      int    `json:"pr_number" jsonschema:"required,Number of the pull request to review"`
 	Model         string `json:"model,omitempty" jsonschema:"Model for the review, e.g. opus or sonnet; defaults to the channel's"`
 	Effort        string `json:"effort,omitempty" jsonschema:"Reasoning effort: low, medium, high, xhigh or max; defaults to the channel's"`
 	Mode          string `json:"mode,omitempty" jsonschema:"review (default) to only review, or review-fix to fix the findings and review again"`
-	MaxIterations int    `json:"max_iterations,omitempty" jsonschema:"Number of passes, 1-10 (default 1)"`
+	MaxIterations int    `json:"max_iterations,omitempty" jsonschema:"Number of passes, 1-10 (default 3)"`
 	ChannelID     string `json:"channel_id,omitempty" jsonschema:"Channel or thread to run the review in; defaults to this one"`
 }
 
@@ -70,7 +74,7 @@ func (s *Server) handleRunReview(_ context.Context, _ *mcp.CallToolRequest, inpu
 		"model":          input.Model,
 		"effort":         input.Effort,
 		"mode":           input.Mode,
-		"max_iterations": input.MaxIterations,
+		"max_iterations": cmp.Or(input.MaxIterations, defaultMCPReviewIterations),
 	})
 	apiURL := fmt.Sprintf("%s/api/channels/%s/review/start", s.apiURL, url.PathEscape(channelID))
 	type startResult struct {

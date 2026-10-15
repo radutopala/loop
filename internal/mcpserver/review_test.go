@@ -375,15 +375,15 @@ func (s *ReviewToolSuite) TestRunReview() {
 			args:     map[string]any{"pr_number": 7},
 			resp:     `{"run_id":"r1","workflow_name":"review-loop","model":"","effort":""}`,
 			wantURL:  "http://localhost:8222/api/channels/test-channel/review/start",
-			wantBody: map[string]any{"pr_number": float64(7), "model": "", "effort": "", "mode": "", "max_iterations": float64(0)},
+			wantBody: map[string]any{"pr_number": float64(7), "model": "", "effort": "", "mode": "", "max_iterations": float64(3)},
 			want:     "Review of PR #7 started in channel test-channel: workflow review-loop, run ID r1, model default, effort default. Use get_workflow_run to check progress.",
 		},
 		{
 			name:     "another thread, fix loop",
-			args:     map[string]any{"pr_number": 9, "channel_id": "th 2", "model": "opus", "effort": "high", "mode": "review-fix", "max_iterations": 3},
+			args:     map[string]any{"pr_number": 9, "channel_id": "th 2", "model": "opus", "effort": "high", "mode": "review-fix", "max_iterations": 5},
 			resp:     `{"run_id":"r2","workflow_name":"review-fix-loop","model":"opus","effort":"high"}`,
 			wantURL:  "http://localhost:8222/api/channels/th%202/review/start",
-			wantBody: map[string]any{"pr_number": float64(9), "model": "opus", "effort": "high", "mode": "review-fix", "max_iterations": float64(3)},
+			wantBody: map[string]any{"pr_number": float64(9), "model": "opus", "effort": "high", "mode": "review-fix", "max_iterations": float64(5)},
 			want:     "Review of PR #9 started in channel th 2: workflow review-fix-loop, run ID r2, model opus, effort high. Use get_workflow_run to check progress.",
 		},
 	}
