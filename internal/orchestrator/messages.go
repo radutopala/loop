@@ -339,7 +339,7 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 	defer stopTyping()
 	go o.refreshTyping(typingCtx, msg.ChannelID)
 
-	resp, lastStreamedText, runID, finish, err := o.executeAgentRun(ctx, msg, req, channel)
+	resp, lastStreamedText, runID, finish, err := o.executeAgentRun(ctx, msg, req, channel, o.runChat)
 	if err != nil {
 		// Mark the trigger message as processed even on error/stop so the
 		// frontend doesn't keep showing it as "processing" when the next
@@ -378,7 +378,8 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 // the user didn't ask for: "learn" for a learn pass, "explain" for an
 // explanation, "plugin" for a plugin's agent run, "bot" when the bot
 // itself re-entered HandleMessage (an agent posting via the send_message or
-// create_thread MCP tools), "learn-reply" for a user's message in a learn
+// create_thread MCP tools), "live" for a turn a live session started by
+// itself, "learn-reply" for a user's message in a learn
 // thread, "" for a user's message anywhere else.
 func (o *Orchestrator) runTrigger(ch *db.Channel, authorID string) string {
 	switch {
@@ -388,6 +389,8 @@ func (o *Orchestrator) runTrigger(ch *db.Channel, authorID string) string {
 		return "explain"
 	case authorID == pluginAuthorID:
 		return "plugin"
+	case authorID == liveAuthorID:
+		return "live"
 	case o.bot.IsBotUser(authorID):
 		return "bot"
 	case ch != nil && ch.Kind == db.ChannelKindLearn:
@@ -511,6 +514,7 @@ func (o *Orchestrator) prepareAgentRequest(ctx context.Context, msg *bot.Incomin
 		)
 		req.Prompt = dirHint + "\n\n" + req.Prompt
 	}
+	req.Live = o.useLive(req, msg, channel)
 
 	return req, recent, channel, nil
 }
@@ -520,7 +524,9 @@ func (o *Orchestrator) prepareAgentRequest(ctx context.Context, msg *bot.Incomin
 // run failed and the caller should abort. The finish field carries the deferred
 // agent.status non-running broadcast (completed/error); the caller fires it AFTER
 // markTriggerProcessed so the FE sees messages.processed before refetchHead.
-func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMessage, req *agent.AgentRequest, channel *db.Channel) (*agent.AgentResponse, string, string, *runFinishStatus, error) {
+// run runs req: the runner's Run, or the wait for a turn a live session
+// started by itself.
+func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMessage, req *agent.AgentRequest, channel *db.Channel, run func(context.Context, *agent.AgentRequest) (*agent.AgentResponse, error)) (*agent.AgentResponse, string, string, *runFinishStatus, error) {
 	chatID := int64(0)
 	if channel != nil {
 		chatID = channel.ID
@@ -687,12 +693,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 			})
 		}
 		req.OnActivity = func(activity, detail string) {
-			data := events.AgentActivityEventData{Activity: activity}
-			if activity == "model" {
-				data.Model = detail
-			} else {
-				data.Description = detail
-			}
+			data := activityData(activity, detail)
 			if activity == "compacting" {
 				storeAgentEvent(ctx, o.store, chatID, msg.ChannelID, &db.Message{
 					Kind:         db.MessageKindCompacting,
@@ -707,7 +708,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 		o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{Status: "running", RunID: runID, TriggerContent: msg.Content, Trigger: trigger, MsgID: msg.MessageID})
 	}
 
-	resp, err := o.runner.Run(runCtx, req)
+	resp, err := run(runCtx, req)
 	o.recordPrompt(ctx, channel, msg.MessageID, firstReply)
 	if err != nil {
 		if selfInitiatedPlan.Load() {

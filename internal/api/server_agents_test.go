@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"github.com/radutopala/loop/internal/agentregistry"
@@ -28,6 +29,7 @@ func (s *ServerSuite) TestAgentSetAgentRegistry() {
 // --- handleListAgents ---
 
 func (s *ServerSuite) TestAgentListAgentsSuccess() {
+	s.store.On("GetChannel", mock.Anything, mock.Anything).Return(nil, nil).Maybe()
 	reg := agentregistry.New()
 	s.srv.SetAgentRegistry(reg)
 	defer func() { s.srv.agentRegistry = nil }()
@@ -46,6 +48,7 @@ func (s *ServerSuite) TestAgentListAgentsSuccess() {
 }
 
 func (s *ServerSuite) TestAgentListAgentsEmpty() {
+	s.store.On("GetChannel", mock.Anything, mock.Anything).Return(nil, nil).Maybe()
 	reg := agentregistry.New()
 	s.srv.SetAgentRegistry(reg)
 	defer func() { s.srv.agentRegistry = nil }()
@@ -175,6 +178,7 @@ func (s *ServerSuite) TestAgentSendMessage() {
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
+			s.store.On("GetChannel", mock.Anything, mock.Anything).Return(nil, nil).Maybe()
 			reg := agentregistry.New()
 			s.srv.SetAgentRegistry(reg)
 			defer func() { s.srv.agentRegistry = nil }()
@@ -208,6 +212,7 @@ func (s *ServerSuite) TestAgentSendMessage() {
 }
 
 func (s *ServerSuite) TestAgentSendMessageTargetNotFound() {
+	s.store.On("GetChannel", mock.Anything, mock.Anything).Return(nil, nil).Maybe()
 	reg := agentregistry.New()
 	s.srv.SetAgentRegistry(reg)
 	defer func() { s.srv.agentRegistry = nil }()

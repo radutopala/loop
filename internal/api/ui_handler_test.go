@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,10 +11,12 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/radutopala/loop/internal/apiauth"
+	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/uibridge"
 )
 
@@ -84,6 +87,43 @@ func (s *UIHandlerSuite) TestWSRoundTrip() {
 	conn.Close()
 	s.waitVersion(3)
 	require.Empty(s.T(), s.srv.ui.Snapshot().Clients)
+}
+
+func (s *UIHandlerSuite) TestSelectSideChatOpensItsParent() {
+	store := new(MockChannelLister)
+	s.srv.store = store
+	store.On("GetChannel", mock.Anything, "side-1").Return(&db.Channel{ChannelID: "side-1", Kind: db.ChannelKindSide, ParentID: "ch-1"}, nil)
+	store.On("GetChannel", mock.Anything, "broken").Return(nil, errors.New("db down"))
+	store.On("GetChannel", mock.Anything, mock.Anything).Return(&db.Channel{ChannelID: "ch-1"}, nil)
+
+	conn := s.dial("w1")
+	s.waitVersion(1)
+	go func() {
+		for {
+			var cmd uibridge.Message
+			if conn.ReadJSON(&cmd) != nil {
+				return
+			}
+			_ = conn.WriteJSON(uibridge.Message{Type: uibridge.MsgResult, ID: cmd.ID, Results: cmd.Steps})
+		}
+	}()
+	tests := []struct {
+		name  string
+		steps string
+		want  string
+	}{
+		{"a side chat opens its parent", `[{"op":"select_channel","channel_id":"side-1"},{"op":"set_tab","tab":"Git"}]`, `[{"op":"select_channel","channel_id":"ch-1"},{"op":"set_tab","tab":"Git"}]`},
+		{"other channels stay", `[{"op":"select_channel","channel_id":"ch-1"},{"op":"select_channel","channel_id":"broken"},{"op":"select_channel"}]`, `[{"op":"select_channel","channel_id":"ch-1"},{"op":"select_channel","channel_id":"broken"},{"op":"select_channel"}]`},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			resp := s.post(`{"steps":` + tt.steps + `}`)
+			require.Equal(s.T(), http.StatusOK, resp.StatusCode)
+			var reply uibridge.Reply
+			require.NoError(s.T(), json.NewDecoder(resp.Body).Decode(&reply))
+			require.JSONEq(s.T(), tt.want, string(reply.Results))
+		})
+	}
 }
 
 func (s *UIHandlerSuite) TestWSBadHello() {
@@ -202,20 +242,34 @@ func (s *UIHandlerSuite) TestRunCommandWindowDisconnects() {
 func (s *UIHandlerSuite) TestTerminalStepsOnlyOnAgentPanes() {
 	conn := s.dial("w1")
 	s.waitVersion(1)
-	state := `{"panes":[{"id":"chat","panel":"chat"},{"id":"host-shell-0","panel":"host-shell"},{"id":"docker-agent-1","panel":"docker-agent"},{"id":"docker-shell-2","panel":"docker-shell"}]}`
+	state := `{"panes":[{"id":"chat","panel":"chat"},{"id":"notes-3","panel":"notes"},{"id":"host-shell-0","panel":"host-shell"},{"id":"docker-agent-1","panel":"docker-agent"},{"id":"docker-shell-2","panel":"docker-shell"}]}`
 	require.NoError(s.T(), conn.WriteJSON(uibridge.Message{Type: uibridge.MsgState, State: json.RawMessage(state)}))
 	s.waitVersion(2)
 
 	ops := []string{"send_input", "read_output", "wait_for"}
 	for _, op := range ops {
-		for _, pane := range []string{"host-shell", "host-shell-0", "chat", "missing", ""} {
+		for _, pane := range []string{"host-shell", "host-shell-0", "notes-3", "missing", ""} {
 			s.Run(op+" refuses "+pane, func() {
 				resp := s.post(`{"steps":[{"op":"select_channel","channel_id":"c1"},{"op":"` + op + `","pane":"` + pane + `","text":"ls"}]}`)
 				require.Equal(s.T(), http.StatusBadRequest, resp.StatusCode)
 				body, _ := io.ReadAll(resp.Body)
-				require.Contains(s.T(), string(body), op+" only works on docker-agent and docker-shell panes")
+				require.Contains(s.T(), string(body), op+" only works on docker-agent, docker-shell, chat and chat-side panes")
 			})
 		}
+	}
+	refused := []struct{ name, steps string }{
+		{"a host shell", `{"op":"add_pane","panel":"host-shell"},{"op":"send_input","pane":"$1","text":"ls"}`},
+		{"a step that makes no pane", `{"op":"set_tab","tab":"Chat"},{"op":"send_input","pane":"$1","text":"ls"}`},
+		{"itself", `{"op":"send_input","pane":"$1","text":"ls"}`},
+		{"a later step", `{"op":"send_input","pane":"$2","text":"ls"},{"op":"add_pane","panel":"docker-shell"}`},
+		{"$0", `{"op":"add_pane","panel":"docker-shell"},{"op":"send_input","pane":"$0","text":"ls"}`},
+		{"$x", `{"op":"add_pane","panel":"docker-shell"},{"op":"send_input","pane":"$x","text":"ls"}`},
+	}
+	for _, tt := range refused {
+		s.Run("a $n pane of "+tt.name, func() {
+			resp := s.post(`{"steps":[` + tt.steps + `]}`)
+			require.Equal(s.T(), http.StatusBadRequest, resp.StatusCode)
+		})
 	}
 
 	go func() {
@@ -228,12 +282,18 @@ func (s *UIHandlerSuite) TestTerminalStepsOnlyOnAgentPanes() {
 		}
 	}()
 	for _, op := range ops {
-		for _, pane := range []string{"docker-agent", "docker-shell", "docker-agent-1", "docker-shell-2"} {
+		for _, pane := range []string{"docker-agent", "docker-shell", "docker-agent-1", "docker-shell-2", "chat", "chat-side"} {
 			s.Run(op+" allows "+pane, func() {
 				resp := s.post(`{"steps":[{"op":"` + op + `","pane":"` + pane + `","text":"hi"}]}`)
 				require.Equal(s.T(), http.StatusOK, resp.StatusCode)
 			})
 		}
+	}
+	for _, panel := range []string{"docker-agent", "chat-side"} {
+		s.Run("allows the "+panel+" pane a step before adds", func() {
+			resp := s.post(`{"steps":[{"op":"replace_pane","pane":"notes-3","panel":"` + panel + `"},{"op":"send_input","pane":"$1","text":"hi"}]}`)
+			require.Equal(s.T(), http.StatusOK, resp.StatusCode)
+		})
 	}
 }
 

@@ -63,7 +63,7 @@ interface LeafNode {
 }
 ```
 
-`openMode` is persisted per leaf so that re-opening a layout boots each Docker Agent pane in the same session-handling mode the user originally picked. Legacy persisted leaves and built-in defaults (e.g. the **Swarm** layout) omit it and fall through to `"fork"` -- see [Agent Open Modes](#agent-open-modes).
+`openMode` is persisted per leaf so that re-opening a layout boots each Chat Terminal pane in the same session-handling mode the user originally picked. Legacy persisted leaves and built-in defaults (e.g. the **Swarm** layout) omit it and fall through to `"fork"` -- see [Agent Open Modes](#agent-open-modes).
 
 ### SplitNode
 
@@ -101,7 +101,8 @@ interface SplitNode {
 | Quality | `quality` | `"quality"` | Yes | Architectural quality signal (see [quality.md](quality.md)) |
 | Review | `review` | `"review"` | Yes | Load a GitHub PR into a local worktree, run an agent review pass, and push inline comments back to the PR (see [review.md](review.md)) |
 | Playground | `playground` | `"playground-N"` | No | Live interactive code sandbox (HTML/CSS/JS) |
-| Docker Agent | `docker-agent` | `"docker-agent-N"` | No | Docker-isolated terminal running Claude Code. The pane-split menu and `EmptyLayoutPicker` expose three variants — **Resume**, **Resume with fork**, **Fresh session** — that choose how the pane boots Claude relative to the channel's stored session (see [Agent Open Modes](#agent-open-modes) below). |
+| Side Chat | `chat-side` | `"chat-side-N"` | No | A [side chat](chat.md#side-chats): a chat with its own live session next to the channel's, offered as **Chat (Resume with fork)** and **Chat (Fresh session)**. The header reads `Chat · fork` or `Chat · fresh`. The pane's side chat id is kept in `localStorage` under `side-chats:<channelId>` (pane id → side chat id); closing the pane deletes the side chat, and side chats with no pane left are deleted when the layout loads. |
+| Chat Terminal | `docker-agent` | `"docker-agent-N"` | No | Docker-isolated terminal running Claude Code: Claude's own terminal app on the channel's session, for its slash commands (`/model`, `/compact`, `/context`) and the Swarm. Labelled "Docker Agent" before; only the label changed, so saved layouts keep their `docker-agent` leaves as they are. The pane-split menu and `EmptyLayoutPicker` expose three variants — **Resume**, **Resume with fork**, **Fresh session** — that choose how the pane boots Claude relative to the channel's stored session (see [Agent Open Modes](#agent-open-modes) below). |
 | Host Shell | `host-shell` | `"host-shell-N"` | No | Local machine shell session |
 | Docker Shell | `docker-shell` | `"docker-shell-N"` | No | Plain bash shell inside the Docker container (no Claude) |
 
@@ -109,9 +110,9 @@ interface SplitNode {
 
 **Hidden layout tabs**: The Sessions tab is hidden from the layout tab bar in threads; the Review tab is hidden unless the channel has reviews enabled. Every other tab, Kanban included, is available in channels, threads and worktree threads alike.
 
-**Multi-instance panels** (docker-agent, host-shell, docker-shell, playground) can appear multiple times. Each instance gets a unique numbered ID (e.g., `docker-agent-0`, `host-shell-1`, `docker-shell-0`, `playground-0`) from a per-channel counter.
+**Multi-instance panels** (chat-side, docker-agent, host-shell, docker-shell, playground) can appear multiple times. Each instance gets a unique numbered ID (e.g., `docker-agent-0`, `host-shell-1`, `docker-shell-0`, `playground-0`) from a per-channel counter.
 
-**Docker Agent vs Docker Shell**: Both connect to the same docker container (`target: "agent"`), so files and processes are shared. Docker Agent launches Claude Code on connect; Docker Shell sends `cmd: ["/bin/bash"]` to bypass the Claude bootstrap and land on a plain bash prompt. Either pane type keeps the container alive — `hasAgentLeaf()` returns true for both.
+**Chat Terminal vs Docker Shell**: Both connect to the same docker container (`target: "agent"`), so files and processes are shared. Chat Terminal launches Claude Code on connect; Docker Shell sends `cmd: ["/bin/bash"]` to bypass the Claude bootstrap and land on a plain bash prompt. Either pane type keeps the container alive — `hasAgentLeaf()` returns true for both.
 
 **Exclusive panels** are singleton panels that are mutually exclusive -- only one from each exclusive group can exist in a layout at a time. If one is present, the others in the same group are greyed out and disabled in the split menu.
 
@@ -141,7 +142,7 @@ Default layouts are created for every new channel:
 | **Git** | Single leaf: Git | |
 | **Browser Chat** | Horizontal split: Chat (30%) + (Docker Browser 70% over a 30% row of Git 50% \| Host Shell 50%) | |
 | **Sessions** | Single leaf: Sessions | Channels only — hidden for threads |
-| **Swarm** | Three Docker Agent panels in a split | |
+| **Swarm** | Three Chat Terminal panels in a split | |
 
 The "Chat" layout is the initial active layout.
 
@@ -207,7 +208,7 @@ New migrations increment `CURRENT_VERSION` and add an entry to the `migrations` 
 
 ## Container Stats Readout
 
-The chat panel header and every Docker Agent pane header (split and canvas layouts alike) show a compact live resource readout on their right side — `12% · 384M` — for the container backing the panel: the chat panel reads the channel's **agent** container, Docker Agent panes read the shared **shell** container all three open modes exec into. One `useContainerStats` poll per workspace hits [`GET /api/channels/{id}/container-stats`](api.md#get-apichannelsidcontainer-stats) every ~3s (paused while the window is hidden); hovering the readout shows the container id and exact CPU/memory-of-limit numbers. Nothing renders when no container is running.
+The chat panel header and every Chat Terminal pane header (split and canvas layouts alike) show a compact live resource readout on their right side — `12% · 384M` — for the container backing the panel: the chat panel reads the channel's **agent** container, Chat Terminal panes read the shared **shell** container all three open modes exec into. One `useContainerStats` poll per workspace hits [`GET /api/channels/{id}/container-stats`](api.md#get-apichannelsidcontainer-stats) every ~3s (paused while the window is hidden); hovering the readout shows the container id and exact CPU/memory-of-limit numbers. Nothing renders when no container is running.
 
 ---
 
@@ -308,13 +309,13 @@ In the `PaneSplitMenu`, singleton panels that are already present and exclusive 
 
 ## Agent Open Modes
 
-Docker Agent panes choose **up front** how Claude Code boots relative to the channel's stored session. The pane-split menu (`+` button on any pane header) and the `EmptyLayoutPicker` (shown when a Split layout has no tree) both expand the single "Docker Agent" entry into three labelled variants:
+Chat Terminal panes choose **up front** how Claude Code boots relative to the channel's stored session. The pane-split menu (`+` button on any pane header) and the `EmptyLayoutPicker` (shown when a Split layout has no tree) both expand the single "Chat Terminal" entry into three labelled variants:
 
 | Label | `openMode` value | Behavior |
 |-------|------------------|----------|
-| **Docker Agent (Resume)** | `"resume"` | Resume the channel's existing Claude session in place. Falls back to a fresh session when the channel has no stored `session_id`. |
-| **Docker Agent (Resume with fork)** | `"fork"` | Resume the stored session with the fork flag set so the new run gets its own session id without losing the parent context. Auto-disabled (treated as `"resume"`) when the channel has no `session_id`. |
-| **Docker Agent (Fresh session)** | `"fresh"` | Ignore the stored `session_id` entirely — Claude starts a new conversation. |
+| **Chat Terminal (Resume)** | `"resume"` | Resume the channel's existing Claude session in place. Falls back to a fresh session when the channel has no stored `session_id`. |
+| **Chat Terminal (Resume with fork)** | `"fork"` | Resume the stored session with the fork flag set so the new run gets its own session id without losing the parent context. Auto-disabled (treated as `"resume"`) when the channel has no `session_id`. |
+| **Chat Terminal (Fresh session)** | `"fresh"` | Ignore the stored `session_id` entirely — Claude starts a new conversation. |
 
 The picked mode is written to `LeafNode.openMode` and (for Canvas layouts) `CanvasTile.openMode`, then sent to the terminal WebSocket as the `open_mode` field on the `create` message (see [terminal.md](terminal.md#create)).
 
@@ -323,7 +324,9 @@ The picked mode is written to `LeafNode.openMode` and (for Canvas layouts) `Canv
 type AgentOpenMode = "resume" | "fork" | "fresh";
 ```
 
-**Default for layouts created before this feature** (and for the built-in Swarm layout, which spawns three Docker Agent leaves without explicit modes): `WorkspaceLayout` resolves `leaf.openMode ?? "fork"` when sending `create`, preserving the previous auto-fork behavior.
+Side chat panes (`chat-side`) take an open mode too, from `fork` and `fresh` only: resuming the channel's session in place is the Chat pane's. The menus show them as **Chat (Resume with fork)** and **Chat (Fresh session)**; the mode is sent to [`POST /api/channels/{id}/side-chats`](api.md#post-apichannelsidside-chats) when the pane opens.
+
+**Default for layouts created before this feature** (and for the built-in Swarm layout, which spawns three Chat Terminal leaves without explicit modes): `WorkspaceLayout` resolves `leaf.openMode ?? "fork"` when sending `create`, preserving the previous auto-fork behavior.
 
 ---
 

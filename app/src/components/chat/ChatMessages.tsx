@@ -17,7 +17,7 @@ export interface ChatMessagesProps {
   scrollToMessageId?: number | null;
   /** The find bar's term: the view goes to it inside the message, and it's marked. */
   findTerm?: string;
-  onScrollComplete?: () => void;
+  onScrollComplete?: (found: boolean) => void;
   onQuote?: (msg: Message) => void;
   // Opens a queued message in the composer for editing; resolves false when
   // the message already started.
@@ -221,7 +221,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
       const range = revealMessage(containerRef.current, el, findTerm);
       if (range) CSS.highlights?.set(FIND_HIGHLIGHT, new Highlight(range));
       setHighlightedMsgId(scrollToMessageId);
-      onScrollComplete?.();
+      onScrollComplete?.(true);
       return;
     }
     // Wait for the first page, and for a page that's on its way.
@@ -229,7 +229,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
     // Row ids grow with the timeline, so once the oldest loaded item is older
     // than the message, it isn't in this channel's chat.
     if (hasMore && items[0]!.id > scrollToMessageId) loadMore();
-    else onScrollComplete?.();
+    else onScrollComplete?.(false);
   }, [scrollToMessageId, messages, items, loading, hasMore, loadMore]);
 
   // The marked occurrence goes when the find bar closes or its term changes.

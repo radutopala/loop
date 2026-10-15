@@ -20,7 +20,8 @@ export interface UiStep {
   side?: string;
   text?: string;
   submit?: boolean;
-  /** read_output, wait_for: how many of the terminal's last lines. */
+  /** read_output, wait_for: how many of the terminal's (or chat's) last
+   *  lines. */
   lines?: number;
   /** wait_for: a regular expression the terminal's output must match. */
   match?: string;
@@ -29,6 +30,8 @@ export interface UiStep {
   /** open_file: a path in one of the channel's roots. */
   path?: string;
   line?: number;
+  /** show_message: a message of the open channel's chat. */
+  message_id?: number;
   /** replace_pane, add_pane: the playground a playground pane shows, or
    *  the panel a plugin pane shows, as plugin/panel or the plugin's id. */
   item?: string;
@@ -43,7 +46,7 @@ export interface StepResult {
   pane?: string;
   /** create_tab, rename_tab: the tab's name. */
   tab?: string;
-  /** read_output, wait_for: the terminal's last lines. */
+  /** read_output, wait_for: the terminal's (or chat's) last lines. */
   output?: string;
 }
 
@@ -126,6 +129,27 @@ export interface TerminalInput {
   send(data: string): void;
 }
 
+/** A message of a chat pane's chat, as read_output shows it. */
+export interface ChatLine {
+  id: number;
+  author: string;
+  bot: boolean;
+  content: string;
+}
+
+/** A chat pane's chat: the channel's (a chat pane), or a side chat's (a
+ *  chat-side pane). send_input queues a message in it, as its composer does. */
+export interface ChatPaneInput {
+  /** Whether it's working on a message, or has one queued to run. */
+  busy(): boolean;
+  /** What it waits on an answer to before it takes a message (a question,
+   *  a plan or an approval card), or null. */
+  blocked(): string | null;
+  /** Its loaded messages, oldest first. */
+  messages(): ChatLine[];
+  send(text: string): Promise<void>;
+}
+
 /** What the executor needs from the app. */
 export interface UiHost {
   selectedChannelId(): string | null;
@@ -134,9 +158,13 @@ export interface UiHost {
   selectChannel(id: string): Promise<void>;
   workspace(channelId: string): WorkspaceController | undefined;
   terminal(channelId: string, paneId: string): TerminalInput | undefined;
+  chat(channelId: string, paneId: string): ChatPaneInput | undefined;
   /** Opens a file of the channel's roots in its editor; rejects if there's
    *  no such file. */
   openFile(channelId: string, path: string, line?: number): Promise<void>;
+  /** Scrolls channelId's chat to a message and highlights it; false when
+   *  the chat has no such message. */
+  showMessage(channelId: string, messageId: number): Promise<boolean>;
   /** The playgrounds a channel's playground panes can show. */
   playgrounds(channelId: string): Promise<PlaygroundPick[]>;
   now(): number;

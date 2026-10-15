@@ -353,7 +353,7 @@ func (s *StoreSuite) TestSearchMessages() {
 	rows := addMessageRow(addMessageRow(newMockMessageRows(),
 		10, 1, "ch1", "msg10", "u1", "alice", "hello world", 0, 0, now),
 		5, 2, "ch2", "msg5", "bot", "assistant", "hello there", 1, 1, now)
-	s.mock.ExpectQuery(`SELECT .+ FROM messages WHERE .+ content LIKE \?\s+AND channel_id NOT IN \(SELECT channel_id FROM channels WHERE \(kind IN \('learn', 'explain'\) OR kind LIKE 'plugin:_%'\)\)\s+ORDER BY created_at DESC LIMIT`).
+	s.mock.ExpectQuery(`SELECT .+ FROM messages WHERE .+ content LIKE \?\s+AND channel_id NOT IN \(SELECT channel_id FROM channels WHERE \(kind = 'side' OR \(kind IN \('learn', 'explain'\) OR kind LIKE 'plugin:_%'\)\)\)\s+ORDER BY created_at DESC LIMIT`).
 		WithArgs("%hello%", 20).
 		WillReturnRows(rows)
 

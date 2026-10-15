@@ -323,7 +323,7 @@ The backend also broadcasts [`gate.approval_resolved`](events.md#gateapproval_re
 
 ### Terminal-panel overlay variant
 
-The same `ApprovalCard` component (extracted to `src/components/chat/ApprovalCard.tsx`) is also rendered as a dimmed, centered overlay inside each Docker Agent `Terminal` panel. When a layout has no Chat panel visible (for example, a Swarm layout with three Docker Agents side-by-side), the panel's own terminal gets the approval prompt layered on top of the xterm so the operator can decide without switching layouts. The overlay sits in the Terminal's `position: relative` content region, uses a `rgba(0,0,0,0.55)` backdrop, and renders the card with its default margin reset (`style={{ margin: 0 }}`) so it fits the 520-px-wide popover. Resolution uses the same `POST /api/gate/approvals/{id}` path; `clearGateApproval` is passed as `onGateApprovalResolved` so dismissing from one surface dismisses on all of them.
+The same `ApprovalCard` component (extracted to `src/components/chat/ApprovalCard.tsx`) is also rendered as a dimmed, centered overlay inside each Chat Terminal `Terminal` panel. When a layout has no Chat panel visible (for example, a Swarm layout with three Chat Terminals side-by-side), the panel's own terminal gets the approval prompt layered on top of the xterm so the operator can decide without switching layouts. The overlay sits in the Terminal's `position: relative` content region, uses a `rgba(0,0,0,0.55)` backdrop, and renders the card with its default margin reset (`style={{ margin: 0 }}`) so it fits the 520-px-wide popover. Resolution uses the same `POST /api/gate/approvals/{id}` path; `clearGateApproval` is passed as `onGateApprovalResolved` so dismissing from one surface dismisses on all of them.
 
 ---
 
@@ -483,9 +483,9 @@ A separate `$` picker surfaces shell-command shortcuts on terminal panes (not in
 The picker lives in the footer bar below each terminal:
 
 - **Docker Shell** and **Host Shell** panes — shows a `$` button. Picked commands are sent as raw text + `\n` (bash doesn't enable bracketed paste by default).
-- **Docker Agent** panes — shows the `#` prompt-shortcut button instead of `$`. Picked entries are wrapped in `ESC[200~ … ESC[201~\r` so multi-line scripts arrive as a single bracketed-paste buffer in Claude's TUI.
+- **Chat Terminal** panes — shows the `#` prompt-shortcut button instead of `$`. Picked entries are wrapped in `ESC[200~ … ESC[201~\r` so multi-line scripts arrive as a single bracketed-paste buffer in Claude's TUI.
 
-The two buttons are mutually exclusive per pane — a Docker Shell or Host Shell pane never shows `#`, and a Docker Agent pane never shows `$`. Selecting a shortcut sends the resolved command/prompt immediately. Backed by `GET /api/bash-shortcuts` (project shortcuts merge on top of global ones when `channel_id` is passed).
+The two buttons are mutually exclusive per pane — a Docker Shell or Host Shell pane never shows `#`, and a Chat Terminal pane never shows `$`. Selecting a shortcut sends the resolved command/prompt immediately. Backed by `GET /api/bash-shortcuts` (project shortcuts merge on top of global ones when `channel_id` is passed).
 
 ---
 
@@ -720,7 +720,7 @@ The chat view accepts a `scrollToMessageId` prop from the [Command Palette](sett
 When there are no messages and loading is complete, the chat view shows:
 - Centered Loop logo
 - Full-width input area at the bottom
-- Docker isolation label: "Running non-interactively in an isolated Docker container"
+- Docker isolation label: "Running interactively in an isolated Docker container" (see [Docker Isolation Label](#docker-isolation-label))
 
 ---
 
@@ -841,6 +841,27 @@ The hold is a lease: the hook renews it every 2 minutes, and the backend drops i
 
 Above the composer, one row per [monitor](api.md#post-apichannelsidmonitors) the channel's agent left running with the `monitor` MCP tool: its description, how long it has run, and a Cancel button that stops it without waking the agent. Hovering a row shows its command. Rows come from [`GET /api/channels/{id}/monitors`](api.md#get-apichannelsidmonitors), refetched on each WebSocket reconnect, and follow the [`monitor.started` / `monitor.finished`](events.md#monitorstarted--monitorfinished) events. A monitor that ends drops out; the message it wakes the agent with shows in the chat like any queued message.
 
+## Live Sessions
+
+A chat's turns run in a live session: one Claude Code process, in its own Docker container, that stays up between turns and reads each new prompt from its input. Everything else about the chat is unchanged: messages queue and steer as before, Stop interrupts the turn, asks and plans prompt the same way, and a model or settings change applies from the next turn.
+
+- **Lazy start.** The session starts with the channel's next message when none is running, resuming the channel's Claude session, and every later message reuses it. In the app, typing a message already starts it, so the container is up by the time you send. It stops after `live_session_idle_sec` (default 600; 0 never stops it) without a turn or background task; the next message starts a new one on the same session.
+- **Background work.** Tasks the agent left in the background (shells, subagents, [monitors](#monitors)) keep running while the session waits. When one finishes, the agent can take a turn on its own; its reply posts to the chat like any other, on Slack and Discord too.
+- **Threads.** A +thread or +wt thread's first turn forks the parent's session, as before, into its own live session; a fork at a message resumes at that message. A +wt thread runs in its worktree.
+- **Restarts.** A change to what the process was started with (its model, image, env, mounts, MCP servers, gates) restarts it on the same Claude session with reason `config changed`. A turn on another Claude session than the one running (a session resumed from the session list, say) restarts it with `session changed`.
+- **One-shot runs.** [Learn](#learn-from-a-run), [Explain](#explain-a-turn), reviews, plugin and read-only runs, workflow steps and scheduled tasks run one-shot (`claude --print`) as they did. A scheduled task that runs in a thread with a live session stops that session first (`scheduled run`), once it holds the thread; the next chat message resumes the session with the task's turns in it. A one-shot run on the channel's own session stops its live session the same way (`one-shot run`).
+- **Turning it off.** `live_sessions: false` in the global config runs every chat turn one-shot, as before. `live_session_platforms` limits live sessions to some platforms (`["local"]` keeps Slack and Discord one-shot); empty means all.
+
+### Live status
+
+The footer's infinity icon shows the session: animated during a turn, solid in the theme's accent color while a live session waits idle between turns, and dimmed when none is running (hover it for which). After "Running interactively…" the footer adds the background tasks the session waits on (`· waiting on 1 background task: watch CI`), and when the session ends for a reason worth knowing, why, e.g. "· Session ended: stopped for a scheduled task". A session that stopped after being idle, or was stopped through the API, shows only the dimmed icon. It follows the [`live.status`](events.md#livestatus) event and is fetched from [`GET /api/channels/{id}/live`](api.md#get-apichannelsidlive) on open and on each reconnect.
+
+### Side chats
+
+**Chat (Resume with fork)** and **Chat (Fresh session)** in a pane's add menu open a side chat next to the channel's own: an unlisted chat with its own live session and container, that doesn't touch the channel's chat or session. A fork starts from the channel's current session; a fresh one starts a new session in the same project. A pane can open any number of them. Closing the pane stops its session and deletes the side chat; side chats left behind by a closed window are removed the next time the layout loads. See [`POST /api/channels/{id}/side-chats`](api.md#post-apichannelsidside-chats).
+
+---
+
 ## Docker Isolation Label
 
-Below the input area, a small label reads: "Running non-interactively in an isolated Docker container" with a monitor icon. The icon stroke color changes to green (`#48bb78`) when the agent is running.
+Below the input area, a small label reads "Running interactively in an isolated Docker container" when the chat's turns run in a [live session](#live-sessions), or "Running non-interactively in an isolated Docker container" when they run one-shot (live sessions off for the channel's platform, or a hidden learn or explain thread), with a monitor icon. The icon stroke color changes to green (`#48bb78`) when the agent is running.

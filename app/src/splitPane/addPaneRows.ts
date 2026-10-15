@@ -1,5 +1,5 @@
 import { type PluginPanelsValue, pluginPaneOptions } from "../plugins/PluginPanelsContext";
-import { AGENT_OPEN_MODE_OPTIONS, EXCLUSIVE_PANELS, PANEL_OPTIONS, type PanelType, type PaneMeta, SINGLETON_PANELS } from "../types/panels";
+import { AGENT_OPEN_MODE_OPTIONS, EXCLUSIVE_PANELS, openModesFor, PANEL_OPTIONS, type PanelType, type PaneMeta, SINGLETON_PANELS } from "../types/panels";
 
 /** One entry of an add-pane menu. */
 export interface AddPaneRow {
@@ -13,15 +13,18 @@ export interface AddPaneRow {
   description?: string;
 }
 
-/** The add-pane menu entries: the built-in panels (docker-agent once per
- *  open mode), then the installed plugins' panels. */
+/** The add-pane menu entries: the built-in panels (docker-agent and
+ *  chat-side once per open mode they take), then the installed plugins'
+ *  panels. */
 export function addPaneRows(used: Set<PanelType>, plugins: PluginPanelsValue, hiddenPanels?: PanelType[]): AddPaneRow[] {
   const rows: AddPaneRow[] = [];
   for (const { panel, label } of PANEL_OPTIONS) {
     if (hiddenPanels?.includes(panel)) continue;
     const disabled = (SINGLETON_PANELS.includes(panel) && used.has(panel)) || EXCLUSIVE_PANELS.some((g) => g.includes(panel) && g.some((x) => x !== panel && used.has(x)));
-    if (panel === "docker-agent") {
-      for (const m of AGENT_OPEN_MODE_OPTIONS) rows.push({ key: `${panel}-${m.mode}`, panel, label: `${label} (${m.label})`, meta: { openMode: m.mode }, disabled, description: m.description });
+    const modes = openModesFor(panel);
+    if (modes.length > 0) {
+      for (const m of AGENT_OPEN_MODE_OPTIONS.filter((o) => modes.includes(o.mode)))
+        rows.push({ key: `${panel}-${m.mode}`, panel, label: `${label} (${m.label})`, meta: { openMode: m.mode }, disabled, description: m.description });
     } else {
       rows.push({ key: panel, panel, label, disabled });
     }

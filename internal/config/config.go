@@ -36,6 +36,9 @@ type jsonConfig struct {
 	ContainerMemoryMB          *int64                     `json:"container_memory_mb"`
 	ContainerCPUs              *float64                   `json:"container_cpus"`
 	ContainerKeepAliveSec      *int                       `json:"container_keep_alive_sec"`
+	LiveSessionIdleSec         *int                       `json:"live_session_idle_sec"`
+	LiveSessions               *bool                      `json:"live_sessions"`
+	LiveSessionPlatforms       []string                   `json:"live_session_platforms"`
 	PollIntervalSec            *int                       `json:"poll_interval_sec"`
 	APIAddr                    string                     `json:"api_addr"`
 	APIAdvertiseURL            string                     `json:"api_advertise_url"`
@@ -295,6 +298,8 @@ func (l *Loader) parse() (*Config, error) {
 		ContainerMemoryMB:          ptrDefault(jc.ContainerMemoryMB, defaultContainerMemoryMB),
 		ContainerCPUs:              ptrDefault(jc.ContainerCPUs, 1.0),
 		ContainerKeepAlive:         time.Duration(ptrDefault(jc.ContainerKeepAliveSec, 300)) * time.Second,
+		LiveSessionIdle:            time.Duration(ptrDefault(jc.LiveSessionIdleSec, 600)) * time.Second,
+		LiveSessions:               ptrDefault(jc.LiveSessions, true),
 		PollInterval:               time.Duration(ptrDefault(jc.PollIntervalSec, 30)) * time.Second,
 		APIAddr:                    stringDefault(jc.APIAddr, ":8222"),
 		APIAdvertiseURL:            jc.APIAdvertiseURL,
@@ -558,6 +563,9 @@ func (l *Loader) parse() (*Config, error) {
 	// Build the platforms list.
 	for _, p := range jc.Platforms {
 		cfg.Platforms = append(cfg.Platforms, types.Platform(strings.ToLower(p)))
+	}
+	for _, p := range jc.LiveSessionPlatforms {
+		cfg.LiveSessionPlatforms = append(cfg.LiveSessionPlatforms, types.Platform(strings.ToLower(p)))
 	}
 
 	return cfg, nil

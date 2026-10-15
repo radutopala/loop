@@ -855,6 +855,9 @@ func (a *app) serve() error {
 	apiSrv.SetIncomingMessageHandler(chatBot)
 	monitors := monitor.NewManager(runner, apiSrv.WakeChannel, apiSrv.PublishChannelEvent, logger)
 	apiSrv.SetMonitors(monitors)
+	orch.SetLiveRunner(runner, apiSrv.PublishChannelEvent)
+	executor.SetLiveSessions(orch)
+	apiSrv.SetLiveSessions(orch)
 	apiSrv.SetRunCanceller(orch)
 	apiSrv.SetExplainer(orch)
 	apiSrv.SetLearnTurner(orch)
@@ -966,6 +969,8 @@ func (a *app) serve() error {
 
 	// Stops the monitors' containers; a monitor stopped this way wakes nobody.
 	monitors.Stop()
+	// Stops the live sessions' containers, which would otherwise run on.
+	runner.CloseLiveSessions()
 
 	if err := orch.Stop(); err != nil {
 		slog.Error("shutdown error", "error", err)
@@ -1191,9 +1196,10 @@ func childProjectsLister(store channelLister, cfg *config.Config, loadProject fu
 		seenDirs := map[string]bool{}
 		var out []container.ChildProject
 		for _, ch := range chs {
-			// A hidden thread shares its parent's dir without carrying the
-			// worktree flag, so a worktree thread's would pass for a project.
-			if ch.DirPath == "" || ch.Worktree || db.IsHiddenKind(ch.Kind) || seenDirs[ch.DirPath] {
+			// A hidden thread or side chat shares its parent's dir without
+			// carrying the worktree flag, so a worktree thread's would pass
+			// for a project.
+			if ch.DirPath == "" || ch.Worktree || db.IsUnlistedKind(ch.Kind) || seenDirs[ch.DirPath] {
 				continue
 			}
 			seenDirs[ch.DirPath] = true

@@ -224,9 +224,9 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 		if platformFilter != "" && string(ch.Platform) != platformFilter {
 			continue
 		}
-		// Learn and explain threads are hidden: the chat shows them in its
-		// Learn and Explain views.
-		if db.IsHiddenKind(ch.Kind) {
+		// Hidden threads and side chats are unlisted: the chat shows learn
+		// and explain threads in its views, side chats in their own panes.
+		if db.IsUnlistedKind(ch.Kind) {
 			continue
 		}
 		if query != "" && !containsFold(ch.Name, query) {
@@ -370,6 +370,7 @@ func (s *Server) handleDeleteChannel(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.stopHiddenThreads(r.Context(), append(hidden, threadHidden...))
+	s.sweepLive(r.Context())
 	s.removeMCPConfigs(ch, append(append([]*db.Channel{ch}, threads...), threadHidden...))
 
 	w.WriteHeader(http.StatusNoContent)

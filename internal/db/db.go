@@ -101,6 +101,8 @@ type Store interface {
 	ListHiddenThreads(ctx context.Context, parentID string) ([]*Channel, error)
 	ListPluginThreads(ctx context.Context, pluginID string) ([]*Channel, error)
 	InsertHiddenThread(ctx context.Context, ch *Channel) error
+	InsertSideChat(ctx context.Context, ch *Channel) error
+	ListSideChats(ctx context.Context, parentID string) ([]*Channel, error)
 	FileLearnProposals(ctx context.Context, channelID string, proposals []*LearnProposal, withdraw []LearnWithdrawal) ([]*LearnProposal, error)
 	ListLearnProposals(ctx context.Context, channelID string) ([]*LearnProposal, error)
 	GetLearnProposal(ctx context.Context, id int64) (*LearnProposal, error)

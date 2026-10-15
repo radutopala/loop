@@ -24,8 +24,8 @@ func (s *SQLiteStore) GetHiddenThread(ctx context.Context, parentID, kind string
 	return ch, err
 }
 
-// ErrParentGone is returned by InsertHiddenThread when the hidden thread's
-// parent no longer exists.
+// ErrParentGone is returned by InsertHiddenThread and InsertSideChat when
+// the new thread's parent no longer exists.
 var ErrParentGone = errors.New("hidden thread parent is gone")
 
 // InsertHiddenThread creates a hidden thread of ch.Kind, which must be a

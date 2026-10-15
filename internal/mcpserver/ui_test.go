@@ -57,6 +57,26 @@ func (s *MCPServerSuite) TestUIRun() {
 			},
 			`[{"op":"select_channel","channel_id":"test-channel"},{"op":"send_input","pane":"docker-shell","text":"ls","submit":false},{"op":"wait_for","pane":"docker-shell","quiet_ms":0,"lines":5}]`,
 		},
+		{
+			"moving $n pane references past the select_channel step",
+			[]any{
+				map[string]any{"op": "add_pane", "panel": "chat-side", "next_to": "chat"},
+				map[string]any{"op": "add_pane", "panel": "docker-shell", "next_to": "$1"},
+				map[string]any{"op": "send_input", "pane": "$2", "text": "ls"},
+				map[string]any{"op": "send_input", "pane": "$x", "text": "ls"},
+				map[string]any{"op": "send_input", "pane": "$99999999999999999999", "text": "ls"},
+			},
+			`[{"op":"select_channel","channel_id":"test-channel"},{"op":"add_pane","panel":"chat-side","next_to":"chat"},{"op":"add_pane","panel":"docker-shell","next_to":"$2"},{"op":"send_input","pane":"$3","text":"ls"},{"op":"send_input","pane":"$x","text":"ls"},{"op":"send_input","pane":"$99999999999999999999","text":"ls"}]`,
+		},
+		{
+			"keeping $n pane references after the agent's select_channel",
+			[]any{
+				map[string]any{"op": "select_channel", "channel_id": "th-1"},
+				map[string]any{"op": "add_pane", "panel": "chat-side"},
+				map[string]any{"op": "send_input", "pane": "$2", "text": "hi"},
+			},
+			`[{"op":"select_channel","channel_id":"th-1"},{"op":"add_pane","panel":"chat-side"},{"op":"send_input","pane":"$2","text":"hi"}]`,
+		},
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {

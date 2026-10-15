@@ -109,6 +109,8 @@ type Orchestrator struct {
 	pluginBudgetMu    sync.Mutex            // makes counting a plugin's daily runs and queuing one a single step
 	pluginNotifier    PluginRunNotifier     // tells a plugin its run ended; nil skips it
 	pluginRunStore    PluginRunStore        // keeps plugin runs across restarts; nil keeps them in memory only
+	live              LiveRunner            // runs the channels' live sessions; nil disables them
+	livePublish       func(channelID, eventType string, data any)
 
 	// loadWorktreeProjectConfig merges global → root project → worktree
 	// config for a worktree dir and its root checkout.
@@ -633,6 +635,7 @@ func (o *Orchestrator) HandleChannelDelete(ctx context.Context, channelID string
 			return
 		}
 		o.logger.Info("deleted thread from db", "thread_id", channelID)
+		o.SweepLiveSessions(ctx)
 		return
 	}
 
@@ -666,6 +669,7 @@ func (o *Orchestrator) HandleChannelDelete(ctx context.Context, channelID string
 		return
 	}
 	o.logger.Info("deleted channel and child threads from db", "channel_id", channelID)
+	o.SweepLiveSessions(ctx)
 }
 
 func formatDuration(d time.Duration) string {

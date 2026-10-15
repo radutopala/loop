@@ -966,6 +966,86 @@ Stop a monitor's container without waking the agent. The chat's monitor row has 
 
 ---
 
+### `GET /api/channels/{id}/live`
+
+Owner only. The channel's [live session](chat.md#live-sessions), and whether its chat turns run live.
+
+**Response (200):**
+```json
+{ "running": true, "enabled": true, "channel_id": "ch1", "started_at": "2026-01-02T03:04:05Z", "session_id": "0a1b2c3d-…", "busy": false, "background": "1 background task: watch CI" }
+```
+
+Fields are as in the [`live.status`](events.md#livestatus) event, plus `enabled`: whether the channel's plain chat turns run live (`live_sessions` and `live_session_platforms` allow its platform, and it isn't a hidden learn or explain thread). With no session running, it is `{"running": false, "busy": false}` plus `enabled`.
+
+**Errors:** `501` if live sessions are not configured.
+
+---
+
+### `POST /api/channels/{id}/live`
+
+Owner only. Start the channel's [live session](chat.md#live-sessions) ahead of its next chat turn, as that turn would: resuming the channel's session, or forking the parent's for a thread's first turn. The chat's composer calls it when you start typing, so the container is up by the time the message is sent. It does nothing when a session already runs, a run or scheduled task holds the channel, or the channel's turns don't run live.
+
+**Response (200):**
+```json
+{ "started": true }
+```
+
+`started` is whether this call started the session; when it did, a [`live.status`](events.md#livestatus) event follows.
+
+**Errors:** `500` if the session failed to start. `503` if no live runner is set up. `501` if live sessions are not configured.
+
+---
+
+### `DELETE /api/channels/{id}/live`
+
+Owner only. Stop the channel's live session, with reason `stopped`. Its Claude session stays: the next message starts a new live session on it.
+
+**Response:** `204 No Content`.
+
+**Errors:** `404` if the channel has no live session. `501` if live sessions are not configured.
+
+---
+
+### `POST /api/channels/{id}/side-chats`
+
+Owner only. Create a [side chat](chat.md#side-chats) of the channel or thread: an unlisted local thread with its own live session, for a Chat (Resume with fork) or Chat (Fresh session) pane. It is left out of the channel list, search and plugin events, and is deleted with its parent.
+
+**Request Body:**
+```json
+{ "mode": "fork" }
+```
+
+| Field  | Type   | Required | Description |
+|--------|--------|----------|-------------|
+| `mode` | string | yes      | `fork`: its first turn forks the channel's current session. `fresh`: it starts a new session in the channel's project |
+
+**Response (201):**
+```json
+{ "channel_id": "side-1a2b3c4d5e6f" }
+```
+
+**Errors:** `400` on an invalid body or `mode`. `404` if the channel doesn't exist. `409` if the channel is itself unlisted (a side chat, or a learn or explain thread), or in `fork` mode when it has no session yet. `501` if the store is not configured.
+
+---
+
+### `GET /api/channels/{id}/side-chats`
+
+Owner only. List the channel's side chats, as channel rows (`[]` when there are none). The app uses it to delete side chats whose pane is gone.
+
+**Errors:** `501` if the store is not configured.
+
+---
+
+### `DELETE /api/side-chats/{id}`
+
+Owner only. Stop a side chat's live session (reason `closed`) and delete it like a thread, with its messages and containers. Its Claude session's transcript stays.
+
+**Response:** `204 No Content`.
+
+**Errors:** `404` if there's no side chat with that id. `501` if the store or threads are not configured.
+
+---
+
 ### `GET /api/channels/{id}/timeline`
 
 List the channel's interleaved timeline — chat messages plus persisted agent events (thinking blocks, tool calls, tool results) — in canonical chain order. Each row carries a `kind` discriminator and a per-channel `chain_position`.
@@ -2904,15 +2984,16 @@ Runs steps in a window, in order, until one fails.
 | `maximize_pane` | `pane` | Makes the pane fill the tab |
 | `restore_pane` | | Puts a maximized pane back |
 | `open_file` | `path`, `line?` | Opens a file of the channel's roots in the editor |
-| `send_input` | `pane`, `text`, `submit?` | Types into an agent terminal |
-| `read_output` | `pane`, `lines?` | The terminal's last `lines` (default 50, at most 2000) |
-| `wait_for` | `pane`, `match?`, `quiet_ms?`, `lines?` | Waits until the last `lines` match the regular expression `match` (multiline, [RE2 syntax](https://github.com/google/re2/wiki/Syntax), so no lookarounds or backreferences), or, without it, until the terminal is quiet for `quiet_ms` (default 2000). After a `send_input` to that pane in the same command, only output since counts. A session that ended counts as done |
+| `show_message` | `message_id` | Scrolls the channel's chat to the message (its `#id`) and highlights it, paging back through older messages and switching to a tab with a chat pane when needed. Fails when the chat has no such message. A message link, `loop://channel/<channel-id>/<message-id>`, is `select_channel` to the channel, then `show_message` |
+| `send_input` | `pane`, `text`, `submit?` | Types into an agent terminal, or queues the text as a chat pane's next message |
+| `read_output` | `pane`, `lines?` | The terminal's last `lines` (default 50, at most 2000), or a chat pane's, its messages as `author: text` |
+| `wait_for` | `pane`, `match?`, `quiet_ms?`, `lines?` | Waits until the last `lines` match the regular expression `match` (multiline, [RE2 syntax](https://github.com/google/re2/wiki/Syntax), so no lookarounds or backreferences), or, without it, until the terminal is quiet for `quiet_ms` (default 2000). After a `send_input` to that pane in the same command, only output since counts. A session that ended counts as done. On a chat pane: after a `send_input` to it, until it replied and has nothing left to run (or, with `match`, until its replies since match); without one, until it's idle for `quiet_ms` |
 
 On a canvas tab the panes are its tiles, and `canvas` in the state is `true`. `add_pane` puts the tile beside `next_to`'s tile, or beside all the tiles, on the side `direction` and `side` give, nudged off the others; `replace_pane` keeps the tile's place and size; `maximize_pane` makes the tile fill the canvas's view.
 
-`open_mode` is for `docker-agent` panes. `item` names the playground of a `playground` pane, and `scope` (`global` or `project`) picks it when both scopes have one by that name. For a `plugin` pane, `item` names the plugin panel as `plugin/panel`, or as the plugin's id when it has one panel; it must be a panel of an installed plugin the project enables.
+`open_mode` is for `docker-agent` (Chat Terminal) panes: `resume`, `fork` (the default) or `fresh`; and for `chat-side` panes, Chat (Resume with fork) and Chat (Fresh session): `fork` (the default) or `fresh`, `resume` being the Chat pane's. `item` names the playground of a `playground` pane, and `scope` (`global` or `project`) picks it when both scopes have one by that name. For a `plugin` pane, `item` names the plugin panel as `plugin/panel`, or as the plugin's id when it has one panel; it must be a panel of an installed plugin the project enables.
 
-Terminal steps (`send_input`, `read_output`, `wait_for`) work only on `docker-agent` and `docker-shell` panes, which run in containers. A host shell is refused, by the daemon and again by the window.
+Terminal steps (`send_input`, `read_output`, `wait_for`) work only on `docker-agent` and `docker-shell` panes, which run in containers, and on `chat` and `chat-side` panes. A host shell is refused, by the daemon and again by the window. A `pane` or `next_to` of `$n` is the pane step `n` (from 1) of the same command made, so a command can add a pane and type into it: `[{"op":"add_pane","panel":"chat-side","open_mode":"fresh"},{"op":"send_input","pane":"$1","text":"hi"}]`. For a terminal step, step `n` must be an `add_pane` or `replace_pane` of one of those panels. On a chat pane, `send_input` refuses `submit: false`, empty text, and a chat waiting on an answer to a question, plan or approval card.
 
 **Response:**
 ```json
@@ -3361,7 +3442,7 @@ Dismisses the channel's → `204`. `channel_id` is required (`400`).
 
 ### `GET /api/agents`
 
-List active agents for a channel.
+List a channel's agents: its chats first, then the terminal agents registered in it. The chats are the channel's own, `chat`, and each of its side chats, by its channel ID (`side-<id>`); a chat's status is `running` while its live session takes a turn, `idle` otherwise. Asked for a side chat, it lists its parent channel's agents. `self` marks the chat the request names, since every chat runs as agent `chat`.
 
 **Query Parameters:**
 
@@ -3369,10 +3450,21 @@ List active agents for a channel.
 |-------|----------|-------------|
 | `channel_id` | Yes | Channel ID to list agents for |
 
-**Response:** JSON array of `AgentInfo` objects.
+**Response:** JSON array of `AgentInfo` objects, a chat's with `self` when it's the one `channel_id` names.
 
 ```json
 [
+  {
+    "agent_id": "chat",
+    "channel_id": "ch-1",
+    "session_id": "",
+    "name": "Chat",
+    "status": "idle",
+    "work_summary": "",
+    "self": true,
+    "created_at": "0001-01-01T00:00:00Z",
+    "updated_at": "0001-01-01T00:00:00Z"
+  },
   {
     "agent_id": "docker-agent-0",
     "channel_id": "ch-1",
@@ -3390,6 +3482,7 @@ List active agents for a channel.
 |--------|-------------|
 | 200 | JSON array (empty `[]` if no agents) |
 | 400 | Missing `channel_id` |
+| 500 | Channel or side chat lookup failed |
 | 503 | Agent registry not configured |
 
 ---
@@ -3446,7 +3539,7 @@ Unregister an agent from the registry. Called by the MCP server on graceful shut
 
 ### `POST /api/agents/{id}/message`
 
-Type a message into an agent's terminal, as `[from <from_agent_id>] <content>` in one bracketed paste followed by Enter. Claude Code queues it when the agent is busy.
+Send a message to an agent as `[from <from_agent_id>] <content>`. A terminal agent gets it typed into its terminal in one bracketed paste followed by Enter; Claude Code queues it when the agent is busy. A chat (`chat`, or a side chat's `side-<id>`) gets it queued as its next message, as [`POST /api/messages`](#post-apimessages) would. `channel_id` is the sender's channel: a side chat's names its parent's agents, and its `from_agent_id` `chat` is relabelled `side-<id>`. `from_agent_id` is optional; when set it must be `chat` or an agent registered in the channel.
 
 **Request Body:**
 
@@ -3460,10 +3553,11 @@ Type a message into an agent's terminal, as `[from <from_agent_id>] <content>` i
 
 | Status | Description |
 |--------|-------------|
-| 204 | Message typed into the agent's terminal |
-| 400 | Missing `channel_id` or `content`, or `content` holds a bracketed-paste marker |
+| 204 | Message typed into the agent's terminal, or queued in the chat |
+| 400 | Missing `channel_id` or `content`, `from_agent_id` isn't an agent of the channel, a chat messaging itself, or `content` holds a bracketed-paste marker (terminal agents) |
 | 404 | Target agent not found |
-| 409 | Target agent has no terminal, or its terminal session is gone |
+| 409 | Target agent has no terminal, or its terminal session is gone; messages not configured for a chat |
+| 500 | Channel or side chat lookup failed |
 | 503 | Agent registry not configured |
 
 ---

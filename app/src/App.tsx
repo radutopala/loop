@@ -478,7 +478,6 @@ function AppInner() {
     },
     [loadChannels, handleSelect],
   );
-  useUiBridge(selectedId, uiSelectChannel);
 
   // Auto-select DM channel if nothing is selected on first load.
   const autoSelectedRef = useRef(false);
@@ -501,6 +500,28 @@ function AppInner() {
       return channelId;
     });
   }, []);
+
+  // A ui_run show_message step waits here for the chat to scroll to its
+  // message, or to find it isn't there.
+  const showMessageWaitRef = useRef<((found: boolean) => void) | null>(null);
+  const uiShowMessage = useCallback(
+    (channelId: string, messageId: number) =>
+      new Promise<boolean>((resolve) => {
+        showMessageWaitRef.current?.(false);
+        showMessageWaitRef.current = resolve;
+        // The step runs in the open channel, so the chat scrolls where it is,
+        // without remounting the layout as a message link does.
+        if (channelId === selectedId) setScrollToMessageId(messageId);
+        else handleSelectMessage(channelId, messageId);
+      }),
+    [selectedId, handleSelectMessage],
+  );
+  const handleScrollComplete = useCallback((found: boolean) => {
+    setScrollToMessageId(null);
+    showMessageWaitRef.current?.(found);
+    showMessageWaitRef.current = null;
+  }, []);
+  useUiBridge(selectedId, uiSelectChannel, uiShowMessage);
 
   // Opens a channel, or a message in it: "<channel-id>[/<message-id>]" from
   // the hash or a loop://channel/ deep link.
@@ -820,7 +841,7 @@ function AppInner() {
               onToggleSidebar={() => setSidebarOpen((v) => !v)}
               onOpenPalette={() => setPaletteOpen(true)}
               scrollToMessageId={scrollToMessageId}
-              onScrollComplete={() => setScrollToMessageId(null)}
+              onScrollComplete={handleScrollComplete}
               openMemoryFile={openMemoryFile}
               onOpenMemoryFileComplete={() => setOpenMemoryFile(null)}
               onStatusChange={loadChannels}

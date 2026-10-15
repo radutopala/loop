@@ -145,10 +145,10 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, ...panelPr
               alignItems: "center",
               borderBottom: `1px solid ${colors.border}`,
               flexShrink: 0,
-              overflow: "auto",
+              overflow: "hidden",
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", flex: 1, minWidth: 0 }}>
+            <div data-testid="editor-tabs" style={{ display: "flex", alignItems: "center", flex: 1, minWidth: 0, overflowX: "auto" }}>
               {openTabs.map((tab) => {
                 const isActive = tab === selectedPath;
                 const isDirty = dirtyTabs.has(tab);
@@ -230,30 +230,6 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, ...panelPr
                 );
               })}
             </div>
-            {(isMd || isHtml) && (
-              <div style={{ display: "flex", flexShrink: 0, margin: "0 6px", border: `1px solid ${colors.border}`, borderRadius: 4, overflow: "hidden" }}>
-                {(["editor", "both", "preview"] as const).map((mode) => (
-                  <button
-                    key={mode}
-                    data-testid={`preview-mode-${mode}`}
-                    onClick={() => setPreviewMode(mode)}
-                    title={mode === "editor" ? (isHtml ? "Source only" : "Editor only") : mode === "both" ? (isHtml ? "Source + Preview" : "Editor + Preview") : "Preview only"}
-                    style={{
-                      fontSize: 10,
-                      color: previewMode === mode ? colors.active : colors.textDim,
-                      background: previewMode === mode ? `${colors.active}18` : "none",
-                      border: "none",
-                      borderRight: mode !== "preview" ? `1px solid ${colors.border}` : undefined,
-                      cursor: "pointer",
-                      padding: "2px 6px",
-                      lineHeight: 1,
-                    }}
-                  >
-                    {mode === "editor" ? (isHtml ? "Source" : "Edit") : mode === "both" ? "Split" : "Preview"}
-                  </button>
-                ))}
-              </div>
-            )}
           </div>
         )}
         {pendingForActive !== undefined && selectedPath && (
@@ -306,27 +282,69 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, ...panelPr
             </button>
           </div>
         )}
-        <CodeEditor
-          ref={codeEditorRef}
-          fileContent={fileContent}
-          isBinary={isBinary}
-          binarySize={binarySize}
-          selectedRelPath={selectedRelPath}
-          selectedPath={selectedPath}
-          loading={loading}
-          error={error}
-          previewMode={previewMode}
-          onDocChanged={markDirty}
-          onPreviewUpdate={handlePreviewUpdate}
-          editorMenu={editorMenu}
-          onEditorMenuClose={() => setEditorMenu(null)}
-          onEditorContextMenu={handleEditorContextMenu}
-          previewHtml={previewHtml}
-          htmlBaseURL={htmlBaseURL}
-          imageURL={imageURL}
-          onMediaError={editorState.retryMedia}
-          gitChanges={gitChanges}
-        />
+        {/* The preview-mode toggle floats over the top right of the file,
+            out of the tab bar, so many open tabs don't squeeze it. */}
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, position: "relative" }}>
+          {(isMd || isHtml) && (
+            <div
+              data-testid="preview-mode-toggle"
+              style={{
+                position: "absolute",
+                top: 6,
+                right: 16,
+                zIndex: 2,
+                display: "flex",
+                border: `1px solid ${colors.border}`,
+                borderRadius: 4,
+                overflow: "hidden",
+                backgroundColor: colors.sidebar,
+                boxShadow: "0 1px 4px rgba(0,0,0,0.25)",
+              }}
+            >
+              {(["editor", "both", "preview"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  data-testid={`preview-mode-${mode}`}
+                  onClick={() => setPreviewMode(mode)}
+                  title={mode === "editor" ? (isHtml ? "Source only" : "Editor only") : mode === "both" ? (isHtml ? "Source + Preview" : "Editor + Preview") : "Preview only"}
+                  style={{
+                    fontSize: 10,
+                    color: previewMode === mode ? colors.active : colors.textDim,
+                    background: previewMode === mode ? `${colors.active}18` : "none",
+                    border: "none",
+                    borderRight: mode !== "preview" ? `1px solid ${colors.border}` : undefined,
+                    cursor: "pointer",
+                    padding: "2px 6px",
+                    lineHeight: 1,
+                  }}
+                >
+                  {mode === "editor" ? (isHtml ? "Source" : "Edit") : mode === "both" ? "Split" : "Preview"}
+                </button>
+              ))}
+            </div>
+          )}
+          <CodeEditor
+            ref={codeEditorRef}
+            fileContent={fileContent}
+            isBinary={isBinary}
+            binarySize={binarySize}
+            selectedRelPath={selectedRelPath}
+            selectedPath={selectedPath}
+            loading={loading}
+            error={error}
+            previewMode={previewMode}
+            onDocChanged={markDirty}
+            onPreviewUpdate={handlePreviewUpdate}
+            editorMenu={editorMenu}
+            onEditorMenuClose={() => setEditorMenu(null)}
+            onEditorContextMenu={handleEditorContextMenu}
+            previewHtml={previewHtml}
+            htmlBaseURL={htmlBaseURL}
+            imageURL={imageURL}
+            onMediaError={editorState.retryMedia}
+            gitChanges={gitChanges}
+          />
+        </div>
       </div>
       {tabMenu && <ContextMenu x={tabMenu.x} y={tabMenu.y} items={tabMenuItems()} onClose={() => setTabMenu(null)} />}
     </FilePanel>

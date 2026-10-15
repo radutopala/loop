@@ -181,6 +181,7 @@ function PaneTree({
           leafId={node.id}
           panel={node.panel}
           plugin={node.plugin}
+          openMode={node.openMode}
           usedSingletons={usedSingletons}
           isMinimized={isMinimized}
           hiddenPanels={hiddenPanels}

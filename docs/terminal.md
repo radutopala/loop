@@ -9,11 +9,11 @@ The terminal system provides interactive PTY sessions inside Docker containers o
 
 ## In the app
 
-![A Docker Agent terminal split below a shell, resuming the channel's Claude session in the container](static/images/features/docker-agent-terminal.png)
+![A Chat Terminal split below a shell, resuming the channel's Claude session in the container](static/images/features/docker-agent-terminal.png)
 
 Terminals open as panels in any layout (see [Layouts](layouts.md)). Each pane is one of:
 
-- **Docker Agent** — an interactive Claude session inside the channel's container. The open mode (**Resume** / **Fork** / **Fresh**) decides how it relates to the channel's stored session: *Resume* continues the same conversation in place, so you can talk to the very same agent straight from a terminal — no context lost.
+- **Chat Terminal** — an interactive Claude session inside the channel's container. The open mode (**Resume** / **Fork** / **Fresh**) decides how it relates to the channel's stored session: *Resume* continues the same conversation in place, so you can talk to the very same agent straight from a terminal — no context lost.
 - **Docker Shell** — a plain `/bin/bash` inside the container, for running commands next to the agent.
 - **Host Shell** — a shell on your machine.
 
@@ -23,11 +23,11 @@ The terminal WebSocket is owner-only: it needs the owner API token (see [Authent
 
 Paste an image into any terminal pane (⌘/Ctrl-V). Loop saves it under the workspace's `.loop/pastes/` directory and inserts the saved **absolute path** into the pane, so the in-pane Claude session (or shell) can read it. Same UX as the [chat input](chat.md#image-paste).
 
-![Pasting an image into the Docker Agent terminal drops the saved file path into the prompt](static/images/features/terminal-image-paste.png)
+![Pasting an image into the Chat Terminal drops the saved file path into the prompt](static/images/features/terminal-image-paste.png)
 
 ### Continue
 
-While a Docker Agent pane's session is running, its footer has the same **»** button as the chat composer, next to the `#` prompt-shortcut picker. Clicking it types `continue` into the agent and presses Enter, so it carries on where it stopped. Shell panes don't run Claude, so they don't get it.
+While a Chat Terminal pane's session is running, its footer has the same **»** button as the chat composer, next to the `#` prompt-shortcut picker. Clicking it types `continue` into the agent and presses Enter, so it carries on where it stopped. Shell panes don't run Claude, so they don't get it.
 
 ---
 

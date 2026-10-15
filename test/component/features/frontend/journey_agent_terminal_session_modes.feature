@@ -5,7 +5,7 @@ Feature: Agent Terminal Session Mode Picker Journey
   Fresh session — so users pick up-front how a docker-agent pane boots
   Claude relative to the channel's stored session.
 
-  Scenario: Pane-split menu lists Docker Agent session-mode variants
+  Scenario: Pane-split menu lists Chat Terminal session-mode variants
     Given I set up a test channel via API for directory "/tmp/bdd-agent-modes-menu"
     And I open the app in a browser
     And I wait for text "bdd-agent-modes-menu" to appear
@@ -19,12 +19,12 @@ Feature: Agent Terminal Session Mode Picker Journey
     Then the element "[data-testid='add-panel-menu']" should be visible
 
     # Three docker-agent variants each appear as separate menu entries,
-    # rendered as "Docker Agent (<mode>) ↓" / "→".  Substring assertions
+    # rendered as "Chat Terminal (<mode>) ↓" / "→".  Substring assertions
     # discriminate the modes — "(Resume)" closes immediately after Resume,
     # so it does not match "(Resume with fork)".
-    And the page should contain text "Docker Agent (Resume)"
-    And the page should contain text "Docker Agent (Resume with fork)"
-    And the page should contain text "Docker Agent (Fresh session)"
+    And the page should contain text "Chat Terminal (Resume)"
+    And the page should contain text "Chat Terminal (Resume with fork)"
+    And the page should contain text "Chat Terminal (Fresh session)"
 
   Scenario: Pane-split menu stays inside the window for a pane near the bottom
     Given I set up a test channel via API for directory "/tmp/bdd-agent-modes-bottom"
@@ -42,7 +42,7 @@ Feature: Agent Terminal Session Mode Picker Journey
     And I click the last "button[title='Add panel']"
     Then the element "[data-testid='add-panel-menu']" should fit inside the window
 
-  Scenario: Adding a Docker Agent (Fresh session) variant mounts a pane
+  Scenario: Adding a Chat Terminal (Fresh session) variant mounts a pane
     Given I set up a test channel via API for directory "/tmp/bdd-agent-modes-fresh"
     And I open the app in a browser
     And I wait for text "bdd-agent-modes-fresh" to appear
@@ -50,7 +50,7 @@ Feature: Agent Terminal Session Mode Picker Journey
     Then I wait for "textarea" to be visible
 
     # The addPanel step matches by textContent.includes, so the variant label
-    # "Docker Agent (Fresh session)" picks the fresh-mode entry.  After the
+    # "Chat Terminal (Fresh session)" picks the fresh-mode entry.  After the
     # click the dropdown closes and the menu element should be gone.
-    When I add a "Docker Agent (Fresh session)" panel
-    Then I wait for text "Docker Agent (Fresh session)" to disappear
+    When I add a "Chat Terminal (Fresh session)" panel
+    Then I wait for text "Chat Terminal (Fresh session)" to disappear

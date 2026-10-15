@@ -3,7 +3,7 @@ import type { PluginPaneOption } from "../plugins/PluginPanelsContext";
 import type { SessionStatus } from "../types";
 import type { PanelType } from "../types/panels";
 import { INPUT_QUIET_MS, MAX_LINES, runSteps, WAIT_QUIET_MS } from "./executor";
-import type { PaneInfo, PaneOptions, PlaygroundPick, TerminalInput, UiHost, UiStep, WorkspaceController } from "./types";
+import type { ChatLine, ChatPaneInput, PaneInfo, PaneOptions, PlaygroundPick, TerminalInput, UiHost, UiStep, WorkspaceController } from "./types";
 
 /** A workspace that keeps its panes in a list. */
 class FakeWorkspace implements WorkspaceController {
@@ -110,17 +110,45 @@ class FakeTerminal implements TerminalInput {
   }
 }
 
+class FakeChat implements ChatPaneInput {
+  sent: string[] = [];
+  lines: ChatLine[] = [{ id: 1, author: "Ann", bot: false, content: "hi" }];
+  running = false;
+  waitsOn: string | null = null;
+  fail = "";
+  busy() {
+    return this.running;
+  }
+  blocked() {
+    return this.waitsOn;
+  }
+  messages() {
+    return this.lines;
+  }
+  async send(text: string) {
+    if (this.fail) throw new Error(this.fail);
+    this.sent.push(text);
+  }
+  reply(id: number, content: string) {
+    this.lines = [...this.lines, { id, author: "Loop", bot: true, content }];
+  }
+}
+
 /** A host with a clock that moves on only when steps sleep. */
 class FakeHost implements UiHost {
   clock = 10_000;
   selected: string | null = "c1";
   workspaces = new Map<string, FakeWorkspace>();
   terminals = new Map<string, FakeTerminal>();
+  chats = new Map<string, FakeChat>();
   channels = new Set(["c1", "c2"]);
   onSleep: (() => void) | null = null;
   selected_: string[] = [];
   opened: string[] = [];
   files = new Set(["main.go"]);
+  messages = new Set([7]);
+  shown: string[] = [];
+  showing: "hangs" | "fails" | null = null;
   pgs: PlaygroundPick[] = [
     { name: "board", scope: "global" },
     { name: "both", scope: "global" },
@@ -141,9 +169,19 @@ class FakeHost implements UiHost {
   terminal(channelId: string, paneId: string) {
     return this.terminals.get(`${channelId}:${paneId}`);
   }
+  chat(channelId: string, paneId: string) {
+    return this.chats.get(`${channelId}:${paneId}`);
+  }
   async openFile(channelId: string, path: string, line?: number) {
     if (!this.files.has(path)) throw new Error(`no file "${path}" in the channel's roots`);
     this.opened.push(`${channelId} ${path}${line ? `:${line}` : ""}`);
+  }
+  showMessage(channelId: string, messageId: number) {
+    if (this.showing === "hangs") return new Promise<boolean>(() => {});
+    if (this.showing === "fails") return Promise.reject(new Error("chat went away"));
+    this.shown.push(`${channelId} ${messageId}`);
+    // The chat scrolls a moment later, as it pages back to the message.
+    return Promise.resolve().then(() => this.messages.has(messageId));
   }
   async playgrounds() {
     return this.pgs;
@@ -218,6 +256,7 @@ describe("runSteps", () => {
     { name: "without a panel", step: { op: "add_pane" }, error: "panel is required" },
     { name: "an unknown panel", step: { op: "add_pane", panel: "clock" }, error: 'unknown panel "clock"' },
     { name: "an unknown open mode", step: { op: "add_pane", panel: "docker-agent", open_mode: "new" }, error: 'unknown open_mode "new"; use resume, fork or fresh' },
+    { name: "a side chat resuming", step: { op: "add_pane", panel: "chat-side", open_mode: "resume" }, error: "a chat-side pane is a fork or a fresh session; use fork or fresh" },
     { name: "an unknown side", step: { op: "add_pane", panel: "notes", side: "left" }, error: 'unknown side "left"; use before or after' },
     { name: "an unknown direction", step: { op: "add_pane", panel: "notes", direction: "left" }, error: 'unknown direction "left"; use horizontal or vertical' },
     { name: "a missing next_to", step: { op: "add_pane", panel: "notes", next_to: "git" }, error: 'no pane "git" in the open tab; panes: chat' },
@@ -448,6 +487,40 @@ describe("send_input", () => {
     expect(t.sent).toEqual(["\x1b[200~hi\nthere\x1b[201~\r", "\x1b[200~draft\x1b[201~"]);
   });
 
+  it("types into the pane an earlier step made, named $n", async () => {
+    const t = new FakeTerminal("shell");
+    host.terminals.set("c1:docker-shell-0", t);
+    expect(
+      await run([
+        { op: "add_pane", panel: "docker-shell" },
+        { op: "send_input", pane: "$1", text: "ls" },
+        { op: "add_pane", panel: "notes", next_to: "$1" },
+      ]),
+    ).toEqual([
+      { op: "add_pane", ok: true, pane: "docker-shell-0" },
+      { op: "send_input", ok: true, pane: "docker-shell-0" },
+      { op: "add_pane", ok: true, pane: "notes-1" },
+    ]);
+    expect(t.sent).toEqual(["ls\n"]);
+  });
+
+  it.each([
+    { name: "a step that made no pane", steps: [{ op: "restore_pane" }, { op: "send_input", pane: "$1", text: "ls" }] },
+    {
+      name: "a step after it",
+      steps: [
+        { op: "send_input", pane: "$2", text: "ls" },
+        { op: "add_pane", panel: "docker-shell" },
+      ],
+    },
+    { name: "itself", steps: [{ op: "send_input", pane: "$1", text: "ls" }] },
+  ])("refuses a $$n pane of $name", async ({ steps }) => {
+    const results = await run(steps);
+    const last = results[results.length - 1]!;
+    expect(last.ok).toBe(false);
+    expect(last.error).toMatch(/names step \d's pane, but no step before this one by that number made a pane/);
+  });
+
   it("types into a container shell", async () => {
     const t = new FakeTerminal("shell");
     host.terminals.set("c1:docker-shell-2", t);
@@ -459,12 +532,13 @@ describe("send_input", () => {
   it.each([
     { pane: "host-shell", panel: "host-shell" },
     { pane: "host-shell-0", panel: "host-shell" },
-    { pane: "chat", panel: "chat" },
   ])("never types into $pane", async ({ pane, panel }) => {
     // Even with a terminal there, which a host shell never registers.
     const t = new FakeTerminal("shell");
     host.terminals.set(`c1:${pane}`, t);
-    expect(await run([{ op: "send_input", pane, text: "ls" }])).toEqual([{ op: "send_input", ok: false, error: `send_input only types into docker-agent and docker-shell panes, not ${panel}` }]);
+    expect(await run([{ op: "send_input", pane, text: "ls" }])).toEqual([
+      { op: "send_input", ok: false, error: `send_input only types into docker-agent, docker-shell, chat and chat-side panes, not ${panel}` },
+    ]);
     expect(t.sent).toEqual([]);
   });
 
@@ -533,7 +607,26 @@ describe("more steps", () => {
     expect(host.opened).toEqual(["c1 main.go:12", "c1 main.go"]);
   });
 
+  it("shows a message of the open channel's chat", async () => {
+    expect(await run([{ op: "show_message", message_id: 7 }])).toEqual([{ op: "show_message", ok: true }]);
+    expect(host.shown).toEqual(["c1 7"]);
+  });
+
+  it("times out showing a message the chat doesn't get to", async () => {
+    host.showing = "hangs";
+    expect(await run([{ op: "show_message", message_id: 7 }], 1_000)).toEqual([{ op: "show_message", ok: false, error: "timed out waiting for message 7 to show" }]);
+  });
+
+  it("fails showing a message when the chat does", async () => {
+    host.showing = "fails";
+    expect(await run([{ op: "show_message", message_id: 7 }])).toEqual([{ op: "show_message", ok: false, error: "chat went away" }]);
+  });
+
   it.each<{ name: string; step: UiStep; error: string }>([
+    { name: "show_message without a message_id", step: { op: "show_message" }, error: "message_id is required" },
+    { name: "show_message of message 0", step: { op: "show_message", message_id: 0 }, error: "message_id must be a whole number from 1" },
+    { name: "show_message of a fraction", step: { op: "show_message", message_id: 1.5 }, error: "message_id must be a whole number from 1" },
+    { name: "show_message of another chat's message", step: { op: "show_message", message_id: 8 }, error: "no message 8 in channel c1's chat" },
     { name: "open_file without a path", step: { op: "open_file" }, error: "path is required" },
     { name: "open_file at line 0", step: { op: "open_file", path: "main.go", line: 0 }, error: "line must be a whole number from 1" },
     { name: "open_file of no such file", step: { op: "open_file", path: "nope.go" }, error: `no file "nope.go" in the channel's roots` },
@@ -636,8 +729,8 @@ describe("read_output and wait_for", () => {
   });
 
   it.each<{ name: string; step: UiStep; error: string }>([
-    { name: "a host shell", step: { op: "read_output", pane: "host-shell" }, error: "read_output only reads docker-agent and docker-shell panes, not host-shell" },
-    { name: "wait_for on a host shell", step: { op: "wait_for", pane: "host-shell" }, error: "wait_for only reads docker-agent and docker-shell panes, not host-shell" },
+    { name: "a host shell", step: { op: "read_output", pane: "host-shell" }, error: "read_output only reads docker-agent, docker-shell, chat and chat-side panes, not host-shell" },
+    { name: "wait_for on a host shell", step: { op: "wait_for", pane: "host-shell" }, error: "wait_for only reads docker-agent, docker-shell, chat and chat-side panes, not host-shell" },
     { name: "0 lines", step: { op: "read_output", pane: "docker-agent", lines: 0 }, error: `lines must be a whole number from 1 to ${MAX_LINES}` },
     { name: "too many lines", step: { op: "wait_for", pane: "docker-agent", lines: MAX_LINES + 1 }, error: `lines must be a whole number from 1 to ${MAX_LINES}` },
     { name: "a bad match", step: { op: "wait_for", pane: "docker-agent", match: "(" }, error: "match: error parsing regexp: missing closing ): `(?m)(`" },
@@ -774,5 +867,162 @@ describe("read_output and wait_for", () => {
     expect(await run([{ op: "wait_for", pane: "docker-agent", match: "never" }], 500)).toEqual([{ op: "wait_for", ok: false, error: "timed out waiting for pane docker-agent-1 to print /never/" }]);
     t.text = "busy";
     expect(await run([{ op: "wait_for", pane: "docker-agent", quiet_ms: 10_000 }], 500)).toEqual([{ op: "wait_for", ok: false, error: "timed out waiting for pane docker-agent-1 to be quiet" }]);
+  });
+});
+
+describe("chat panes", () => {
+  let chat: FakeChat;
+  let side: FakeChat;
+  beforeEach(() => {
+    ws.panes = [
+      { id: "chat-0", panel: "chat" },
+      { id: "chat-side-1", panel: "chat-side" },
+    ];
+    chat = new FakeChat();
+    side = new FakeChat();
+    host.chats.set("c1:chat-0", chat);
+    host.chats.set("c1:chat-side-1", side);
+  });
+
+  it("queues a message in the chat and in a side chat", async () => {
+    expect(
+      await run([
+        { op: "send_input", pane: "chat", text: "hello" },
+        { op: "send_input", pane: "chat-side-1", text: "and you" },
+      ]),
+    ).toEqual([
+      { op: "send_input", ok: true, pane: "chat-0" },
+      { op: "send_input", ok: true, pane: "chat-side-1" },
+    ]);
+    expect(chat.sent).toEqual(["hello"]);
+    expect(side.sent).toEqual(["and you"]);
+  });
+
+  it("waits for a side chat to start", async () => {
+    host.chats.delete("c1:chat-side-1");
+    host.onSleep = () => host.chats.set("c1:chat-side-1", side);
+    expect(await run([{ op: "send_input", pane: "chat-side", text: "hi" }])).toEqual([{ op: "send_input", ok: true, pane: "chat-side-1" }]);
+    expect(side.sent).toEqual(["hi"]);
+    host.onSleep = null;
+    host.chats.delete("c1:chat-side-1");
+    expect(await run([{ op: "read_output", pane: "chat-side" }], 100)).toEqual([{ op: "read_output", ok: false, error: "timed out waiting for pane chat-side-1's chat to start" }]);
+  });
+
+  it.each<{ name: string; step: UiStep; setup?: () => void; error: string }>([
+    { name: "empty text", step: { op: "send_input", pane: "chat", text: "  " }, error: "text can't be empty for a chat pane" },
+    { name: "submit: false", step: { op: "send_input", pane: "chat", text: "draft", submit: false }, error: "a chat pane sends what it's given; submit: false is for terminals" },
+    {
+      name: "a chat waiting on an answer",
+      step: { op: "send_input", pane: "chat", text: "go" },
+      setup: () => {
+        chat.waitsOn = "a question";
+      },
+      error: "pane chat-0's chat waits on an answer to a question; answer it in the window",
+    },
+    {
+      name: "a send that fails",
+      step: { op: "send_input", pane: "chat", text: "go" },
+      setup: () => {
+        chat.fail = "Failed to send message: Bad Gateway";
+      },
+      error: "Failed to send message: Bad Gateway",
+    },
+  ])("refuses $name", async ({ step, setup, error }) => {
+    setup?.();
+    expect(await run([step])).toEqual([{ op: step.op, ok: false, error }]);
+    expect(chat.sent).toEqual([]);
+  });
+
+  it("reads the last lines of the messages", async () => {
+    chat.reply(2, "one\ntwo");
+    expect(
+      await run([
+        { op: "read_output", pane: "chat" },
+        { op: "read_output", pane: "chat", lines: 2 },
+        { op: "read_output", pane: "chat", lines: 3 },
+      ]),
+    ).toEqual([
+      { op: "read_output", ok: true, pane: "chat-0", output: "Ann: hi\n\nLoop: one\ntwo" },
+      { op: "read_output", ok: true, pane: "chat-0", output: "Loop: one\ntwo" },
+      { op: "read_output", ok: true, pane: "chat-0", output: "Loop: one\ntwo" },
+    ]);
+  });
+
+  it("waits for the reply to a message it queued", async () => {
+    chat.reply(2, "an old reply");
+    let sleeps = 0;
+    host.onSleep = () => {
+      sleeps++;
+      if (sleeps === 2) chat.lines = [...chat.lines, { id: 3, author: "Ann", bot: false, content: "6*7" }];
+      if (sleeps === 3) chat.running = true;
+      if (sleeps === 6) chat.reply(4, "42");
+      if (sleeps === 9) chat.running = false;
+    };
+    const results = await run([
+      { op: "send_input", pane: "chat", text: "6*7" },
+      { op: "wait_for", pane: "chat", lines: 3 },
+    ]);
+    expect(results).toEqual([
+      { op: "send_input", ok: true, pane: "chat-0" },
+      { op: "wait_for", ok: true, pane: "chat-0", output: "Ann: 6*7\n\nLoop: 42" },
+    ]);
+    expect(sleeps).toBe(9);
+  });
+
+  it("waits for a reply that matches", async () => {
+    chat.reply(2, "42 earlier");
+    let sleeps = 0;
+    host.onSleep = () => {
+      sleeps++;
+      if (sleeps === 2) chat.lines = [...chat.lines, { id: 3, author: "Ann", bot: false, content: "say it's 42" }];
+      if (sleeps === 4) chat.reply(4, "working on it");
+      if (sleeps === 7) chat.reply(5, "it's 42");
+    };
+    chat.running = true;
+    const results = await run([
+      { op: "send_input", pane: "chat-side-1", text: "x" },
+      { op: "send_input", pane: "chat", text: "say it's 42" },
+      { op: "wait_for", pane: "chat", match: "it's \\d+" },
+    ]);
+    expect(results.at(-1)).toEqual({ op: "wait_for", ok: true, pane: "chat-0", output: "Ann: hi\n\nLoop: 42 earlier\n\nAnn: say it's 42\n\nLoop: working on it\n\nLoop: it's 42" });
+    expect(sleeps).toBe(7);
+  });
+
+  it("without a send_input, waits for the chat to be idle a while", async () => {
+    chat.running = true;
+    host.onSleep = () => {
+      if (host.clock >= 10_500) chat.running = false;
+    };
+    const started = host.clock;
+    expect(await run([{ op: "wait_for", pane: "chat", quiet_ms: 300 }])).toEqual([{ op: "wait_for", ok: true, pane: "chat-0", output: "Ann: hi" }]);
+    expect(host.clock - started).toBe(500 + 300);
+  });
+
+  it("fails when the chat pane closes while it waits", async () => {
+    host.onSleep = () => host.chats.delete("c1:chat-0");
+    expect(await run([{ op: "wait_for", pane: "chat", match: "never" }])).toEqual([{ op: "wait_for", ok: false, error: "pane chat-0 is no longer open" }]);
+  });
+
+  it("reads the new chat of a pane that remounted", async () => {
+    const remounted = new FakeChat();
+    remounted.reply(2, "42");
+    host.onSleep = () => host.chats.set("c1:chat-0", remounted);
+    expect(await run([{ op: "wait_for", pane: "chat", match: "42" }])).toEqual([{ op: "wait_for", ok: true, pane: "chat-0", output: "Ann: hi\n\nLoop: 42" }]);
+  });
+
+  it("gives up on a reply that never comes", async () => {
+    expect(
+      await run(
+        [
+          { op: "send_input", pane: "chat", text: "hi" },
+          { op: "wait_for", pane: "chat" },
+        ],
+        300,
+      ),
+    ).toEqual([
+      { op: "send_input", ok: true, pane: "chat-0" },
+      { op: "wait_for", ok: false, error: "timed out waiting for pane chat-0's chat to reply" },
+    ]);
+    expect(await run([{ op: "wait_for", pane: "chat", match: "never" }], 300)).toEqual([{ op: "wait_for", ok: false, error: "timed out waiting for pane chat-0's chat to reply /never/" }]);
   });
 });

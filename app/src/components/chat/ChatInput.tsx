@@ -215,6 +215,9 @@ export interface ChatInputProps {
   // that never touched the park cannot hide a still-blocking card.
   onDismissGate?: () => void;
   onSent?: () => void;
+  // Called as the user types a message, so the channel's live session can
+  // start before it is sent.
+  onTyping?: () => void;
   quotedMessage?: Message | null;
   onClearQuote?: () => void;
   // When a gate approval popup is showing, sending a message auto-denies the
@@ -265,6 +268,7 @@ export function ChatInput({
   setMode,
   onDismissGate,
   onSent,
+  onTyping,
   quotedMessage,
   onClearQuote,
   pendingGateReqId,
@@ -284,6 +288,13 @@ export function ChatInput({
   const commandStyles = buildCommandStyles(colors);
   const mentionStyles = buildMentionStyles(colors);
   const [text, setText] = useState(() => draftText.get(channelId) ?? "");
+  // A restored draft isn't typing; only a change to the text is.
+  const typedFrom = useRef(text);
+  useEffect(() => {
+    if (text === typedFrom.current) return;
+    typedFrom.current = text;
+    if (text.trim() !== "") onTyping?.();
+  }, [text, onTyping]);
   const [sending, setSending] = useState(false);
   const [showMention, setShowMention] = useState(false);
   const [mentionIdx, setMentionIdx] = useState(-1);

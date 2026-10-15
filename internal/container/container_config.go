@@ -790,7 +790,7 @@ func (r *DockerRunner) copyFiles(ctx context.Context, containerID string, files 
 //   - global: hasCompletedOnboarding, bypassPermissionsModeAccepted
 //   - projects[workDir]: hasTrustDialogAccepted, hasCompletedProjectOnboarding
 //
-// Without them the interactive Claude TUI (Docker Agent terminals) stalls on the
+// Without them the interactive Claude TUI (Chat Terminals) stalls on the
 // onboarding, "Bypass Permissions mode" consent, and "trust this folder" dialogs
 // — which an automated agent can't answer. Invalid JSON is treated as empty.
 func mergeClaudeFlags(existing []byte, workDir string) []byte {

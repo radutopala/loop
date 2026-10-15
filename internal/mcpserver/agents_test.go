@@ -63,6 +63,22 @@ func (s *AgentsToolsSuite) TestListAgents() {
 	require.Contains(s.T(), text, "(indexing)")
 }
 
+func (s *AgentsToolsSuite) TestListAgentsAsChat() {
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `[{"agent_id":"chat","name":"Chat","status":"idle"},{"agent_id":"side-s1","name":"Side","status":"running","self":true}]`)
+	}))
+	defer apiSrv.Close()
+
+	// Every chat runs as agent "chat": the daemon marks which one asked.
+	srv := New("s1", apiSrv.URL, "author-1", apiSrv.Client(), nil, WithAgentSender("chat"))
+	result, _, err := srv.handleListAgents(context.TODO(), nil, listAgentsInput{})
+	require.NoError(s.T(), err)
+	text := result.Content[0].(*mcp.TextContent).Text
+	require.Contains(s.T(), text, "  [chat] Chat")
+	require.Contains(s.T(), text, "* [side-s1] Side")
+}
+
 func (s *AgentsToolsSuite) TestListAgentsEmpty() {
 	emptySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -271,7 +287,7 @@ func (s *AgentsToolsSuite) TestAgentSender() {
 	cs, err := mcp.NewClient(&mcp.Implementation{Name: "test"}, nil).Connect(context.Background(), ct, nil)
 	require.NoError(s.T(), err)
 	defer cs.Close()
-	require.Contains(s.T(), cs.InitializeResult().Instructions, "They can't message you back.")
+	require.Contains(s.T(), cs.InitializeResult().Instructions, "queued as a chat's next message")
 
 	tools, err := cs.ListTools(context.Background(), nil)
 	require.NoError(s.T(), err)

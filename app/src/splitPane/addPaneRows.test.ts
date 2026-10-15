@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { PluginInfo } from "../api/plugins";
 import { canvasAddRows } from "../canvas/canvasAddRows";
-import type { PanelType } from "../types/panels";
+import { type PanelType, paneLabel } from "../types/panels";
 import { addPaneRows } from "./addPaneRows";
 
 const plugins: PluginInfo[] = [
@@ -15,6 +15,15 @@ describe("addPaneRows", () => {
     expect(rows.filter((r) => r.panel === "docker-agent").map((r) => r.meta)).toEqual([{ openMode: "resume" }, { openMode: "fork" }, { openMode: "fresh" }]);
     expect(rows.at(-1)).toEqual({ key: "plugin-cogtest/quiz", panel: "plugin", label: "Quiz", meta: { plugin: quiz }, disabled: false, description: "Cognitive tests plugin" });
     expect(rows.some((r) => r.panel === "plugin" && r.key === "plugin")).toBe(false);
+  });
+
+  it("offers chat-side as a fork or a fresh session, and Chat once", () => {
+    const rows = addPaneRows(new Set(["chat-side"]), { plugins: [], shown: new Set() });
+    expect(rows.filter((r) => r.panel === "chat-side").map((r) => [r.label, r.meta, r.disabled])).toEqual([
+      ["Chat (Resume with fork)", { openMode: "fork" }, false],
+      ["Chat (Fresh session)", { openMode: "fresh" }, false],
+    ]);
+    expect(rows.filter((r) => r.panel === "chat").map((r) => r.meta)).toEqual([undefined]);
   });
 
   it.each<{ name: string; used: PanelType[]; panel: PanelType; disabled: boolean }>([
@@ -42,7 +51,24 @@ describe("canvasAddRows", () => {
     expect(rows.at(-1)).toEqual({ key: "plugin-cogtest/quiz", panel: "plugin", label: "Quiz", meta: { plugin: quiz }, disabled: false });
   });
 
+  it("lists chat-side once per mode it takes", () => {
+    const rows = canvasAddRows(new Set<PanelType>(["chat-side"]), { plugins: null, shown: new Set() });
+    expect(rows.filter((r) => r.panel === "chat-side")).toEqual([
+      { key: "chat-side-fork", panel: "chat-side", label: "Chat (Resume with fork)", meta: { openMode: "fork" }, disabled: false },
+      { key: "chat-side-fresh", panel: "chat-side", label: "Chat (Fresh session)", meta: { openMode: "fresh" }, disabled: false },
+    ]);
+  });
+
   it("enables everything with no used set", () => {
     expect(canvasAddRows(undefined, { plugins: null, shown: new Set() }).every((r) => !r.disabled)).toBe(true);
   });
+});
+
+describe("paneLabel", () => {
+  it.each<{ openMode?: "fork" | "fresh"; want: string }>([{ openMode: "fork", want: "Chat · fork" }, { openMode: "fresh", want: "Chat · fresh" }, { want: "Chat · fork" }])(
+    "heads a chat-side pane opened as $openMode with $want",
+    ({ openMode, want }) => {
+      expect(paneLabel("chat-side", undefined, openMode)).toBe(want);
+    },
+  );
 });

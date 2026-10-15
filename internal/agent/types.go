@@ -3,6 +3,7 @@ package agent
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // AgentRequest is the input sent to the agent runner.
@@ -104,6 +105,35 @@ type AgentRequest struct {
 	// writes to a new session before it has said anything, and a run stopped
 	// at an ask or plan card may never send a text turn or a final result.
 	OnSession func(sessionID string) `json:"-"`
+	// Live runs the request as a turn of the channel's live session when one
+	// is running (see LiveHooks); without one it runs as usual.
+	Live bool `json:"live,omitempty"`
+}
+
+// LiveHooks is how a live session reports what happens between the turns it
+// is given: one long-lived claude process can start turns by itself, when a
+// background task it started ends.
+type LiveHooks struct {
+	// BeginTurn is called when the process starts a turn by itself. The
+	// returned request's callbacks get the turn's events, and done gets its
+	// outcome.
+	BeginTurn func() (req *AgentRequest, done func(*AgentResponse, error))
+	// Activity gets the activity reported while no turn runs.
+	Activity func(activity, detail string)
+	// Ended is called once, when the session ends, with why.
+	Ended func(reason string)
+}
+
+// LiveInfo describes a channel's live session.
+type LiveInfo struct {
+	ChannelID string    `json:"channel_id,omitempty"`
+	StartedAt time.Time `json:"started_at,omitzero"`
+	SessionID string    `json:"session_id,omitempty"`
+	// Busy is set while a turn runs.
+	Busy bool `json:"busy"`
+	// Background describes the background tasks the process waits on, ""
+	// when there are none.
+	Background string `json:"background,omitempty"`
 }
 
 // TurnRef locates an assistant text event in Claude Code's session

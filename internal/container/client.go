@@ -40,6 +40,7 @@ type dockerAPI interface {
 	ContainerWait(ctx context.Context, container string, condition containertypes.WaitCondition) (<-chan containertypes.WaitResponse, <-chan error)
 	ContainerRemove(ctx context.Context, container string, options containertypes.RemoveOptions) error
 	ContainerStop(ctx context.Context, containerID string, options containertypes.StopOptions) error
+	ContainerAttach(ctx context.Context, container string, options containertypes.AttachOptions) (types.HijackedResponse, error)
 	ContainerStats(ctx context.Context, containerID string, stream bool) (containertypes.StatsResponseReader, error)
 	ContainerList(ctx context.Context, options containertypes.ListOptions) ([]containertypes.Summary, error)
 	ImageList(ctx context.Context, options image.ListOptions) ([]image.Summary, error)
@@ -174,6 +175,12 @@ func (c *Client) ContainerCreate(ctx context.Context, cfg *ContainerConfig, name
 		Env:          cfg.Env,
 		Cmd:          cfg.Cmd,
 		WorkingDir:   cfg.WorkingDir,
+		OpenStdin:    cfg.OpenStdin,
+		AttachStdin:  cfg.OpenStdin,
+		// Closing stdin when the attached client goes away makes a live
+		// session's claude exit when Loop does, crash included, rather than
+		// wait on it forever; the next start removes the stopped container.
+		StdinOnce: cfg.OpenStdin,
 	}
 	if len(cfg.Volumes) > 0 {
 		containerCfg.Volumes = make(map[string]struct{}, len(cfg.Volumes))
@@ -225,6 +232,18 @@ func (c *Client) ContainerCreate(ctx context.Context, cfg *ContainerConfig, name
 		return "", err
 	}
 	return resp.ID, nil
+}
+
+// ContainerAttach connects to the container's stdin, stdout and stderr. The
+// container must have been created with OpenStdin.
+func (c *Client) ContainerAttach(ctx context.Context, containerID string) (*AttachStream, error) {
+	resp, err := c.api.ContainerAttach(ctx, containerID, containertypes.AttachOptions{
+		Stream: true, Stdin: true, Stdout: true, Stderr: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &AttachStream{Writer: resp.Conn, Reader: resp.Reader, Close: resp.Close}, nil
 }
 
 // ContainerStatsSummary is a one-shot resource snapshot of a running

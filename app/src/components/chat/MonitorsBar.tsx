@@ -74,6 +74,11 @@ export function MonitorsBar({ channelId, subscribeChatEvents, wsOpens }: Monitor
             display: "flex",
             alignItems: "center",
             gap: 8,
+            // As wide as the composer under it.
+            width: "100%",
+            maxWidth: 768,
+            margin: "0 auto",
+            boxSizing: "border-box",
             padding: "4px 10px",
             border: `1px solid ${colors.border}`,
             borderRadius: 6,

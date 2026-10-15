@@ -5,7 +5,7 @@ import type { ContainerStatsByType } from "../hooks/useContainerStats";
 import { usePluginPanels } from "../plugins/PluginPanelsContext";
 import { EmptyLayoutPicker } from "../splitPane/AddPanelButton";
 import { useTheme } from "../ThemeContext";
-import { EXCLUSIVE_PANELS, type LeafNode, type PanelType, type PaneMeta, SINGLETON_PANELS } from "../types/panels";
+import { EXCLUSIVE_PANELS, type LeafNode, type PanelType, type PaneMeta, SINGLETON_PANELS, takesOpenMode } from "../types/panels";
 import { CanvasLearnDock, LEARN_DOCK_GAP } from "./CanvasLearnDock";
 import { CanvasTile } from "./CanvasTile";
 import { canvasAddRows } from "./canvasAddRows";
@@ -216,7 +216,7 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats,
       const { w: tileW, h: tileH } = DEFAULT_TILE_SIZES[panel] ?? { w: 500, h: 400 };
       // Nudge position to avoid overlapping existing tiles.
       const adjusted = findNonOverlappingPosition(worldPos.x, worldPos.y, tileW, tileH, canvas.tiles);
-      const openMode = panel === "docker-agent" ? meta?.openMode : undefined;
+      const openMode = takesOpenMode(panel) ? meta?.openMode : undefined;
       const plugin = panel === "plugin" ? meta?.plugin : undefined;
       if (panel === "plugin" && !plugin) return;
       const newTile: CanvasTileType = {
@@ -512,6 +512,7 @@ const MINIMAP_PADDING = 8;
 
 const PANEL_COLORS: Record<PanelType, string> = {
   chat: "#4a9eff",
+  "chat-side": "#60a5fa",
   editor: "#a78bfa",
   "file-tree": "#a78bfa",
   memory: "#34d399",

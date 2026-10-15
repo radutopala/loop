@@ -30,6 +30,7 @@ import {
   saveLayout,
   saveLayoutType,
 } from "../../layouts/persistence";
+import { sideChatLeafIds, sideChats } from "../../layouts/sideChats";
 import { NotificationButton, NotificationDrawer } from "../../notifications/NotificationDrawer";
 import { PluginPanel } from "../../plugins/PluginPanel";
 import { PluginPanelsProvider, pluginPaneKey, pluginPaneOptions, shownPluginPanes, useInstalledPlugins, usePluginPanelsValue } from "../../plugins/PluginPanelsContext";
@@ -57,10 +58,12 @@ import { useTheme } from "../../ThemeContext";
 import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
 import type { Channel, SessionStatus } from "../../types";
-import type { AgentOpenMode, LeafNode, PanelType, PaneMeta, PaneNode } from "../../types/panels";
+import { type AgentOpenMode, type LeafNode, type PanelType, type PaneMeta, type PaneNode, takesOpenMode } from "../../types/panels";
 import { replaceLeaf } from "../../uiBridge/paneOps";
 import { getTerminalInput, notifyUiChanged, registerWorkspace } from "../../uiBridge/registry";
 import type { PaneOptions, WorkspaceController } from "../../uiBridge/types";
+import { useChatPaneInput } from "../../uiBridge/useChatPaneInput";
+import { logErr } from "../../utils/log";
 import { storageSetJSON } from "../../utils/storage";
 import { ChatComponentFull, ComponentFocusContext, type ShownComponent } from "../chat/ChatComponent";
 import { ChatView } from "../chat/ChatView";
@@ -90,6 +93,7 @@ import { ExplainPane } from "./ExplainPane";
 import { HeaderBranchPicker } from "./HeaderBranchPicker";
 import { LearnPane } from "./LearnPane";
 import { LEARN_SPLIT_MS, LEARN_SPLIT_SLOT_ID, LearnSplit, type SideView } from "./LearnSplit";
+import { SideChatPane } from "./SideChatPane";
 
 type AgentState = "running" | "stopped" | "none";
 
@@ -125,8 +129,13 @@ function shownPluginTiles(tiles: CanvasTile[]): Set<string> {
 }
 
 /** Closes the session of a terminal pane that's going away. A pane on
- *  another tab isn't mounted, so its stored session is closed directly. */
+ *  another tab isn't mounted, so its stored session is closed directly.
+ *  A chat-side pane's side chat ends with it. */
 function closeTerminalSession(channelId: string, leaf: Pick<LeafNode, "id" | "panel">) {
+  if (leaf.panel === "chat-side") {
+    sideChats.close(channelId, leaf.id).catch(logErr("ending the side chat"));
+    return;
+  }
   if (leaf.panel !== "docker-agent" && leaf.panel !== "host-shell" && leaf.panel !== "docker-shell") return;
   const target = leaf.panel === "host-shell" ? "host" : "agent";
   const close = getCloseForInstance(`${target}:${channelId}:${leaf.id}`);
@@ -270,7 +279,7 @@ interface WorkspaceLayoutProps {
   onToggleSidebar: () => void;
   onOpenPalette: () => void;
   scrollToMessageId?: number | null;
-  onScrollComplete?: () => void;
+  onScrollComplete?: (found: boolean) => void;
   openMemoryFile?: string | null;
   onOpenMemoryFileComplete?: () => void;
   onStatusChange?: () => void;
@@ -527,6 +536,12 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     }
   }, [channelId]);
 
+  // Side chats no saved pane shows any more (closed while Loop was away)
+  // end when the channel's layouts load.
+  useEffect(() => {
+    sideChats.sweep(channelId, () => sideChatLeafIds(Object.values(loadChannelLayouts(channelId)?.layouts ?? {}))).catch(logErr("ending stale side chats"));
+  }, [channelId]);
+
   // Save tree/canvas whenever it changes.
   useEffect(() => {
     if (tree) {
@@ -758,7 +773,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         const plugin = panel === "plugin" ? meta?.plugin : undefined;
         if (panel === "plugin" && !plugin) return prev;
         const newLeafId = leafIdForPanel(channelId, panel);
-        const openMode = panel === "docker-agent" ? meta?.openMode : undefined;
+        const openMode = takesOpenMode(panel) ? meta?.openMode : undefined;
         let result = splitLeaf(prev, leafId, direction, makeLeaf(newLeafId, panel, 1, openMode, plugin));
         if (panel === "editor") {
           result = withDefaultFileTreeForEditor(result, newLeafId, leafIdForPanel(channelId, "file-tree"));
@@ -774,7 +789,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       const plugin = panel === "plugin" ? meta?.plugin : undefined;
       if (panel === "plugin" && !plugin) return;
       const newLeafId = leafIdForPanel(channelId, panel);
-      const openMode = panel === "docker-agent" ? meta?.openMode : undefined;
+      const openMode = takesOpenMode(panel) ? meta?.openMode : undefined;
       let newTree: PaneNode = makeLeaf(newLeafId, panel, 1, openMode, plugin);
       if (panel === "editor") {
         newTree = withDefaultFileTreeForEditor(newTree, newLeafId, leafIdForPanel(channelId, "file-tree"));
@@ -829,7 +844,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     };
     const newLeaf = (panel: PanelType, opts: PaneOptions = {}) => {
       if (panel === "plugin" && !opts.plugin) throw new Error("a plugin pane needs the plugin panel it shows");
-      const leaf = makeLeaf(leafIdForPanel(channelId, panel), panel, 1, panel === "docker-agent" ? opts.openMode : undefined, panel === "plugin" ? opts.plugin : undefined);
+      const leaf = makeLeaf(leafIdForPanel(channelId, panel), panel, 1, takesOpenMode(panel) ? opts.openMode : undefined, panel === "plugin" ? opts.plugin : undefined);
       // A playground pane reads the playground it shows when it mounts.
       if (panel === "playground" && opts.playground) storageSetJSON(`playground-active:${channelId}:${leaf.id}`, opts.playground);
       return leaf;
@@ -861,7 +876,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     const newTile = (c: CanvasNode, panel: PanelType, opts: PaneOptions = {}): NewTile => {
       if (panel === "plugin" && !opts.plugin) throw new Error("a plugin pane needs the plugin panel it shows");
       const tile: NewTile = { id: freshTileId(c, panel, Date.now()), panel };
-      if (panel === "docker-agent" && opts.openMode) tile.openMode = opts.openMode;
+      if (takesOpenMode(panel) && opts.openMode) tile.openMode = opts.openMode;
       if (panel === "plugin") tile.plugin = opts.plugin;
       if (panel === "playground" && opts.playground) storageSetJSON(`playground-active:${channelId}:${tile.id}`, opts.playground);
       return tile;
@@ -1127,6 +1142,10 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     setLearnOpen(false);
     // Close any running terminal sessions in the current tree
     const current = treeRef.current;
+    // and the side chats of its chat-side panes.
+    for (const pane of current ? collectLeaves(current) : (canvasRef.current?.tiles ?? [])) {
+      if (pane.panel === "chat-side") sideChats.close(channelId, pane.id).catch(logErr("ending the side chat"));
+    }
     if (current) {
       for (const leaf of collectLeaves(current)) {
         if (leaf.panel === "docker-agent" || leaf.panel === "host-shell" || leaf.panel === "docker-shell") {
@@ -1290,6 +1309,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     () => (layoutType === "canvas" ? canvasState?.tiles.find((t) => t.panel === "chat")?.id : tree ? collectLeaves(tree).find((l) => l.panel === "chat")?.id : undefined),
     [layoutType, canvasState, tree],
   );
+  // UI commands queue messages in the chat pane, and read its replies.
+  useChatPaneInput(channelId, chatLeafId, channelId, chatState);
 
   // The Learn view keeps the chat while it fades out, even after a layout
   // switch took its pane away.
@@ -1356,6 +1377,21 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               <ExplainBadge leafId={leaf.id} explain={explain} open={learnDocked && explainShown} onToggle={learnDocked && explainShown ? closeLearn : openExplain} />
               <LearnBadge leafId={leaf.id} learn={learn} open={learnDocked && learnShown} onToggle={learnDocked && learnShown ? closeLearn : openLearn} />
             </>
+          );
+        case "chat-side":
+          return (
+            <SideChatPane
+              key={`layout-chat-side-${channelId}-${leaf.id}`}
+              channelId={channelId}
+              leafId={leaf.id}
+              mode={leaf.openMode === "fresh" ? "fresh" : "fork"}
+              roots={editorState.roots}
+              onSelectThread={onSelectThread}
+              subscribeChannelEvents={subscribeChannelEvents}
+              getChatState={getChatState}
+              onChatStateUnmount={onChatStateUnmount}
+              wsOpens={wsOpens}
+            />
           );
         case "editor":
           return (
@@ -1525,6 +1561,11 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       placeChatHost,
       pluginHost,
       placePluginHost,
+      onSelectThread,
+      subscribeChannelEvents,
+      getChatState,
+      onChatStateUnmount,
+      wsOpens,
     ],
   );
 
@@ -1992,6 +2033,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                         leafId={leaf.id}
                         panel={leaf.panel}
                         plugin={leaf.plugin}
+                        openMode={leaf.openMode}
                         usedSingletons={usedSingletons}
                         hiddenPanels={hiddenPanels}
                         agentInfo={leaf.panel === "docker-agent" ? agentInfoMap.get(leaf.id) : undefined}

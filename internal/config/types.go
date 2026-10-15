@@ -545,8 +545,17 @@ type Config struct {
 	ContainerMemoryMB       int64
 	ContainerCPUs           float64
 	ContainerKeepAlive      time.Duration
-	PollInterval            time.Duration
-	APIAddr                 string
+	// LiveSessionIdle is how long a channel's live session may sit idle,
+	// with no turn and no background task running, before it is stopped.
+	// Zero keeps it until it is stopped by hand.
+	LiveSessionIdle time.Duration
+	// LiveSessions runs chat turns in live sessions (see LiveFor).
+	LiveSessions bool
+	// LiveSessionPlatforms limits live sessions to the channels of these
+	// platforms; empty means every platform.
+	LiveSessionPlatforms []types.Platform
+	PollInterval         time.Duration
+	APIAddr              string
 	// APIAdvertiseURL is the base URL advertised to agent containers for reaching
 	// the loop API (default "http://host.docker.internal" + APIAddr). This is the
 	// advertise counterpart to the APIAddr bind address: set it when the daemon
@@ -760,4 +769,10 @@ type ProxiesConfig struct {
 	// they are reached by bare name, which no CIDR entry can cover, because
 	// Go's proxy matcher compares the URL host before DNS resolves it.
 	NoProxy []string `json:"no_proxy"`
+}
+
+// LiveFor reports whether chat turns in a channel of platform p run in a
+// live session.
+func (c *Config) LiveFor(p types.Platform) bool {
+	return c.LiveSessions && (len(c.LiveSessionPlatforms) == 0 || slices.Contains(c.LiveSessionPlatforms, p))
 }

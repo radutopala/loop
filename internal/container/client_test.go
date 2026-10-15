@@ -102,6 +102,11 @@ func (m *mockDockerAPI) ContainerLogs(ctx context.Context, container string, opt
 	return rc, args.Error(1)
 }
 
+func (m *mockDockerAPI) ContainerAttach(ctx context.Context, container string, options containertypes.AttachOptions) (types.HijackedResponse, error) {
+	args := m.Called(ctx, container, options)
+	return args.Get(0).(types.HijackedResponse), args.Error(1)
+}
+
 func (m *mockDockerAPI) CopyToContainer(ctx context.Context, containerID, dstPath string, content io.Reader, options containertypes.CopyToContainerOptions) error {
 	args := m.Called(ctx, containerID, dstPath, content, options)
 	return args.Error(0)
@@ -313,6 +318,38 @@ func (s *ClientSuite) TestContainerCreateAlwaysSetsInit() {
 	require.NotNil(s.T(), capturedHost)
 	require.NotNil(s.T(), capturedHost.Init, "HostConfig.Init must be set")
 	require.True(s.T(), *capturedHost.Init, "HostConfig.Init must be true")
+}
+
+func (s *ClientSuite) TestContainerCreateStdin() {
+	tests := []struct {
+		name      string
+		openStdin bool
+	}{
+		{"live session", true},
+		{"one-shot", false},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			ctx := context.Background()
+			api := new(mockDockerAPI)
+			client := &Client{api: api}
+			var captured *containertypes.Config
+			api.On("ContainerCreate", ctx,
+				mock.MatchedBy(func(c *containertypes.Config) bool {
+					captured = c
+					return true
+				}),
+				mock.AnythingOfType("*container.HostConfig"),
+				(*network.NetworkingConfig)(nil), (*ocispec.Platform)(nil), "stdin-test").
+				Return(containertypes.CreateResponse{ID: "id"}, nil)
+
+			_, err := client.ContainerCreate(ctx, &ContainerConfig{Image: "img:latest", OpenStdin: tc.openStdin}, "stdin-test")
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tc.openStdin, captured.OpenStdin)
+			require.Equal(s.T(), tc.openStdin, captured.AttachStdin)
+			require.Equal(s.T(), tc.openStdin, captured.StdinOnce)
+		})
+	}
 }
 
 func (s *ClientSuite) TestContainerCreateEmptyName() {
