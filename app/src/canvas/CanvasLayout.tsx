@@ -23,7 +23,7 @@ interface CanvasLayoutProps {
   containerStats?: ContainerStatsByType;
   onCanvasChange: (canvas: CanvasNode) => void;
   hiddenPanels?: PanelType[];
-  /** The Learn view, docked to the chat's tile while it's up (see
+  /** The Learn view, docked to its tile while it's up (see
    * CanvasLearnDock). */
   learnDock?: LearnDock;
   /** Set to what UI steps do on the canvas. */
@@ -40,6 +40,9 @@ export interface CanvasControl {
 }
 
 export interface LearnDock {
+  /** The tile it docks to; the chat's by default (a side chat's view docks
+   *  to its pane's). */
+  tileId?: string;
   shown: boolean;
   view?: SideView;
   ms: number;
@@ -308,12 +311,12 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats,
 
   // Opening the Learn view brings the chat's tile and its dock into view,
   // zooming out if they don't fit.
-  const chatTile = canvas.tiles.find((t) => t.panel === "chat");
-  const docked = !!learnDock && !!chatTile;
+  const dockTile = learnDock ? canvas.tiles.find((t) => (learnDock.tileId ? t.id === learnDock.tileId : t.panel === "chat")) : undefined;
+  const dockedId = dockTile?.id;
   useEffect(() => {
     const rect = containerRef.current?.getBoundingClientRect();
-    const chat = canvasRef.current.tiles.find((t) => t.panel === "chat");
-    if (!docked || !rect || !chat) return;
+    const chat = canvasRef.current.tiles.find((t) => t.id === dockedId);
+    if (!rect || !chat) return;
     const v = vpRef.current;
     const w = chat.width * 2 + LEARN_DOCK_GAP;
     const left = chat.x * v.zoom + v.x;
@@ -321,7 +324,7 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats,
     if (left >= 0 && top >= 0 && left + w * v.zoom <= rect.width && top + chat.height * v.zoom <= rect.height) return;
     const zoom = Math.max(MIN_ZOOM, Math.min(v.zoom, (rect.width * 0.95) / w, (rect.height * 0.95) / chat.height));
     setViewportRef.current((rect.width - w * zoom) / 2 - chat.x * zoom, (rect.height - chat.height * zoom) / 2 - chat.y * zoom, zoom);
-  }, [docked]);
+  }, [dockedId]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -413,10 +416,10 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats,
             />
           </div>
         ))}
-        {learnDock && chatTile && (
+        {learnDock && dockTile && (
           <CanvasLearnDock
             ref={learnDock.ref}
-            chat={chatTile}
+            chat={dockTile}
             zoom={vp.zoom}
             shown={learnDock.shown}
             ms={learnDock.ms}

@@ -197,7 +197,7 @@ Feature: Explain a turn
     Then the clipboard should contain "### Summary"
     And the clipboard should contain "Added a lint target to the Makefile."
 
-  Scenario: A side chat's turns are explained beside it, in its own pane
+  Scenario: A side chat's turns are explained beside it, in the chat's view
     When I add a "Chat (Fresh session)" panel
     Then I wait for "[data-testid='side-chat'] textarea" to be visible
     Given the current channel becomes its side chat
@@ -214,15 +214,20 @@ Feature: Explain a turn
     Then I wait for "[data-testid='side-chat'] [data-testid='explain-turn'][data-state='open']" to be visible
     And the element "[data-testid='side-chat'] [data-testid='explain-turn']" should contain text "Explained"
     And the element "[data-testid='side-chat'] [data-testid='learn-turn']" should be visible
-    # Its pane's header carries its Explain label, which opens the view in
-    # the pane (the turn's button opens it the same way).
+    # Its pane's header carries its Explain label, which opens the view the
+    # chat's way: the side chat split with its Explain pane over the layout
+    # (the turn's button opens it the same way).
     When I click on "[data-testid='explain-badge'][aria-expanded='false']"
-    Then I wait for "[data-testid='side-chat'][data-view='explain'] [data-testid='explain-pane']" to be visible
-    And the element "[data-testid='side-chat'] [data-testid='explanation-content']" should contain text "Renamed the lint target in the side chat."
-    And the element "[data-testid='side-chat-logo']" should be visible
+    Then I wait for "[data-testid='side-chat-split'][data-view='explain'] [data-testid='explain-pane']" to be visible
+    And the element "[data-testid='side-chat-split'] [data-testid='explanation-content']" should contain text "Renamed the lint target in the side chat."
+    And the element "[data-testid='side-chat-split-logo']" should be visible
+    And the element "[data-testid='side-chat-split-chat'] [data-testid='explain-turn']" should be visible
+    And the element "[data-testid='side-chat-split-chat'] [id^='pane-header-slot-side-chat-view-'] [data-testid='explain-badge']" should be visible
     # The channel's own Explain view stays shut.
     And the element "[data-testid='learn-split']" should not exist
-    # The label closes it again.
-    When I click on "[data-testid='explain-badge'][aria-expanded='true']"
-    Then I wait for "[data-testid='side-chat'][data-view=''] textarea" to be visible
-    And the element "[data-testid='side-chat'] [data-testid='explain-pane']" should not exist
+    # The label in the view's header closes it again, giving the side chat
+    # back to its pane.
+    When I click on "[data-testid='side-chat-split'] [data-testid='explain-badge'][aria-expanded='true']"
+    Then I wait up to "5s" for "[data-testid='side-chat-split']" to disappear
+    And I wait for "[data-testid='side-chat'] textarea" to be visible
+    And the element "[data-testid='explain-pane']" should not exist
