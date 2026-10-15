@@ -139,6 +139,13 @@ function openModeOf(mode: string | undefined): AgentOpenMode | undefined {
   return mode as AgentOpenMode;
 }
 
+/** The panel a step makes: a chat forked or started fresh is a side chat,
+ *  since the Chat pane resumes the channel's session. */
+function stepPanelOf(step: UiStep): PanelType {
+  const panel = panelOf(step.panel);
+  return panel === "chat" && (step.open_mode === "fork" || step.open_mode === "fresh") ? "chat-side" : panel;
+}
+
 /** Runs a step against the controller, turning its Error into the step's. */
 function attempt<T>(fn: () => T): T {
   try {
@@ -254,14 +261,14 @@ async function runStep(step: UiStep, run: Run): Promise<StepOutput> {
     case "replace_pane": {
       const { channelId, ws } = workspaceOf(run);
       const pane = findPane(ws.view().panes, step.pane);
-      const panel = panelOf(step.panel);
+      const panel = stepPanelOf(step);
       const opts = await paneOptions(step, panel, channelId, run, ws, pane.id);
       stillOn(run);
       return { pane: attempt(() => ws.replacePane(pane.id, panel, opts)) };
     }
     case "add_pane": {
       const { channelId, ws } = workspaceOf(run);
-      const panel = panelOf(step.panel);
+      const panel = stepPanelOf(step);
       const nextTo = step.next_to === undefined ? undefined : findPane(ws.view().panes, step.next_to).id;
       const direction = step.direction ?? "horizontal";
       if (direction !== "horizontal" && direction !== "vertical") throw new StepError(`unknown direction "${direction}"; use horizontal or vertical`);
