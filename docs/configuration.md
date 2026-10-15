@@ -340,6 +340,7 @@ Enables and configures the Review panel (see [review.md](review.md)).
 | `prompt_path` | `string` | Path to a prompt file, resolved as `~/.loop/review/{prompt_path}`. Mutually exclusive with `prompt`. |
 | `verify` | `bool` | Run the [verification step](review.md#lifecycle) once a review is over: the dedup pass, then a read-only agent that records a verdict on each agent comment and posts a summary to the channel. `true` by default. `loop review:run --no-verify` skips it for one run. |
 | `verify_prompt` | `string` | Replaces the verification agent's built-in instructions. Loop still appends the PR, the reviewed commit, the checkout and the dedup pass's outcome. |
+| `max_iterations` | `int` | Passes a review runs, 1–10 (default `3`). The Review panel's input starts at it, and `run_review` and `POST /api/channels/{id}/review/start` use it when given no `max_iterations`. |
 
 Both prompt fields empty (the default) uses the daemon's built-in default prompt: the `/code-review` slash command with the run's effort as its level (e.g. `/code-review high`; bare when no effort is set), with the output contract (report actionable findings via the built-in `ReportFindings` tool, each carrying a file and a 1-based line) carried in the system prompt. A configured non-slash prompt gets no system prompt, so it must carry its own contract — see [review.md](review.md#required-output-format).
 
@@ -726,7 +727,7 @@ Not all global fields are available in project configs. The following fields can
 | `browser.extensions` | **Replaces** the global list when set (entries are not merged). Read when the channel's sidecar is created. |
 | `browser.cookie_import` | **Overrides** per key: `source` and `auto` when set, `domains` **replaces** the global list when present. |
 | `github.gh_user` | **Overrides** global value when set. |
-| `review.enabled` / `review.prompt` / `review.prompt_path` / `review.verify` / `review.verify_prompt` | Each field **overrides** the global value only when explicitly set (see [Review](#review)). |
+| `review.enabled` / `review.prompt` / `review.prompt_path` / `review.verify` / `review.verify_prompt` / `review.max_iterations` | Each field **overrides** the global value only when explicitly set (see [Review](#review)). |
 | `learn.enabled` / `learn.min_turns` / `learn.model` / `learn.effort` / `learn.prompt` | Each field **overrides** the global value only when set: `enabled` and `min_turns` when present, the strings when non-empty (see [Learn](#learn)). |
 | `explain.enabled` / `explain.model` / `explain.effort` / `explain.prompt` | Each field **overrides** the global value only when set: `enabled` when present, the strings when non-empty (see [Explain](#explain)). |
 | `gates.agentgate.enabled` | **Ignored**: the global setting decides, so a project can neither switch the gate off nor on. |

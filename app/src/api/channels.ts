@@ -55,6 +55,7 @@ interface ChannelAPIResponse {
   diff_additions?: number;
   diff_deletions?: number;
   review_enabled?: boolean;
+  review_max_iterations?: number;
   model_override?: string;
   effort_override?: string;
   last_activity_at?: string;
@@ -95,6 +96,7 @@ export async function fetchChannels(): Promise<Channel[]> {
     diff_additions: c.diff_additions ?? 0,
     diff_deletions: c.diff_deletions ?? 0,
     review_enabled: c.review_enabled ?? false,
+    review_max_iterations: c.review_max_iterations,
     model_override: c.model_override,
     effort_override: c.effort_override,
     last_activity_at: c.last_activity_at ? Date.parse(c.last_activity_at) : undefined,

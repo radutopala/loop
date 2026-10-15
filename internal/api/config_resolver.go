@@ -90,6 +90,16 @@ func (c *configResolver) reviewEnabled(workdir, parentDirPath string) bool {
 	return cfg.Review.Enabled
 }
 
+// reviewMaxIterations mirrors ghUser for review.max_iterations: the passes a
+// review runs when its start gives none. The default on a config-load error.
+func (c *configResolver) reviewMaxIterations(workdir, parentDirPath string) int {
+	cfg := c.merged(workdir, parentDirPath)
+	if cfg == nil {
+		return config.DefaultReviewMaxIterations
+	}
+	return cfg.Review.ReviewIterations()
+}
+
 // claudeEffort mirrors ghUser for claude_effort, the reasoning effort a
 // container runs at when the request sets none.
 func (c *configResolver) claudeEffort(workdir, parentDirPath string) string {

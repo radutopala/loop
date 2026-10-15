@@ -33,6 +33,8 @@ export interface Channel {
   diff_additions: number;
   diff_deletions: number;
   review_enabled: boolean;
+  /** The project's review.max_iterations: the Review panel's starting pass count. */
+  review_max_iterations?: number;
   /** The model this channel's agent runs with instead of the config's; unset inherits it. */
   model_override?: string;
   /** The reasoning effort this channel's agent runs with instead of the config's; unset inherits it. */

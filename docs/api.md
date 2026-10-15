@@ -152,6 +152,7 @@ List all channels with optional filtering. Enriches each channel with container 
 - `container_running` is determined by querying the Docker daemon for running containers.
 - `agent_running` indicates whether an active Claude agent run exists for the channel. A run is registered before its `agent.status` "running" event is broadcast, so a response to a request made after that event reflects the run.
 - `review_running` is true while a review run or a dedup pass runs on the channel's [review session](#review) (its status is `reviewing`, or `verifying` during the [verification step](#post-apichannelsidreviewverify)). Review sessions live in the daemon's memory, so this comes from the review store, not the database. The sidebar shows the channel as running and patches the flag live from `review.status` events.
+- `review_max_iterations` is the project's `review.max_iterations` (global, then project and worktree config; `3` unless set), where the Review panel's pass count starts.
 - `branch` is resolved by running `git rev-parse --abbrev-ref HEAD` in the channel's directory.
 - `commit` is the short commit hash from `git rev-parse --short HEAD`, and `subject` its subject line.
 - `upstream` is the branch's tracking branch (e.g. `origin/main`), with `ahead` / `behind` counting the commits between them. Omitted when there's none.
@@ -2526,7 +2527,7 @@ Body: `{"pr_number": 42, "model": "opus", "effort": "high", "mode": "review", "m
 Only `pr_number` is required. `model` and `effort` default to the
 channel's own overrides, and empty after that means the config default.
 `mode` is `review` (default, the `review-loop` workflow) or `review-fix`
-(`review-fix-loop`). `max_iterations` is 1–10, default `3`.
+(`review-fix-loop`). `max_iterations` is 1–10, default the project's `review.max_iterations` (`3` unless set).
 
 Response (`201`): `{"run_id": "...", "workflow_name": "review-loop", "model": "opus", "effort": "high", "session": { ... }}`.
 A Review panel on the channel picks the run up from its

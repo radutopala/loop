@@ -1574,6 +1574,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             <ReviewPanel
               key={`layout-review-${channelId}`}
               channelId={channelId}
+              defaultMaxIter={channel.review_max_iterations}
               subscribeChatEvents={subscribeChatEvents}
               registerReviewView={registerReviewView}
               hasChatPanel={tree ? collectLeaves(tree).some((l) => l.panel === "chat") : false}
@@ -1591,6 +1592,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       editorState,
       dirPath,
       channel.root_dir_path,
+      channel.review_max_iterations,
       branch,
       scrollToMessageId,
       onScrollComplete,

@@ -601,6 +601,9 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 		if pc.Review.VerifyPrompt != "" {
 			merged.Review.VerifyPrompt = pc.Review.VerifyPrompt
 		}
+		if pc.Review.MaxIterations != 0 {
+			merged.Review.MaxIterations = pc.Review.MaxIterations
+		}
 	}
 
 	// PlaygroundShare: Enabled overrides global only when explicitly set.

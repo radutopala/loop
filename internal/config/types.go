@@ -208,23 +208,45 @@ type EmbeddingsConfig struct {
 // the dedup pass, then an agent that judges each agent comment against the
 // code and posts a summary to the channel. VerifyPrompt replaces that
 // agent's built-in instructions (review.DefaultVerifyPrompt).
+//
+// MaxIterations is the number of passes a review runs when its start gives
+// none, and the Review panel's starting value (DefaultReviewMaxIterations
+// by default, MaxReviewIterations at most).
 type ReviewConfig struct {
-	Enabled      bool   `json:"enabled"`
-	Prompt       string `json:"prompt"`
-	PromptPath   string `json:"prompt_path"`
-	Verify       bool   `json:"verify"`
-	VerifyPrompt string `json:"verify_prompt"`
+	Enabled       bool   `json:"enabled"`
+	Prompt        string `json:"prompt"`
+	PromptPath    string `json:"prompt_path"`
+	Verify        bool   `json:"verify"`
+	VerifyPrompt  string `json:"verify_prompt"`
+	MaxIterations int    `json:"max_iterations"`
+}
+
+// DefaultReviewMaxIterations is review.max_iterations when not set, and
+// MaxReviewIterations its most.
+const (
+	DefaultReviewMaxIterations = 3
+	MaxReviewIterations        = 10
+)
+
+// ReviewIterations returns MaxIterations, or the default when it's out of
+// range.
+func (r ReviewConfig) ReviewIterations() int {
+	if r.MaxIterations < 1 || r.MaxIterations > MaxReviewIterations {
+		return DefaultReviewMaxIterations
+	}
+	return r.MaxIterations
 }
 
 // jsonReviewConfig is the JSON representation of ReviewConfig with optional
 // Enabled and Verify pointers so we can distinguish "unset" (inherit parent
 // layer) from "explicitly false" (force-disable at this layer).
 type jsonReviewConfig struct {
-	Enabled      *bool  `json:"enabled"`
-	Prompt       string `json:"prompt"`
-	PromptPath   string `json:"prompt_path"`
-	Verify       *bool  `json:"verify"`
-	VerifyPrompt string `json:"verify_prompt"`
+	Enabled       *bool  `json:"enabled"`
+	Prompt        string `json:"prompt"`
+	PromptPath    string `json:"prompt_path"`
+	Verify        *bool  `json:"verify"`
+	VerifyPrompt  string `json:"verify_prompt"`
+	MaxIterations int    `json:"max_iterations"`
 }
 
 // ResolvePrompt returns the configured prompt text. When neither field

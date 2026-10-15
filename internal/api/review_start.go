@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/review"
 	"github.com/radutopala/loop/internal/workflow"
@@ -15,13 +16,6 @@ import (
 const (
 	reviewLoopWorkflow    = "review-loop"
 	reviewFixLoopWorkflow = "review-fix-loop"
-)
-
-// maxReviewIterations caps max_iterations the way the panel's input does,
-// and defaultReviewIterations is its value when not given, as the panel's.
-const (
-	maxReviewIterations     = 10
-	defaultReviewIterations = 3
 )
 
 // reviewStartRequest is the body of POST /api/channels/{id}/review/start.
@@ -76,8 +70,7 @@ func (s *Server) handleReviewStart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "mode must be review or review-fix", http.StatusBadRequest)
 		return
 	}
-	iterations := cmp.Or(req.MaxIterations, defaultReviewIterations)
-	if iterations < 1 || iterations > maxReviewIterations {
+	if req.MaxIterations < 0 || req.MaxIterations > config.MaxReviewIterations {
 		http.Error(w, "max_iterations must be between 1 and 10", http.StatusBadRequest)
 		return
 	}
@@ -125,6 +118,8 @@ func (s *Server) handleReviewStart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// Without max_iterations the run takes the project's review.max_iterations.
+	iterations := cmp.Or(req.MaxIterations, s.configs.reviewMaxIterations(dirPath, parentDirPath))
 	runID, err := s.workflowEngine.StartRun(r.Context(), workflow.StartRunOptions{
 		WorkflowName:  workflowName,
 		ChannelID:     channelID,

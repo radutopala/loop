@@ -901,10 +901,20 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 		{
 			name:        "Review/VerifyUnsetKeepsGlobal",
 			projectJSON: `{"review": {}}`,
-			mainCfg:     &Config{Review: ReviewConfig{Verify: true, VerifyPrompt: "global verify"}},
+			mainCfg:     &Config{Review: ReviewConfig{Verify: true, VerifyPrompt: "global verify", MaxIterations: 4}},
 			assert: func(merged, _ *Config) {
 				require.True(s.T(), merged.Review.Verify)
 				require.Equal(s.T(), "global verify", merged.Review.VerifyPrompt)
+				require.Equal(s.T(), 4, merged.Review.MaxIterations)
+			},
+		},
+		{
+			name:        "Review/MaxIterationsOverridesGlobal",
+			projectJSON: `{"review": {"max_iterations": 7}}`,
+			mainCfg:     &Config{Review: ReviewConfig{MaxIterations: 4}},
+			assert: func(merged, main *Config) {
+				require.Equal(s.T(), 7, merged.Review.MaxIterations)
+				require.Equal(s.T(), 4, main.Review.MaxIterations)
 			},
 		},
 		{

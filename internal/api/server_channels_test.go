@@ -1178,6 +1178,7 @@ func (s *ServerSuite) TestSearchChannelsReviewEnabledWorktreeUsesParentDir() {
 		require.Equal(s.T(), "/proj", parent)
 		out := *c
 		out.Review.Enabled = true
+		out.Review.MaxIterations = 5
 		return &out, nil
 	}
 
@@ -1191,8 +1192,10 @@ func (s *ServerSuite) TestSearchChannelsReviewEnabledWorktreeUsesParentDir() {
 	for _, r := range resp {
 		if r.ChannelID == "parent" {
 			require.False(s.T(), r.ReviewEnabled)
+			require.Equal(s.T(), 3, r.ReviewMaxIterations)
 		} else {
 			require.True(s.T(), r.ReviewEnabled)
+			require.Equal(s.T(), 5, r.ReviewMaxIterations)
 		}
 	}
 }
