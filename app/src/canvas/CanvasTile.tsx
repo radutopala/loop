@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { paneHeaderSlotRef } from "../components/chat/LearnBadge";
+import { ContainerStatsLabel } from "../components/panels/ContainerStatsLabel";
 import type { AgentInfo } from "../hooks/useAgentRegistry";
-import { type ContainerStatsByType, fmtBytes, statsForPanel } from "../hooks/useContainerStats";
+import { type ContainerStatsByType, statsForPanel } from "../hooks/useContainerStats";
 import { usePluginPanels } from "../plugins/PluginPanelsContext";
 import { useTheme } from "../ThemeContext";
-import { fonts } from "../theme";
 import { type LeafNode, type PanelType, type PaneMeta, paneLabel } from "../types/panels";
 import { canvasAddRows } from "./canvasAddRows";
 import type { CanvasTile as CanvasTileType } from "./types";
@@ -326,14 +326,7 @@ export function CanvasTile({
           ×
         </button>
         <div style={{ flex: 1 }} />
-        {statsEntry && (
-          <span
-            title={`Container ${statsEntry.container_id.slice(0, 12)} — CPU ${statsEntry.cpu_percent.toFixed(1)}%, memory ${fmtBytes(statsEntry.mem_usage)} of ${fmtBytes(statsEntry.mem_limit)}`}
-            style={{ fontSize: 9, fontFamily: fonts.mono, color: colors.textDim, flexShrink: 0, marginRight: 2, whiteSpace: "nowrap" }}
-          >
-            {Math.round(statsEntry.cpu_percent)}% · {fmtBytes(statsEntry.mem_usage)}
-          </span>
-        )}
+        <ContainerStatsLabel entry={statsEntry} />
         <div
           id={`pane-header-slot-${tile.id}`}
           ref={paneHeaderSlotRef}

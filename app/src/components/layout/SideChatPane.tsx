@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import type { RootEntry } from "../../api/files";
 import type { SideChatMode } from "../../api/sideChats";
 import { useChatState } from "../../hooks/useChatState";
 import type { ActiveChatState, ChatEventListener } from "../../hooks/useChatStateStore";
+import { useContainerStats } from "../../hooks/useContainerStats";
 import { ExplainContext, useExplain } from "../../hooks/useExplain";
 import { LearnContext, useLearn } from "../../hooks/useLearn";
 import { sideChats } from "../../layouts/sideChats";
@@ -12,7 +14,8 @@ import { useChatPaneInput } from "../../uiBridge/useChatPaneInput";
 import { ChatView } from "../chat/ChatView";
 import { ExplainBadge } from "../chat/ExplainBadge";
 import { explanationPending } from "../chat/explainState";
-import { LearnBadge } from "../chat/LearnBadge";
+import { LearnBadge, usePaneHeaderSlot } from "../chat/LearnBadge";
+import { ContainerStatsLabel } from "../panels/ContainerStatsLabel";
 import { ExplainPane } from "./ExplainPane";
 import { LearnPane } from "./LearnPane";
 import { type SideView, SplitSeamLogo } from "./LearnSplit";
@@ -98,9 +101,14 @@ function SideChat({
   const explain = useExplain(sideChannelId, subscribeChannelEvents ? subscribe : undefined, wsOpens, showExplain);
   const learn = useLearn(sideChannelId, subscribeChannelEvents ? subscribe : undefined, subscribeChannelEvents, wsOpens, showLearn);
   const running = sideView === "explain" ? explain.explanations.some(explanationPending) : learn.running;
+  // The side chat runs in a container of its own channel's, not the
+  // channel's the pane header polls.
+  const stats = useContainerStats(sideChannelId);
+  const slot = usePaneHeaderSlot(leafId);
   return (
     <LearnContext.Provider value={learn}>
       <ExplainContext.Provider value={explain}>
+        {slot && createPortal(<ContainerStatsLabel entry={stats.agent} />, slot)}
         <ExplainBadge leafId={leafId} explain={explain} open={sideView === "explain"} onToggle={sideView === "explain" ? closeSide : showExplain} />
         <LearnBadge leafId={leafId} learn={learn} open={sideView === "learn"} onToggle={sideView === "learn" ? closeSide : showLearn} />
         <div data-testid="side-chat" data-view={sideView ?? ""} style={{ flex: 1, minHeight: 0, display: "flex", position: "relative" }}>

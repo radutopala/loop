@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { paneHeaderSlotRef } from "../components/chat/LearnBadge";
+import { ContainerStatsLabel } from "../components/panels/ContainerStatsLabel";
 import type { AgentInfo } from "../hooks/useAgentRegistry";
-import { type ContainerStatsByType, fmtBytes, statsForPanel } from "../hooks/useContainerStats";
+import { type ContainerStatsByType, statsForPanel } from "../hooks/useContainerStats";
 import { usePluginPanels } from "../plugins/PluginPanelsContext";
 import { usePaneTitle } from "../plugins/paneTitles";
 import { useTheme } from "../ThemeContext";
 import type { ColorPalette } from "../theme";
-import { fonts } from "../theme";
 import { type AgentOpenMode, type PanelType, type PaneMeta, type PluginPaneRef, paneLabel } from "../types/panels";
 import { addPaneRows } from "./addPaneRows";
 import { DRAG_MIME, emitLayoutDragEnd, emitLayoutDragStart } from "./DropZoneOverlay";
@@ -221,14 +221,7 @@ export function PaneLeafHeader({
         </button>
       )}
       <div style={{ flex: 1 }} />
-      {statsEntry && (
-        <span
-          title={`Container ${statsEntry.container_id.slice(0, 12)} — CPU ${statsEntry.cpu_percent.toFixed(1)}%, memory ${fmtBytes(statsEntry.mem_usage)} of ${fmtBytes(statsEntry.mem_limit)}`}
-          style={{ fontSize: 9, fontFamily: fonts.mono, color: colors.textDim, flexShrink: 0, marginRight: 2, whiteSpace: "nowrap" }}
-        >
-          {Math.round(statsEntry.cpu_percent)}% · {fmtBytes(statsEntry.mem_usage)}
-        </span>
-      )}
+      <ContainerStatsLabel entry={statsEntry} />
       <div id={`pane-header-slot-${leafId}`} ref={paneHeaderSlotRef} style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }} />
     </div>
   );
