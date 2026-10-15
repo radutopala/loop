@@ -196,3 +196,33 @@ Feature: Explain a turn
     And I click on "[data-testid='explanation-copy']"
     Then the clipboard should contain "### Summary"
     And the clipboard should contain "Added a lint target to the Makefile."
+
+  Scenario: A side chat's turns are explained beside it, in its own pane
+    When I add a "Chat (Fresh session)" panel
+    Then I wait for "[data-testid='side-chat'] textarea" to be visible
+    Given the current channel becomes its side chat
+    And the current channel has a finished turn "rename the lint target" replying "Renamed it."
+    And the turn has an explanation:
+      """
+      ### Summary
+
+      Renamed the lint target in the side chat.
+      """
+    # The side chat's turn shows on reopening; its actions are its own.
+    When I open the app in a browser
+    And I click on "bdd-explain" in the sidebar
+    Then I wait for "[data-testid='side-chat'] [data-testid='explain-turn'][data-state='open']" to be visible
+    And the element "[data-testid='side-chat'] [data-testid='explain-turn']" should contain text "Explained"
+    And the element "[data-testid='side-chat'] [data-testid='learn-turn']" should be visible
+    # Its pane's header carries its Explain label, which opens the view in
+    # the pane (the turn's button opens it the same way).
+    When I click on "[data-testid='explain-badge'][aria-expanded='false']"
+    Then I wait for "[data-testid='side-chat'][data-view='explain'] [data-testid='explain-pane']" to be visible
+    And the element "[data-testid='side-chat'] [data-testid='explanation-content']" should contain text "Renamed the lint target in the side chat."
+    And the element "[data-testid='side-chat-logo']" should be visible
+    # The channel's own Explain view stays shut.
+    And the element "[data-testid='learn-split']" should not exist
+    # The label closes it again.
+    When I click on "[data-testid='explain-badge'][aria-expanded='true']"
+    Then I wait for "[data-testid='side-chat'][data-view=''] textarea" to be visible
+    And the element "[data-testid='side-chat'] [data-testid='explain-pane']" should not exist

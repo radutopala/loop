@@ -3,10 +3,19 @@ import type { RootEntry } from "../../api/files";
 import type { SideChatMode } from "../../api/sideChats";
 import { useChatState } from "../../hooks/useChatState";
 import type { ActiveChatState, ChatEventListener } from "../../hooks/useChatStateStore";
+import { ExplainContext, useExplain } from "../../hooks/useExplain";
+import { LearnContext, useLearn } from "../../hooks/useLearn";
 import { sideChats } from "../../layouts/sideChats";
+import { SplitDivider } from "../../splitPane/SplitPaneLayout";
 import { useTheme } from "../../ThemeContext";
 import { useChatPaneInput } from "../../uiBridge/useChatPaneInput";
 import { ChatView } from "../chat/ChatView";
+import { ExplainBadge } from "../chat/ExplainBadge";
+import { explanationPending } from "../chat/explainState";
+import { LearnBadge } from "../chat/LearnBadge";
+import { ExplainPane } from "./ExplainPane";
+import { LearnPane } from "./LearnPane";
+import { type SideView, SplitSeamLogo } from "./LearnSplit";
 
 interface SideChatPaneProps {
   channelId: string;
@@ -79,15 +88,56 @@ function SideChat({
   const initialState = getChatState?.(sideChannelId);
   const chatState = useChatState(sideChannelId, initialState?.isRunning ?? false, { initialState, onUnmount, subscribeChatEvents: subscribe });
   useChatPaneInput(channelId, leafId, sideChannelId, chatState);
+  // The side chat's own explanations and learn passes: its turns' Explain
+  // and Learn actions, and the badges in its pane's header, open them in a
+  // pane beside its chat, inside this pane.
+  const [sideView, setSideView] = useState<SideView | null>(null);
+  const showExplain = useCallback(() => setSideView("explain"), []);
+  const showLearn = useCallback(() => setSideView("learn"), []);
+  const closeSide = useCallback(() => setSideView(null), []);
+  const explain = useExplain(sideChannelId, subscribeChannelEvents ? subscribe : undefined, wsOpens, showExplain);
+  const learn = useLearn(sideChannelId, subscribeChannelEvents ? subscribe : undefined, subscribeChannelEvents, wsOpens, showLearn);
+  const running = sideView === "explain" ? explain.explanations.some(explanationPending) : learn.running;
   return (
-    <ChatView
-      channelId={sideChannelId}
-      chatState={chatState}
-      roots={roots}
-      noAutoFocus
-      onSelectThread={onSelectThread}
-      subscribeChatEvents={subscribeChannelEvents ? subscribe : undefined}
-      wsOpens={wsOpens}
-    />
+    <LearnContext.Provider value={learn}>
+      <ExplainContext.Provider value={explain}>
+        <ExplainBadge leafId={leafId} explain={explain} open={sideView === "explain"} onToggle={sideView === "explain" ? closeSide : showExplain} />
+        <LearnBadge leafId={leafId} learn={learn} open={sideView === "learn"} onToggle={sideView === "learn" ? closeSide : showLearn} />
+        <div data-testid="side-chat" data-view={sideView ?? ""} style={{ flex: 1, minHeight: 0, display: "flex", position: "relative" }}>
+          <div style={{ flex: "1 1 0%", minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            <ChatView
+              channelId={sideChannelId}
+              chatState={chatState}
+              roots={roots}
+              noAutoFocus
+              onSelectThread={onSelectThread}
+              subscribeChatEvents={subscribeChannelEvents ? subscribe : undefined}
+              wsOpens={wsOpens}
+            />
+          </div>
+          {sideView && (
+            <>
+              <SplitDivider vertical={false} />
+              <div style={{ flex: "1 1 0%", minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+                {sideView === "explain" ? (
+                  <ExplainPane channelId={sideChannelId} explain={explain} onClose={closeSide} />
+                ) : (
+                  <LearnPane
+                    learn={learn}
+                    worktree={false}
+                    roots={roots}
+                    subscribeChannelEvents={subscribeChannelEvents}
+                    getChatState={getChatState}
+                    onChatStateUnmount={onChatStateUnmount}
+                    onClose={closeSide}
+                  />
+                )}
+              </div>
+              <SplitSeamLogo testId="side-chat-logo" running={running} />
+            </>
+          )}
+        </div>
+      </ExplainContext.Provider>
+    </LearnContext.Provider>
   );
 }
