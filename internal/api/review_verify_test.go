@@ -430,6 +430,29 @@ func (s *ReviewHandlerSuite) TestWithReviewVerifyTimeout() {
 	require.Equal(s.T(), time.Minute, srv.review.verifyTimeout)
 }
 
+func (s *ReviewHandlerSuite) TestConfigReviewMaxIterations() {
+	cases := []struct {
+		name string
+		load func() (*config.Config, error)
+		want int
+	}{
+		{"load error keeps the default", func() (*config.Config, error) { return nil, errors.New("bad") }, 3},
+		{"unset", func() (*config.Config, error) { return &config.Config{}, nil }, 3},
+		{"set", func() (*config.Config, error) {
+			return &config.Config{Review: config.ReviewConfig{MaxIterations: 5}}, nil
+		}, 5},
+		{"out of range", func() (*config.Config, error) {
+			return &config.Config{Review: config.ReviewConfig{MaxIterations: 11}}, nil
+		}, 3},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			r := &configResolver{load: tc.load}
+			require.Equal(s.T(), tc.want, r.reviewMaxIterations("", ""))
+		})
+	}
+}
+
 func (s *ReviewHandlerSuite) TestConfigReviewVerify() {
 	cases := []struct {
 		name string

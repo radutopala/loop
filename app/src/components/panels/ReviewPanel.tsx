@@ -33,7 +33,6 @@ import { ReviewRunDrawer } from "./ReviewRunDrawer";
 type ReviewMode = "review-only" | "review-fix";
 
 const REVIEW_MODE_STORAGE_KEY = "loop.review.lastMode";
-const REVIEW_MAX_ITER_STORAGE_KEY = "loop.review.maxIter";
 
 const REVIEW_LOOP_WORKFLOW = "review-loop";
 const REVIEW_FIX_LOOP_WORKFLOW = "review-fix-loop";
@@ -110,15 +109,9 @@ function readStoredMode(): ReviewMode {
   return v === "review-fix" ? "review-fix" : "review-only";
 }
 
-function readStoredMaxIter(): number {
-  if (typeof window === "undefined") return 1;
-  const raw = window.localStorage.getItem(REVIEW_MAX_ITER_STORAGE_KEY);
-  const n = raw === null ? NaN : parseInt(raw, 10);
-  if (!Number.isFinite(n)) return 1;
-  if (n < 1) return 1;
-  if (n > 10) return 10;
-  return n;
-}
+// DEFAULT_REVIEW_MAX_ITER is review.max_iterations' default, for a channel
+// that doesn't carry it.
+const DEFAULT_REVIEW_MAX_ITER = 3;
 
 function modePrimaryLabel(mode: ReviewMode): string {
   return mode === "review-fix" ? "Run review + fix" : "Run review";
@@ -349,6 +342,8 @@ export function allActionItems(a: { newCount: number; pendingCount: number; skip
 
 interface ReviewPanelProps {
   channelId: string;
+  /** The project's review.max_iterations: the passes input's starting value. */
+  defaultMaxIter?: number;
   subscribeChatEvents?: (listener: ChatEventListener) => () => void;
   /**
    * Register this channel as having a Review panel mounted. The store
@@ -388,7 +383,7 @@ function statusLabel(status: ReviewStatus): string {
   }
 }
 
-export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView, hasChatPanel, gateApprovals, onClearGateApproval }: ReviewPanelProps) {
+export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITER, subscribeChatEvents, registerReviewView, hasChatPanel, gateApprovals, onClearGateApproval }: ReviewPanelProps) {
   const { colors, fontSizes } = useTheme();
   const [session, setSession] = useState<ReviewSession | null>(null);
   // A run's verification step holds the session like the run does.
@@ -400,7 +395,10 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
   const [loadingPR, setLoadingPR] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<ReviewMode>(() => readStoredMode());
-  const [maxIter, setMaxIter] = useState<number>(() => readStoredMaxIter());
+  // Starts from the project's review.max_iterations, and again when that
+  // changes; editing it applies to the runs this panel starts.
+  const [maxIter, setMaxIter] = useState<number>(defaultMaxIter);
+  useEffect(() => setMaxIter(defaultMaxIter), [defaultMaxIter]);
   // Hydrate loopRunId from sessionStorage so a panel remount (layout
   // reshuffle, dev-tools, hot reload) re-binds to the still-running daemon
   // workflow instead of losing track of it. The hydration effect below
@@ -516,16 +514,12 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
     };
   }, [channelId, hasSession]);
 
-  // Persist mode + max_iterations to localStorage so the primary button
-  // label and input survive remounts/reloads.
+  // Persist mode to localStorage so the primary button label survives
+  // remounts/reloads.
   useEffect(() => {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(REVIEW_MODE_STORAGE_KEY, mode);
   }, [mode]);
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(REVIEW_MAX_ITER_STORAGE_KEY, String(maxIter));
-  }, [maxIter]);
   useEffect(() => {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(REVIEW_DRAWER_COLLAPSED_KEY, drawerCollapsed ? "1" : "0");

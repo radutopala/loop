@@ -575,8 +575,8 @@ func (s *ConfigSuite) TestReviewConfigLoad() {
 		{name: "empty verifies", json: `, "review": {}`, want: ReviewConfig{Verify: true}},
 		{
 			name: "all fields",
-			json: `, "review": {"enabled": true, "prompt": "p", "prompt_path": "r.md", "verify": false, "verify_prompt": "v"}`,
-			want: ReviewConfig{Enabled: true, Prompt: "p", PromptPath: "r.md", VerifyPrompt: "v"},
+			json: `, "review": {"enabled": true, "prompt": "p", "prompt_path": "r.md", "verify": false, "verify_prompt": "v", "max_iterations": 5}`,
+			want: ReviewConfig{Enabled: true, Prompt: "p", PromptPath: "r.md", VerifyPrompt: "v", MaxIterations: 5},
 		},
 	}
 	for _, tc := range tests {
@@ -838,4 +838,12 @@ func (s *ConfigSuite) TestNodeDefResolvePromptNeitherSet() {
 	_, err := node.ResolvePrompt("/loop", s.loader.readFile)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "one of prompt or prompt_path is required")
+}
+
+func (s *ConfigSuite) TestReviewIterations() {
+	for _, tc := range []struct {
+		max, want int
+	}{{0, 3}, {-1, 3}, {11, 3}, {1, 1}, {10, 10}} {
+		require.Equal(s.T(), tc.want, ReviewConfig{MaxIterations: tc.max}.ReviewIterations(), tc.max)
+	}
 }

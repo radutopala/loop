@@ -158,7 +158,7 @@ func (s *ReviewStartSuite) TestLoadsAndStartsWithTheChannelsAgent() {
 		WorkflowName: reviewLoopWorkflow,
 		ChannelID:    "ch1",
 		DirPath:      "/repo",
-		Inputs:       map[string]string{"max_iterations": "1", "pr": "7"},
+		Inputs:       map[string]string{"max_iterations": "3", "pr": "7"},
 	}).Return("run-1", nil)
 
 	w := s.start(map[string]any{"pr_number": 7})
@@ -185,10 +185,10 @@ func (s *ReviewStartSuite) TestKeepsTheLoadedPR() {
 		WorkflowName: reviewFixLoopWorkflow,
 		ChannelID:    "ch1",
 		DirPath:      "/repo",
-		Inputs:       map[string]string{"max_iterations": "3", "pr": "7"},
+		Inputs:       map[string]string{"max_iterations": "5", "pr": "7"},
 	}).Return("run-2", nil)
 
-	w := s.start(map[string]any{"pr_number": 7, "mode": "review-fix", "max_iterations": 3, "model": "sonnet", "effort": "low"})
+	w := s.start(map[string]any{"pr_number": 7, "mode": "review-fix", "max_iterations": 5, "model": "sonnet", "effort": "low"})
 	require.Equal(s.T(), http.StatusCreated, w.Code, w.Body.String())
 	s.gh.AssertNotCalled(s.T(), "FetchPRByNumber", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	sess := s.rs.Get("ch1")
@@ -202,7 +202,12 @@ func (s *ReviewStartSuite) TestReloadsAnotherPR() {
 	s.readySession(3)
 	s.wt.On("Remove", mock.Anything, "/repo", "/repo/.worktrees/pr-7-ch1").Return(nil)
 	s.loadMocks()
-	s.eng.On("StartRun", mock.Anything, mock.Anything).Return("run-3", nil)
+	s.srv.configs.load = func() (*config.Config, error) {
+		return &config.Config{Review: config.ReviewConfig{Enabled: true, MaxIterations: 6}}, nil
+	}
+	s.eng.On("StartRun", mock.Anything, mock.MatchedBy(func(o workflow.StartRunOptions) bool {
+		return o.Inputs["max_iterations"] == "6"
+	})).Return("run-3", nil)
 
 	w := s.start(map[string]any{"pr_number": 7})
 	require.Equal(s.T(), http.StatusCreated, w.Code, w.Body.String())

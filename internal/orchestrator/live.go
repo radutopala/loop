@@ -147,12 +147,28 @@ func (o *Orchestrator) WarmLiveSession(ctx context.Context, channelID, authorID 
 	if !req.Live {
 		return false, nil
 	}
-	if err := o.live.StartLive(context.WithoutCancel(ctx), req, o.liveHooks(channelID)); err != nil {
+	// It gives up when the start would wait out an image build: it holds
+	// the channel meanwhile, so the turn being typed would sit queued with
+	// no word of the build, which the turn's own start shows.
+	startCtx, cancel := context.WithCancelCause(context.WithoutCancel(ctx))
+	req.OnActivity = func(activity, _ string) {
+		if activity == "image_build" {
+			cancel(errWarmImageBuild)
+		}
+	}
+	if err := o.live.StartLive(startCtx, req, o.liveHooks(channelID)); err != nil {
+		if errors.Is(context.Cause(startCtx), errWarmImageBuild) {
+			o.logger.Info("not warming the live session during an image build", "channel_id", channelID)
+			return false, nil
+		}
 		return false, err
 	}
 	o.publishLive(channelID, o.LiveSession(ctx, channelID))
 	return true, nil
 }
+
+// errWarmImageBuild is why a warm-up stops starting a live session.
+var errWarmImageBuild = errors.New("an image build is in progress")
 
 // runChat runs req, a message's run: a live turn starts the channel's live
 // session when none runs, from req, which carries the fork or resume the

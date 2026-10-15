@@ -485,6 +485,12 @@ func buildSchema() *ConfigSchema {
 						Description: "Instructions for the verification agent, in place of the built-in ones; the PR, commit, checkout and dedup outcome are added after them",
 						XWidget:     "textarea",
 					},
+					"max_iterations": {
+						Type:        "integer",
+						Title:       "Max Iterations",
+						Description: "Passes a review runs, 1-10: the Review panel's starting value, and the default of run_review and the review/start API. 3 by default.",
+						Default:     DefaultReviewMaxIterations,
+					},
 				},
 			},
 

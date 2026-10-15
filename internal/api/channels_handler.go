@@ -48,25 +48,28 @@ type channelResponse struct {
 	AgentRunning     bool   `json:"agent_running"`
 	// ReviewRunning is set while a review (or a dedup pass, or the
 	// verification step) runs on the channel's review session.
-	ReviewRunning  bool   `json:"review_running"`
-	Branch         string `json:"branch,omitempty"`
-	Commit         string `json:"commit,omitempty"`
-	Subject        string `json:"subject,omitempty"`
-	Upstream       string `json:"upstream,omitempty"`
-	Ahead          int    `json:"ahead,omitempty"`
-	Behind         int    `json:"behind,omitempty"`
-	SyncBase       string `json:"sync_base,omitempty"`
-	BaseAhead      int    `json:"base_ahead,omitempty"`
-	BaseBehind     int    `json:"base_behind,omitempty"`
-	Worktree       bool   `json:"worktree"`
-	BaseBranch     string `json:"base_branch,omitempty"`
-	RootDirPath    string `json:"root_dir_path,omitempty"` // inside a worktree chain: the checkout it was cut from
-	Locked         bool   `json:"locked"`
-	DiffAdditions  int    `json:"diff_additions,omitempty"`
-	DiffDeletions  int    `json:"diff_deletions,omitempty"`
-	ReviewEnabled  bool   `json:"review_enabled"`
-	ModelOverride  string `json:"model_override,omitempty"`
-	EffortOverride string `json:"effort_override,omitempty"`
+	ReviewRunning bool   `json:"review_running"`
+	Branch        string `json:"branch,omitempty"`
+	Commit        string `json:"commit,omitempty"`
+	Subject       string `json:"subject,omitempty"`
+	Upstream      string `json:"upstream,omitempty"`
+	Ahead         int    `json:"ahead,omitempty"`
+	Behind        int    `json:"behind,omitempty"`
+	SyncBase      string `json:"sync_base,omitempty"`
+	BaseAhead     int    `json:"base_ahead,omitempty"`
+	BaseBehind    int    `json:"base_behind,omitempty"`
+	Worktree      bool   `json:"worktree"`
+	BaseBranch    string `json:"base_branch,omitempty"`
+	RootDirPath   string `json:"root_dir_path,omitempty"` // inside a worktree chain: the checkout it was cut from
+	Locked        bool   `json:"locked"`
+	DiffAdditions int    `json:"diff_additions,omitempty"`
+	DiffDeletions int    `json:"diff_deletions,omitempty"`
+	ReviewEnabled bool   `json:"review_enabled"`
+	// ReviewMaxIterations is review.max_iterations, the Review panel's
+	// starting pass count.
+	ReviewMaxIterations int    `json:"review_max_iterations"`
+	ModelOverride       string `json:"model_override,omitempty"`
+	EffortOverride      string `json:"effort_override,omitempty"`
 	// TaskID is the scheduled task whose thread this is, for a task's thread.
 	TaskID int64 `json:"task_id,omitempty"`
 	// Description says what a thread is for; absent when it has none.
@@ -257,39 +260,40 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 			trustDir = rootDirPath
 		}
 		resp = append(resp, channelResponse{
-			ChannelID:        ch.ChannelID,
-			Name:             ch.Name,
-			DirPath:          dirPath,
-			ParentID:         ch.ParentID,
-			SessionID:        ch.SessionID,
-			Active:           ch.Active,
-			ContainerRunning: running,
-			AgentRunning:     runningBot,
-			ReviewRunning:    rev.Status == review.StatusReviewing || rev.Status == review.StatusVerifying,
-			Branch:           git.Branch,
-			Commit:           git.Commit,
-			Subject:          git.Subject,
-			Upstream:         git.Upstream,
-			Ahead:            git.Ahead,
-			Behind:           git.Behind,
-			SyncBase:         git.SyncBase,
-			BaseAhead:        git.BaseAhead,
-			BaseBehind:       git.BaseBehind,
-			Worktree:         ch.Worktree,
-			BaseBranch:       ch.BaseBranch,
-			RootDirPath:      rootDirPath,
-			Locked:           ch.Locked,
-			DiffAdditions:    git.DiffAdditions,
-			DiffDeletions:    git.DiffDeletions,
-			ReviewEnabled:    reviewEnabled,
-			ModelOverride:    ch.ModelOverride,
-			EffortOverride:   ch.EffortOverride,
-			TaskID:           ch.TaskID,
-			Description:      ch.Description,
-			TicketURL:        ch.TicketURL,
-			LastActivityAt:   lastActivity,
-			TrustPending:     trustPendingFor(trustDir),
-			PluginBadges:     badges[ch.ChannelID],
+			ChannelID:           ch.ChannelID,
+			Name:                ch.Name,
+			DirPath:             dirPath,
+			ParentID:            ch.ParentID,
+			SessionID:           ch.SessionID,
+			Active:              ch.Active,
+			ContainerRunning:    running,
+			AgentRunning:        runningBot,
+			ReviewRunning:       rev.Status == review.StatusReviewing || rev.Status == review.StatusVerifying,
+			Branch:              git.Branch,
+			Commit:              git.Commit,
+			Subject:             git.Subject,
+			Upstream:            git.Upstream,
+			Ahead:               git.Ahead,
+			Behind:              git.Behind,
+			SyncBase:            git.SyncBase,
+			BaseAhead:           git.BaseAhead,
+			BaseBehind:          git.BaseBehind,
+			Worktree:            ch.Worktree,
+			BaseBranch:          ch.BaseBranch,
+			RootDirPath:         rootDirPath,
+			Locked:              ch.Locked,
+			DiffAdditions:       git.DiffAdditions,
+			DiffDeletions:       git.DiffDeletions,
+			ReviewEnabled:       reviewEnabled,
+			ReviewMaxIterations: s.configs.reviewMaxIterations(dirPath, parentDirPath),
+			ModelOverride:       ch.ModelOverride,
+			EffortOverride:      ch.EffortOverride,
+			TaskID:              ch.TaskID,
+			Description:         ch.Description,
+			TicketURL:           ch.TicketURL,
+			LastActivityAt:      lastActivity,
+			TrustPending:        trustPendingFor(trustDir),
+			PluginBadges:        badges[ch.ChannelID],
 		})
 	}
 

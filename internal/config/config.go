@@ -453,6 +453,7 @@ func (l *Loader) parse() (*Config, error) {
 		cfg.Review.PromptPath = jc.Review.PromptPath
 		cfg.Review.Verify = ptrDefault(jc.Review.Verify, true)
 		cfg.Review.VerifyPrompt = jc.Review.VerifyPrompt
+		cfg.Review.MaxIterations = jc.Review.MaxIterations
 	}
 
 	if jc.PlaygroundShare != nil {
