@@ -664,6 +664,21 @@ describe("more steps", () => {
     expect(ws.opts).toEqual([{ playground: { name: "board", scope: "global" } }, { playground: { name: "both", scope: "project" } }, { openMode: "fresh" }]);
   });
 
+  it("opens a chat forked or started fresh as a side chat", async () => {
+    expect(
+      await run([
+        { op: "add_pane", panel: "chat", open_mode: "fork" },
+        { op: "replace_pane", pane: "chat-side-0", panel: "chat", open_mode: "fresh" },
+        { op: "replace_pane", pane: "chat", panel: "chat", open_mode: "resume" },
+      ]),
+    ).toEqual([
+      { op: "add_pane", ok: true, pane: "chat-side-0" },
+      { op: "replace_pane", ok: true, pane: "chat-side-1" },
+      { op: "replace_pane", ok: true, pane: "chat-2" },
+    ]);
+    expect(ws.calls).toEqual(["add chat-side - horizontal fork", "replace chat-side-0 chat-side fresh", "replace chat chat resume"]);
+  });
+
   it("opens a plugin pane on a plugin panel", async () => {
     expect(
       await run([

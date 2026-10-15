@@ -53,7 +53,7 @@ type uiRunStep struct {
 	Canvas    *bool  `json:"canvas,omitempty" jsonschema:"create_tab: a canvas tab, whose panes are free-floating tiles (default false, a split tab)"`
 	Pane      string `json:"pane,omitempty" jsonschema:"A pane id (from ui_state), a panel type for its first pane, or $n for the pane step n (from 1) of this call made (e.g. add_pane then send_input to $1); on a canvas tab the panes are its tiles"`
 	Panel     string `json:"panel,omitempty" jsonschema:"replace_pane, add_pane: the new pane's panel"`
-	OpenMode  string `json:"open_mode,omitempty" jsonschema:"replace_pane, add_pane of a docker-agent (Chat Terminal): resume the channel's session, fork it (the default) or start fresh; of a chat-side (Chat (Resume with fork) / Chat (Fresh session)): fork or fresh"`
+	OpenMode  string `json:"open_mode,omitempty" jsonschema:"replace_pane, add_pane of a docker-agent (Chat Terminal): resume the channel's session, fork it (the default) or start fresh; of a chat-side (Chat (Resume with fork) / Chat (Fresh session)): fork or fresh; a chat with fork or fresh opens a chat-side"`
 	NextTo    string `json:"next_to,omitempty" jsonschema:"add_pane: the pane (id, panel type or $n) the new one goes beside; without it, the new pane spans the tab's edge (on a canvas, its tile goes beside all the tiles)"`
 	Direction string `json:"direction,omitempty" jsonschema:"add_pane: horizontal makes a column, vertical a row (default horizontal); beside a pane in a row of columns (or a column of rows) it joins that row with an equal share"`
 	Side      string `json:"side,omitempty" jsonschema:"add_pane: after puts the new pane right of or below next_to (or the tab), before left of or above it (default after)"`
