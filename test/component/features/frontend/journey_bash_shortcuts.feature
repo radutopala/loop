@@ -4,7 +4,7 @@ Feature: Terminal Bash Shortcuts Journey
   pane footer. The button mounts on `target !== "agent"` panes (Host Shell)
   and on the Docker Shell pane (which runs `/bin/bash` inside the agent
   container — `showPrompts={target === "agent" && !cmd}` resolves to false).
-  The Docker Agent pane keeps the prompt `#` picker and never shows `$`,
+  The Chat Terminal pane keeps the prompt `#` picker and never shows `$`,
   even when bash shortcuts are configured.
 
   Scenario: Host Shell pane exposes the $ bash-shortcut picker and picks a shortcut
@@ -47,9 +47,9 @@ Feature: Terminal Bash Shortcuts Journey
     And I wait "2s"
     Then the element "button[data-testid^='terminal-bash-shortcuts-btn-']" should not exist
 
-  Scenario: Docker Agent pane shows # picker and never the $ picker
+  Scenario: Chat Terminal pane shows # picker and never the $ picker
     # Seed BOTH a prompt and a bash shortcut so we know each picker would
-    # otherwise be enabled. Docker Agent has target="agent" without cmd, so
+    # otherwise be enabled. Chat Terminal has target="agent" without cmd, so
     # `showPrompts` resolves to true and the # picker wins exclusively
     # (TerminalShortcuts.tsx: `showPromptBtn = promptsEnabled && ...`,
     # `showBashBtn = !promptsEnabled && ...`).
@@ -61,9 +61,9 @@ Feature: Terminal Bash Shortcuts Journey
     When I click on "bdd-bash-agent" in the sidebar
     Then I wait for "textarea" to be visible
 
-    # Scope both assertions to the Docker Agent leaf: leaf ids are
+    # Scope both assertions to the Chat Terminal leaf: leaf ids are
     # "<panel>-<n>", and the default Chat tab already ships a Host Shell pane
     # that legitimately carries its own $ picker.
-    When I add a "Docker Agent" panel
+    When I add a "Chat Terminal" panel
     Then I wait for "button[data-testid^='terminal-shortcuts-btn-docker-agent-']" to be visible
     And the element "button[data-testid^='terminal-bash-shortcuts-btn-docker-agent-']" should not exist

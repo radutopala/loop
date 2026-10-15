@@ -1,6 +1,6 @@
 @frontend @slow @terminal-continue
-Feature: Continue button in the Docker Agent terminal
-  While a Docker Agent pane's session is up, its footer shows the same »
+Feature: Continue button in the Chat Terminal terminal
+  While a Chat Terminal pane's session is up, its footer shows the same »
   button as the chat composer. Clicking it types "continue" into the agent
   and presses Enter. Shell panes don't run Claude, so they don't get it.
 
@@ -11,8 +11,8 @@ Feature: Continue button in the Docker Agent terminal
     When I click on "bdd-term-continue" in the sidebar
     And I wait for "textarea" to be visible
 
-  Scenario: Docker Agent pane shows Continue once its session runs
-    When I add a "Docker Agent" panel
+  Scenario: Chat Terminal pane shows Continue once its session runs
+    When I add a "Chat Terminal" panel
     Then I wait up to "60s" for "button[data-testid^='terminal-continue-docker-agent-']" to be visible
     When I rest the pointer on the element "button[data-testid^='terminal-continue-docker-agent-']"
     Then I wait for "[data-testid='hover-tip']" to be visible

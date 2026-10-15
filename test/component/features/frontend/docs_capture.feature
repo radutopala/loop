@@ -287,7 +287,7 @@ Feature: Documentation walkthrough
 
   @docs-terminal
   Scenario: Terminal
-    # Open a Docker shell, run a saved command, then split in a Docker Agent
+    # Open a Docker shell, run a saved command, then split in a Chat Terminal
     # terminal that resumes this channel's session inside the container.
     When I start recording
     And I wait "2s"
@@ -309,18 +309,18 @@ Feature: Documentation walkthrough
     # Select a saved command — pause on the open menu, then it runs in the shell
     And I click on the element with text "$run-tests"
     And I wait "6s"
-    # Docker Agent (Resume) — split an agent terminal in below the shell; it
+    # Chat Terminal (Resume) — split an agent terminal in below the shell; it
     # resumes THIS channel's Claude session right inside the container.
     And I wait "2s"
-    And I show caption "Open a Docker Agent terminal — it resumes this channel's session in the container"
+    And I show caption "Open a Chat Terminal terminal — it resumes this channel's session in the container"
     And I wait "4s"
     And I hide caption
     And I wait "2s"
     # Open the pane's panel selector and let it linger so the menu is recorded
     And I open the add-panel menu
     And I wait "5s"
-    # Pick "Docker Agent (Resume)" — splits an agent terminal in below the shell
-    And I add the "Docker Agent (Resume)" panel below in the menu
+    # Pick "Chat Terminal (Resume)" — splits an agent terminal in below the shell
+    And I add the "Chat Terminal (Resume)" panel below in the menu
     And I wait up to "40s" for "[data-testid='docker-agent-pane'] .xterm" to be visible, best effort
     # Give the Claude TUI time to boot and resume the session inside the container
     And I wait "35s"

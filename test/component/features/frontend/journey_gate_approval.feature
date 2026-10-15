@@ -40,7 +40,7 @@ Feature: Per-source gate approval routing
     # "newest-docker-agent" resolves to the just-added pane's real leaf id —
     # the counter's start value depends on which features ran earlier in the
     # suite, so the first added pane is not always docker-agent-1.
-    When I add a "Docker Agent" panel
+    When I add a "Chat Terminal" panel
     And I inject a gate.approval_requested event with req_id "gate-term-A", source "terminal:newest-docker-agent", and target "/tmp/bdd-gate-term-A.txt"
     Then I wait for text "/tmp/bdd-gate-term-A.txt" to appear
     When I click on the button with title "More deny options"
@@ -61,14 +61,14 @@ Feature: Per-source gate approval routing
   Scenario: Chat and terminal gates coexist on different surfaces
     # The key regression this feature fixes: a terminal-sourced gate no longer
     # evicts a chat-sourced one (singleton state was the previous bug).
-    When I add a "Docker Agent" panel
+    When I add a "Chat Terminal" panel
     And I inject a gate.approval_requested event with req_id "gate-chat-C", source "chat", and target "/tmp/bdd-gate-parallel-chat.txt"
     And I inject a gate.approval_requested event with req_id "gate-term-C", source "terminal:newest-docker-agent", and target "/tmp/bdd-gate-parallel-term.txt"
     Then I wait for text "/tmp/bdd-gate-parallel-chat.txt" to appear
     And I wait for text "/tmp/bdd-gate-parallel-term.txt" to appear
 
   Scenario: Resolving the chat gate leaves the terminal gate intact
-    When I add a "Docker Agent" panel
+    When I add a "Chat Terminal" panel
     And I inject a gate.approval_requested event with req_id "gate-chat-D", source "chat", and target "/tmp/bdd-gate-resolve-chat.txt"
     And I inject a gate.approval_requested event with req_id "gate-term-D", source "terminal:newest-docker-agent", and target "/tmp/bdd-gate-resolve-term.txt"
     And I wait for text "/tmp/bdd-gate-resolve-chat.txt" to appear

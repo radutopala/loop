@@ -1,7 +1,7 @@
 @frontend @slow
 Feature: Terminal Prompt Shortcuts Journey
   End-to-end journey verifying the prompt-shortcut `#` button portaled into
-  the Docker Agent terminal pane header opens a menu of shortcuts and that
+  the Chat Terminal terminal pane header opens a menu of shortcuts and that
   picking one closes the menu (after pasting the prompt as bracketed paste
   into the terminal).
 
@@ -16,10 +16,10 @@ Feature: Terminal Prompt Shortcuts Journey
     When I click on "bdd-term-shortcuts" in the sidebar
     Then I wait for "textarea" to be visible
 
-    # Add the Docker Agent panel — this is the only target that renders the
+    # Add the Chat Terminal panel — this is the only target that renders the
     # terminal-shortcuts `#` button in its pane header (target === "agent"
     # with hideActions in WorkspaceLayout).
-    When I add a "Docker Agent" panel
+    When I add a "Chat Terminal" panel
     Then I wait for "button[data-testid^='terminal-shortcuts-btn-']" to be visible
 
     # Open the menu and verify the seeded shortcut is listed.
@@ -47,7 +47,7 @@ Feature: Terminal Prompt Shortcuts Journey
     When I click on "bdd-term-no-shortcuts" in the sidebar
     Then I wait for "textarea" to be visible
 
-    When I add a "Docker Agent" panel
+    When I add a "Chat Terminal" panel
     # Allow fetchShortcuts to complete; with an empty list the # button
     # never mounts. 2s is well above the local API roundtrip.
     And I wait "2s"
