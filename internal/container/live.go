@@ -198,19 +198,25 @@ func (s *liveSession) ownSession() string {
 // or a new session without one.
 func (r *DockerRunner) StartLive(ctx context.Context, req *agent.AgentRequest, hooks agent.LiveHooks) error {
 	r.liveMu.Lock()
-	defer r.liveMu.Unlock()
-	if _, ok := r.live[req.ChannelID]; ok {
+	if _, ok := r.live[req.ChannelID]; ok || r.liveStarting[req.ChannelID] {
+		r.liveMu.Unlock()
 		return ErrLiveSessionRunning
 	}
-	s, err := r.spawnLive(ctx, req, hooks, r.now())
-	if err != nil {
-		return err
-	}
-	r.live[req.ChannelID] = s
-	return nil
+	// The container starts outside liveMu, as it can wait out an image
+	// build; meanwhile the channel is marked starting, and other channels'
+	// sessions go on.
+	r.liveStarting[req.ChannelID] = true
+	r.liveMu.Unlock()
+
+	_, err := r.spawnLive(ctx, req, hooks, r.now())
+	r.liveMu.Lock()
+	delete(r.liveStarting, req.ChannelID)
+	r.liveMu.Unlock()
+	return err
 }
 
-// spawnLive starts a live session's container and its reader.
+// spawnLive starts a live session's container and its reader, and makes it
+// the channel's session.
 func (r *DockerRunner) spawnLive(ctx context.Context, req *agent.AgentRequest, hooks agent.LiveHooks, startedAt time.Time) (*liveSession, error) {
 	asked := req
 	if req.SessionID != "" && r.transcriptMissing(r.resolveWorkDir(req.ChannelID, req.DirPath), req.SessionID) {
@@ -229,7 +235,7 @@ func (r *DockerRunner) spawnLive(ctx context.Context, req *agent.AgentRequest, h
 		return nil, fmt.Errorf("loading project config: %w", err)
 	}
 	containerID, ctrName, mcpConfigPath, keepMCP, err := r.createAndStartContainer(ctx, req.ChannelID, req.DirPath, req.AuthorID, req.ParentDirPath, req.AgentID, req.MCPArgs,
-		ContainerTypeAgent, nil,
+		ContainerTypeAgent, req.OnActivity,
 		func(cfg *config.Config, mcpConfigPath string) []string {
 			return buildLiveClaudeCmd(cfg, mcpConfigPath, req)
 		}, true,
@@ -285,6 +291,10 @@ func (r *DockerRunner) spawnLive(ctx context.Context, req *agent.AgentRequest, h
 	if req.ForkSession {
 		s.forkOf = req.SessionID
 	}
+	// Registered before anything can end it, so its end forgets it.
+	r.liveMu.Lock()
+	r.live[req.ChannelID] = s
+	r.liveMu.Unlock()
 	s.mu.Lock()
 	r.armLiveIdle(s)
 	s.mu.Unlock()
@@ -609,9 +619,6 @@ func (r *DockerRunner) restartLive(ctx context.Context, s *liveSession, req *age
 		}
 		return nil, err
 	}
-	r.liveMu.Lock()
-	r.live[s.channelID] = ns
-	r.liveMu.Unlock()
 	return ns, nil
 }
 

@@ -210,6 +210,8 @@ type DockerRunner struct {
 	// live holds the channels' live sessions (see StartLive).
 	liveMu sync.Mutex
 	live   map[string]*liveSession
+	// liveStarting marks the channels whose session is starting.
+	liveStarting map[string]bool
 	// now and afterFunc are the clock live sessions run on.
 	now       func() time.Time
 	afterFunc func(d time.Duration, f func()) stopper
@@ -230,6 +232,7 @@ func NewDockerRunner(client DockerClient, cfg *config.Config, configLoad func() 
 		sleep:                     sleepCtx,
 		instanceID:                hex.EncodeToString(b),
 		live:                      map[string]*liveSession{},
+		liveStarting:              map[string]bool{},
 		now:                       time.Now,
 		afterFunc:                 func(d time.Duration, f func()) stopper { return time.AfterFunc(d, f) },
 	}
