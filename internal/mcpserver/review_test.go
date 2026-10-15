@@ -375,7 +375,7 @@ func (s *ReviewToolSuite) TestRunReview() {
 			args:     map[string]any{"pr_number": 7},
 			resp:     `{"run_id":"r1","workflow_name":"review-loop","model":"","effort":""}`,
 			wantURL:  "http://localhost:8222/api/channels/test-channel/review/start",
-			wantBody: map[string]any{"pr_number": float64(7), "model": "", "effort": "", "mode": "", "max_iterations": float64(3)},
+			wantBody: map[string]any{"pr_number": float64(7), "model": "", "effort": "", "mode": "", "max_iterations": float64(0)},
 			want:     "Review of PR #7 started in channel test-channel: workflow review-loop, run ID r1, model default, effort default. Use get_workflow_run to check progress.",
 		},
 		{

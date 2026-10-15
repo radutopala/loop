@@ -17,8 +17,12 @@ const (
 	reviewFixLoopWorkflow = "review-fix-loop"
 )
 
-// maxReviewIterations caps max_iterations the way the panel's input does.
-const maxReviewIterations = 10
+// maxReviewIterations caps max_iterations the way the panel's input does,
+// and defaultReviewIterations is its value when not given, as the panel's.
+const (
+	maxReviewIterations     = 10
+	defaultReviewIterations = 3
+)
 
 // reviewStartRequest is the body of POST /api/channels/{id}/review/start.
 // Model and effort default to the channel's own overrides; empty after that
@@ -72,7 +76,7 @@ func (s *Server) handleReviewStart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "mode must be review or review-fix", http.StatusBadRequest)
 		return
 	}
-	iterations := cmp.Or(req.MaxIterations, 1)
+	iterations := cmp.Or(req.MaxIterations, defaultReviewIterations)
 	if iterations < 1 || iterations > maxReviewIterations {
 		http.Error(w, "max_iterations must be between 1 and 10", http.StatusBadRequest)
 		return

@@ -52,10 +52,6 @@ func (s *Server) registerReviewTools() {
 	}, s.handlePushAllReviewComments)
 }
 
-// defaultMCPReviewIterations is run_review's number of passes when the
-// agent gives none; the Review panel's default stays 1.
-const defaultMCPReviewIterations = 3
-
 type runReviewInput struct {
 	PRNumber      int    `json:"pr_number" jsonschema:"required,Number of the pull request to review"`
 	Model         string `json:"model,omitempty" jsonschema:"Model for the review, e.g. opus or sonnet; defaults to the channel's"`
@@ -74,7 +70,7 @@ func (s *Server) handleRunReview(_ context.Context, _ *mcp.CallToolRequest, inpu
 		"model":          input.Model,
 		"effort":         input.Effort,
 		"mode":           input.Mode,
-		"max_iterations": cmp.Or(input.MaxIterations, defaultMCPReviewIterations),
+		"max_iterations": input.MaxIterations,
 	})
 	apiURL := fmt.Sprintf("%s/api/channels/%s/review/start", s.apiURL, url.PathEscape(channelID))
 	type startResult struct {

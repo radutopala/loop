@@ -158,7 +158,7 @@ func (s *ReviewStartSuite) TestLoadsAndStartsWithTheChannelsAgent() {
 		WorkflowName: reviewLoopWorkflow,
 		ChannelID:    "ch1",
 		DirPath:      "/repo",
-		Inputs:       map[string]string{"max_iterations": "1", "pr": "7"},
+		Inputs:       map[string]string{"max_iterations": "3", "pr": "7"},
 	}).Return("run-1", nil)
 
 	w := s.start(map[string]any{"pr_number": 7})

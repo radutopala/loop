@@ -110,11 +110,14 @@ function readStoredMode(): ReviewMode {
   return v === "review-fix" ? "review-fix" : "review-only";
 }
 
+// DEFAULT_REVIEW_MAX_ITER is the number of passes until one is picked.
+const DEFAULT_REVIEW_MAX_ITER = 3;
+
 function readStoredMaxIter(): number {
-  if (typeof window === "undefined") return 1;
+  if (typeof window === "undefined") return DEFAULT_REVIEW_MAX_ITER;
   const raw = window.localStorage.getItem(REVIEW_MAX_ITER_STORAGE_KEY);
   const n = raw === null ? NaN : parseInt(raw, 10);
-  if (!Number.isFinite(n)) return 1;
+  if (!Number.isFinite(n)) return DEFAULT_REVIEW_MAX_ITER;
   if (n < 1) return 1;
   if (n > 10) return 10;
   return n;

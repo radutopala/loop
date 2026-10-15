@@ -2526,7 +2526,7 @@ Body: `{"pr_number": 42, "model": "opus", "effort": "high", "mode": "review", "m
 Only `pr_number` is required. `model` and `effort` default to the
 channel's own overrides, and empty after that means the config default.
 `mode` is `review` (default, the `review-loop` workflow) or `review-fix`
-(`review-fix-loop`). `max_iterations` is 1–10, default `1`.
+(`review-fix-loop`). `max_iterations` is 1–10, default `3`.
 
 Response (`201`): `{"run_id": "...", "workflow_name": "review-loop", "model": "opus", "effort": "high", "session": { ... }}`.
 A Review panel on the channel picks the run up from its
