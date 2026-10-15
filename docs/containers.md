@@ -266,7 +266,7 @@ The filter is inherited by every descendant. An agent cannot disable the gate by
 
 Files listed in `copy_files` are copied into each container after creation but before startup. This gives each container its own independent copy rather than sharing via a bind mount, avoiding corruption from concurrent writes.
 
-`~/.claude.json` is **always** copied (prepended automatically), even when `copy_files` is empty or customized. As it's copied, Loop merges in the consent flags an automated agent can't answer interactively — `hasCompletedOnboarding`, `bypassPermissionsModeAccepted`, and per-workdir `hasTrustDialogAccepted` / `hasCompletedProjectOnboarding` — while preserving the user's auth, so a Docker Agent terminal resumes the session straight to the prompt instead of stalling on the onboarding / bypass-consent / "trust this folder" dialogs.
+`~/.claude.json` is **always** copied (prepended automatically), even when `copy_files` is empty or customized. As it's copied, Loop merges in the consent flags an automated agent can't answer interactively — `hasCompletedOnboarding`, `bypassPermissionsModeAccepted`, and per-workdir `hasTrustDialogAccepted` / `hasCompletedProjectOnboarding` — while preserving the user's auth, so a Chat Terminal resumes the session straight to the prompt instead of stalling on the onboarding / bypass-consent / "trust this folder" dialogs.
 
 ### Mechanism
 
@@ -346,6 +346,17 @@ The container's log stream merges stderr into stdout, and the runner parses it a
 - **Docker out of disk space** -- the disk that fills is the Docker VM's, not the host's. Container create, file copies and the agent's own writes (its session files under `~/.claude`) then fail with `no space left on device` / `ENOSPC`, and the chat shows "Docker is out of disk space … then send again" with `docker builder prune -a` as the first thing to try.
 
 The chat shows every run error, see [Orchestrator: Agent Execution](orchestrator.md#agent-execution).
+
+---
+
+## Live Session Containers
+
+A channel's [live session](chat.md#live-sessions) runs in an agent container like a one-shot run's, with the same image, mounts, env, MCP config and gate, but its command reads turns as stream-json on stdin (`--input-format stream-json`) instead of taking a prompt, and it doesn't deny the CLI's `Monitor` tool. The container is created with `OpenStdin` and `StdinOnce`, and the daemon attaches to it to write turns and read the stream.
+
+- It is registered as an `agent` container of its channel, so it shows in the container list and is removed `container_keep_alive_sec` after it stops.
+- It stops when the session ends: idle (`live_session_idle_sec`), a restart, a stop, the channel's delete, or daemon shutdown.
+- With `StdinOnce`, Docker closes the process's stdin when the daemon's attach goes away, so a daemon crash ends the claude process instead of leaving it waiting. The stopped container is then cleaned up like any other: the [reconcile loop](#reconcile-loop) schedules its removal.
+- A session whose transcript is gone (a stale `session_id`) starts a new session instead of failing.
 
 ---
 

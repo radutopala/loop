@@ -28,8 +28,21 @@ type claudeResponse struct {
 	// (e.g. "error_during_execution").
 	Subtype string   `json:"subtype"`
 	Errors  []string `json:"errors"`
-	Model   string   `json:"-"` // set by scanStreamJSON from assistant events
-	Output  string   `json:"-"` // set by scanStreamJSON: the non-JSON output tail
+	// Origin is set on a result the CLI emits by itself rather than in
+	// answer to a turn, e.g. {"kind":"task-notification"}.
+	Origin struct {
+		Kind string `json:"kind"`
+	} `json:"origin"`
+	Model  string `json:"-"` // set by scanStreamJSON from assistant events
+	Output string `json:"-"` // set by scanStreamJSON: the non-JSON output tail
+}
+
+// flush reports whether the result is an empty one a resumed process emits
+// by itself while it drains a pending background-task notification. It
+// answers no turn. A result of that origin that did run turns carries the
+// answer of the turn it ended, so it isn't one.
+func (r *claudeResponse) flush() bool {
+	return r.Origin.Kind != "" && r.NumTurns == 0
 }
 
 // errorText is what an error result says went wrong. Result is empty for
@@ -280,6 +293,9 @@ type streamCallbacks struct {
 	onThinking   func(text string)
 	onToolResult func(toolUseID, output string, isError bool)
 	onSession    func(sessionID string)
+	// onTurnStart is called when a turn starts (a "system" "init" event),
+	// before any of the turn's other events.
+	onTurnStart func()
 }
 
 // any reports whether at least one callback is set. collectOutput uses it to
@@ -292,7 +308,7 @@ type streamCallbacks struct {
 func (cb streamCallbacks) any() bool {
 	return cb.onTurn != nil || cb.onToolUse != nil || cb.onToolUseRaw != nil ||
 		cb.onActivity != nil || cb.onThinking != nil || cb.onToolResult != nil ||
-		cb.onSession != nil
+		cb.onSession != nil || cb.onTurnStart != nil
 }
 
 // userEventMaxBytes caps the size of "user" stream-json lines we will fully
@@ -468,9 +484,8 @@ func withTail(err error, tail *outputTail) error {
 // until they finish; an empty description means none are left.
 func scanStreamJSON(r io.Reader, cb streamCallbacks) (*claudeResponse, error) {
 	br := bufio.NewReaderSize(r, scannerBufInit)
+	var st streamState
 	var result *claudeResponse
-	var lastModel, lastSession string
-	var tail outputTail
 	for {
 		// Peek at the first bytes to detect the event type without reading
 		// the entire line. Tool results (screenshots) can be several MB —
@@ -480,141 +495,170 @@ func scanStreamJSON(r io.Reader, cb streamCallbacks) (*claudeResponse, error) {
 			if err == io.EOF {
 				break
 			}
-			return result, withTail(fmt.Errorf("reading container output: %w", err), &tail)
+			return result, withTail(fmt.Errorf("reading container output: %w", err), &st.tail)
 		}
-		if len(line) == 0 {
-			continue
-		}
-
-		var typeCheck struct {
-			Type string `json:"type"`
-		}
-		if err := json.Unmarshal(line, &typeCheck); err != nil {
-			tail.add(string(line)) // stderr, or ANSI noise
-			continue
-		}
-
-		switch typeCheck.Type {
-		case "assistant":
-			var msg assistantMessage
-			if err := json.Unmarshal(line, &msg); err != nil {
-				continue
-			}
-			if ref := msg.turnRef(); ref.SessionID != "" && ref.SessionID != lastSession {
-				lastSession = ref.SessionID
-				if cb.onSession != nil {
-					cb.onSession(lastSession)
-				}
-			}
-			if msg.Message.Model != "" && msg.Message.Model != lastModel {
-				lastModel = msg.Message.Model
-				if cb.onActivity != nil {
-					cb.onActivity("model", lastModel)
-				}
-			}
-			if cb.onTurn != nil {
-				if text := msg.extractText(); text != "" {
-					cb.onTurn(text, msg.turnRef())
-				}
-			}
-			if cb.onThinking != nil {
-				if text := msg.extractThinking(); text != "" {
-					cb.onThinking(text)
-				}
-			}
-			if cb.onToolUse != nil || cb.onToolUseRaw != nil {
-				for _, tu := range msg.extractToolUses() {
-					if cb.onToolUse != nil {
-						cb.onToolUse(tu.ID, tu.Name, tu.Input)
-					}
-					if cb.onToolUseRaw != nil {
-						cb.onToolUseRaw(tu.ID, tu.Name, tu.Raw)
-					}
-				}
-			}
-		case "user":
-			if cb.onToolResult == nil {
-				continue
-			}
-			var um userMessage
-			if err := json.Unmarshal(line, &um); err != nil {
-				continue
-			}
-			for _, blk := range um.Message.Content {
-				if blk.Type != "tool_result" {
-					continue
-				}
-				body := parseToolResultContent(blk.Content)
-				out, _ := truncateInline(body, toolResultMaxInline)
-				cb.onToolResult(blk.ToolUseID, out, blk.IsError)
-			}
-		case "system":
-			if cb.onActivity != nil {
-				var evt systemEvent
-				if err := json.Unmarshal(line, &evt); err != nil {
-					continue
-				}
-				switch evt.Subtype {
-				case "task_started":
-					cb.onActivity("subagent_started", evt.Description)
-				case "task_progress":
-					cb.onActivity("subagent_progress", evt.Description)
-				case "task_notification":
-					// A background task finished (or was stopped); summary
-					// carries its one-line outcome. Surface it so the user
-					// sees background completions instead of them vanishing.
-					if evt.Summary != "" {
-						cb.onActivity("task_notification", evt.Summary)
-					}
-				case "api_retry":
-					// The CLI is retrying an upstream API error with backoff —
-					// surface it so long silent stalls (529 storms back off
-					// for minutes) are visible instead of looking like a hang.
-					if evt.Attempt > 0 {
-						cb.onActivity("api_retry", fmt.Sprintf("%s (%d) — retry %d/%d in %.1fs",
-							evt.Error, evt.ErrorStatus, evt.Attempt, evt.MaxRetries, float64(evt.RetryDelayMs)/1000))
-					}
-				case "status":
-					cb.onActivity(evt.Status, evt.Description)
-				case "background_tasks_changed":
-					cb.onActivity("background_tasks", backgroundWait(evt.Tasks))
-				case "thinking_tokens":
-					// Opus emits running thinking-token estimates while it
-					// reasons (the thinking text itself is redacted). Surface
-					// them as a live "thinking" activity so the chat shows a
-					// progress indicator, mirroring sonnet's thinking display.
-					cb.onActivity("thinking", fmt.Sprintf("%d", evt.EstimatedTokens))
-				}
-			}
-		case "tool_progress":
-			// Periodic heartbeat the CLI emits while a long-running tool
-			// executes (e.g. a multi-minute Bash call): tool name + elapsed
-			// seconds. Surfaced as activity so the chat UI can show "Bash —
-			// running 90s" instead of a silent spinner.
-			if cb.onActivity != nil {
-				var evt struct {
-					ToolName string  `json:"tool_name"`
-					Elapsed  float64 `json:"elapsed_time_seconds"`
-				}
-				if err := json.Unmarshal(line, &evt); err != nil || evt.ToolName == "" {
-					continue
-				}
-				cb.onActivity("tool_progress", fmt.Sprintf("%s — running %ds", evt.ToolName, int(evt.Elapsed)))
-			}
-		case "result":
-			var evt claudeResponse
-			if err := json.Unmarshal(line, &evt); err != nil {
-				continue
-			}
-			result = &evt
+		if res := st.dispatch(line, cb); res != nil {
+			result = res
 		}
 	}
 	if result == nil {
-		return nil, withTail(errors.New("parsing claude response: no result event found"), &tail)
+		return nil, withTail(errors.New("parsing claude response: no result event found"), &st.tail)
 	}
-	if lastModel != "" {
-		result.Model = lastModel
-	}
-	result.Output = tail.String()
+	result.Output = st.tail.String()
 	return result, nil
+}
+
+// streamState is what scanning a stream remembers from one line to the next.
+type streamState struct {
+	lastModel, lastSession string
+	tail                   outputTail
+}
+
+// dispatch hands one line of the stream to cb and returns the line's
+// "result" event, nil for any other line. The result carries the model the
+// stream last reported.
+func (st *streamState) dispatch(line []byte, cb streamCallbacks) *claudeResponse {
+	if len(line) == 0 {
+		return nil
+	}
+	var typeCheck struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(line, &typeCheck); err != nil {
+		st.tail.add(string(line)) // stderr, or ANSI noise
+		return nil
+	}
+
+	switch typeCheck.Type {
+	case "assistant":
+		var msg assistantMessage
+		if err := json.Unmarshal(line, &msg); err != nil {
+			return nil
+		}
+		if ref := msg.turnRef(); ref.SessionID != "" && ref.SessionID != st.lastSession {
+			st.lastSession = ref.SessionID
+			if cb.onSession != nil {
+				cb.onSession(st.lastSession)
+			}
+		}
+		if msg.Message.Model != "" && msg.Message.Model != st.lastModel {
+			st.lastModel = msg.Message.Model
+			if cb.onActivity != nil {
+				cb.onActivity("model", st.lastModel)
+			}
+		}
+		if cb.onTurn != nil {
+			if text := msg.extractText(); text != "" {
+				cb.onTurn(text, msg.turnRef())
+			}
+		}
+		if cb.onThinking != nil {
+			if text := msg.extractThinking(); text != "" {
+				cb.onThinking(text)
+			}
+		}
+		if cb.onToolUse != nil || cb.onToolUseRaw != nil {
+			for _, tu := range msg.extractToolUses() {
+				if cb.onToolUse != nil {
+					cb.onToolUse(tu.ID, tu.Name, tu.Input)
+				}
+				if cb.onToolUseRaw != nil {
+					cb.onToolUseRaw(tu.ID, tu.Name, tu.Raw)
+				}
+			}
+		}
+	case "user":
+		if cb.onToolResult == nil {
+			return nil
+		}
+		var um userMessage
+		if err := json.Unmarshal(line, &um); err != nil {
+			return nil
+		}
+		for _, blk := range um.Message.Content {
+			if blk.Type != "tool_result" {
+				continue
+			}
+			body := parseToolResultContent(blk.Content)
+			out, _ := truncateInline(body, toolResultMaxInline)
+			cb.onToolResult(blk.ToolUseID, out, blk.IsError)
+		}
+	case "system":
+		if cb.onActivity == nil && cb.onTurnStart == nil {
+			return nil
+		}
+		var evt systemEvent
+		if err := json.Unmarshal(line, &evt); err != nil {
+			return nil
+		}
+		st.system(evt, cb)
+	case "tool_progress":
+		// Periodic heartbeat the CLI emits while a long-running tool
+		// executes (e.g. a multi-minute Bash call): tool name + elapsed
+		// seconds. Surfaced as activity so the chat UI can show "Bash —
+		// running 90s" instead of a silent spinner.
+		if cb.onActivity != nil {
+			var evt struct {
+				ToolName string  `json:"tool_name"`
+				Elapsed  float64 `json:"elapsed_time_seconds"`
+			}
+			if err := json.Unmarshal(line, &evt); err != nil || evt.ToolName == "" {
+				return nil
+			}
+			cb.onActivity("tool_progress", fmt.Sprintf("%s — running %ds", evt.ToolName, int(evt.Elapsed)))
+		}
+	case "result":
+		var evt claudeResponse
+		if err := json.Unmarshal(line, &evt); err != nil {
+			return nil
+		}
+		evt.Model = st.lastModel
+		return &evt
+	}
+	return nil
+}
+
+// system hands a "system" event to cb.
+func (st *streamState) system(evt systemEvent, cb streamCallbacks) {
+	if evt.Subtype == "init" {
+		// Every turn starts with one, the ones the CLI starts by itself too.
+		if cb.onTurnStart != nil {
+			cb.onTurnStart()
+		}
+		return
+	}
+	if cb.onActivity == nil {
+		return
+	}
+	switch evt.Subtype {
+	case "task_started":
+		cb.onActivity("subagent_started", evt.Description)
+	case "task_progress":
+		cb.onActivity("subagent_progress", evt.Description)
+	case "task_notification":
+		// A background task finished (or was stopped); summary
+		// carries its one-line outcome. Surface it so the user
+		// sees background completions instead of them vanishing.
+		if evt.Summary != "" {
+			cb.onActivity("task_notification", evt.Summary)
+		}
+	case "api_retry":
+		// The CLI is retrying an upstream API error with backoff —
+		// surface it so long silent stalls (529 storms back off
+		// for minutes) are visible instead of looking like a hang.
+		if evt.Attempt > 0 {
+			cb.onActivity("api_retry", fmt.Sprintf("%s (%d) — retry %d/%d in %.1fs",
+				evt.Error, evt.ErrorStatus, evt.Attempt, evt.MaxRetries, float64(evt.RetryDelayMs)/1000))
+		}
+	case "status":
+		cb.onActivity(evt.Status, evt.Description)
+	case "background_tasks_changed":
+		cb.onActivity("background_tasks", backgroundWait(evt.Tasks))
+	case "thinking_tokens":
+		// Opus emits running thinking-token estimates while it
+		// reasons (the thinking text itself is redacted). Surface
+		// them as a live "thinking" activity so the chat shows a
+		// progress indicator, mirroring sonnet's thinking display.
+		cb.onActivity("thinking", fmt.Sprintf("%d", evt.EstimatedTokens))
+	}
 }

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -47,6 +48,18 @@ type ContainerConfig struct {
 	// Masks lists container paths covered by an empty read-only tmpfs,
 	// hiding what a bind exposes there.
 	Masks []string
+	// OpenStdin keeps the container's stdin open, so a live session can
+	// write the turns of one long-lived claude process to it.
+	OpenStdin bool
+}
+
+// AttachStream is a connection to a running container's stdio: Writer feeds
+// its stdin, Reader carries its stdout and stderr multiplexed (demux with
+// stdcopy), and Close drops the connection without stopping the container.
+type AttachStream struct {
+	Writer io.Writer
+	Reader io.Reader
+	Close  func()
 }
 
 // WaitResponse represents the result of waiting for a container to finish.
@@ -69,6 +82,7 @@ type DockerClient interface {
 	ContainerRemove(ctx context.Context, containerID string) error
 	ContainerStop(ctx context.Context, containerID string) error
 	ContainerRunning(ctx context.Context, containerID string) (bool, error)
+	ContainerAttach(ctx context.Context, containerID string) (*AttachStream, error)
 	ImageList(ctx context.Context, image string) ([]string, error)
 	ImagePull(ctx context.Context, image string) error
 	ImageBuild(ctx context.Context, contextDir, tag string) error
@@ -192,6 +206,13 @@ type DockerRunner struct {
 	// won't mount them, anything under them or any ancestor, and the docker
 	// proxy denies nested containers binding them. Set via SetProtectedDirs.
 	protectedDirs []string
+
+	// live holds the channels' live sessions (see StartLive).
+	liveMu sync.Mutex
+	live   map[string]*liveSession
+	// now and afterFunc are the clock live sessions run on.
+	now       func() time.Time
+	afterFunc func(d time.Duration, f func()) stopper
 }
 
 // NewDockerRunner creates a new DockerRunner with the given Docker client and config.
@@ -208,6 +229,9 @@ func NewDockerRunner(client DockerClient, cfg *config.Config, configLoad func() 
 		osTimeLocalName:           func() string { return time.Now().Location().String() },
 		sleep:                     sleepCtx,
 		instanceID:                hex.EncodeToString(b),
+		live:                      map[string]*liveSession{},
+		now:                       time.Now,
+		afterFunc:                 func(d time.Duration, f func()) stopper { return time.AfterFunc(d, f) },
 	}
 	r.transcriptMissing = func(workDir, sessionID string) bool {
 		return claudeTranscriptMissing(r.sys.Stat, r.sys.UserHomeDir, workDir, sessionID)
@@ -394,6 +418,11 @@ const compactionFailed = "Error during compaction"
 // preserved; the backoff is interruptible via ctx (the Stop button), and
 // progress is surfaced through req.OnActivity as a "rate_limited" notice.
 func (r *DockerRunner) Run(ctx context.Context, req *agent.AgentRequest) (*agent.AgentResponse, error) {
+	if req.Live {
+		if resp, ran, err := r.runLive(ctx, req); ran {
+			return resp, err
+		}
+	}
 	retry := r.currentConfig().AgentRetry
 
 	resp, err := r.runWithRecovery(ctx, req)
@@ -504,7 +533,7 @@ func (r *DockerRunner) RunBash(ctx context.Context, script, channelID, dirPath, 
 		ContainerTypeAgent, nil,
 		func(_ *config.Config, _ string) []string {
 			return []string{"/bin/sh", "-c", script}
-		},
+		}, false,
 	)
 	if mcpConfigPath != "" && !keepMCP {
 		defer func() { _ = r.sys.Remove(mcpConfigPath) }()
@@ -584,7 +613,7 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 		ContainerTypeAgent, req.OnActivity,
 		func(cfg *config.Config, mcpConfigPath string) []string {
 			return buildClaudeCmd(cfg, mcpConfigPath, req)
-		},
+		}, false,
 	)
 	if mcpConfigPath != "" && !keepMCP {
 		defer func() { _ = r.sys.Remove(mcpConfigPath) }()
@@ -655,6 +684,15 @@ func (r *DockerRunner) resolveWorkDir(channelID, dirPath string) string {
 	return filepath.Join(r.currentConfig().LoopDir, channelID, "work")
 }
 
+// runConfig is the merged config a run in workDir gets: global, then the
+// project's, then a worktree's when parentDirPath is its root checkout.
+func (r *DockerRunner) runConfig(workDir, parentDirPath string) (*config.Config, error) {
+	if parentDirPath != "" {
+		return r.loadWorktreeProjectConfig(workDir, parentDirPath, r.currentConfig())
+	}
+	return r.loadProjectConfig(workDir, r.currentConfig())
+}
+
 func (r *DockerRunner) createAndStartContainer(
 	ctx context.Context,
 	channelID, dirPath, authorID, parentDirPath, agentID string,
@@ -662,16 +700,12 @@ func (r *DockerRunner) createAndStartContainer(
 	cType ContainerType,
 	onActivity func(activity, detail string),
 	buildCmd func(cfg *config.Config, mcpConfigPath string) []string,
+	openStdin bool,
 ) (containerID, containerName, mcpConfigPath string, keepMCPConfig bool, err error) {
 	workDir := r.resolveWorkDir(channelID, dirPath)
 
 	baseCfg := r.currentConfig()
-	var cfg *config.Config
-	if parentDirPath != "" {
-		cfg, err = r.loadWorktreeProjectConfig(workDir, parentDirPath, baseCfg)
-	} else {
-		cfg, err = r.loadProjectConfig(workDir, baseCfg)
-	}
+	cfg, err := r.runConfig(workDir, parentDirPath)
 	if err != nil {
 		return "", "", "", false, fmt.Errorf("loading project config: %w", err)
 	}
@@ -881,6 +915,7 @@ func (r *DockerRunner) createAndStartContainer(
 		CapAdd:     capAdd,
 		Volumes:    volumes,
 		Masks:      masks,
+		OpenStdin:  openStdin,
 	}
 
 	containerID, err = r.client.ContainerCreate(ctx, containerCfg, containerName)
@@ -1014,7 +1049,7 @@ func (r *DockerRunner) CreateShellContainer(ctx context.Context, channelID, dirP
 		ContainerTypeShell, nil,
 		func(*config.Config, string) []string {
 			return []string{"sleep", "infinity"}
-		})
+		}, false)
 	if err == nil && containerID != "" && r.registry != nil {
 		r.registry.Register(&ContainerInfo{
 			ContainerID:   containerID,

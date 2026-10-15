@@ -1,7 +1,7 @@
 ---
 title: Multi-Agent Workspaces
 ---
-Loop supports running multiple Claude Code agents in parallel within the same channel, with real-time agent discovery and inter-agent messaging typed into each agent's terminal.
+Loop supports running multiple Claude Code agents in parallel within the same channel, with real-time agent discovery and inter-agent messaging: typed into a terminal agent's terminal, or queued as a chat's next message.
 
 ## Overview
 
@@ -9,14 +9,15 @@ Multiple agents share one Docker container per channel (each runs as a separate 
 
 ```
 Channel "my-project" → 1 Docker container
-  ├── chat:             batch run → claude (Chat pane, AgentID "chat")
+  ├── chat:             live session → claude (Chat pane, AgentID "chat")
+  ├── side-<id>:        live session → claude (Chat (Resume with fork) / Chat (Fresh session) pane)
   ├── docker-agent-0:   docker exec → bash → claude (Swarm/Canvas pane)
   ├── docker-agent-1:   docker exec → bash → claude (Swarm/Canvas pane)
   ├── docker-agent-2:   docker exec → bash → claude (Swarm/Canvas pane)
   └── docker-agent-3:   docker exec → bash → claude (Swarm/Canvas pane)
 ```
 
-The terminal agents register, so they can discover and message each other. The chat agent (AgentID `"chat"`) only sends: it can list the terminal agents and message them, but it has no terminal to type messages into, so it isn't registered and the others neither list nor message it.
+The terminal agents register, so they can discover and message each other. The chats are agents too, though they don't register: `GET /api/agents` lists the channel's own chat as `chat` and each of its side chats (the chats of the Chat (Resume with fork) and Chat (Fresh session) panes) by its channel ID, `side-<id>`, and a message sent to one is queued as that chat's next message. Every chat runs with AgentID `"chat"`; the daemon tells them apart by the channel the request comes from, so a side chat's agents are its parent channel's, and a message it sends is labelled with its own `side-<id>`.
 
 ## Layouts
 
@@ -60,7 +61,7 @@ type AgentInfo struct {
 
 Agent IDs are pane IDs such as `docker-agent-0`: letters, digits, `.`, `_` and `-`, up to 64 characters. Registering any other ID is refused (`400`).
 
-Chat runs (batch runs via Discord/Slack/local messages, AgentID `"chat"`) don't register.
+Chat runs (via Discord/Slack/local messages, AgentID `"chat"`) don't register. A chat is listed whether or not its live session is running: a message starts one. Its status is `running` while its live session takes a turn, `idle` otherwise.
 
 ### Auto-Accept Prompts
 
@@ -70,10 +71,10 @@ Agent terminal sessions automatically accept Claude Code's workspace trust promp
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET /api/agents?channel_id=X` | List agents for a channel |
+| `GET /api/agents?channel_id=X` | List a channel's agents: its chats, then its terminal agents |
 | `PATCH /api/agents/{id}` | Update agent status/name/work summary |
 | `DELETE /api/agents/{id}?channel_id=X` | Unregister agent (MCP server shutdown) |
-| `POST /api/agents/{id}/message` | Type a message into the agent's terminal |
+| `POST /api/agents/{id}/message` | Type a message into a terminal agent's terminal, or queue it as a chat's next message |
 
 ## Inter-Agent MCP Tools
 
@@ -82,12 +83,14 @@ When a terminal pane has an `agent_id`, the Loop MCP server inside the container
 | Tool | Description |
 |------|-------------|
 | `list_agents` | List all active agents in the current channel with status and work summaries |
-| `send_agent_message` | Send a message to another agent by ID, typed into its terminal |
+| `send_agent_message` | Send a message to another agent by ID: typed into a terminal agent's terminal, or queued as a chat's next message |
 | `update_agent_status` | Update this agent's display name and work summary |
 
 ### Instructions
 
-The MCP server provides these instructions to Claude when agent tools are enabled:
+A chat gets `list_agents` and `send_agent_message` but not `update_agent_status`, and instructions of its own: a message arrives as its next message, and its reply stays in its chat, so it answers the sender with `send_agent_message`. In its `list_agents` output, the `*` marks the chat that asked (the API's `self`), since every chat runs as `chat`.
+
+The MCP server provides these instructions to Claude when agent tools are enabled in a terminal:
 
 ```
 You are agent "<id>" connected to Loop's inter-agent communication channel.
@@ -106,11 +109,13 @@ Agent A calls send_agent_message tool
   → Claude B gets it as a prompt; while B is busy, Claude Code queues it
 ```
 
+A chat takes it through the channel's message queue instead: `[from <sender>] <message>` is queued as the chat's next message, behind the run it's on, as a message sent from the composer would be. An agent can't message its own chat (`400`); `queue_message` queues a prompt for itself.
+
 The message goes in as one paste, so a multi-line message stays one prompt, and ends with a newline so prompts queued while the agent is busy stay on lines of their own. Content holding a bracketed-paste marker is refused (`400`).
 
-The sender label is checked: `from_agent_id` must be `"chat"` or an agent registered in the channel, else the message is refused (`400`). It can be left out, and the message goes in unlabelled. The label still can't tell apart the agents of one channel, which share a shell container and so the same API token: any of them can send under another's ID.
+The sender label is checked: `from_agent_id` must be `"chat"` (relabelled `side-<id>` when a side chat sends) or an agent registered in the channel, else the message is refused (`400`). It can be left out, and the message goes in unlabelled. The label still can't tell apart the agents of one channel, which share a shell container and so the same API token: any of them can send under another's ID.
 
-The call fails, and the tool reports it, when the target has no terminal (`409`) or its terminal session is gone (`409`; the stale session is forgotten).
+The call fails, and the tool reports it, when the target is neither a chat nor registered (`404`), has no terminal (`409`) or its terminal session is gone (`409`; the stale session is forgotten).
 
 ## Frontend Events
 

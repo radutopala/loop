@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,10 +32,10 @@ const (
 )
 
 // uiInputPanels are the panes the terminal steps may use: the agent's
-// terminals, which run in its container. A host shell runs on the host, so
-// typing into one would run commands there, and reading one could show what
-// the host has.
-var uiInputPanels = []string{"docker-agent", "docker-shell"}
+// terminals, which run in its container, and the chats, where send_input
+// queues a message. A host shell runs on the host, so typing into one would
+// run commands there, and reading one could show what the host has.
+var uiInputPanels = []string{"docker-agent", "docker-shell", "chat", "chat-side"}
 
 // uiTerminalOps are the steps that use a terminal pane: they type into it,
 // read it or wait on its output.
@@ -130,6 +131,7 @@ type uiCommandRequest struct {
 type uiStep struct {
 	Op        string `json:"op"`
 	Pane      string `json:"pane"`
+	Panel     string `json:"panel"`
 	ChannelID string `json:"channel_id"`
 }
 
@@ -148,6 +150,7 @@ func (s *Server) handleRunUICommand(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	s.uiSideChatsToParents(r.Context(), &req, steps)
 	if msg := s.uiAgentRefusal(r, steps); msg != "" {
 		http.Error(w, msg, http.StatusForbidden)
 		return
@@ -174,6 +177,31 @@ func parseUICommand(w http.ResponseWriter, r *http.Request) (uiCommandRequest, [
 		}
 	}
 	return req, steps, true
+}
+
+// uiSideChatsToParents has a select_channel to a side chat open the side
+// chat's parent instead: the window lists no side chats, and shows a side
+// chat's pane in its parent's view. A side chat's agent's ui_run starts
+// with one. A channel it can't look up stays as it is.
+func (s *Server) uiSideChatsToParents(ctx context.Context, req *uiCommandRequest, steps []uiStep) {
+	var raw []map[string]json.RawMessage
+	_ = json.Unmarshal(req.Steps, &raw) // parseUICommand read them as objects
+	changed := false
+	for i, step := range steps {
+		if step.Op != "select_channel" || step.ChannelID == "" {
+			continue
+		}
+		group, _, err := s.agentGroup(ctx, step.ChannelID)
+		if err != nil || group == step.ChannelID {
+			continue
+		}
+		steps[i].ChannelID = group
+		raw[i]["channel_id"], _ = json.Marshal(group)
+		changed = true
+	}
+	if changed {
+		req.Steps, _ = json.Marshal(raw)
+	}
 }
 
 // runUICommand sends a parsed command to its window and answers with the
@@ -209,25 +237,48 @@ func (s *Server) runUICommand(w http.ResponseWriter, r *http.Request, req uiComm
 }
 
 // checkUIInput refuses a terminal step that could use anything but an agent
-// terminal. Its pane is a panel type, which the window resolves to
-// its first pane of that type, or the id of a pane the window c reports.
-// The window checks the pane again when it runs the step, since a pane a
-// step before it adds isn't in the reported state yet.
+// terminal or a chat. Its pane is a panel type, which the window resolves to
+// its first pane of that type, the id of a pane the window c reports, or
+// "$n": the pane step n before it adds, an agent terminal or a chat. The
+// window checks the pane again when it runs the step.
 func checkUIInput(steps []uiStep, c uibridge.Client) error {
 	var state struct {
 		Panes []uiPane `json:"panes"`
 	}
 	_ = json.Unmarshal(c.State, &state) // a window with no state has no panes
-	for _, step := range steps {
+	for at, step := range steps {
 		if !slices.Contains(uiTerminalOps, step.Op) || slices.Contains(uiInputPanels, step.Pane) {
+			continue
+		}
+		if n, ok := paneRef(step.Pane); ok {
+			if n > at || !slices.Contains(uiPaneOps, steps[n-1].Op) || !slices.Contains(uiInputPanels, steps[n-1].Panel) {
+				return fmt.Errorf("%w: %s's pane %s isn't a docker-agent, docker-shell, chat or chat-side pane a step before it adds", errUIStep, step.Op, step.Pane)
+			}
 			continue
 		}
 		i := slices.IndexFunc(state.Panes, func(p uiPane) bool { return p.ID == step.Pane })
 		if i < 0 || !slices.Contains(uiInputPanels, state.Panes[i].Panel) {
-			return fmt.Errorf("%w: %s only works on docker-agent and docker-shell panes, not %q", errUIStep, step.Op, step.Pane)
+			return fmt.Errorf("%w: %s only works on docker-agent, docker-shell, chat and chat-side panes, not %q", errUIStep, step.Op, step.Pane)
 		}
 	}
 	return nil
+}
+
+// uiPaneOps are the steps that make a pane, which a later step can name as
+// "$n".
+var uiPaneOps = []string{"add_pane", "replace_pane"}
+
+// paneRef returns n of a pane named "$n", the pane step n (from 1) made.
+func paneRef(pane string) (int, bool) {
+	ref, ok := strings.CutPrefix(pane, "$")
+	if !ok {
+		return 0, false
+	}
+	n, err := strconv.Atoi(ref)
+	if err != nil || n < 1 {
+		return 0, false
+	}
+	return n, true
 }
 
 // uiAgentRefusal returns why an agent may not run steps, or "" when it may.

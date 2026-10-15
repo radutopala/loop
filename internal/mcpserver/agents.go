@@ -18,9 +18,9 @@ func WithAgentTools(agentID string) MemoryOption {
 	}
 }
 
-// WithAgentSender gives an agent with no terminal, the chat agent, the tools
-// to find and message the terminal agents. It isn't registered, so the
-// others neither list nor message it.
+// WithAgentSender gives a chat, which has no terminal, the tools to find and
+// message the channel's agents. It isn't registered: the daemon lists the
+// channel's chats itself, and queues the messages sent to them.
 func WithAgentSender(agentID string) MemoryOption {
 	return func(s *Server) {
 		s.agentID = agentID
@@ -43,12 +43,12 @@ type updateAgentStatusInput struct {
 func (s *Server) registerAgentTools() {
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "list_agents",
-		Description: "List all active agents in the current channel with their status and work summaries.",
+		Description: "List the agents in the current channel, its chats and terminal agents, with their status and work summaries. Your own is marked with *.",
 	}, s.handleListAgents)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "send_agent_message",
-		Description: "Send a message to another agent in this channel. It's typed into the agent's terminal as a prompt. The call fails when the agent has no terminal to type into.",
+		Description: "Send a message to another agent in this channel. A terminal agent gets it typed into its terminal as a prompt; a chat gets it queued as its next message. The call fails when a terminal agent has no terminal to type into.",
 	}, s.handleSendAgentMessage)
 
 	if s.agentSender {
@@ -65,6 +65,7 @@ type agentListItem struct {
 	Name        string `json:"name"`
 	Status      string `json:"status"`
 	WorkSummary string `json:"work_summary"`
+	Self        bool   `json:"self"`
 }
 
 func (s *Server) handleListAgents(_ context.Context, _ *mcp.CallToolRequest, _ listAgentsInput) (*mcp.CallToolResult, any, error) {
@@ -80,8 +81,13 @@ func (s *Server) handleListAgents(_ context.Context, _ *mcp.CallToolRequest, _ l
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%d agent(s):\n", len(*agents))
 	for _, a := range *agents {
+		// Every chat runs as agent "chat": the daemon marks which one asked.
+		self := a.AgentID == s.agentID
+		if s.agentSender {
+			self = a.Self
+		}
 		marker := " "
-		if a.AgentID == s.agentID {
+		if self {
 			marker = "*"
 		}
 		fmt.Fprintf(&sb, "%s [%s] %s — %s", marker, a.AgentID, a.Name, a.Status)

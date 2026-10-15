@@ -154,6 +154,7 @@ type Server struct {
 	history                 configHistory                         // records each config.json's revisions; see lockConfig
 	backup                  BackupRunner                          // writes database backups; nil disables /api/backup
 	monitors                MonitorManager                        // runs channels' watch scripts; nil disables /api/channels/{id}/monitors
+	live                    LiveSessions                          // runs channels' live sessions; nil disables /api/channels/{id}/live
 	newBackupKey            func() (*age.X25519Identity, error)   // generates the backups' key pair
 	messages                MessageSender
 	memoryIndexer           MemoryIndexer
@@ -435,6 +436,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	s.registerQualityRoutes(mux)
 	s.registerTicketRoutes(mux)
 	s.registerMonitorRoutes(mux)
+	s.registerLiveRoutes(mux)
 	s.registerSystemRoutes(mux)
 	return mux
 }

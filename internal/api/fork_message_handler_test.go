@@ -77,10 +77,20 @@ func (s *ServerSuite) TestForkAtMessage() {
 		src        *db.Channel
 		msg        *db.Message
 		reply      *db.Message // the first forkable reply to a user message
+		base       *db.Channel // the channel or thread a side chat src is of
 		wantParent string
 		wantAt     forkPoint
 		wantImport []string
 	}{
+		{
+			name:       "at a reply in a side chat of a thread",
+			src:        &db.Channel{ChannelID: "s1", ParentID: "t1", Name: "research (fork)", Kind: db.ChannelKindSide},
+			base:       &db.Channel{ChannelID: "t1", ParentID: "ch1", Name: "research"},
+			msg:        &db.Message{ChannelID: "s1", MsgID: "b2", IsBot: true, SessionID: "sess-1", TranscriptUUID: "a-2", Forkable: true},
+			wantParent: "ch1",
+			wantAt:     forkPoint{SessionID: "sess-1", ResumeAt: "a-2"},
+			wantImport: []string{"first prompt", "looking", "done"},
+		},
 		{
 			name:       "at a reply in a thread",
 			src:        &db.Channel{ChannelID: "t1", ParentID: "ch1", Name: "research"},
@@ -121,6 +131,9 @@ func (s *ServerSuite) TestForkAtMessage() {
 			s.useForkTranscript("/proj")
 			s.srv.SetEventsHub(NewEventsHub(s.srv.logger))
 			s.store.On("GetChannel", mock.Anything, tc.src.ChannelID).Return(tc.src, nil)
+			if tc.base != nil {
+				s.store.On("GetChannel", mock.Anything, tc.base.ChannelID).Return(tc.base, nil)
+			}
 			s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/proj"}, nil)
 			s.store.On("GetChannel", mock.Anything, "t2").Return(&db.Channel{ID: 9, ChannelID: "t2", ParentID: "ch1"}, nil)
 			s.store.On("GetChatMessage", mock.Anything, tc.src.ChannelID, tc.msg.MsgID).Return(tc.msg, nil)
@@ -214,6 +227,29 @@ func (s *ServerSuite) TestForkAtMessageErrors() {
 			s.store.On("InsertMessage", mock.Anything, mock.Anything).Return(nil)
 
 			rec := s.testRequest("POST", "/api/channels/t1/messages/m1/fork", "")
+			require.Equal(s.T(), tc.want, rec.Code, rec.Body.String())
+		})
+	}
+}
+
+func (s *ServerSuite) TestForkAtMessageSideChatBaseErrors() {
+	tests := []struct {
+		name    string
+		base    *db.Channel
+		baseErr error
+		want    int
+	}{
+		{name: "base lookup fails", baseErr: errors.New("db down"), want: http.StatusInternalServerError},
+		{name: "base gone", want: http.StatusNotFound},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			s.store.On("GetChannel", mock.Anything, "s1").Return(&db.Channel{ChannelID: "s1", ParentID: "ch1", Kind: db.ChannelKindSide}, nil)
+			s.store.On("GetChannel", mock.Anything, "ch1").Return(tc.base, tc.baseErr)
+			s.store.On("GetChatMessage", mock.Anything, "s1", "m1").Return(&db.Message{ChannelID: "s1", MsgID: "m1", IsBot: true}, nil)
+
+			rec := s.testRequest("POST", "/api/channels/s1/messages/m1/fork", "")
 			require.Equal(s.T(), tc.want, rec.Code, rec.Body.String())
 		})
 	}

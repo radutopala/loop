@@ -79,7 +79,7 @@ export function CanvasTile({
   }, [tile.id, onBringToFront]);
 
   const isAgent = tile.panel === "docker-agent";
-  const label = isAgent ? agentInfo?.name || tile.id : paneLabel(tile.panel, tile.plugin);
+  const label = isAgent ? agentInfo?.name || tile.id : paneLabel(tile.panel, tile.plugin, tile.openMode);
   const pluginPanels = usePluginPanels();
   const statsEntry = statsForPanel(tile.panel, containerStats);
 

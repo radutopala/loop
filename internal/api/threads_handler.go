@@ -109,6 +109,7 @@ func (s *Server) deleteThread(ctx context.Context, threadID string) error {
 	}
 	s.cleanupChannelContainers(ctx, threadID)
 	s.stopHiddenThreads(ctx, hidden)
+	s.sweepLive(ctx)
 	if len(threads) == 1 {
 		s.removeMCPConfigs(s.threadOwner(ctx, threads[0]), append(threads, hidden...))
 	}
@@ -303,7 +304,7 @@ func (s *Server) handleForkThread(w http.ResponseWriter, r *http.Request) {
 	}
 	// A hidden learn or explain thread is as good as missing: forking it
 	// would surface its session as a visible thread.
-	if src == nil || src.ParentID == "" || db.IsHiddenKind(src.Kind) {
+	if src == nil || src.ParentID == "" || db.IsUnlistedKind(src.Kind) {
 		http.Error(w, "thread not found", http.StatusBadRequest)
 		return
 	}

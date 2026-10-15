@@ -14,7 +14,7 @@ export interface CanvasTile {
   width: number;
   height: number;
   zIndex: number;
-  /** For docker-agent tiles: how to boot the Claude session. Undefined → "fork" (legacy default). */
+  /** For docker-agent and chat-side tiles: how to boot the Claude session. Undefined → "fork" (legacy default). */
   openMode?: AgentOpenMode;
   /** For plugin tiles: the plugin panel shown. */
   plugin?: PluginPaneRef;

@@ -80,10 +80,11 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 	serverOpts := &mcp.ServerOptions{Logger: logger}
 	switch {
 	case s.agentSender:
-		serverOpts.Instructions = "Other agents run in this channel's terminals.\n" +
-			"Use `list_agents` to discover them.\n" +
-			"Use `send_agent_message` to send one a message by ID; it's typed into its terminal.\n" +
-			"They can't message you back."
+		serverOpts.Instructions = "You are one of this channel's chats. Other agents run in its terminals and its other chats.\n" +
+			"Use `list_agents` to discover them; your own chat is marked with *.\n" +
+			"Use `send_agent_message` to send one a message by ID: it's typed into a terminal agent's prompt, or queued as a chat's next message.\n" +
+			"Messages from other agents arrive as your next message, \"[from <agent id>] <message>\". " +
+			"Your reply stays in your chat; to answer the sender, use `send_agent_message`."
 	case s.agentID != "":
 		serverOpts.Instructions = fmt.Sprintf("You are agent %q connected to Loop's inter-agent communication channel.\n", s.agentID) +
 			"Your agent ID is marked with * in list_agents output.\n" +
@@ -273,7 +274,7 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "ui_run",
-		Description: "Drive the Loop desktop app window the user last focused: open a channel of this project, switch layout tabs, add, replace, remove or maximize panes, open a file in the editor, show a playground in a pane, and type into, read or wait on an agent terminal (docker-agent or docker-shell panes, never host shells). The steps run in order until one fails; without a select_channel first, they run in this channel. Desktop app only. Moving the user's window is visible to them: do it when they asked to see something.",
+		Description: "Drive the Loop desktop app window the user last focused: open a channel of this project, switch layout tabs, add, replace, remove or maximize panes, open a file in the editor, scroll the chat to a message (show_message; for a loop://channel/<channel-id>/<message-id> link, select_channel then show_message), show a playground in a pane, and type into, read or wait on an agent terminal (docker-agent or docker-shell panes, never host shells), or queue a message in a chat pane (chat or chat-side) and read or wait for its reply. The steps run in order until one fails; without a select_channel first, they run in this channel. Desktop app only. Moving the user's window is visible to them: do it when they asked to see something.",
 		InputSchema: uiRunSchema(),
 	}, s.handleUIRun)
 

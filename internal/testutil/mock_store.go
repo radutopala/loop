@@ -530,6 +530,16 @@ func (m *MockStore) InsertHiddenThread(ctx context.Context, ch *db.Channel) erro
 	return m.Called(ctx, ch).Error(0)
 }
 
+func (m *MockStore) InsertSideChat(ctx context.Context, ch *db.Channel) error {
+	return m.Called(ctx, ch).Error(0)
+}
+
+func (m *MockStore) ListSideChats(ctx context.Context, parentID string) ([]*db.Channel, error) {
+	args := m.Called(ctx, parentID)
+	v, _ := args.Get(0).([]*db.Channel)
+	return v, args.Error(1)
+}
+
 func (m *MockStore) FileLearnProposals(ctx context.Context, channelID string, proposals []*db.LearnProposal, withdraw []db.LearnWithdrawal) ([]*db.LearnProposal, error) {
 	args := m.Called(ctx, channelID, proposals, withdraw)
 	v, _ := args.Get(0).([]*db.LearnProposal)

@@ -110,7 +110,7 @@ func (s *MainSuite) TestRunMCPChatAgent() {
 	}
 	require.Contains(s.T(), names, "list_agents")
 	require.Contains(s.T(), names, "send_agent_message")
-	require.NotContains(s.T(), names, "update_agent_status", "chat only sends")
+	require.NotContains(s.T(), names, "update_agent_status", "chat isn't registered")
 }
 
 func (s *MainSuite) TestRunMCPLearnAgent() {

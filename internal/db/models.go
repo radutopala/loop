@@ -85,6 +85,18 @@ func PluginOfKind(kind string) (string, bool) {
 	return id, true
 }
 
+// ChannelKindSide marks a side chat: a thread of its parent the user chats
+// in from a pane of its own, either a fork of the parent's session or a
+// fresh one. Unlike a hidden thread it is a plain chat, but like one it is
+// never listed in the sidebar or search.
+const ChannelKindSide = "side"
+
+// IsUnlistedKind reports whether kind marks a channel the sidebar and search
+// never list: a hidden thread or a side chat.
+func IsUnlistedKind(kind string) bool {
+	return kind == ChannelKindSide || IsHiddenKind(kind)
+}
+
 // IsHiddenKind reports whether kind marks a hidden thread, one the user
 // never sees in the sidebar, search or session import.
 func IsHiddenKind(kind string) bool {

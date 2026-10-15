@@ -15,6 +15,8 @@ import { ChatInput } from "./ChatInput";
 import type { ChatMessagesHandle } from "./ChatMessages";
 import { ChatMessages } from "./ChatMessages";
 import { draftText } from "./chatDrafts";
+import { LiveBar, useLiveStatus, useWarmLive } from "./LiveBar";
+import { footerLabel, liveIcon, liveIconTitle } from "./liveSession";
 import { MonitorsBar } from "./MonitorsBar";
 
 function buildStyles(colors: ColorPalette): Record<string, React.CSSProperties> {
@@ -87,7 +89,7 @@ interface ChatViewProps {
   chatState: ChatState;
   roots?: RootEntry[];
   scrollToMessageId?: number | null;
-  onScrollComplete?: () => void;
+  onScrollComplete?: (found: boolean) => void;
   /** Don't take focus on mount: the Learn view's learn thread, beside a chat
    * that has it. */
   noAutoFocus?: boolean;
@@ -132,6 +134,8 @@ export function ChatView({
   const [quotedMessage, setQuotedMessage] = useState<Message | null>(null);
   const clearQuote = useCallback(() => setQuotedMessage(null), []);
   const queuedEdit = useQueuedEdit(channelId, chatState.queuedMessages);
+  const live = useLiveStatus(channelId, subscribeChatEvents, wsOpens);
+  const warmLive = useWarmLive(subscribeChatEvents ? channelId : null, live);
 
   // +fork on a bubble: the new thread opens, and for a user message its
   // composer holds that message's text to edit and send. The draft is
@@ -170,10 +174,13 @@ export function ChatView({
     setFindTarget(null);
     setFindTerm("");
   }, []);
-  const handleScrollComplete = useCallback(() => {
-    if (findTarget !== null) setFindTarget(null);
-    else onScrollComplete?.();
-  }, [findTarget, onScrollComplete]);
+  const handleScrollComplete = useCallback(
+    (found: boolean) => {
+      if (findTarget !== null) setFindTarget(null);
+      else onScrollComplete?.(found);
+    },
+    [findTarget, onScrollComplete],
+  );
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if ((e.metaKey || e.ctrlKey) && e.key === "f") {
       e.preventDefault();
@@ -186,6 +193,7 @@ export function ChatView({
   }, [channelId, closeFind]);
 
   const isEmpty = items.length === 0 && liveTail.length === 0 && !loading;
+  const icon = liveIcon(live, isRunning && !isEmpty);
 
   if (!channelId) {
     return (
@@ -246,6 +254,7 @@ export function ChatView({
           </div>
         </>
       )}
+      {readOnlyNote === undefined && <LiveBar status={live} hideBackground={isRunning && !!chatState.backgroundTasks} />}
       {channelId && subscribeChatEvents && <MonitorsBar channelId={channelId} subscribeChatEvents={subscribeChatEvents} wsOpens={wsOpens} />}
       {readOnlyNote !== undefined ? (
         <div data-testid="chat-read-only" style={{ ...styles.isolationLabel, padding: "8px 12px" }}>
@@ -270,6 +279,7 @@ export function ChatView({
             setMode={chatState.setMode}
             onDismissGate={dismissGate}
             onSent={scrollToBottom}
+            onTyping={warmLive}
             quotedMessage={quotedMessage}
             onClearQuote={clearQuote}
             pendingGateReqId={chatState.gateApprovals["chat"]?.req_id ?? null}
@@ -281,8 +291,10 @@ export function ChatView({
         </div>
       )}
       <div style={styles.isolationLabel}>
-        <LoopInfinityIcon color={isRunning && !isEmpty ? undefined : colors.textDim} animated={isRunning && !isEmpty} isDark={colors.isDark} />
-        Running non-interactively in an isolated Docker container
+        <span data-testid="live-icon" data-state={icon} title={liveIconTitle(icon)} style={{ display: "inline-flex" }}>
+          <LoopInfinityIcon color={icon === "idle" ? colors.active : colors.textDim} animated={icon === "working"} isDark={colors.isDark} />
+        </span>
+        {footerLabel(subscribeChatEvents ? live?.enabled : false)}
       </div>
     </div>
   );

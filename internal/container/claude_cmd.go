@@ -416,3 +416,19 @@ func (b *ClaudeCmdBuilder) writeAgentMCPConfig(cfg *config.Config, workDir, chan
 	configPath := mcpConfigPathForAgent(workDir, channelID, agentID)
 	_ = b.writeFile(configPath, data, 0o644)
 }
+
+// monitorTool is the CLI's Monitor tool. A one-shot run denies it: the run
+// ends at its result, so the monitor's events would reach nobody.
+const monitorTool = "Monitor"
+
+// buildLiveClaudeCmd builds the command of a live session: one long-lived
+// claude process that reads its turns as stream-json lines on stdin, so it
+// gets no prompt argument. It lives on after a result, so background tasks
+// and Monitor work there: the process starts a turn by itself when one ends.
+func buildLiveClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRequest) []string {
+	live := *cfg
+	live.ClaudeBatchDisallowedTools = withoutTool(cfg.ClaudeBatchDisallowedTools, monitorTool)
+	cmd := buildClaudeCmd(&live, mcpConfigPath, req)
+	cmd = cmd[:len(cmd)-1] // the prompt
+	return append(cmd, "--input-format", "stream-json")
+}

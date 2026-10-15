@@ -9,6 +9,14 @@ const PANEL_ICONS: Record<PanelType, React.ReactNode> = {
       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
     </svg>
   ),
+  "chat-side": (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+      <circle cx="8" cy="8" r="1.5" />
+      <circle cx="16" cy="8" r="1.5" />
+      <path d="M8 9.5v1a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-1" />
+    </svg>
+  ),
   editor: (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
@@ -143,11 +151,12 @@ const PANEL_ICONS: Record<PanelType, React.ReactNode> = {
 
 const PANEL_DESCRIPTIONS: Record<PanelType, string> = {
   chat: "Chat with the agent",
+  "chat-side": "A chat of its own beside the channel's, in a fork of its session or a fresh one",
   editor: "Edit open files in tabs",
   "file-tree": "Workspace file tree",
   memory: "Agent memory explorer",
   git: "Git diff viewer",
-  "docker-agent": "Docker isolated terminal",
+  "docker-agent": "Claude's own terminal app on the channel's session, in its Docker container",
   "host-shell": "Local machine shell",
   "docker-shell": "Shell inside the Docker container",
   "docker-browser": "Browser in Docker container",

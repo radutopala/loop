@@ -63,6 +63,9 @@ func (s *ConfigSuite) TestLoadDefaults() {
 	require.Equal(s.T(), int64(2048), cfg.ContainerMemoryMB)
 	require.Equal(s.T(), 1.0, cfg.ContainerCPUs)
 	require.Equal(s.T(), 300*time.Second, cfg.ContainerKeepAlive)
+	require.Equal(s.T(), 10*time.Minute, cfg.LiveSessionIdle)
+	require.True(s.T(), cfg.LiveSessions)
+	require.Empty(s.T(), cfg.LiveSessionPlatforms)
 	require.Equal(s.T(), 30*time.Second, cfg.PollInterval)
 	require.Equal(s.T(), ":8222", cfg.APIAddr)
 	require.Equal(s.T(), "/home/testuser/.loop", cfg.LoopDir)
@@ -453,6 +456,7 @@ func (s *ConfigSuite) TestZeroNumericValues() {
 			"container_cpus": 0,
 			"container_keep_alive_sec": 0,
 			"poll_interval_sec": 0,
+			"live_session_idle_sec": 0,
 			"browser": {"memory_mb": 0, "cpus": 0}
 		}`), nil
 	}
@@ -463,11 +467,51 @@ func (s *ConfigSuite) TestZeroNumericValues() {
 	require.Equal(s.T(), int64(0), cfg.ContainerMemoryMB)
 	require.Equal(s.T(), 0.0, cfg.ContainerCPUs)
 	require.Equal(s.T(), time.Duration(0), cfg.ContainerKeepAlive)
+	require.Equal(s.T(), time.Duration(0), cfg.LiveSessionIdle)
 	require.Equal(s.T(), time.Duration(0), cfg.PollInterval)
 	// Zero is the documented escape hatch from the caps, so it has to survive
 	// defaulting rather than be read as "unset".
 	require.Equal(s.T(), int64(0), cfg.Browser.MemoryMB)
 	require.Equal(s.T(), 0.0, cfg.Browser.CPUs)
+}
+
+func (s *ConfigSuite) TestLiveSessions() {
+	s.loader.readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			"platforms": ["discord"],
+			"discord_token": "tok",
+			"discord_app_id": "app",
+			"live_sessions": false,
+			"live_session_platforms": ["Local", "slack"]
+		}`), nil
+	}
+
+	cfg, err := s.loader.load()
+	require.NoError(s.T(), err)
+	require.False(s.T(), cfg.LiveSessions)
+	require.Equal(s.T(), []types.Platform{types.PlatformLocal, types.PlatformSlack}, cfg.LiveSessionPlatforms)
+}
+
+func (s *ConfigSuite) TestLiveFor() {
+	tests := []struct {
+		name      string
+		enabled   bool
+		platforms []types.Platform
+		platform  types.Platform
+		want      bool
+	}{
+		{"off", false, nil, types.PlatformLocal, false},
+		{"every platform", true, nil, types.PlatformSlack, true},
+		{"listed platform", true, []types.Platform{types.PlatformLocal}, types.PlatformLocal, true},
+		{"unlisted platform", true, []types.Platform{types.PlatformLocal}, types.PlatformDiscord, false},
+		{"off for a listed platform", false, []types.Platform{types.PlatformLocal}, types.PlatformLocal, false},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			cfg := &Config{LiveSessions: tc.enabled, LiveSessionPlatforms: tc.platforms}
+			require.Equal(s.T(), tc.want, cfg.LiveFor(tc.platform))
+		})
+	}
 }
 
 func (s *ConfigSuite) TestJSONWithComments() {

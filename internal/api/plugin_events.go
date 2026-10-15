@@ -40,7 +40,7 @@ func (s *Server) forwardToPlugins(ctx context.Context, evt Event) {
 	out := proxy.Event{Type: evt.Type, ChannelID: ch.ChannelID, Data: evt.Data, Timestamp: evt.Timestamp}
 	var thread *runtime.Channel
 	if ch.ParentID != "" {
-		if db.IsHiddenKind(ch.Kind) {
+		if db.IsUnlistedKind(ch.Kind) {
 			return
 		}
 		t := pluginRuntimeChannel(ch)

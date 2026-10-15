@@ -45,6 +45,12 @@ func (m *MockDockerClient) ContainerLogsFollow(ctx context.Context, containerID 
 	return r, args.Error(1)
 }
 
+func (m *MockDockerClient) ContainerAttach(ctx context.Context, containerID string) (*AttachStream, error) {
+	args := m.Called(ctx, containerID)
+	a, _ := args.Get(0).(*AttachStream)
+	return a, args.Error(1)
+}
+
 func (m *MockDockerClient) ContainerStart(ctx context.Context, containerID string) error {
 	args := m.Called(ctx, containerID)
 	return args.Error(0)

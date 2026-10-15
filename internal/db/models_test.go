@@ -112,6 +112,20 @@ func (s *ModelsSuite) TestIsHiddenKind() {
 	}
 }
 
+func (s *ModelsSuite) TestIsUnlistedKind() {
+	for _, tc := range []struct {
+		kind string
+		want bool
+	}{
+		{ChannelKindSide, true},
+		{ChannelKindLearn, true},
+		{PluginKind("cogtest"), true},
+		{"", false},
+	} {
+		require.Equal(s.T(), tc.want, IsUnlistedKind(tc.kind), "kind %q", tc.kind)
+	}
+}
+
 func (s *ModelsSuite) TestPluginOfKind() {
 	for _, tc := range []struct {
 		kind   string

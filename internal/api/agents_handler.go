@@ -79,7 +79,25 @@ func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	agents := s.agentRegistry.List(channelID)
+	// A side chat's agents are its parent's: the terminals and chats it
+	// works with.
+	group, self, err := s.agentGroup(r.Context(), channelID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	chats, err := s.chatAgents(r.Context(), group)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	agents := []agentListItem{}
+	for _, a := range chats {
+		agents = append(agents, agentListItem{AgentInfo: a, Self: a.AgentID == self})
+	}
+	for _, a := range s.agentRegistry.List(group) {
+		agents = append(agents, agentListItem{AgentInfo: a})
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(agents) //nolint:errcheck
 }
@@ -194,20 +212,53 @@ func (s *Server) handleSendAgentMessage(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "channel_id and content required", http.StatusBadRequest)
 		return
 	}
-	// The sender's label is all the target goes by, so it names the chat
-	// agent, which isn't registered, or an agent of the channel.
-	if from := body.FromAgentID; from != "" && from != agent.ChatAgentID &&
-		(!validAgentID.MatchString(from) || s.agentRegistry.Get(body.ChannelID, from) == nil) {
-		http.Error(w, "from_agent_id "+strconv.Quote(from)+" isn't an agent in channel "+body.ChannelID, http.StatusBadRequest)
+	group, self, err := s.agentGroup(r.Context(), body.ChannelID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// The sender's label is all the target goes by, so it names the
+	// sending chat, whose agent is "chat" in each one, or an agent of the
+	// channel.
+	from := body.FromAgentID
+	switch {
+	case from == agent.ChatAgentID:
+		from = self
+	case from != "" && (!validAgentID.MatchString(from) || s.agentRegistry.Get(group, from) == nil):
+		http.Error(w, "from_agent_id "+strconv.Quote(from)+" isn't an agent in channel "+group, http.StatusBadRequest)
+		return
+	}
+	text := body.Content
+	if from != "" {
+		text = "[from " + from + "] " + text
+	}
+
+	// A chat takes the message as its next turn, queued behind its run.
+	chat, err := s.chatTarget(r.Context(), group, toAgentID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if chat != "" {
+		if toAgentID == from {
+			http.Error(w, "an agent can't message itself; queue_message queues a prompt for yourself", http.StatusBadRequest)
+			return
+		}
+		if s.msgHandler == nil {
+			http.Error(w, "agent "+toAgentID+" can't take messages: messages are not configured", http.StatusConflict)
+			return
+		}
+		s.enqueueMessage(r.Context(), chat, text, "", false)
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
-	if s.agentRegistry.Get(body.ChannelID, toAgentID) == nil {
-		http.Error(w, "agent "+toAgentID+" not found in channel "+body.ChannelID, http.StatusNotFound)
+	if s.agentRegistry.Get(group, toAgentID) == nil {
+		http.Error(w, "agent "+toAgentID+" not found in channel "+group, http.StatusNotFound)
 		return
 	}
 
-	sid := s.agentRegistry.Terminal(body.ChannelID, toAgentID)
+	sid := s.agentRegistry.Terminal(group, toAgentID)
 	if sid == "" || s.termManager == nil {
 		http.Error(w, "agent "+toAgentID+" can't take messages: it has no terminal", http.StatusConflict)
 		return
@@ -218,15 +269,11 @@ func (s *Server) handleSendAgentMessage(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "content contains a bracketed-paste marker", http.StatusBadRequest)
 		return
 	}
-	text := body.Content
-	if body.FromAgentID != "" {
-		text = "[from " + body.FromAgentID + "] " + text
-	}
 	// The trailing newline keeps messages queued while the agent is busy on
 	// lines of their own: Claude Code joins queued prompts as is.
 	input := pasteStart + text + "\n" + pasteEnd + "\r"
 	if err := s.termManager.SendInput(sid, []byte(input)); err != nil {
-		s.agentRegistry.ClearTerminal(body.ChannelID, toAgentID, sid)
+		s.agentRegistry.ClearTerminal(group, toAgentID, sid)
 		http.Error(w, "agent "+toAgentID+"'s terminal is gone: "+err.Error(), http.StatusConflict)
 		return
 	}

@@ -45,15 +45,18 @@ fails:
   {"op":"maximize_pane","pane":"docker-agent"}  make a pane fill the tab
   {"op":"restore_pane"}                       put it back
   {"op":"open_file","path":"cmd/main.go","line":12}
+  {"op":"show_message","message_id":1234}   scroll the chat to a message and highlight it
   {"op":"add_pane","panel":"playground","item":"board","scope":"project"}
   {"op":"add_pane","panel":"plugin","item":"cogtest/quiz"}  a plugin's panel (or its id)
   {"op":"send_input","pane":"docker-agent","text":"…","submit":true}
   {"op":"read_output","pane":"docker-agent","lines":50}
   {"op":"wait_for","pane":"docker-agent","match":"regexp","quiet_ms":2000}
 
-A pane is a pane id or a panel type, the first pane of that type. The
-terminal steps (send_input, read_output, wait_for) use only docker-agent and
-docker-shell panes, never a host shell. wait_for waits for output matching
+A pane is a pane id, a panel type (the first pane of that type), or $n, the
+pane step n (from 1) of the command made. The
+terminal steps (send_input, read_output, wait_for) use only docker-agent,
+docker-shell, chat and chat-side panes, never a host shell; on a chat pane,
+send_input queues a message and wait_for waits for its reply. wait_for waits for output matching
 match, or else for the terminal to be quiet for quiet_ms; after a send_input
 to the pane in the same command, only output since counts. A command stays
 in the channel select_channel opened (or the one open at its start): if the

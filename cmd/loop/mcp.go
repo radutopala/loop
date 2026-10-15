@@ -108,7 +108,8 @@ func (a *app) runMCP(channelID, apiURL, dirPath, logPath, authorID, platform, ag
 		// it.
 		memOpts = append(memOpts, mcpserver.WithLearnTools())
 	case agentID == agent.ChatAgentID:
-		// Chat has no terminal to type messages into, so it only sends.
+		// Chat has no terminal: it isn't registered, and the daemon queues
+		// the messages sent to it.
 		memOpts = append(memOpts, mcpserver.WithAgentSender(agentID))
 	case agentID == explain.AgentID:
 		// An explanation only reads: like a learn pass it works alone, and

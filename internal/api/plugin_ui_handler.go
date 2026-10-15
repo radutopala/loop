@@ -92,7 +92,7 @@ func (s *Server) uiPluginRefusal(ctx context.Context, ch *db.Channel, steps []ui
 		if err != nil {
 			return "", err
 		}
-		if thread == nil || thread.ParentID != ch.ChannelID || db.IsHiddenKind(thread.Kind) {
+		if thread == nil || thread.ParentID != ch.ChannelID || db.IsUnlistedKind(thread.Kind) {
 			return "channel " + step.ChannelID + " isn't the plugin's channel or one of its threads", nil
 		}
 	}

@@ -214,6 +214,9 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
   const pendingScrollRef = useRef<{ pathKey: string; line: number } | null>(null);
   const selectedPathRef = useRef(selectedPath);
   selectedPathRef.current = selectedPath;
+  // Counts switchToTab's loads, so a fetch that finishes after another tab
+  // was opened is dropped.
+  const loadSeqRef = useRef(0);
   const dirtyTabsRef = useRef(dirtyTabs);
   dirtyTabsRef.current = dirtyTabs;
   const autoSaveOnBlurRef = useRef(autoSaveOnBlur);
@@ -401,6 +404,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
       clearAgentEdited(pathKey);
       setError(null);
       setIsBinary(false);
+      loadSeqRef.current++;
       const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
       if (isMediaPath(rp)) {
         showMedia(rp, ri);
@@ -416,8 +420,12 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
       }
       setLoading(true);
       setFileContent(null);
+      // Tabs opened in quick succession each fetch; only the last one's
+      // content may land, or an earlier, slower fetch shows under its tab.
+      const load = ++loadSeqRef.current;
       fetchFileContent(channelId, rp, ri)
         .then((result) => {
+          if (load !== loadSeqRef.current) return;
           if (result.binary) {
             setIsBinary(true);
             setBinarySize(0);
@@ -427,9 +435,12 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
           }
         })
         .catch((err) => {
+          if (load !== loadSeqRef.current) return;
           setError(err instanceof Error ? err.message : "Failed to load file");
         })
-        .finally(() => setLoading(false));
+        .finally(() => {
+          if (load === loadSeqRef.current) setLoading(false);
+        });
     },
     [channelId, saveAllDirty, clearAgentEdited],
   );

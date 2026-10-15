@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { getTerminalInput, getWorkspace, notifyUiChanged, registerTerminalInput, registerWorkspace, subscribeUiChanged } from "./registry";
-import type { TerminalInput, WorkspaceController } from "./types";
+import { getChatInput, getTerminalInput, getWorkspace, notifyUiChanged, registerChatInput, registerTerminalInput, registerWorkspace, subscribeUiChanged } from "./registry";
+import type { ChatPaneInput, TerminalInput, WorkspaceController } from "./types";
 
 const workspace = () => ({}) as WorkspaceController;
 const terminal = () => ({}) as TerminalInput;
+const chat = () => ({}) as ChatPaneInput;
 
 describe("registry", () => {
   it("registers a workspace and says so", () => {
@@ -40,5 +41,18 @@ describe("registry", () => {
     expect(getTerminalInput("c2", "docker-agent-0")).toBeUndefined();
     unregister();
     expect(getTerminalInput("c1", "docker-agent-0")).toBeUndefined();
+  });
+
+  it("registers a chat pane's input by channel and pane", () => {
+    const old = chat();
+    const unregisterOld = registerChatInput("c1", "chat-side-0", old);
+    const c = chat();
+    const unregister = registerChatInput("c1", "chat-side-0", c);
+    unregisterOld();
+    expect(getChatInput("c1", "chat-side-0")).toBe(c);
+    expect(getChatInput("c2", "chat-side-0")).toBeUndefined();
+    expect(getTerminalInput("c1", "chat-side-0")).toBeUndefined();
+    unregister();
+    expect(getChatInput("c1", "chat-side-0")).toBeUndefined();
   });
 });

@@ -8,7 +8,7 @@ import { usePaneTitle } from "../plugins/paneTitles";
 import { useTheme } from "../ThemeContext";
 import type { ColorPalette } from "../theme";
 import { fonts } from "../theme";
-import { type PanelType, type PaneMeta, type PluginPaneRef, paneLabel } from "../types/panels";
+import { type AgentOpenMode, type PanelType, type PaneMeta, type PluginPaneRef, paneLabel } from "../types/panels";
 import { addPaneRows } from "./addPaneRows";
 import { DRAG_MIME, emitLayoutDragEnd, emitLayoutDragStart } from "./DropZoneOverlay";
 import { type MenuPlacement, placeMenu } from "./menuPlacement";
@@ -51,6 +51,8 @@ interface PaneLeafHeaderProps {
   panel: PanelType;
   /** For plugin panes: the plugin panel shown. */
   plugin?: PluginPaneRef;
+  /** For chat-side panes: how its side chat started, for the title. */
+  openMode?: AgentOpenMode;
   /** For plugin panes: the leaf whose ui.set_title the header shows, when
    *  it isn't leafId (a panel's agent view heads the panel's pane). */
   titleLeafId?: string;
@@ -76,6 +78,7 @@ export function PaneLeafHeader({
   leafId,
   panel,
   plugin,
+  openMode,
   titleLeafId,
   usedSingletons,
   isMaximized,
@@ -92,7 +95,7 @@ export function PaneLeafHeader({
   const { colors } = useTheme();
   const isAgent = panel === "docker-agent";
   const pluginTitle = usePaneTitle(titleLeafId ?? leafId);
-  const label = isAgent ? agentInfo?.name || leafId : (panel === "plugin" && pluginTitle) || paneLabel(panel, plugin);
+  const label = isAgent ? agentInfo?.name || leafId : (panel === "plugin" && pluginTitle) || paneLabel(panel, plugin, openMode);
   const statsEntry = statsForPanel(panel, containerStats);
 
   const btnStyle = buildBtnStyle(colors);

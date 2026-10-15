@@ -40,6 +40,12 @@ type TaskExecutor struct {
 	channelLocks     *sync.Map // shared with Orchestrator: per-channel drain locks
 	tasks            *taskRegistry
 	parker           cardParker
+	live             liveEnder
+}
+
+// liveEnder ends a channel's live session. The Orchestrator implements it.
+type liveEnder interface {
+	EndLiveSession(channelID, reason string) error
 }
 
 // cardParker parks a channel on an ask or plan card, as a chat run does, so
@@ -112,6 +118,22 @@ func (e *TaskExecutor) SetActiveRuns(m *sync.Map) {
 // agents resuming the same session at once.
 func (e *TaskExecutor) SetChannelLocks(m *sync.Map) {
 	e.channelLocks = m
+}
+
+// SetLiveSessions sets what ends a thread's live session before a task runs
+// in it: the task's run carries a system prompt of its own, which a live
+// process fixed when it started, so it runs one-shot, and the session must
+// not write to the thread's session meanwhile. The next chat message
+// resumes it, task turn included.
+func (e *TaskExecutor) SetLiveSessions(l liveEnder) {
+	e.live = l
+}
+
+// endLive ends threadID's live session, if any, once the run holds its lock.
+func (e *TaskExecutor) endLive(threadID string) {
+	if e.live != nil && threadID != "" {
+		_ = e.live.EndLiveSession(threadID, "scheduled run")
+	}
 }
 
 // SetCardParker sets what parks a task's thread on an ask or plan card.
@@ -273,6 +295,8 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	locks := &threadLocks{locks: e.channelLocks, held: map[string]*sync.Mutex{}}
 	defer locks.releaseAll()
 	locks.hold(task.ThreadID)
+	e.endLive(task.ThreadID)
+	endedLive := task.ThreadID
 
 	// Determine which session to resume:
 	// - Recurring task with existing thread → resume the thread's own session
@@ -397,6 +421,9 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	// Normally already held; differs when the thread was just created or a
 	// concurrent run persisted one since this task was loaded.
 	locks.hold(threadID)
+	if threadID != endedLive {
+		e.endLive(threadID)
+	}
 	// hasThread is true when the run has a thread on the local platform:
 	// register the agent under the thread so the stop button in the thread
 	// view targets the correct container. Discord/Slack are left unchanged —

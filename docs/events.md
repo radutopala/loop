@@ -631,6 +631,38 @@ An [explanation](chat.md#explain-a-turn) was queued, started, finished or failed
 
 ---
 
+### `live.status`
+
+A channel's [live session](chat.md#live-sessions) started, changed or ended. The chat's composer footer renders from it.
+
+**Payload schema:**
+
+```json
+{
+  "running": true,
+  "channel_id": "ch1",
+  "started_at": "2026-01-02T15:04:05Z",
+  "session_id": "0a1b2c3d-…",
+  "busy": false,
+  "background": "1 background task: watch CI"
+}
+```
+
+| Field        | Type   | Description |
+|--------------|--------|-------------|
+| `running`    | bool   | Whether a live session is up for the channel |
+| `started_at` | string | When the session started (while running) |
+| `session_id` | string | The Claude session it runs (while running) |
+| `busy`       | bool   | Whether a turn is in progress |
+| `background` | string | The background tasks (shells, subagents, monitors) it still waits on, empty when there are none |
+| `reason`     | string | Why it ended (when not running): `idle`, `config changed`, `session changed`, `scheduled run`, `one-shot run`, `stopped`, `closed`, `deleted`, `shutdown`, `stdin closed`, `interrupt timed out`, `exited`, `exited: …`, `restart failed: …` |
+
+A turn the session starts on its own, after a background task wakes it, runs with `agent.status` `trigger: "live"`.
+
+**Scope:** Channel.
+
+---
+
 ### `monitor.started` / `monitor.finished`
 
 A [monitor](api.md#post-apichannelsidmonitors) started or ended in the channel. `monitor.started` carries the monitor, shaped as in [`GET /api/channels/{id}/monitors`](api.md#get-apichannelsidmonitors); `monitor.finished` carries how it ended. The chat lists running monitors above the composer from these.

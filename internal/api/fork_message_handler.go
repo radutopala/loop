@@ -49,6 +49,20 @@ func (s *Server) handleForkAtMessage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "message not found", http.StatusNotFound)
 		return
 	}
+	// A side chat's fork is placed as one of the channel or thread it is a
+	// side chat of.
+	if src.Kind == db.ChannelKindSide {
+		base, err := s.store.GetChannel(ctx, src.ParentID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if base == nil {
+			http.Error(w, "channel not found", http.StatusNotFound)
+			return
+		}
+		src = base
+	}
 
 	if src.Worktree && src.ParentID != "" {
 		at, err := s.forkPointAt(ctx, src.DirPath, msg)

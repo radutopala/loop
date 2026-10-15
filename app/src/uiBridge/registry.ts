@@ -1,10 +1,11 @@
-import type { TerminalInput, WorkspaceController } from "./types";
+import type { ChatPaneInput, TerminalInput, WorkspaceController } from "./types";
 
-// Where the mounted workspace and its agent terminals make themselves
+// Where the mounted workspace, its agent terminals and its chats make themselves
 // reachable to UI commands, and say when what a window reports changed.
 
 const workspaces = new Map<string, WorkspaceController>();
 const terminals = new Map<string, TerminalInput>();
+const chats = new Map<string, ChatPaneInput>();
 const listeners = new Set<() => void>();
 
 /** Registers the workspace of channelId; the returned function unregisters
@@ -37,6 +38,20 @@ export function registerTerminalInput(channelId: string, paneId: string, input: 
 
 export function getTerminalInput(channelId: string, paneId: string): TerminalInput | undefined {
   return terminals.get(terminalKey(channelId, paneId));
+}
+
+/** Registers the chat of a chat or chat-side pane; the returned function
+ *  unregisters it, unless another has registered since. */
+export function registerChatInput(channelId: string, paneId: string, input: ChatPaneInput): () => void {
+  const key = terminalKey(channelId, paneId);
+  chats.set(key, input);
+  return () => {
+    if (chats.get(key) === input) chats.delete(key);
+  };
+}
+
+export function getChatInput(channelId: string, paneId: string): ChatPaneInput | undefined {
+  return chats.get(terminalKey(channelId, paneId));
 }
 
 /** Says the open channel, its tabs or its panes changed. */

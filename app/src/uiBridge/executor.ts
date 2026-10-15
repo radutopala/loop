@@ -1,12 +1,16 @@
 import { RE2JS } from "re2js";
 import type { PluginPaneOption } from "../plugins/PluginPanelsContext";
-import { AGENT_OPEN_MODE_OPTIONS, type AgentOpenMode, PANEL_OPTIONS, type PanelType } from "../types/panels";
-import type { PaneInfo, PaneOptions, StepResult, TerminalInput, UiHost, UiStep, WorkspaceController } from "./types";
+import { AGENT_OPEN_MODE_OPTIONS, type AgentOpenMode, openModesFor, PANEL_OPTIONS, type PanelType } from "../types/panels";
+import type { ChatLine, ChatPaneInput, PaneInfo, PaneOptions, StepResult, TerminalInput, UiHost, UiStep, WorkspaceController } from "./types";
 
-/** The panes send_input types into, and read_output and wait_for read:
- *  the agent's terminals, in its container. Never a host shell, which runs
- *  on the host. */
+/** The terminal panes send_input types into, and read_output and wait_for
+ *  read: the agent's terminals, in its container. Never a host shell, which
+ *  runs on the host. */
 export const INPUT_PANELS: PanelType[] = ["docker-agent", "docker-shell"];
+
+/** The chat panes send_input queues a message in, and read_output and
+ *  wait_for read the messages of: the channel's chat and its side chats. */
+export const CHAT_PANELS: PanelType[] = ["chat", "chat-side"];
 
 /** How long a command may take when the daemon gives no timeout. */
 export const DEFAULT_TIMEOUT_MS = 60_000;
@@ -42,6 +46,9 @@ interface Run {
    *  command never follows the window into another channel. */
   channel?: string;
   sentAt: Map<string, number>;
+  /** The last message of each chat pane when a message was queued in it,
+   *  for wait_for to wait for the reply that brought. */
+  chatSince: Map<string, number>;
 }
 
 class StepError extends Error {}
@@ -52,17 +59,33 @@ class StepError extends Error {}
  * (for a channel to open, a terminal to be ready) give up by then.
  */
 export async function runSteps(steps: UiStep[], host: UiHost, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<StepResult[]> {
-  const run: Run = { host, deadline: host.now() + timeoutMs, sentAt: new Map() };
+  const run: Run = { host, deadline: host.now() + timeoutMs, sentAt: new Map(), chatSince: new Map() };
   const results: StepResult[] = [];
   for (const step of steps) {
     try {
-      results.push({ op: step.op, ok: true, ...(await runStep(step, run)) });
+      results.push({ op: step.op, ok: true, ...(await runStep(withPaneRef(step, results), run)) });
     } catch (err) {
       results.push({ op: step.op, ok: false, error: err instanceof Error ? err.message : String(err) });
       break;
     }
   }
   return results;
+}
+
+/** PANE_REF is a pane as "$n": the pane step n (from 1) of the command made. */
+const PANE_REF = /^\$(\d+)$/;
+
+/** withPaneRef returns step with a "$n" pane, next_to or pane it names
+ *  replaced by the pane step n made, which the steps run so far reported. */
+function withPaneRef(step: UiStep, results: StepResult[]): UiStep {
+  const resolve = (pane: string | undefined): string | undefined => {
+    const ref = pane === undefined ? null : PANE_REF.exec(pane);
+    if (!ref) return pane;
+    const made = results[Number(ref[1]) - 1]?.pane;
+    if (!made) throw new StepError(`${pane} names step ${ref[1]}'s pane, but no step before this one by that number made a pane`);
+    return made;
+  };
+  return { ...step, pane: resolve(step.pane), next_to: resolve(step.next_to) };
 }
 
 async function waitFor(run: Run, what: string, ready: () => boolean): Promise<void> {
@@ -146,6 +169,7 @@ async function pluginPane(step: UiStep, run: Run, ws: WorkspaceController, repla
 async function paneOptions(step: UiStep, panel: PanelType, channelId: string, run: Run, ws: WorkspaceController, replacing?: string): Promise<PaneOptions> {
   const opts: PaneOptions = {};
   const openMode = openModeOf(step.open_mode);
+  if (openMode && panel === "chat-side" && !openModesFor(panel).includes(openMode)) throw new StepError("a chat-side pane is a fork or a fresh session; use fork or fresh");
   if (openMode) opts.openMode = openMode;
   if (panel === "plugin") {
     opts.plugin = await pluginPane(step, run, ws, replacing);
@@ -273,10 +297,38 @@ async function runStep(step: UiStep, run: Run): Promise<StepOutput> {
       });
       return {};
     }
+    case "show_message": {
+      const { channelId } = workspaceOf(run);
+      const id = step.message_id;
+      if (id === undefined) throw new StepError("message_id is required");
+      if (!Number.isInteger(id) || id < 1) throw new StepError("message_id must be a whole number from 1");
+      // The chat scrolls once it has paged back to the message, which can
+      // take a while in a long chat: wait for it within the deadline.
+      let shown: boolean | null = null;
+      let failed: unknown = null;
+      host.showMessage(channelId, id).then(
+        (found) => {
+          shown = found;
+        },
+        (err: unknown) => {
+          failed = err ?? "failed";
+        },
+      );
+      const found = await waitForValue(run, `message ${id} to show`, () => {
+        if (failed !== null) throw new StepError(failed instanceof Error ? failed.message : String(failed));
+        return shown;
+      });
+      if (!found) throw new StepError(`no message ${id} in channel ${channelId}'s chat`);
+      return {};
+    }
     case "send_input":
       return sendInput(step, run);
     case "read_output": {
       const lines = linesOf(step);
+      if (isChatPane(step, run)) {
+        const { pane, chat } = await chatOf(step, run);
+        return { pane, output: chatText(chat.messages(), lines) };
+      }
       const { pane, t } = await terminalOf(step, run, "reads");
       return { pane, output: t.read(lines) };
     }
@@ -293,7 +345,7 @@ async function terminalOf(step: UiStep, run: Run, verb: string, ready?: (t: Term
   const { host } = run;
   const { channelId, ws } = workspaceOf(run);
   const pane = findPane(ws.view().panes, step.pane);
-  if (!INPUT_PANELS.includes(pane.panel)) throw new StepError(`${step.op} only ${verb} docker-agent and docker-shell panes, not ${pane.panel}`);
+  if (!INPUT_PANELS.includes(pane.panel)) throw new StepError(`${step.op} only ${verb} docker-agent, docker-shell, chat and chat-side panes, not ${pane.panel}`);
   // A pane added a step before mounts and starts its session first.
   let found: TerminalInput | undefined;
   await waitFor(run, `pane ${pane.id} to be ${ready ? "ready for input" : "started"}`, () => {
@@ -306,8 +358,86 @@ async function terminalOf(step: UiStep, run: Run, verb: string, ready?: (t: Term
   return { channelId, pane: pane.id, t: found as TerminalInput };
 }
 
+/** Whether the step's pane is a chat pane. */
+function isChatPane(step: UiStep, run: Run): boolean {
+  const { ws } = workspaceOf(run);
+  return CHAT_PANELS.includes(findPane(ws.view().panes, step.pane).panel);
+}
+
+/** The chat of the step's chat pane, once it's there: a chat-side pane
+ *  registers its chat once its side chat has started. */
+async function chatOf(step: UiStep, run: Run): Promise<{ channelId: string; pane: string; chat: ChatPaneInput }> {
+  const { channelId, ws } = workspaceOf(run);
+  const pane = findPane(ws.view().panes, step.pane);
+  const chat = await waitForValue(run, `pane ${pane.id}'s chat to start`, () => run.host.chat(channelId, pane.id) ?? null);
+  return { channelId, pane: pane.id, chat };
+}
+
+/** The last lines of a chat's messages, each as "author: text", with a
+ *  blank line between them, from the first that isn't blank. */
+function chatText(messages: ChatLine[], lines: number): string {
+  const all = messages
+    .map((m) => `${m.author}: ${m.content}`)
+    .join("\n\n")
+    .split("\n")
+    .slice(-lines);
+  return all.slice(all.findIndex((l) => l !== "")).join("\n");
+}
+
+const lastId = (messages: ChatLine[]) => messages.reduce((max, m) => Math.max(max, m.id), 0);
+
+/** Queues the text as the chat's next message, as its composer sends it. */
+async function sendChat(step: UiStep, run: Run, text: string): Promise<StepOutput> {
+  if (!text.trim()) throw new StepError("text can't be empty for a chat pane");
+  if (step.submit === false) throw new StepError("a chat pane sends what it's given; submit: false is for terminals");
+  const { pane, chat } = await chatOf(step, run);
+  const blocked = chat.blocked();
+  if (blocked) throw new StepError(`pane ${pane}'s chat waits on an answer to ${blocked}; answer it in the window`);
+  run.chatSince.set(pane, lastId(chat.messages()));
+  await chat.send(text).catch((err) => {
+    throw new StepError(err instanceof Error ? err.message : String(err));
+  });
+  return { pane };
+}
+
+/** Waits until the chat has replied to a message send_input queued earlier
+ *  in the command and has nothing left to run, or, with match, until its
+ *  replies since match (the message sent, which may hold the pattern, never
+ *  does); without a send_input, all its replies count and it's done once it
+ *  has been idle for quietMs. */
+async function waitForChat(step: UiStep, run: Run, match: RE2JS | undefined, quietMs: number, lines: number): Promise<StepOutput> {
+  const { host } = run;
+  const found = await chatOf(step, run);
+  const { channelId, pane } = found;
+  let chat = found.chat;
+  const since = run.chatSince.get(pane);
+  let idleSince: number | null = null;
+  await waitFor(run, match ? `pane ${pane}'s chat to reply /${step.match}/` : `pane ${pane}'s chat to reply`, () => {
+    // A pane that remounted has a new chat.
+    const current = host.chat(channelId, pane);
+    if (!current) throw new StepError(`pane ${pane} is no longer open`);
+    chat = current;
+    const fresh = chat.messages().filter((m) => m.id > (since ?? 0));
+    if (match)
+      return match.test(
+        chatText(
+          fresh.filter((m) => m.bot),
+          lines,
+        ),
+      );
+    if (chat.busy() || (since !== undefined && !fresh.some((m) => m.bot))) {
+      idleSince = null;
+      return false;
+    }
+    idleSince ??= host.now();
+    return host.now() - idleSince >= (since === undefined ? quietMs : 0);
+  });
+  return { pane, output: chatText(chat.messages(), lines) };
+}
+
 async function sendInput(step: UiStep, run: Run): Promise<StepOutput> {
   if (typeof step.text !== "string") throw new StepError("text is required");
+  if (isChatPane(step, run)) return sendChat(step, run, step.text);
   const { host } = run;
   const { pane, t } = await terminalOf(step, run, "types into", (t) => t.status() === "running" && t.lastOutputAt() > 0 && host.now() - t.lastOutputAt() >= INPUT_QUIET_MS);
   const submit = step.submit ?? true;
@@ -341,6 +471,7 @@ async function waitForOutput(step: UiStep, run: Run): Promise<StepOutput> {
   }
   const quietMs = step.quiet_ms ?? WAIT_QUIET_MS;
   if (!Number.isInteger(quietMs) || quietMs < 0) throw new StepError("quiet_ms must be a whole number from 0");
+  if (isChatPane(step, run)) return waitForChat(step, run, match, quietMs, lines);
   const { host } = run;
   const found = await terminalOf(step, run, "reads");
   const { channelId, pane } = found;

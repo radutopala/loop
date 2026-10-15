@@ -4,7 +4,7 @@ import { checkFilesExist } from "../api/files";
 import { fetchPlaygroundItems } from "../api/playground";
 import type { FileLinkOpenDetail } from "../components/chat/FileLink";
 import { DEFAULT_TIMEOUT_MS, runSteps } from "./executor";
-import { getTerminalInput, getWorkspace, subscribeUiChanged } from "./registry";
+import { getChatInput, getTerminalInput, getWorkspace, subscribeUiChanged } from "./registry";
 import type { UiHost, UiStep } from "./types";
 
 const CLIENT_ID_KEY = "loop-ui-client-id";
@@ -36,11 +36,13 @@ interface CommandMessage {
  * the window's focus, open channel, tabs and panes as they change, and runs
  * the commands sent to it (loop ui:run, POST /api/ui/commands) one at a time.
  */
-export function useUiBridge(selectedId: string | null, selectChannel: (id: string) => Promise<void>): void {
+export function useUiBridge(selectedId: string | null, selectChannel: (id: string) => Promise<void>, showMessage: (channelId: string, messageId: number) => Promise<boolean>): void {
   const selectedRef = useRef(selectedId);
   selectedRef.current = selectedId;
   const selectRef = useRef(selectChannel);
   selectRef.current = selectChannel;
+  const showMessageRef = useRef(showMessage);
+  showMessageRef.current = showMessage;
   const changedRef = useRef<() => void>(() => {});
 
   // The open channel changing changes the state.
@@ -53,12 +55,14 @@ export function useUiBridge(selectedId: string | null, selectChannel: (id: strin
       selectChannel: (ch) => selectRef.current(ch),
       workspace: getWorkspace,
       terminal: getTerminalInput,
+      chat: getChatInput,
       openFile: async (channelId, path, line) => {
         const [found] = await checkFilesExist(channelId, [path]);
         if (!found?.exists || found.root_index === undefined || found.rel_path === undefined) throw new Error(`no file "${path}" in the channel's roots`);
         const detail: FileLinkOpenDetail = { channelId, target: { rootIndex: found.root_index, relPath: found.rel_path }, line: line ?? null };
         window.dispatchEvent(new CustomEvent<FileLinkOpenDetail>("loop:open-file", { detail }));
       },
+      showMessage: (ch, messageId) => showMessageRef.current(ch, messageId),
       playgrounds: async (channelId) => (await fetchPlaygroundItems(channelId)).map((p) => ({ name: p.name, scope: p.scope })),
       now: () => Date.now(),
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
