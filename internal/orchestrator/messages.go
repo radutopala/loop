@@ -726,6 +726,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 		}
 		if runCtx.Err() == context.Canceled {
 			o.logger.Info("run stopped by user", "channel_id", msg.ChannelID)
+			o.keepParkedSession(ctx, msg.ChannelID, ranSession)
 			_ = o.bot.SendMessage(ctx, &bot.OutgoingMessage{
 				ChannelID:        msg.ChannelID,
 				Content:          "Run stopped.",
@@ -756,10 +757,11 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 	return resp, tracker.lastText, runID, nil, nil
 }
 
-// keepParkedSession saves the session of a run stopped at an ask or plan
-// card, which never reaches deliverResponse. The answer must resume the
-// session that asked: a forked thread's run writes to a new session, and
-// without this the next run forks the source again and loses the question.
+// keepParkedSession saves the session of a run stopped by the user or at an
+// ask or plan card, which never reaches deliverResponse. The next run must
+// resume the session that ran: a forked thread's run writes to a new
+// session, and without this the next run forks the source again, losing
+// what the stopped run did and restarting a live session to fork it.
 func (o *Orchestrator) keepParkedSession(ctx context.Context, channelID, sessionID string) {
 	if sessionID == "" {
 		return

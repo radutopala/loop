@@ -42,9 +42,14 @@ jobs:
       - run: go generate ./internal/readme/
       - name: Check the plugin SDK's generated types
         run: make sdk-gen-check
-      - uses: golangci/golangci-lint-action@v9
+      # Pinned to the version make lint runs, so a new release's checks
+      # don't fail CI on code that passed locally.
       - uses: golangci/golangci-lint-action@v9
         with:
+          version: v2.14.0
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.14.0
           working-directory: pluginsdk
 
   build:

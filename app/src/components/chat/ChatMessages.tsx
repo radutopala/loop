@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, type ReactNode, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChatState } from "../../hooks/useChatState";
 import { useTheme } from "../../ThemeContext";
 import type { Message, TimelineItem } from "../../types";
@@ -26,6 +26,9 @@ export interface ChatMessagesProps {
   editingMsgId?: string | null;
   // Forks the conversation at a message into a new thread; unset hides +fork.
   onFork?: (msg: Message) => Promise<void>;
+  // Shown under the transcript and above the queued messages, which run
+  // into the composer and must stay last.
+  aboveQueue?: ReactNode;
 }
 
 export interface ChatMessagesHandle {
@@ -75,7 +78,7 @@ function revealMessage(container: HTMLElement, el: Element, term: string | undef
 }
 
 export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(function ChatMessages(
-  { channelId, chatState, scrollToMessageId, findTerm, onScrollComplete, onQuote, onEditQueued, editingMsgId, onFork },
+  { channelId, chatState, scrollToMessageId, findTerm, onScrollComplete, onQuote, onEditQueued, editingMsgId, onFork, aboveQueue },
   ref,
 ) {
   const { colors } = useTheme();
@@ -389,7 +392,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
   return (
     <ChannelContext.Provider value={channelId}>
       <div ref={containerRef} style={styles.messages} onScroll={handleScroll}>
-        <style>{`@keyframes loop-msg-blink { 50% { outline-color: transparent; } } ::highlight(${FIND_HIGHLIGHT}) { background-color: ${colors.warning}; color: #000; }`}</style>
+        <style>{`@keyframes loop-msg-blink { 50% { outline-color: transparent; } } ::highlight(${FIND_HIGHLIGHT}) { background-color: ${colors.warning}; color: #000; } .loop-above-queue:not(:empty) { padding-bottom: 8px; }`}</style>
         {quoteAnchor?.position === "top" && (
           <div style={{ position: "sticky", top: 0, zIndex: 2, paddingBottom: 4, backgroundColor: "transparent" }}>
             <div style={{ maxWidth: 768, margin: "0 auto" }}>
@@ -496,6 +499,8 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
         )}
       </div>
       {agentTasks && agentTasks.tasks.length > 0 && <TaskChecklist tasks={agentTasks.tasks} />}
+      {/* Spaced off the queued tray only while a bar shows. */}
+      <div className="loop-above-queue">{aboveQueue}</div>
       {queuedMessages.length > 0 && <QueuedMessagesPopup messages={queuedMessages} channelId={channelId} isRunning={isRunning} onEdit={onEditQueued} editingMsgId={editingMsgId} />}
     </ChannelContext.Provider>
   );
