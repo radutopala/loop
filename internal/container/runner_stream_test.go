@@ -265,11 +265,13 @@ func TestScanStreamJSONOnToolUse(t *testing.T) {
 	require.Equal(t, []string{"Bash:go test"}, tools)
 }
 
-// onSession reports the run's session from its first assistant event, before
-// any text, and again only when it changes. A subagent's events and events
-// without a session don't count.
+// onSession reports the run's session from the turn's init event, before the
+// model answers, and again only when it changes. A subagent's events and
+// events without a session don't count.
 func TestScanStreamJSONOnSession(t *testing.T) {
-	input := `{"type":"assistant","message":{"content":[{"type":"text","text":"no session"}]}}
+	input := `{"type":"system","subtype":"init"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"no session"}]}}
+{"type":"system","subtype":"init","session_id":"fork-1"}
 {"type":"assistant","session_id":"fork-1","uuid":"u1","message":{"content":[{"type":"tool_use","id":"tu-1","name":"AskUserQuestion","input":{}}]}}
 {"type":"assistant","session_id":"fork-1","uuid":"u2","message":{"content":[{"type":"text","text":"same"}]}}
 {"type":"assistant","session_id":"sub-1","uuid":"u3","parent_tool_use_id":"tu-9","message":{"content":[{"type":"text","text":"subagent"}]}}
@@ -283,6 +285,20 @@ func TestScanStreamJSONOnSession(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "OK", resp.Result)
 	require.Equal(t, []string{"fork-1", "fork-2"}, sessions)
+}
+
+// A run stopped while its first request is in flight has seen only the init
+// event; that still names the session it forked.
+func TestScanStreamJSONOnSessionFromInit(t *testing.T) {
+	input := `{"type":"system","subtype":"init","session_id":"fork-1"}
+{"type":"result","result":"","session_id":"fork-1","is_error":false}
+`
+	var sessions []string
+	_, err := scanStreamJSON(strings.NewReader(input), streamCallbacks{
+		onSession: func(id string) { sessions = append(sessions, id) },
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{"fork-1"}, sessions)
 }
 
 // onToolUseRaw gets the input JSON untouched. The ReportFindings case is the

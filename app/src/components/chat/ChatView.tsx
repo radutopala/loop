@@ -205,6 +205,17 @@ export function ChatView({
     );
   }
 
+  // The live, task and monitor bars above the composer. With messages they
+  // render in ChatMessages, above the queued-message tray, which runs into
+  // the composer and has to stay last.
+  const statusBars = (
+    <>
+      {readOnlyNote === undefined && <LiveBar status={live} />}
+      {channelId && background && <BackgroundTasksBar channelId={channelId} tasks={background.tasks} stoppable={background.stoppable} />}
+      {channelId && subscribeChatEvents && <MonitorsBar channelId={channelId} subscribeChatEvents={subscribeChatEvents} wsOpens={wsOpens} />}
+    </>
+  );
+
   // One tree for both states, with the composer at the same position in each:
   // a channel's first message flips it out of the empty state, often before
   // the send request returns (the message event arrives first). A composer
@@ -231,6 +242,7 @@ export function ChatView({
               onEditQueued={queuedEdit.start}
               editingMsgId={queuedEdit.editing?.msg_id ?? null}
               onFork={onSelectThread ? forkAt : undefined}
+              aboveQueue={statusBars}
             />
             {!findOpen && (
               <button
@@ -256,9 +268,7 @@ export function ChatView({
           </div>
         </>
       )}
-      {readOnlyNote === undefined && <LiveBar status={live} />}
-      {channelId && background && <BackgroundTasksBar channelId={channelId} tasks={background.tasks} stoppable={background.stoppable} />}
-      {channelId && subscribeChatEvents && <MonitorsBar channelId={channelId} subscribeChatEvents={subscribeChatEvents} wsOpens={wsOpens} />}
+      {isEmpty && statusBars}
       {readOnlyNote !== undefined ? (
         <div data-testid="chat-read-only" style={{ ...styles.isolationLabel, padding: "8px 12px" }}>
           {readOnlyNote}

@@ -165,8 +165,13 @@ func (s *OrchestratorSuite) TestHandleMessageRunCanceledByStopButton() {
 	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
 
+	// The run is in a session of its own, kept so the next run resumes it
+	// rather than forking the source again.
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess-ran").Return(nil).Once()
+
 	// Simulate stop button click during runner execution.
 	s.runner.On("Run", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		args.Get(1).(*agent.AgentRequest).OnSession("sess-ran")
 		// Cancel the runCtx via the activeRuns entry (simulates stop button).
 		if val, ok := s.orch.activeRuns.Load("ch1"); ok {
 			cancel := val.(context.CancelFunc)
@@ -186,6 +191,7 @@ func (s *OrchestratorSuite) TestHandleMessageRunCanceledByStopButton() {
 	s.bot.AssertCalled(s.T(), "SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Run stopped."
 	}))
+	s.store.AssertCalled(s.T(), "UpdateSessionID", s.ctx, "ch1", "sess-ran")
 }
 
 // --- Readme interaction tests ---

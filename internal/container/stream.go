@@ -100,6 +100,7 @@ type assistantMessage struct {
 type systemEvent struct {
 	Type            string `json:"type"`
 	Subtype         string `json:"subtype"`
+	SessionID       string `json:"session_id"`
 	Description     string `json:"description"`
 	Status          string `json:"status"`
 	EstimatedTokens int    `json:"estimated_tokens"`
@@ -617,12 +618,7 @@ func (st *streamState) dispatch(line []byte, cb streamCallbacks) *claudeResponse
 		if err := json.Unmarshal(line, &msg); err != nil {
 			return nil
 		}
-		if ref := msg.turnRef(); ref.SessionID != "" && ref.SessionID != st.lastSession {
-			st.lastSession = ref.SessionID
-			if cb.onSession != nil {
-				cb.onSession(st.lastSession)
-			}
-		}
+		st.noteSession(msg.turnRef().SessionID, cb)
 		st.noteMonitors(&msg)
 		if msg.Message.Model != "" && msg.Message.Model != st.lastModel {
 			st.lastModel = msg.Message.Model
@@ -698,6 +694,17 @@ func (st *streamState) dispatch(line []byte, cb streamCallbacks) *claudeResponse
 	return nil
 }
 
+// noteSession reports the session the stream writes to when it changes.
+func (st *streamState) noteSession(sessionID string, cb streamCallbacks) {
+	if sessionID == "" || sessionID == st.lastSession {
+		return
+	}
+	st.lastSession = sessionID
+	if cb.onSession != nil {
+		cb.onSession(sessionID)
+	}
+}
+
 // system hands a "system" event to cb.
 func (st *streamState) system(evt systemEvent, cb streamCallbacks) {
 	if evt.Subtype == "init" {
@@ -705,6 +712,10 @@ func (st *streamState) system(evt systemEvent, cb streamCallbacks) {
 		if cb.onTurnStart != nil {
 			cb.onTurnStart()
 		}
+		// It names the session before the model answers, so a run stopped
+		// while its first request is in flight still knows the session it
+		// forked.
+		st.noteSession(evt.SessionID, cb)
 		return
 	}
 	if evt.Subtype == "background_tasks_changed" {
