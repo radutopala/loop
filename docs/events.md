@@ -340,7 +340,7 @@ A `background_tasks` activity is sent each time the set of tasks running in the 
 | Task field    | Type   | Description |
 |---------------|--------|-------------|
 | `id`          | string | Claude's task id, which [stops it](api.md#post-apichannelsidlivetaskstask_idstop) in a live session |
-| `type`        | string | Claude's task type: `local_bash` (a shell command, or the `Monitor` tool), `local_agent`, `remote_agent`, `local_workflow` and others |
+| `type`        | string | Claude's task type: `local_bash` (a shell command), `monitor` (Claude's `Monitor` tool), `local_agent`, `remote_agent`, `local_workflow` and others |
 | `description` | string | What the task does |
 | `started_at`  | string | When Loop first saw it running. Claude reports no start time, so a foreground command sent to the background starts then |
 

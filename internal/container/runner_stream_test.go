@@ -481,6 +481,53 @@ func TestScanStreamJSONOnActivity(t *testing.T) {
 		require.Equal(t, "b3", sets[3][0].ID)
 	})
 
+	t.Run("tasks Monitor calls start are monitors", func(t *testing.T) {
+		// The CLI reports a Monitor's task as local_bash, in the set just
+		// before the task_started event that names the call; m2's comes
+		// first, and b1 is a plain background command.
+		input := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"m1","name":"Monitor","input":{}},{"type":"tool_use","id":"m2","name":"Monitor","input":{}},{"type":"tool_use","id":"t1","name":"Bash","input":{}}]}}
+{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"bm1","task_type":"local_bash","description":"clock"}]}
+{"type":"system","subtype":"task_started","task_id":"bm1","tool_use_id":"m1","task_type":"local_bash"}
+{"type":"system","subtype":"task_started","task_id":"bm2","tool_use_id":"m2","task_type":"local_bash"}
+{"type":"system","subtype":"task_started","task_id":"b1","tool_use_id":"t1","task_type":"local_bash"}
+{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"bm1","task_type":"local_bash"},{"task_id":"bm2","task_type":"local_bash"},{"task_id":"b1","task_type":"local_bash"}]}
+{"type":"system","subtype":"background_tasks_changed","tasks":[]}
+{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"bm1","task_type":"local_bash"}]}
+{"type":"result","result":"ok"}
+`
+		var sets [][]agent.BackgroundTask
+		cb := streamCallbacks{onBackgroundTasks: func(tasks []agent.BackgroundTask) { sets = append(sets, tasks) }}
+		_, err := scanStreamJSON(strings.NewReader(input), cb)
+		require.NoError(t, err)
+		types := func(tasks []agent.BackgroundTask) []string {
+			out := []string{}
+			for _, t := range tasks {
+				out = append(out, t.ID+":"+t.Type)
+			}
+			return out
+		}
+		require.Len(t, sets, 5)
+		require.Equal(t, []string{"bm1:local_bash"}, types(sets[0]), "the set reported before is left as it was")
+		require.Equal(t, []string{"bm1:monitor"}, types(sets[1]), "the set is reported again once the call is known")
+		require.Equal(t, sets[0][0].StartedAt, sets[1][0].StartedAt)
+		require.Equal(t, []string{"bm1:monitor", "bm2:monitor", "b1:local_bash"}, types(sets[2]))
+		require.Empty(t, sets[3])
+		require.Equal(t, []string{"bm1:local_bash"}, types(sets[4]), "an ended task's id is forgotten")
+	})
+
+	t.Run("a Monitor's task is retyped without a background listener", func(t *testing.T) {
+		input := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"m1","name":"Monitor","input":{}}]}}
+{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"bm1","task_type":"local_bash"}]}
+{"type":"system","subtype":"task_started","task_id":"bm1","tool_use_id":"m1","description":"clock"}
+{"type":"result","result":"ok"}
+`
+		var activities []string
+		cb := streamCallbacks{onActivity: func(activity, detail string) { activities = append(activities, activity+":"+detail) }}
+		_, err := scanStreamJSON(strings.NewReader(input), cb)
+		require.NoError(t, err)
+		require.Equal(t, []string{"subagent_started:clock"}, activities)
+	})
+
 	t.Run("background tasks without an id get each event's time", func(t *testing.T) {
 		input := `{"type":"system","subtype":"background_tasks_changed","tasks":[{"description":"a"}]}
 {"type":"system","subtype":"background_tasks_changed","tasks":[{"description":"a"}]}

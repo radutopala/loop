@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -112,6 +113,9 @@ type systemEvent struct {
 	ErrorStatus  int    `json:"error_status"`
 	// background_tasks_changed: the tasks still running in the background.
 	Tasks []backgroundTask `json:"tasks"`
+	// task_started: the task and the tool call that started it.
+	TaskID    string `json:"task_id"`
+	ToolUseID string `json:"tool_use_id"`
 }
 
 // backgroundTask is one entry of a background_tasks_changed event.
@@ -513,7 +517,17 @@ type streamState struct {
 	// bgStarted is when each background task still running was first
 	// reported, by task id.
 	bgStarted map[string]time.Time
+	// bg is the last set of background tasks reported.
+	bg []agent.BackgroundTask
+	// monitorUses are the Monitor tool calls whose task hasn't started yet,
+	// and monitorTasks the tasks they started, by id.
+	monitorUses, monitorTasks map[string]bool
 }
+
+// monitorTaskType is the type a background task started by Claude's Monitor
+// tool gets. The CLI reports it as local_bash, like any background command;
+// only its task_started event names the tool call that started it.
+const monitorTaskType = "monitor"
 
 // backgroundTasks turns a background_tasks_changed event's tasks into the
 // agent's, each stamped with when it was first reported. The CLI sends the
@@ -531,10 +545,55 @@ func (st *streamState) backgroundTasks(tasks []backgroundTask) []agent.Backgroun
 		if t.TaskID != "" {
 			started[t.TaskID] = begun
 		}
-		out = append(out, agent.BackgroundTask{ID: t.TaskID, Type: t.TaskType, Description: t.Description, StartedAt: begun})
+		typ := t.TaskType
+		if st.monitorTasks[t.TaskID] {
+			typ = monitorTaskType
+		}
+		out = append(out, agent.BackgroundTask{ID: t.TaskID, Type: typ, Description: t.Description, StartedAt: begun})
+	}
+	for _, old := range st.bg {
+		if _, ok := started[old.ID]; !ok {
+			delete(st.monitorTasks, old.ID)
+		}
 	}
 	st.bgStarted = started
+	st.bg = out
 	return out
+}
+
+// noteMonitors remembers msg's Monitor tool calls, so the tasks they start
+// can be told apart from other background commands.
+func (st *streamState) noteMonitors(msg *assistantMessage) {
+	for _, c := range msg.Message.Content {
+		if c.Type == "tool_use" && c.Name == "Monitor" {
+			if st.monitorUses == nil {
+				st.monitorUses = map[string]bool{}
+			}
+			st.monitorUses[c.ID] = true
+		}
+	}
+}
+
+// startedMonitor marks the task a Monitor tool call started as a monitor.
+// The CLI reports the task in the background set just before it says which
+// call started it, so a task already there is retyped and the set reported
+// again.
+func (st *streamState) startedMonitor(evt systemEvent, cb streamCallbacks) {
+	delete(st.monitorUses, evt.ToolUseID)
+	if st.monitorTasks == nil {
+		st.monitorTasks = map[string]bool{}
+	}
+	st.monitorTasks[evt.TaskID] = true
+	i := slices.IndexFunc(st.bg, func(t agent.BackgroundTask) bool { return t.ID == evt.TaskID })
+	if i < 0 {
+		return
+	}
+	// A copy: the set reported before may still be held.
+	st.bg = slices.Clone(st.bg)
+	st.bg[i].Type = monitorTaskType
+	if cb.onBackgroundTasks != nil {
+		cb.onBackgroundTasks(st.bg)
+	}
 }
 
 // dispatch hands one line of the stream to cb and returns the line's
@@ -564,6 +623,7 @@ func (st *streamState) dispatch(line []byte, cb streamCallbacks) *claudeResponse
 				cb.onSession(st.lastSession)
 			}
 		}
+		st.noteMonitors(&msg)
 		if msg.Message.Model != "" && msg.Message.Model != st.lastModel {
 			st.lastModel = msg.Message.Model
 			if cb.onActivity != nil {
@@ -655,6 +715,9 @@ func (st *streamState) system(evt systemEvent, cb streamCallbacks) {
 			cb.onBackgroundTasks(tasks)
 		}
 		return
+	}
+	if evt.Subtype == "task_started" && st.monitorUses[evt.ToolUseID] {
+		st.startedMonitor(evt, cb)
 	}
 	if cb.onActivity == nil {
 		return

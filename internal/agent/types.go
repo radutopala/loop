@@ -150,7 +150,8 @@ type LiveInfo struct {
 type BackgroundTask struct {
 	// ID is the CLI's task id, which stops the task in a live session.
 	ID string `json:"id"`
-	// Type is the CLI's task type, e.g. local_bash, monitor or local_agent.
+	// Type is the CLI's task type, e.g. local_bash or local_agent, or
+	// monitor for a task Claude's Monitor tool started.
 	Type        string `json:"type,omitempty"`
 	Description string `json:"description,omitempty"`
 	// StartedAt is when the task was first reported running. The CLI says

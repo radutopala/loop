@@ -102,6 +102,7 @@ describe("taskTypeLabel", () => {
     ["local_agent", "Agent"],
     ["remote_agent", "Remote agent"],
     ["local_workflow", "Workflow"],
+    ["monitor", "Monitor"],
     ["monitor_mcp", "Monitor"],
     ["monitor_ws", "Monitor"],
     ["in_process_teammate", "Teammate"],
