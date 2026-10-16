@@ -90,7 +90,6 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
     streamingContent,
     isRunning,
     agentActivity,
-    backgroundTasks,
     askUserQuestions,
     exitPlanRequest,
     agentTasks,
@@ -197,7 +196,6 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
     liveTail,
     streamingContent,
     agentActivity,
-    backgroundTasks,
     askUserQuestions,
     exitPlanRequest,
     agentTasks,
@@ -440,12 +438,6 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
               return <ToolRunBlock key={`g-${g.items[0]!.id}`} items={visible} resultsByToolUseID={resultsByToolUseID} skippedToolResultIDs={skippedToolResultIDs} isActive={idx === lastIdx} />;
             });
           })()}
-          {/* Background tasks keep their own line, which other activity doesn't replace, until they finish. */}
-          {isRunning && backgroundTasks && (
-            <div data-testid="background-tasks">
-              <AgentActivityIndicator activity={{ activity: "background_tasks", description: backgroundTasks }} />
-            </div>
-          )}
           {isRunning && agentActivity && <AgentActivityIndicator activity={agentActivity} />}
           {chatGateApproval && (
             <ApprovalCard

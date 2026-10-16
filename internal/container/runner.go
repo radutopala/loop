@@ -640,15 +640,7 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 		return nil, err
 	}
 
-	claudeResp, err := r.collectOutput(ctx, containerID, streamCallbacks{
-		onTurn:       req.OnTurn,
-		onToolUse:    req.OnToolUse,
-		onToolUseRaw: req.OnToolUseRaw,
-		onActivity:   req.OnActivity,
-		onThinking:   req.OnThinking,
-		onToolResult: req.OnToolResult,
-		onSession:    req.OnSession,
-	})
+	claudeResp, err := r.collectOutput(ctx, containerID, requestCallbacks(req))
 	if err != nil {
 		return nil, err
 	}

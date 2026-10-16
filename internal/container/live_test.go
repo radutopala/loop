@@ -158,7 +158,10 @@ func (l *liveHookLog) hooks(turns chan string) agent.LiveHooks {
 			return req, func(resp *agent.AgentResponse, err error) { l.done <- liveRun{resp, err} }
 		},
 		Activity: func(activity, detail string) { l.activity <- activity + "=" + detail },
-		Ended:    func(reason string) { l.ended <- reason },
+		BackgroundTasks: func(tasks []agent.BackgroundTask) {
+			l.activity <- "background_tasks=" + agent.BackgroundSummary(tasks)
+		},
+		Ended: func(reason string) { l.ended <- reason },
 	}
 }
 
@@ -286,6 +289,9 @@ func (s *RunnerSuite) TestLiveSessionTurns() {
 	req.OnToolUseRaw = func(id, _, raw string) { record("raw %s %s", id, raw) }
 	req.OnToolResult = func(id, out string, isErr bool) { record("result %s %s %v", id, out, isErr) }
 	req.OnActivity = func(activity, detail string) { record("activity %s=%s", activity, detail) }
+	req.OnBackgroundTasks = func(tasks []agent.BackgroundTask) {
+		record("activity background_tasks=%s", agent.BackgroundSummary(tasks))
+	}
 	req.OnSession = func(id string) { record("session %s", id) }
 
 	run := s.goRun(context.Background(), &req)
@@ -332,6 +338,18 @@ func (s *RunnerSuite) TestLiveSessionTurns() {
 	require.NoError(s.T(), s.runner.InterruptLive("ch-1"))
 	require.Equal(s.T(), string(interruptLine), waitFor(s.T(), proc.stdin))
 
+	// A background task stops by its id; an unknown one isn't asked to.
+	proc.emit(s.T(), `{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"b1","task_type":"monitor","description":"watch CI"}]}`)
+	require.Eventually(s.T(), func() bool {
+		info, _ := s.runner.LiveInfo("ch-1")
+		return len(info.BackgroundTasks) == 1 && info.BackgroundTasks[0].ID == "b1"
+	}, time.Second, time.Millisecond)
+	require.ErrorIs(s.T(), s.runner.StopLiveTask("ch-1", "nope"), ErrNoLiveTask)
+	require.NoError(s.T(), s.runner.StopLiveTask("ch-1", "b1"))
+	require.JSONEq(s.T(),
+		`{"type":"control_request","request_id":"loop-stop-task-b1","request":{"subtype":"stop_task","task_id":"b1"}}`,
+		waitFor(s.T(), proc.stdin))
+
 	require.NoError(s.T(), s.runner.StopLive("ch-1", "stopped by user"))
 	require.Equal(s.T(), "stopped by user", waitFor(s.T(), log.ended))
 	waitFor(s.T(), proc.closed)
@@ -343,6 +361,7 @@ func (s *RunnerSuite) TestLiveSessionTurns() {
 	require.False(s.T(), ok)
 	require.ErrorIs(s.T(), s.runner.StopLive("ch-1", "again"), ErrNoLiveSession)
 	require.ErrorIs(s.T(), s.runner.InterruptLive("ch-1"), ErrNoLiveSession)
+	require.ErrorIs(s.T(), s.runner.StopLiveTask("ch-1", "b1"), ErrNoLiveSession)
 	requireNone(s.T(), log.ended)
 }
 

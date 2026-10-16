@@ -10,13 +10,14 @@ import { fonts } from "../../theme";
 import type { Message } from "../../types";
 import { LoopInfinityIcon } from "../LoopInfinityIcon";
 import { LoopLogo } from "../shared/LoopLogo";
+import { BackgroundTasksBar } from "./BackgroundTasksBar";
 import { ChatFindBar } from "./ChatFindBar";
 import { ChatInput } from "./ChatInput";
 import type { ChatMessagesHandle } from "./ChatMessages";
 import { ChatMessages } from "./ChatMessages";
 import { draftText } from "./chatDrafts";
 import { LiveBar, useLiveStatus, useWarmLive } from "./LiveBar";
-import { footerLabel, liveIcon, liveIconTitle } from "./liveSession";
+import { footerLabel, liveIcon, liveIconTitle, shownBackground } from "./liveSession";
 import { MonitorsBar } from "./MonitorsBar";
 
 function buildStyles(colors: ColorPalette): Record<string, React.CSSProperties> {
@@ -136,6 +137,7 @@ export function ChatView({
   const queuedEdit = useQueuedEdit(channelId, chatState.queuedMessages);
   const live = useLiveStatus(channelId, subscribeChatEvents, wsOpens);
   const warmLive = useWarmLive(subscribeChatEvents ? channelId : null, live);
+  const background = readOnlyNote === undefined ? shownBackground(live, chatState.backgroundTasks, isRunning) : null;
 
   // +fork on a bubble: the new thread opens, and for a user message its
   // composer holds that message's text to edit and send. The draft is
@@ -254,7 +256,8 @@ export function ChatView({
           </div>
         </>
       )}
-      {readOnlyNote === undefined && <LiveBar status={live} hideBackground={isRunning && !!chatState.backgroundTasks} />}
+      {readOnlyNote === undefined && <LiveBar status={live} />}
+      {channelId && background && <BackgroundTasksBar channelId={channelId} tasks={background.tasks} stoppable={background.stoppable} />}
       {channelId && subscribeChatEvents && <MonitorsBar channelId={channelId} subscribeChatEvents={subscribeChatEvents} wsOpens={wsOpens} />}
       {readOnlyNote !== undefined ? (
         <div data-testid="chat-read-only" style={{ ...styles.isolationLabel, padding: "8px 12px" }}>

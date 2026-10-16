@@ -93,6 +93,10 @@ type AgentRequest struct {
 	OnToolUseRaw func(toolUseID, name, rawInput string) `json:"-"`
 	// OnActivity is called for model detection and system events (subagent progress).
 	OnActivity func(activity, detail string) `json:"-"`
+	// OnBackgroundTasks is called with every task the run has running in the
+	// background each time that set changes, mid-turn too; empty when none
+	// are left.
+	OnBackgroundTasks func(tasks []BackgroundTask) `json:"-"`
 	// OnThinking is called for each "thinking" content block emitted by the
 	// assistant (extended thinking). Empty blocks are not delivered.
 	OnThinking func(text string) `json:"-"`
@@ -120,6 +124,9 @@ type LiveHooks struct {
 	BeginTurn func() (req *AgentRequest, done func(*AgentResponse, error))
 	// Activity gets the activity reported while no turn runs.
 	Activity func(activity, detail string)
+	// BackgroundTasks gets the background tasks, as OnBackgroundTasks does,
+	// while no turn runs.
+	BackgroundTasks func(tasks []BackgroundTask)
 	// Ended is called once, when the session ends, with why.
 	Ended func(reason string)
 }
@@ -134,6 +141,44 @@ type LiveInfo struct {
 	// Background describes the background tasks the process waits on, ""
 	// when there are none.
 	Background string `json:"background,omitempty"`
+	// BackgroundTasks are those tasks.
+	BackgroundTasks []BackgroundTask `json:"background_tasks,omitempty"`
+}
+
+// BackgroundTask is a task a claude process runs in the background: a shell
+// command, a Monitor, a subagent or a workflow.
+type BackgroundTask struct {
+	// ID is the CLI's task id, which stops the task in a live session.
+	ID string `json:"id"`
+	// Type is the CLI's task type, e.g. local_bash or local_agent, or
+	// monitor for a task Claude's Monitor tool started.
+	Type        string `json:"type,omitempty"`
+	Description string `json:"description,omitempty"`
+	// StartedAt is when the task was first reported running. The CLI says
+	// no more: a foreground task sent to the background starts then.
+	StartedAt time.Time `json:"started_at"`
+}
+
+// BackgroundSummary describes background tasks in a line, e.g.
+// "2 background tasks: watch CI, build image"; "" when there are none.
+func BackgroundSummary(tasks []BackgroundTask) string {
+	if len(tasks) == 0 {
+		return ""
+	}
+	noun := "background task"
+	if len(tasks) > 1 {
+		noun += "s"
+	}
+	var descs []string
+	for _, t := range tasks {
+		if t.Description != "" {
+			descs = append(descs, t.Description)
+		}
+	}
+	if len(descs) == 0 {
+		return fmt.Sprintf("%d %s", len(tasks), noun)
+	}
+	return fmt.Sprintf("%d %s: %s", len(tasks), noun, strings.Join(descs, ", "))
 }
 
 // TurnRef locates an assistant text event in Claude Code's session

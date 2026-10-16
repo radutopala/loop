@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/radutopala/loop/internal/agent"
@@ -111,33 +113,16 @@ type systemEvent struct {
 	ErrorStatus  int    `json:"error_status"`
 	// background_tasks_changed: the tasks still running in the background.
 	Tasks []backgroundTask `json:"tasks"`
+	// task_started: the task and the tool call that started it.
+	TaskID    string `json:"task_id"`
+	ToolUseID string `json:"tool_use_id"`
 }
 
 // backgroundTask is one entry of a background_tasks_changed event.
 type backgroundTask struct {
+	TaskID      string `json:"task_id"`
+	TaskType    string `json:"task_type"`
 	Description string `json:"description"`
-}
-
-// backgroundWait describes the background tasks a run is waiting on, e.g.
-// "2 background tasks: watch CI, build image"; "" when there are none.
-func backgroundWait(tasks []backgroundTask) string {
-	if len(tasks) == 0 {
-		return ""
-	}
-	noun := "background task"
-	if len(tasks) > 1 {
-		noun += "s"
-	}
-	var descs []string
-	for _, t := range tasks {
-		if t.Description != "" {
-			descs = append(descs, t.Description)
-		}
-	}
-	if len(descs) == 0 {
-		return fmt.Sprintf("%d %s", len(tasks), noun)
-	}
-	return fmt.Sprintf("%d %s: %s", len(tasks), noun, strings.Join(descs, ", "))
 }
 
 // extractText joins all text content blocks from an assistant message.
@@ -290,9 +275,12 @@ type streamCallbacks struct {
 	// input JSON verbatim rather than summarized, for callers that decode it.
 	onToolUseRaw func(toolUseID, name, rawInput string)
 	onActivity   func(activity, detail string)
-	onThinking   func(text string)
-	onToolResult func(toolUseID, output string, isError bool)
-	onSession    func(sessionID string)
+	// onBackgroundTasks gets the tasks running in the background each time
+	// that set changes.
+	onBackgroundTasks func(tasks []agent.BackgroundTask)
+	onThinking        func(text string)
+	onToolResult      func(toolUseID, output string, isError bool)
+	onSession         func(sessionID string)
 	// onTurnStart is called when a turn starts (a "system" "init" event),
 	// before any of the turn's other events.
 	onTurnStart func()
@@ -307,8 +295,22 @@ type streamCallbacks struct {
 // ReportFindings findings went missing.
 func (cb streamCallbacks) any() bool {
 	return cb.onTurn != nil || cb.onToolUse != nil || cb.onToolUseRaw != nil ||
-		cb.onActivity != nil || cb.onThinking != nil || cb.onToolResult != nil ||
-		cb.onSession != nil || cb.onTurnStart != nil
+		cb.onActivity != nil || cb.onBackgroundTasks != nil || cb.onThinking != nil ||
+		cb.onToolResult != nil || cb.onSession != nil || cb.onTurnStart != nil
+}
+
+// requestCallbacks are the stream callbacks req sets.
+func requestCallbacks(req *agent.AgentRequest) streamCallbacks {
+	return streamCallbacks{
+		onTurn:            req.OnTurn,
+		onToolUse:         req.OnToolUse,
+		onToolUseRaw:      req.OnToolUseRaw,
+		onActivity:        req.OnActivity,
+		onBackgroundTasks: req.OnBackgroundTasks,
+		onThinking:        req.OnThinking,
+		onToolResult:      req.OnToolResult,
+		onSession:         req.OnSession,
+	}
 }
 
 // userEventMaxBytes caps the size of "user" stream-json lines we will fully
@@ -512,6 +514,86 @@ func scanStreamJSON(r io.Reader, cb streamCallbacks) (*claudeResponse, error) {
 type streamState struct {
 	lastModel, lastSession string
 	tail                   outputTail
+	// bgStarted is when each background task still running was first
+	// reported, by task id.
+	bgStarted map[string]time.Time
+	// bg is the last set of background tasks reported.
+	bg []agent.BackgroundTask
+	// monitorUses are the Monitor tool calls whose task hasn't started yet,
+	// and monitorTasks the tasks they started, by id.
+	monitorUses, monitorTasks map[string]bool
+}
+
+// monitorTaskType is the type a background task started by Claude's Monitor
+// tool gets. The CLI reports it as local_bash, like any background command;
+// only its task_started event names the tool call that started it.
+const monitorTaskType = "monitor"
+
+// backgroundTasks turns a background_tasks_changed event's tasks into the
+// agent's, each stamped with when it was first reported. The CLI sends the
+// whole set on each change and no start times, so a task keeps the time it
+// joined the set; a task without an id gets the event's time.
+func (st *streamState) backgroundTasks(tasks []backgroundTask) []agent.BackgroundTask {
+	at := time.Now()
+	started := make(map[string]time.Time, len(tasks))
+	out := make([]agent.BackgroundTask, 0, len(tasks))
+	for _, t := range tasks {
+		begun, ok := st.bgStarted[t.TaskID]
+		if !ok || t.TaskID == "" {
+			begun = at
+		}
+		if t.TaskID != "" {
+			started[t.TaskID] = begun
+		}
+		typ := t.TaskType
+		if st.monitorTasks[t.TaskID] {
+			typ = monitorTaskType
+		}
+		out = append(out, agent.BackgroundTask{ID: t.TaskID, Type: typ, Description: t.Description, StartedAt: begun})
+	}
+	for _, old := range st.bg {
+		if _, ok := started[old.ID]; !ok {
+			delete(st.monitorTasks, old.ID)
+		}
+	}
+	st.bgStarted = started
+	st.bg = out
+	return out
+}
+
+// noteMonitors remembers msg's Monitor tool calls, so the tasks they start
+// can be told apart from other background commands.
+func (st *streamState) noteMonitors(msg *assistantMessage) {
+	for _, c := range msg.Message.Content {
+		if c.Type == "tool_use" && c.Name == "Monitor" {
+			if st.monitorUses == nil {
+				st.monitorUses = map[string]bool{}
+			}
+			st.monitorUses[c.ID] = true
+		}
+	}
+}
+
+// startedMonitor marks the task a Monitor tool call started as a monitor.
+// The CLI reports the task in the background set just before it says which
+// call started it, so a task already there is retyped and the set reported
+// again.
+func (st *streamState) startedMonitor(evt systemEvent, cb streamCallbacks) {
+	delete(st.monitorUses, evt.ToolUseID)
+	if st.monitorTasks == nil {
+		st.monitorTasks = map[string]bool{}
+	}
+	st.monitorTasks[evt.TaskID] = true
+	i := slices.IndexFunc(st.bg, func(t agent.BackgroundTask) bool { return t.ID == evt.TaskID })
+	if i < 0 {
+		return
+	}
+	// A copy: the set reported before may still be held.
+	st.bg = slices.Clone(st.bg)
+	st.bg[i].Type = monitorTaskType
+	if cb.onBackgroundTasks != nil {
+		cb.onBackgroundTasks(st.bg)
+	}
 }
 
 // dispatch hands one line of the stream to cb and returns the line's
@@ -541,6 +623,7 @@ func (st *streamState) dispatch(line []byte, cb streamCallbacks) *claudeResponse
 				cb.onSession(st.lastSession)
 			}
 		}
+		st.noteMonitors(&msg)
 		if msg.Message.Model != "" && msg.Message.Model != st.lastModel {
 			st.lastModel = msg.Message.Model
 			if cb.onActivity != nil {
@@ -584,9 +667,6 @@ func (st *streamState) dispatch(line []byte, cb streamCallbacks) *claudeResponse
 			cb.onToolResult(blk.ToolUseID, out, blk.IsError)
 		}
 	case "system":
-		if cb.onActivity == nil && cb.onTurnStart == nil {
-			return nil
-		}
 		var evt systemEvent
 		if err := json.Unmarshal(line, &evt); err != nil {
 			return nil
@@ -627,6 +707,18 @@ func (st *streamState) system(evt systemEvent, cb streamCallbacks) {
 		}
 		return
 	}
+	if evt.Subtype == "background_tasks_changed" {
+		// Stamped whether or not anyone listens, so a task's start holds
+		// across turns with different callbacks.
+		tasks := st.backgroundTasks(evt.Tasks)
+		if cb.onBackgroundTasks != nil {
+			cb.onBackgroundTasks(tasks)
+		}
+		return
+	}
+	if evt.Subtype == "task_started" && st.monitorUses[evt.ToolUseID] {
+		st.startedMonitor(evt, cb)
+	}
 	if cb.onActivity == nil {
 		return
 	}
@@ -652,8 +744,6 @@ func (st *streamState) system(evt systemEvent, cb streamCallbacks) {
 		}
 	case "status":
 		cb.onActivity(evt.Status, evt.Description)
-	case "background_tasks_changed":
-		cb.onActivity("background_tasks", backgroundWait(evt.Tasks))
 	case "thinking_tokens":
 		// Opus emits running thinking-token estimates while it
 		// reasons (the thinking text itself is redacted). Surface

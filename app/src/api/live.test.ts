@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { warmLive } from "./live";
+import { stopLiveTask, warmLive } from "./live";
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -26,5 +26,19 @@ describe("warmLive", () => {
   it("throws on an error", async () => {
     fetchMock.mockResolvedValue(new Response("boom", { status: 500, statusText: "Internal Server Error" }));
     await expect(warmLive("c1")).rejects.toThrow("Internal Server Error");
+  });
+});
+
+describe("stopLiveTask", () => {
+  it("posts to the task's stop route", async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
+    await stopLiveTask("c 1", "b/1");
+    expect(fetchMock.mock.calls[0]![0]).toBe("http://localhost:8222/api/channels/c%201/live/tasks/b%2F1/stop");
+    expect(fetchMock.mock.calls[0]![1].method).toBe("POST");
+  });
+
+  it("throws on an error", async () => {
+    fetchMock.mockResolvedValue(new Response("gone", { status: 404, statusText: "Not Found" }));
+    await expect(stopLiveTask("c1", "b1")).rejects.toThrow("Not Found");
   });
 });

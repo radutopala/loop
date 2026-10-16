@@ -350,6 +350,7 @@ func (s *TaskExecutorSuite) TestStreamingOnActivityBroadcasts() {
 		req.OnActivity("model", "claude-opus-4-6")
 		req.OnTurn("Turn 1", agent.TurnRef{})
 		req.OnActivity("subagent_started", "Sub task")
+		req.OnBackgroundTasks([]agent.BackgroundTask{{ID: "b1", Description: "watch CI"}})
 	}).Return(&agent.AgentResponse{
 		Response: "Turn 1", SessionID: "sess-act",
 	}, nil)
@@ -366,12 +367,15 @@ func (s *TaskExecutorSuite) TestStreamingOnActivityBroadcasts() {
 	eb.On("BroadcastAgentActivity", "thread-27", mock.MatchedBy(func(d events.AgentActivityEventData) bool {
 		return d.Activity == "subagent_started" && d.Description == "Sub task"
 	})).Once()
+	eb.On("BroadcastAgentActivity", "thread-27", mock.MatchedBy(func(d events.AgentActivityEventData) bool {
+		return d.Activity == "background_tasks" && len(d.Tasks) == 1 && d.Tasks[0].ID == "b1"
+	})).Once()
 
 	resp, err := s.executor.ExecuteTask(s.ctx, task)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "Turn 1", resp)
 
-	eb.AssertNumberOfCalls(s.T(), "BroadcastAgentActivity", 2)
+	eb.AssertNumberOfCalls(s.T(), "BroadcastAgentActivity", 3)
 	eb.AssertExpectations(s.T())
 }
 

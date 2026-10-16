@@ -325,8 +325,24 @@ Agent activity indicator for UI status displays. Covers model detection, subagen
 | `activity`    | string | Activity type: `"model"`, `"subagent_started"`, `"subagent_progress"`, `"background_tasks"` and others |
 | `model`       | string | Model name (when activity is `"model"`) |
 | `description` | string | Human-readable description of the activity |
+| `tasks`       | array  | The background tasks, on a `background_tasks` activity |
 
-A `background_tasks` activity is sent each time the set of tasks running in the background changes, mid-turn too. Its `description` lists them (`"2 background tasks: watch CI, build image"`), and is empty once none are left.
+A `background_tasks` activity is sent each time the set of tasks running in the background changes, mid-turn too. Its `description` lists them (`"2 background tasks: watch CI, build image"`), and is empty once none are left. `tasks` holds every task still running, and is left out once none are:
+
+```json
+{
+  "activity": "background_tasks",
+  "description": "1 background task: watch CI",
+  "tasks": [{ "id": "b1x2", "type": "local_bash", "description": "watch CI", "started_at": "2026-01-02T15:04:05Z" }]
+}
+```
+
+| Task field    | Type   | Description |
+|---------------|--------|-------------|
+| `id`          | string | Claude's task id, which [stops it](api.md#post-apichannelsidlivetaskstask_idstop) in a live session |
+| `type`        | string | Claude's task type: `local_bash` (a shell command), `monitor` (Claude's `Monitor` tool), `local_agent`, `remote_agent`, `local_workflow` and others |
+| `description` | string | What the task does |
+| `started_at`  | string | When Loop first saw it running. Claude reports no start time, so a foreground command sent to the background starts then |
 
 ---
 
@@ -644,7 +660,8 @@ A channel's [live session](chat.md#live-sessions) started, changed or ended. The
   "started_at": "2026-01-02T15:04:05Z",
   "session_id": "0a1b2c3d-…",
   "busy": false,
-  "background": "1 background task: watch CI"
+  "background": "1 background task: watch CI",
+  "background_tasks": [{ "id": "b1x2", "type": "local_bash", "description": "watch CI", "started_at": "2026-01-02T15:04:05Z" }]
 }
 ```
 
@@ -655,6 +672,7 @@ A channel's [live session](chat.md#live-sessions) started, changed or ended. The
 | `session_id` | string | The Claude session it runs (while running) |
 | `busy`       | bool   | Whether a turn is in progress |
 | `background` | string | The background tasks (shells, subagents, monitors) it still waits on, empty when there are none |
+| `background_tasks` | array | Those tasks, shaped as an [`agent.activity`](#agentactivity)'s `tasks`; left out when there are none |
 | `reason`     | string | Why it ended (when not running): `idle`, `config changed`, `session changed`, `scheduled run`, `one-shot run`, `stopped`, `closed`, `deleted`, `shutdown`, `stdin closed`, `interrupt timed out`, `exited`, `exited: …`, `restart failed: …` |
 
 A turn the session starts on its own, after a background task wakes it, runs with `agent.status` `trigger: "live"`.

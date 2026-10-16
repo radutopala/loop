@@ -6,6 +6,7 @@ import type {
   AgentTasksData,
   AgentThinkingData,
   AskUserQuestionData,
+  BackgroundTask,
   ExitPlanModeData,
   GateApprovalRequestedData,
   GateApprovalResolvedData,
@@ -36,7 +37,7 @@ export interface ChatState {
   toolActivity: { tool_name: string; input: string } | null;
   agentActivity: AgentActivityData | null;
   /** The background tasks the run waits on; null when none are running. */
-  backgroundTasks: string | null;
+  backgroundTasks: BackgroundTask[] | null;
   askUserQuestions: AskUserQuestionData | null;
   exitPlanRequest: ExitPlanModeData | null;
   agentTasks: AgentTasksData | null;
@@ -118,7 +119,7 @@ export function useChatState(channelId: string | null, initialRunningBot?: boole
   const [runId, setRunId] = useState<string | null>(initialState?.runId ?? null);
   const [toolActivity, setToolActivity] = useState<{ tool_name: string; input: string } | null>(initialState?.toolActivity ?? null);
   const [agentActivity, setAgentActivity] = useState<AgentActivityData | null>(initialState?.agentActivity ?? null);
-  const [backgroundTasks, setBackgroundTasks] = useState<string | null>(initialState?.backgroundTasks ?? null);
+  const [backgroundTasks, setBackgroundTasks] = useState<BackgroundTask[] | null>(initialState?.backgroundTasks ?? null);
   const [askUserQuestions, setAskUserQuestions] = useState<AskUserQuestionData | null>(initialState?.askUserQuestions ?? null);
   const [exitPlanRequest, setExitPlanRequest] = useState<ExitPlanModeData | null>(initialState?.exitPlanRequest ?? null);
   const [agentTasks, setAgentTasks] = useState<AgentTasksData | null>(initialState?.agentTasks ?? null);
@@ -320,7 +321,7 @@ export function useChatState(channelId: string | null, initialRunningBot?: boole
         }
         // Background tasks get their own slot, which other activity doesn't
         // replace: they stay in view until they finish or the run ends.
-        if (data.activity === "background_tasks") setBackgroundTasks(data.description || null);
+        if (data.activity === "background_tasks") setBackgroundTasks(data.tasks?.length ? data.tasks : null);
         else setAgentActivity(data);
         return;
       }

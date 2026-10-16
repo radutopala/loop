@@ -29,6 +29,10 @@ func (m *MockLiveRunner) StopLive(channelID, reason string) error {
 	return m.Called(channelID, reason).Error(0)
 }
 
+func (m *MockLiveRunner) StopLiveTask(channelID, taskID string) error {
+	return m.Called(channelID, taskID).Error(0)
+}
+
 func (m *MockLiveRunner) InterruptLive(channelID string) error {
 	return m.Called(channelID).Error(0)
 }
@@ -87,6 +91,15 @@ func (s *OrchestratorSuite) TestSetLiveRunnerAndEndLiveSession() {
 
 	lr.On("StopLive", "ch-1", "why").Return(errors.New("stop failed")).Once()
 	require.EqualError(s.T(), s.orch.EndLiveSession("ch-1", "why"), "stop failed")
+	lr.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestStopLiveTask() {
+	require.ErrorIs(s.T(), s.orch.StopLiveTask("ch-1", "b1"), ErrLiveUnavailable)
+
+	lr, _ := s.withLive()
+	lr.On("StopLiveTask", "ch-1", "b1").Return(errors.New("no task")).Once()
+	require.EqualError(s.T(), s.orch.StopLiveTask("ch-1", "b1"), "no task")
 	lr.AssertExpectations(s.T())
 }
 
@@ -402,11 +415,17 @@ func (s *OrchestratorSuite) TestLiveHooksActivityAndEnded() {
 
 	// Without an event broadcaster activity goes nowhere.
 	hooks.Activity("model", "opus")
+	hooks.BackgroundTasks(nil)
 
 	ev := new(MockEventBroadcaster)
 	s.orch.SetEventBroadcaster(ev)
 	ev.On("BroadcastAgentActivity", "ch-1", events.AgentActivityEventData{Activity: "waiting", Description: "2 background tasks"}).Once()
 	hooks.Activity("waiting", "2 background tasks")
+	tasks := []agent.BackgroundTask{{ID: "b1", Type: "monitor", Description: "watch CI", StartedAt: time.Unix(10, 0)}}
+	ev.On("BroadcastAgentActivity", "ch-1", events.AgentActivityEventData{
+		Activity: "background_tasks", Description: "1 background task: watch CI", Tasks: tasks,
+	}).Once()
+	hooks.BackgroundTasks(tasks)
 	ev.AssertExpectations(s.T())
 
 	hooks.Ended("idle")

@@ -750,6 +750,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingOnActivityBroadcasts() {
 		}
 		req.OnActivity("model", "claude-opus-4-6")
 		req.OnActivity("subagent_started", "Deep analysis")
+		req.OnBackgroundTasks([]agent.BackgroundTask{{ID: "b1", Description: "watch CI"}})
 		req.OnTurn("done", agent.TurnRef{})
 		return true
 	})).Return(&agent.AgentResponse{
@@ -773,10 +774,14 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingOnActivityBroadcasts() {
 	eb.On("BroadcastAgentActivity", "ch1", mock.MatchedBy(func(d events.AgentActivityEventData) bool {
 		return d.Activity == "subagent_started" && d.Description == "Deep analysis"
 	})).Once()
+	eb.On("BroadcastAgentActivity", "ch1", mock.MatchedBy(func(d events.AgentActivityEventData) bool {
+		return d.Activity == "background_tasks" && d.Description == "1 background task: watch CI" &&
+			len(d.Tasks) == 1 && d.Tasks[0].ID == "b1"
+	})).Once()
 
 	s.orch.HandleMessage(s.ctx, msg)
 
-	eb.AssertNumberOfCalls(s.T(), "BroadcastAgentActivity", 2)
+	eb.AssertNumberOfCalls(s.T(), "BroadcastAgentActivity", 3)
 	// Verify completed status includes result metadata
 	eb.AssertCalled(s.T(), "BroadcastAgentStatus", "ch1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
 		return d.Status == "completed" && d.DurationMs == 5000 && d.NumTurns == 2 && d.StopReason == "end_turn" && d.Model == "claude-opus-4-6"
