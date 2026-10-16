@@ -244,3 +244,35 @@ func (s *ReviewStartSuite) TestStartRunFails() {
 	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
 	require.Contains(s.T(), w.Body.String(), "no such workflow")
 }
+
+func (s *ReviewStartSuite) TestFork() {
+	tests := []struct {
+		name      string
+		fork      string
+		wantMode  review.ForkMode
+		wantSID   string
+		startMode review.ForkMode
+		startSID  string
+	}{
+		{"empty keeps the session's choice", "", review.ForkCustom, "keep-me", review.ForkCustom, "keep-me"},
+		{"chat", "chat", review.ForkCurrent, "", review.ForkCustom, "old"},
+		{"fresh", " fresh ", review.ForkNone, "", review.ForkCurrent, ""},
+		{"session id", " sess-42 ", review.ForkCustom, "sess-42", review.ForkCurrent, ""},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			s.channel("", "")
+			s.noRuns()
+			s.rs.Put("ch1", &review.Session{PR: &githubapi.PRInfo{Number: 7}, WorktreePath: "/repo/.worktrees/pr-7-ch1", Status: review.StatusReady, ForkMode: tt.startMode, ForkSessionID: tt.startSID})
+			s.eng.On("StartRun", mock.Anything, mock.Anything).Return("run-1", nil)
+
+			w := s.start(map[string]any{"pr_number": 7, "fork": tt.fork})
+			require.Equal(s.T(), http.StatusCreated, w.Code, w.Body.String())
+			var resp reviewStartResponse
+			require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+			require.Equal(s.T(), tt.wantMode, resp.Session.ForkMode)
+			require.Equal(s.T(), tt.wantSID, resp.Session.ForkSessionID)
+		})
+	}
+}

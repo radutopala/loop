@@ -266,6 +266,8 @@ The choice is stored on the in-memory review session (loading a PR resets
 it to the default, and so does a daemon restart) rather than on the run
 request, because the Run button dispatches a workflow whose
 `loop review:run` step has nowhere to carry per-run options. See [`PUT /review/fork`](api.md).
+`run_review` and `POST /review/start` take a `fork` option (`chat`, `fresh`
+or a session id) and store it the same way, so the panel shows it.
 
 ## Handing a finding to the agent
 
@@ -497,8 +499,9 @@ An agent starts a review with the `run_review` MCP tool, which does what
 the Run button does through
 [`POST /api/channels/{id}/review/start`](api.md#post-apichannelsidreviewstart):
 it loads the PR unless the session is already on it, records the model and
-effort (the channel's own by default) and starts `review-loop`, or
-`review-fix-loop` with `mode: "review-fix"`. It takes another channel or
+effort (the channel's own by default) and the [fork choice](#forking-the-chat-session)
+when given, and starts `review-loop`, or `review-fix-loop` with
+`mode: "review-fix"`. It takes another channel or
 thread's id too, so an agent can run reviews in several threads at once. A
 Review panel open on that channel, or opened later while the run is live,
 shows the run as if its Run button had started it: the chip, the run
