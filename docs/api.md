@@ -2533,11 +2533,15 @@ Do what the Review panel's Run button does, in one call: load the PR unless
 the session is already ready on it, record the model and effort on the
 session, and start the review workflow. Used by the `run_review` MCP tool.
 
-Body: `{"pr_number": 42, "model": "opus", "effort": "high", "mode": "review", "max_iterations": 1}`.
+Body: `{"pr_number": 42, "model": "opus", "effort": "high", "mode": "review", "max_iterations": 1, "fork": "chat"}`.
 Only `pr_number` is required. `model` and `effort` default to the
 channel's own overrides, and empty after that means the config default.
 `mode` is `review` (default, the `review-loop` workflow) or `review-fix`
 (`review-fix-loop`). `max_iterations` is 1–10, default the project's `review.max_iterations` (`3` unless set).
+`fork` picks the session the run forks, as [`PUT .../review/fork`](#put-apichannelsidreviewfork)
+does: `chat` (the channel's chat session), `fresh` (a new session) or a
+Claude session id. It is stored on the review session; empty keeps the
+session's choice, which is `chat` for a newly loaded PR.
 
 Response (`201`): `{"run_id": "...", "workflow_name": "review-loop", "model": "opus", "effort": "high", "session": { ... }}`.
 A Review panel on the channel picks the run up from its

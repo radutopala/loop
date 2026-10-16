@@ -20,7 +20,7 @@ import (
 func (s *Server) registerReviewTools() {
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "run_review",
-		Description: "Start a PR review, as the Review panel's Run button does: loads the PR into the channel's review session (unless it is already loaded) and starts the review-loop workflow, or review-fix-loop with mode review-fix. Model and effort default to the channel's own; empty there means the config default. Defaults to this channel; give another channel or thread's id to review there, so several threads can each review a PR at once. Returns the workflow run id; follow it with get_workflow_run, and read the findings with get_review_comments once it finishes. Fails while that channel has a review loading or running.",
+		Description: "Start a PR review, as the Review panel's Run button does: loads the PR into the channel's review session (unless it is already loaded) and starts the review-loop workflow, or review-fix-loop with mode review-fix. Model and effort default to the channel's own; empty there means the config default. The review always forks a session, never resumes it: fork picks the chat session, a fresh one or a session id, as the panel's session dropdown does. Defaults to this channel; give another channel or thread's id to review there, so several threads can each review a PR at once. Returns the workflow run id; follow it with get_workflow_run, and read the findings with get_review_comments once it finishes. Fails while that channel has a review loading or running.",
 	}, s.handleRunReview)
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "report_review_findings",
@@ -59,6 +59,7 @@ type runReviewInput struct {
 	Mode          string `json:"mode,omitempty" jsonschema:"review (default) to only review, or review-fix to fix the findings and review again"`
 	MaxIterations int    `json:"max_iterations,omitempty" jsonschema:"Number of passes, 1-10 (default 3)"`
 	ChannelID     string `json:"channel_id,omitempty" jsonschema:"Channel or thread to run the review in; defaults to this one"`
+	Fork          string `json:"fork,omitempty" jsonschema:"Session the review forks: chat (that channel's chat session), fresh (a new session) or a Claude session id; defaults to the choice set in the Review panel, chat for a newly loaded PR"`
 }
 
 func (s *Server) handleRunReview(_ context.Context, _ *mcp.CallToolRequest, input runReviewInput) (*mcp.CallToolResult, any, error) {
@@ -71,6 +72,7 @@ func (s *Server) handleRunReview(_ context.Context, _ *mcp.CallToolRequest, inpu
 		"effort":         input.Effort,
 		"mode":           input.Mode,
 		"max_iterations": input.MaxIterations,
+		"fork":           input.Fork,
 	})
 	apiURL := fmt.Sprintf("%s/api/channels/%s/review/start", s.apiURL, url.PathEscape(channelID))
 	type startResult struct {

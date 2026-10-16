@@ -20,13 +20,32 @@ const (
 
 // reviewStartRequest is the body of POST /api/channels/{id}/review/start.
 // Model and effort default to the channel's own overrides; empty after that
-// means the config's default, as on the panel.
+// means the config's default, as on the panel. Fork picks the session the
+// run forks: "chat" (the channel's chat session), "fresh", or a session id;
+// empty keeps the review session's own choice.
 type reviewStartRequest struct {
 	PRNumber      int    `json:"pr_number"`
 	Model         string `json:"model"`
 	Effort        string `json:"effort"`
 	Mode          string `json:"mode"`
 	MaxIterations int    `json:"max_iterations"`
+	Fork          string `json:"fork"`
+}
+
+// reviewStartFork maps the request's fork value to the review session's
+// fork mode and session id. ok is false when fork is empty: the session's
+// choice stands.
+func reviewStartFork(fork string) (mode review.ForkMode, sessionID string, ok bool) {
+	switch fork = strings.TrimSpace(fork); fork {
+	case "":
+		return "", "", false
+	case "chat":
+		return review.ForkCurrent, "", true
+	case "fresh":
+		return review.ForkNone, "", true
+	default:
+		return review.ForkCustom, fork, true
+	}
 }
 
 type reviewStartResponse struct {
@@ -39,7 +58,7 @@ type reviewStartResponse struct {
 
 // handleReviewStart does what the Review panel's Run button does, in one
 // call: it loads the PR into the channel's review session unless the session
-// is already on it, records the model and effort, and starts the review-loop
+// is already on it, records the model, effort and fork choice, and starts the review-loop
 // (mode "review") or review-fix-loop (mode "review-fix") workflow. A panel
 // open on the channel picks the run up. Answers 409 while the channel has a
 // review loading, running or about to start.
@@ -112,6 +131,9 @@ func (s *Server) handleReviewStart(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	rs.sessions.UpdateAgent(channelID, model, effort)
+	if mode, sessionID, ok := reviewStartFork(req.Fork); ok {
+		rs.sessions.UpdateFork(channelID, mode, sessionID)
+	}
 
 	dirPath, parentDirPath, err := s.resolveWorkflowConfigPaths(r.Context(), channelID)
 	if err != nil {
