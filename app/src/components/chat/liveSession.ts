@@ -1,5 +1,5 @@
 import type { LiveStatus } from "../../api/live";
-import type { AgentActivityData, WSEvent } from "../../types";
+import type { AgentActivityData, BackgroundTask, WSEvent } from "../../types";
 
 /** The live.status event a channel's live session sends when it starts or ends. */
 export const LIVE_STATUS_EVENT = "live.status";
@@ -17,7 +17,7 @@ export function applyLiveEvent(status: LiveStatus | null, event: WSEvent, channe
   if (event.type === "agent.activity" && status?.running) {
     const data = event.data as AgentActivityData;
     if (data.activity !== "background_tasks") return status;
-    return { ...status, background: data.description || undefined };
+    return { ...status, background: data.description || undefined, background_tasks: data.tasks?.length ? data.tasks : undefined };
   }
   return status;
 }
@@ -62,10 +62,36 @@ export function liveSummary(status: LiveStatus | null): string | null {
   return status.reason && !ROUTINE_ENDS.has(status.reason) ? `Session ended: ${endedReason(status.reason)}` : null;
 }
 
-/** liveBackground is the background tasks a running live session waits on,
- *  which show above the composer; null when it waits on none. */
-export function liveBackground(status: LiveStatus | null): string | null {
-  return (status?.running && status.background) || null;
+/** liveBackground is the background tasks a running live session waits on;
+ *  null when it waits on none. */
+export function liveBackground(status: LiveStatus | null): BackgroundTask[] | null {
+  return (status?.running && status.background_tasks?.length && status.background_tasks) || null;
+}
+
+/** shownBackground is the background tasks above the composer: a running
+ *  live session's, which can be stopped, or else a running one-shot run's. */
+export function shownBackground(status: LiveStatus | null, runTasks: BackgroundTask[] | null, isRunning: boolean): { tasks: BackgroundTask[]; stoppable: boolean } | null {
+  if (status?.running) {
+    const tasks = liveBackground(status);
+    return tasks && { tasks, stoppable: true };
+  }
+  return isRunning && runTasks?.length ? { tasks: runTasks, stoppable: false } : null;
+}
+
+// What each CLI task type is called on its pill.
+const TASK_TYPES: Record<string, string> = {
+  local_bash: "Shell",
+  local_agent: "Agent",
+  remote_agent: "Remote agent",
+  local_workflow: "Workflow",
+  monitor_mcp: "Monitor",
+  monitor_ws: "Monitor",
+  in_process_teammate: "Teammate",
+};
+
+/** taskTypeLabel names a background task's kind. */
+export function taskTypeLabel(type: string | undefined): string {
+  return (type && TASK_TYPES[type]) || "Background";
 }
 
 /** LiveIcon is the footer icon's state: working on a turn (busy: the chat's

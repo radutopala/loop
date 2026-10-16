@@ -3,7 +3,7 @@ import { fetchLive, type LiveStatus, warmLive } from "../../api/live";
 import type { ChatEventListener } from "../../hooks/useChatStateStore";
 import { useTheme } from "../../ThemeContext";
 import { logErr } from "../../utils/log";
-import { applyLiveEvent, liveBackground, liveSummary, shouldWarm } from "./liveSession";
+import { applyLiveEvent, liveSummary, shouldWarm } from "./liveSession";
 
 // The last live status seen per channel, so a chat opened again shows it at
 // once instead of starting blank and flickering when the fetch lands.
@@ -64,20 +64,17 @@ export function useWarmLive(channelId: string | null, status: LiveStatus | null)
   }, [channelId, status]);
 }
 
-/** LiveBar shows above the composer what there is to say about the live
- *  session: the background tasks it waits on, as the monitors show theirs,
- *  or why it ended. The footer's icon shows whether it's working or idle.
- *  hideBackground leaves the tasks out while a turn's activity line in the
- *  chat shows them. */
-export function LiveBar({ status, hideBackground }: { status: LiveStatus | null; hideBackground?: boolean }) {
+/** LiveBar shows above the composer why the live session ended, when that
+ *  needs saying; BackgroundTasksBar shows the tasks it waits on, and the
+ *  footer's icon whether it's working or idle. */
+export function LiveBar({ status }: { status: LiveStatus | null }) {
   const { colors } = useTheme();
-  const background = hideBackground ? null : liveBackground(status);
   const ended = liveSummary(status);
-  if (!background && !ended) return null;
+  if (!ended) return null;
   return (
     <div data-testid="live-bar" style={{ padding: "6px 24px 0" }}>
       <div
-        title={background ? `The live session waits on ${background}` : (ended ?? undefined)}
+        title={ended}
         style={{
           display: "flex",
           alignItems: "center",
@@ -94,8 +91,7 @@ export function LiveBar({ status, hideBackground }: { status: LiveStatus | null;
           color: colors.textMuted,
         }}
       >
-        {background && <span style={{ color: colors.textDim }}>Waiting on</span>}
-        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: colors.text }}>{background ?? ended}</span>
+        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: colors.text }}>{ended}</span>
       </div>
     </div>
   );

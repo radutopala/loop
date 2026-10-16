@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { LiveStatus } from "../../api/live";
-import { applyLiveEvent, endedReason, footerLabel, liveBackground, liveIcon, liveIconTitle, liveSummary, shouldWarm } from "./liveSession";
+import { applyLiveEvent, endedReason, footerLabel, liveBackground, liveIcon, liveIconTitle, liveSummary, shouldWarm, shownBackground, taskTypeLabel } from "./liveSession";
 
 const event = (type: string, data: unknown, channel_id = "c1") => ({ type, channel_id, data, timestamp: 0 });
 const running: LiveStatus = { running: true, enabled: true, channel_id: "c1", busy: false };
+const build = [{ id: "b1", type: "local_bash", description: "build", started_at: "2026-10-16T09:00:00Z" }];
 
 describe("applyLiveEvent", () => {
   it("replaces the status with a live.status event, keeping enabled", () => {
@@ -13,9 +14,13 @@ describe("applyLiveEvent", () => {
   });
 
   it("follows the background tasks of a running session", () => {
-    const waiting = applyLiveEvent(running, event("agent.activity", { activity: "background_tasks", description: "1 background task: build" }), "c1");
+    const waiting = applyLiveEvent(running, event("agent.activity", { activity: "background_tasks", description: "1 background task: build", tasks: build }), "c1");
     expect(waiting?.background).toBe("1 background task: build");
-    expect(applyLiveEvent(waiting, event("agent.activity", { activity: "background_tasks", description: "" }), "c1")?.background).toBeUndefined();
+    expect(waiting?.background_tasks).toEqual(build);
+    const done = applyLiveEvent(waiting, event("agent.activity", { activity: "background_tasks", description: "", tasks: [] }), "c1");
+    expect(done?.background).toBeUndefined();
+    expect(done?.background_tasks).toBeUndefined();
+    expect(applyLiveEvent(running, event("agent.activity", { activity: "background_tasks", description: "x" }), "c1")?.background_tasks).toBeUndefined();
   });
 
   it.each([
@@ -65,13 +70,45 @@ describe("liveSummary", () => {
 });
 
 describe("liveBackground", () => {
-  it.each<{ name: string; status: LiveStatus | null; want: string | null }>([
+  it.each<{ name: string; status: LiveStatus | null; want: unknown }>([
     { name: "no status yet", status: null, want: null },
     { name: "a session with no background tasks", status: running, want: null },
-    { name: "background tasks", status: { ...running, background: "2 background tasks" }, want: "2 background tasks" },
-    { name: "an ended session", status: { running: false, busy: false, background: "2 background tasks" }, want: null },
+    { name: "an empty task list", status: { ...running, background_tasks: [] }, want: null },
+    { name: "background tasks", status: { ...running, background_tasks: build }, want: build },
+    { name: "an ended session", status: { running: false, busy: false, background_tasks: build }, want: null },
   ])("$name", ({ status, want }) => {
-    expect(liveBackground(status)).toBe(want);
+    expect(liveBackground(status)).toEqual(want);
+  });
+});
+
+describe("shownBackground", () => {
+  const ended: LiveStatus = { running: false, busy: false };
+  it.each<{ name: string; status: LiveStatus | null; run: typeof build | null; isRunning: boolean; want: unknown }>([
+    { name: "a live session's tasks, stoppable", status: { ...running, background_tasks: build }, run: null, isRunning: false, want: { tasks: build, stoppable: true } },
+    { name: "a live session without tasks", status: running, run: build, isRunning: true, want: null },
+    { name: "a one-shot run's tasks", status: ended, run: build, isRunning: true, want: { tasks: build, stoppable: false } },
+    { name: "with no status yet", status: null, run: build, isRunning: true, want: { tasks: build, stoppable: false } },
+    { name: "a run that ended", status: ended, run: build, isRunning: false, want: null },
+    { name: "a run without tasks", status: ended, run: [], isRunning: true, want: null },
+    { name: "nothing", status: null, run: null, isRunning: false, want: null },
+  ])("$name", ({ status, run, isRunning, want }) => {
+    expect(shownBackground(status, run, isRunning)).toEqual(want);
+  });
+});
+
+describe("taskTypeLabel", () => {
+  it.each([
+    ["local_bash", "Shell"],
+    ["local_agent", "Agent"],
+    ["remote_agent", "Remote agent"],
+    ["local_workflow", "Workflow"],
+    ["monitor_mcp", "Monitor"],
+    ["monitor_ws", "Monitor"],
+    ["in_process_teammate", "Teammate"],
+    ["dream", "Background"],
+    [undefined, "Background"],
+  ])("%s", (type, want) => {
+    expect(taskTypeLabel(type)).toBe(want);
   });
 });
 

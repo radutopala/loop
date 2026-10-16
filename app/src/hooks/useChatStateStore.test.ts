@@ -55,15 +55,16 @@ describe("confirmedIdle", () => {
 });
 
 describe("applyEvent background tasks", () => {
-  function activity(kind: string, description = ""): WSEvent {
-    return { type: "agent.activity", channel_id: "ch1", data: { activity: kind, description }, timestamp: 0 } as WSEvent;
+  const watch = [{ id: "b1", type: "local_bash", description: "watch CI", started_at: "2026-10-16T09:00:00Z" }];
+  function activity(kind: string, description = "", tasks?: unknown[]): WSEvent {
+    return { type: "agent.activity", channel_id: "ch1", data: { activity: kind, description, tasks }, timestamp: 0 } as WSEvent;
   }
 
   it("keeps them apart from the activity other events replace", () => {
     const state = runningState();
-    applyEvent(state, activity("background_tasks", "1 background task: watch CI"));
+    applyEvent(state, activity("background_tasks", "1 background task: watch CI", watch));
     applyEvent(state, activity("thinking", "120"));
-    expect(state.backgroundTasks).toBe("1 background task: watch CI");
+    expect(state.backgroundTasks).toEqual(watch);
     expect(state.agentActivity?.activity).toBe("thinking");
   });
 
@@ -75,7 +76,7 @@ describe("applyEvent background tasks", () => {
   for (const tc of clears) {
     it(`clears them when ${tc.name}`, () => {
       const state = runningState();
-      applyEvent(state, activity("background_tasks", "1 background task: watch CI"));
+      applyEvent(state, activity("background_tasks", "1 background task: watch CI", watch));
       applyEvent(state, tc.event);
       expect(state.backgroundTasks).toBeNull();
     });

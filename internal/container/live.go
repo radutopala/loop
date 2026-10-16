@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sync"
 	"time"
 
@@ -31,6 +32,10 @@ import (
 
 // ErrNoLiveSession is returned for a channel with no live session.
 var ErrNoLiveSession = errors.New("no live session")
+
+// ErrNoLiveTask is returned by StopLiveTask for a task the live session
+// doesn't run in the background.
+var ErrNoLiveTask = errors.New("no such background task")
 
 // ErrLiveSessionRunning is returned by StartLive when the channel already
 // has a live session.
@@ -105,7 +110,7 @@ type liveSession struct {
 	turn       *liveTurn
 	idle       chan struct{} // closed when the running turn ends
 	sessionID  string
-	background string
+	background []agent.BackgroundTask
 	closed     bool
 	// used is set once the session ran a turn.
 	used      bool
@@ -125,11 +130,12 @@ func (s *liveSession) info() agent.LiveInfo {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return agent.LiveInfo{
-		ChannelID:  s.channelID,
-		StartedAt:  s.startedAt,
-		SessionID:  s.sessionID,
-		Busy:       s.turn != nil,
-		Background: s.background,
+		ChannelID:       s.channelID,
+		StartedAt:       s.startedAt,
+		SessionID:       s.sessionID,
+		Busy:            s.turn != nil,
+		Background:      agent.BackgroundSummary(s.background),
+		BackgroundTasks: s.background,
 	}
 }
 
@@ -332,6 +338,33 @@ func (r *DockerRunner) InterruptLive(channelID string) error {
 	return s.write(interruptLine)
 }
 
+// StopLiveTask stops the background task taskID of the channel's live
+// session; the process reports the set without it once it stopped.
+func (r *DockerRunner) StopLiveTask(channelID, taskID string) error {
+	s := r.liveSession(channelID)
+	if s == nil {
+		return ErrNoLiveSession
+	}
+	s.mu.Lock()
+	found := slices.ContainsFunc(s.background, func(t agent.BackgroundTask) bool { return t.ID == taskID })
+	s.mu.Unlock()
+	if !found {
+		return ErrNoLiveTask
+	}
+	return s.write(stopTaskLine(taskID))
+}
+
+// stopTaskLine is the stream-json control request that stops the
+// background task taskID.
+func stopTaskLine(taskID string) []byte {
+	line, _ := json.Marshal(map[string]any{
+		"type":       "control_request",
+		"request_id": "loop-stop-task-" + taskID,
+		"request":    map[string]any{"subtype": "stop_task", "task_id": taskID},
+	})
+	return append(line, '\n')
+}
+
 // LiveChannels lists the channels with a live session.
 func (r *DockerRunner) LiveChannels() []string {
 	r.liveMu.Lock()
@@ -446,7 +479,7 @@ func (r *DockerRunner) liveIdleFired(s *liveSession, gen uint64) {
 		s.mu.Unlock()
 		return
 	}
-	if s.turn != nil || s.background != "" {
+	if s.turn != nil || len(s.background) > 0 {
 		r.armLiveIdle(s)
 		s.mu.Unlock()
 		return
@@ -487,15 +520,7 @@ func (r *DockerRunner) runLive(ctx context.Context, req *agent.AgentRequest) (re
 	}
 
 	turn := &liveTurn{
-		cb: streamCallbacks{
-			onTurn:       req.OnTurn,
-			onToolUse:    req.OnToolUse,
-			onToolUseRaw: req.OnToolUseRaw,
-			onActivity:   req.OnActivity,
-			onThinking:   req.OnThinking,
-			onToolResult: req.OnToolResult,
-			onSession:    req.OnSession,
-		},
+		cb:     requestCallbacks(req),
 		result: make(chan liveOutcome, 1),
 	}
 	if err := r.claimLiveTurn(ctx, s, turn); err != nil {
@@ -688,11 +713,23 @@ func (r *DockerRunner) liveCallbacks(s *liveSession) streamCallbacks {
 				c.onToolResult(id, out, isErr)
 			}
 		},
+		onBackgroundTasks: func(tasks []agent.BackgroundTask) {
+			s.mu.Lock()
+			s.background = tasks
+			turn := s.turn
+			s.mu.Unlock()
+			if turn != nil {
+				if turn.cb.onBackgroundTasks != nil {
+					turn.cb.onBackgroundTasks(tasks)
+				}
+				return
+			}
+			if s.hooks.BackgroundTasks != nil {
+				s.hooks.BackgroundTasks(tasks)
+			}
+		},
 		onActivity: func(activity, detail string) {
 			s.mu.Lock()
-			if activity == "background_tasks" {
-				s.background = detail
-			}
 			turn := s.turn
 			s.mu.Unlock()
 			if turn != nil {
@@ -729,15 +766,7 @@ func (r *DockerRunner) beginOwnTurn(s *liveSession, started bool) *liveTurn {
 	s.mu.Unlock()
 	if s.hooks.BeginTurn != nil {
 		if req, done := s.hooks.BeginTurn(); req != nil {
-			turn.cb = streamCallbacks{
-				onTurn:       req.OnTurn,
-				onToolUse:    req.OnToolUse,
-				onToolUseRaw: req.OnToolUseRaw,
-				onActivity:   req.OnActivity,
-				onThinking:   req.OnThinking,
-				onToolResult: req.OnToolResult,
-				onSession:    req.OnSession,
-			}
+			turn.cb = requestCallbacks(req)
 			turn.done = done
 		}
 	}

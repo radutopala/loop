@@ -1,3 +1,4 @@
+import type { BackgroundTask } from "../types";
 import { apiFetch, getApiUrl } from "./api";
 
 /** The channel's live session: one claude process that takes its chat turns
@@ -12,6 +13,7 @@ export interface LiveStatus {
   session_id?: string;
   busy: boolean;
   background?: string;
+  background_tasks?: BackgroundTask[];
   reason?: string;
 }
 
@@ -33,4 +35,10 @@ export async function warmLive(channelId: string): Promise<boolean> {
   if (!res.ok) throw new Error(`Failed to start the live session: ${res.statusText}`);
   const body: { started: boolean } = await res.json();
   return body.started;
+}
+
+/** stopLiveTask stops one background task of the channel's live session. */
+export async function stopLiveTask(channelId: string, taskId: string): Promise<void> {
+  const res = await apiFetch(`${liveUrl(channelId)}/tasks/${encodeURIComponent(taskId)}/stop`, { method: "POST" });
+  if (!res.ok) throw new Error(`Failed to stop the background task: ${res.statusText}`);
 }

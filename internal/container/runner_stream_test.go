@@ -449,9 +449,11 @@ func TestScanStreamJSONOnActivity(t *testing.T) {
 {"type":"result","result":"CI passed.","session_id":"s1","is_error":false}
 `
 		var events []string
+		var sets [][]agent.BackgroundTask
 		cb := streamCallbacks{
-			onActivity: func(activity, detail string) {
-				events = append(events, activity+":"+detail)
+			onBackgroundTasks: func(tasks []agent.BackgroundTask) {
+				sets = append(sets, tasks)
+				events = append(events, "background_tasks:"+agent.BackgroundSummary(tasks))
 			},
 			onTurn: func(text string, _ agent.TurnRef) {
 				events = append(events, "turn:"+text)
@@ -468,6 +470,29 @@ func TestScanStreamJSONOnActivity(t *testing.T) {
 			"turn:CI passed.",
 			"background_tasks:1 background task",
 		}, events, "a task started mid-turn is reported at once; an empty set clears it")
+		require.Len(t, sets, 4)
+		first := sets[0][0]
+		require.Equal(t, "b1", first.ID)
+		require.Equal(t, "local_bash", first.Type)
+		require.False(t, first.StartedAt.IsZero())
+		require.Equal(t, first.StartedAt, sets[1][0].StartedAt, "a task keeps the time it was first seen")
+		require.False(t, sets[1][1].StartedAt.Before(first.StartedAt))
+		require.Empty(t, sets[2])
+		require.Equal(t, "b3", sets[3][0].ID)
+	})
+
+	t.Run("background tasks without an id get each event's time", func(t *testing.T) {
+		input := `{"type":"system","subtype":"background_tasks_changed","tasks":[{"description":"a"}]}
+{"type":"system","subtype":"background_tasks_changed","tasks":[{"description":"a"}]}
+{"type":"result","result":"ok"}
+`
+		var sets [][]agent.BackgroundTask
+		cb := streamCallbacks{onBackgroundTasks: func(tasks []agent.BackgroundTask) { sets = append(sets, tasks) }}
+		_, err := scanStreamJSON(strings.NewReader(input), cb)
+		require.NoError(t, err)
+		require.Len(t, sets, 2)
+		require.Empty(t, sets[0][0].ID)
+		require.False(t, sets[1][0].StartedAt.Before(sets[0][0].StartedAt))
 	})
 
 	t.Run("api_retry emits an activity with attempt and backoff", func(t *testing.T) {

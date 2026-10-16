@@ -196,6 +196,19 @@ export interface AgentActivityData {
     | "image_ready";
   model?: string;
   description?: string;
+  /** On a background_tasks activity: the run's background tasks, all of
+   *  them; none once the last one ended. */
+  tasks?: BackgroundTask[];
+}
+
+/** A task a run's claude process runs in the background: a shell command, a
+ *  Monitor, a subagent or a workflow. started_at is when it was first
+ *  reported running. */
+export interface BackgroundTask {
+  id: string;
+  type?: string;
+  description?: string;
+  started_at: string;
 }
 
 export interface AskUserOption {

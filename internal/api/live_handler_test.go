@@ -28,6 +28,10 @@ func (m *mockLiveSessions) EndLiveSession(channelID, reason string) error {
 	return m.Called(channelID, reason).Error(0)
 }
 
+func (m *mockLiveSessions) StopLiveTask(channelID, taskID string) error {
+	return m.Called(channelID, taskID).Error(0)
+}
+
 func (m *mockLiveSessions) LiveSession(ctx context.Context, channelID string) orchestrator.LiveStatus {
 	return m.Called(ctx, channelID).Get(0).(orchestrator.LiveStatus)
 }
@@ -58,6 +62,7 @@ func (s *ServerSuite) TestLiveRoutesNotConfigured() {
 		{http.MethodGet, "/api/channels/ch-1/live", ""},
 		{http.MethodPost, "/api/channels/ch-1/live", ""},
 		{http.MethodDelete, "/api/channels/ch-1/live", ""},
+		{http.MethodPost, "/api/channels/ch-1/live/tasks/b1/stop", ""},
 		{http.MethodPost, "/api/channels/ch-1/side-chats", `{"mode":"fork"}`},
 		{http.MethodGet, "/api/channels/ch-1/side-chats", ""},
 		{http.MethodDelete, "/api/side-chats/side-1", ""},
@@ -131,6 +136,31 @@ func (s *ServerSuite) TestStopLive() {
 			live.On("EndLiveSession", "ch-1", "stopped").Return(tc.err)
 
 			rec := s.testRequest(http.MethodDelete, "/api/channels/ch-1/live", "")
+			require.Equal(s.T(), tc.want, rec.Code)
+			live.AssertExpectations(s.T())
+		})
+	}
+}
+
+func (s *ServerSuite) TestStopLiveTask() {
+	tests := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{name: "stopped", want: http.StatusNoContent},
+		{name: "no session", err: container.ErrNoLiveSession, want: http.StatusNotFound},
+		{name: "no task", err: container.ErrNoLiveTask, want: http.StatusNotFound},
+		{name: "unavailable", err: orchestrator.ErrLiveUnavailable, want: http.StatusServiceUnavailable},
+		{name: "fails", err: errors.New("boom"), want: http.StatusInternalServerError},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			live := s.useLive()
+			live.On("StopLiveTask", "ch-1", "b1").Return(tc.err)
+
+			rec := s.testRequest(http.MethodPost, "/api/channels/ch-1/live/tasks/b1/stop", "")
 			require.Equal(s.T(), tc.want, rec.Code)
 			live.AssertExpectations(s.T())
 		})

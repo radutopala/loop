@@ -36,6 +36,7 @@ var ErrLiveUnavailable = errors.New("live sessions are not available")
 type LiveRunner interface {
 	StartLive(ctx context.Context, req *agent.AgentRequest, hooks agent.LiveHooks) error
 	StopLive(channelID, reason string) error
+	StopLiveTask(channelID, taskID string) error
 	InterruptLive(channelID string) error
 	LiveInfo(channelID string) (agent.LiveInfo, bool)
 	LiveChannels() []string
@@ -74,6 +75,15 @@ func (o *Orchestrator) SweepLiveSessions(ctx context.Context) {
 			_ = o.live.StopLive(channelID, "deleted")
 		}
 	}
+}
+
+// StopLiveTask stops the background task taskID of the channel's live
+// session.
+func (o *Orchestrator) StopLiveTask(channelID, taskID string) error {
+	if o.live == nil {
+		return ErrLiveUnavailable
+	}
+	return o.live.StopLiveTask(channelID, taskID)
 }
 
 // LiveSession describes the channel's live session, and whether its chat
@@ -205,6 +215,11 @@ func (o *Orchestrator) liveHooks(channelID string) agent.LiveHooks {
 				o.events.BroadcastAgentActivity(channelID, activityData(activity, detail))
 			}
 		},
+		BackgroundTasks: func(tasks []agent.BackgroundTask) {
+			if o.events != nil {
+				o.events.BroadcastAgentActivity(channelID, backgroundData(tasks))
+			}
+		},
 		Ended: func(reason string) {
 			o.logger.Info("live session ended", "channel_id", channelID, "reason", reason)
 			o.publishLive(channelID, LiveStatus{LiveInfo: agent.LiveInfo{ChannelID: channelID}, Reason: reason})
@@ -317,4 +332,13 @@ func activityData(activity, detail string) events.AgentActivityEventData {
 		data.Description = detail
 	}
 	return data
+}
+
+// backgroundData is the agent.activity payload of a run's background tasks.
+func backgroundData(tasks []agent.BackgroundTask) events.AgentActivityEventData {
+	return events.AgentActivityEventData{
+		Activity:    "background_tasks",
+		Description: agent.BackgroundSummary(tasks),
+		Tasks:       tasks,
+	}
 }

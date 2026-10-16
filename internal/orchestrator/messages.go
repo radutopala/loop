@@ -702,6 +702,9 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 			}
 			o.events.BroadcastAgentActivity(msg.ChannelID, data)
 		}
+		req.OnBackgroundTasks = func(tasks []agent.BackgroundTask) {
+			o.events.BroadcastAgentActivity(msg.ChannelID, backgroundData(tasks))
+		}
 	}
 
 	if o.events != nil {

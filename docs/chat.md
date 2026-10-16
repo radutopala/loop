@@ -237,7 +237,7 @@ While the agent is running, activity events are shown between the last message a
 
 Activity text is truncated to **100 characters** maximum with "..." appended.
 
-Each activity replaces the one before, except background tasks. While the run waits on tasks running in the background (`background_tasks`), they get a line of their own, e.g. "Waiting on 2 background tasks: watch CI, build image". Other activity doesn't replace it; it changes as tasks start and finish, and goes once none are left or the run ends.
+Each activity replaces the one before. Tasks running in the background (`background_tasks`) show above the composer instead, as [monitors](#monitors) do: a pill per task with its kind (Shell, Agent, Workflow…), what it does and how long it has run, ticking each second. They change as tasks start and finish, and go once none are left, or, for a one-shot run, when the run ends. In a [live session](#live-sessions) each pill has a **Stop** button, which stops that task alone (see [`POST /api/channels/{id}/live/tasks/{task_id}/stop`](api.md#post-apichannelsidlivetaskstask_idstop)). Claude reports no start times, so a task's timer starts when Loop first sees it running.
 
 ### Tool Use Indicator
 
@@ -854,7 +854,7 @@ A chat's turns run in a live session: one Claude Code process, in its own Docker
 
 ### Live status
 
-The footer's infinity icon shows the session: animated during a turn, solid in the theme's accent color while a live session waits idle between turns, and dimmed when none is running (hover it for which). After "Running interactively…" the footer adds the background tasks the session waits on (`· waiting on 1 background task: watch CI`), and when the session ends for a reason worth knowing, why, e.g. "· Session ended: stopped for a scheduled task". A session that stopped after being idle, or was stopped through the API, shows only the dimmed icon. It follows the [`live.status`](events.md#livestatus) event and is fetched from [`GET /api/channels/{id}/live`](api.md#get-apichannelsidlive) on open and on each reconnect.
+The footer's infinity icon shows the session: animated during a turn, solid in the theme's accent color while a live session waits idle between turns, and dimmed when none is running (hover it for which). The background tasks the session waits on show as pills above the composer (see [Activity](#agent-activity-indicators)), and when the session ends for a reason worth knowing, a line there says why, e.g. "Session ended: stopped for a scheduled task". A session that stopped after being idle, or was stopped through the API, shows only the dimmed icon. It follows the [`live.status`](events.md#livestatus) event and is fetched from [`GET /api/channels/{id}/live`](api.md#get-apichannelsidlive) on open and on each reconnect.
 
 ### Side chats
 

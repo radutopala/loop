@@ -973,7 +973,7 @@ Owner only. The channel's [live session](chat.md#live-sessions), and whether its
 
 **Response (200):**
 ```json
-{ "running": true, "enabled": true, "channel_id": "ch1", "started_at": "2026-01-02T03:04:05Z", "session_id": "0a1b2c3d-…", "busy": false, "background": "1 background task: watch CI" }
+{ "running": true, "enabled": true, "channel_id": "ch1", "started_at": "2026-01-02T03:04:05Z", "session_id": "0a1b2c3d-…", "busy": false, "background": "1 background task: watch CI", "background_tasks": [{ "id": "b1x2", "type": "local_bash", "description": "watch CI", "started_at": "2026-01-02T03:04:06Z" }] }
 ```
 
 Fields are as in the [`live.status`](events.md#livestatus) event, plus `enabled`: whether the channel's plain chat turns run live (`live_sessions` and `live_session_platforms` allow its platform, and it isn't a hidden learn or explain thread). With no session running, it is `{"running": false, "busy": false}` plus `enabled`.
@@ -1004,6 +1004,16 @@ Owner only. Stop the channel's live session, with reason `stopped`. Its Claude s
 **Response:** `204 No Content`.
 
 **Errors:** `404` if the channel has no live session. `501` if live sessions are not configured.
+
+---
+
+### `POST /api/channels/{id}/live/tasks/{task_id}/stop`
+
+Owner only. Stop one background task of the channel's live session: a shell command, a `Monitor`, a subagent or a workflow, by the `id` its [`background_tasks`](events.md#agentactivity) carry. Claude stops it and reports the tasks left, which ends its pill above the composer. The session and its turn, if one runs, go on.
+
+**Response:** `204 No Content`.
+
+**Errors:** `404` if the channel has no live session, or the session runs no background task with that id. `503` if no live runner is set up. `501` if live sessions are not configured.
 
 ---
 

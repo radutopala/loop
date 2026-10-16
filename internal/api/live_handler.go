@@ -21,6 +21,7 @@ import (
 // implements it.
 type LiveSessions interface {
 	EndLiveSession(channelID, reason string) error
+	StopLiveTask(channelID, taskID string) error
 	LiveSession(ctx context.Context, channelID string) orchestrator.LiveStatus
 	SweepLiveSessions(ctx context.Context)
 	WarmLiveSession(ctx context.Context, channelID, authorID string) (bool, error)
@@ -43,6 +44,7 @@ func (s *Server) registerLiveRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/channels/{id}/live", s.handleGetLive)
 	mux.HandleFunc("POST /api/channels/{id}/live", s.handleWarmLive)
 	mux.HandleFunc("DELETE /api/channels/{id}/live", s.handleStopLive)
+	mux.HandleFunc("POST /api/channels/{id}/live/tasks/{task_id}/stop", s.handleStopLiveTask)
 	mux.HandleFunc("POST /api/channels/{id}/side-chats", s.handleCreateSideChat)
 	mux.HandleFunc("GET /api/channels/{id}/side-chats", s.handleListSideChats)
 	mux.HandleFunc("DELETE /api/side-chats/{id}", s.handleDeleteSideChat)
@@ -62,6 +64,24 @@ func (s *Server) handleStopLive(w http.ResponseWriter, r *http.Request) {
 	switch err := s.live.EndLiveSession(r.PathValue("id"), "stopped"); {
 	case errors.Is(err, container.ErrNoLiveSession):
 		http.Error(w, err.Error(), http.StatusNotFound)
+	case err != nil:
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	default:
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// handleStopLiveTask stops one background task of the channel's live
+// session.
+func (s *Server) handleStopLiveTask(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.live, "live sessions not configured") {
+		return
+	}
+	switch err := s.live.StopLiveTask(r.PathValue("id"), r.PathValue("task_id")); {
+	case errors.Is(err, container.ErrNoLiveSession), errors.Is(err, container.ErrNoLiveTask):
+		http.Error(w, err.Error(), http.StatusNotFound)
+	case errors.Is(err, orchestrator.ErrLiveUnavailable):
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 	case err != nil:
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	default:

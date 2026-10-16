@@ -557,23 +557,23 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 				IsError:   isError,
 			})
 		}
+		activityTarget := func() string {
+			if threadID == "" {
+				return task.ChannelID
+			}
+			return threadID
+		}
 		req.OnActivity = func(activity, detail string) {
-			targetID := threadID
-			if targetID == "" {
-				targetID = task.ChannelID
-			}
-			data := events.AgentActivityEventData{Activity: activity}
-			if activity == "model" {
-				data.Model = detail
-			} else {
-				data.Description = detail
-			}
+			targetID := activityTarget()
 			if activity == "compacting" {
 				storeAgentEvent(ctx, e.store, resolveTargetChatID(targetID), targetID, &db.Message{
 					Kind: db.MessageKindCompacting,
 				}, e.logger.Warn)
 			}
-			e.events.BroadcastAgentActivity(targetID, data)
+			e.events.BroadcastAgentActivity(targetID, activityData(activity, detail))
+		}
+		req.OnBackgroundTasks = func(tasks []agent.BackgroundTask) {
+			e.events.BroadcastAgentActivity(activityTarget(), backgroundData(tasks))
 		}
 	}
 

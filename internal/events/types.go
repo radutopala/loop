@@ -3,6 +3,7 @@ package events
 import (
 	"time"
 
+	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/db"
 )
 
@@ -175,11 +176,15 @@ type ToolResultEventData struct {
 }
 
 // AgentActivityEventData is the payload for agent.activity events.
-// Activity can be "model", "subagent_started", "subagent_progress", "compacting".
+// Activity can be "model", "subagent_started", "subagent_progress",
+// "compacting" or "background_tasks".
 type AgentActivityEventData struct {
 	Activity    string `json:"activity"`
 	Model       string `json:"model,omitempty"`
 	Description string `json:"description,omitempty"`
+	// Tasks are the run's background tasks, on a "background_tasks"
+	// activity: all of them, none once the last one ended.
+	Tasks []agent.BackgroundTask `json:"tasks,omitempty"`
 }
 
 // AskUserQuestionEventData is the payload for agent.ask_user events.

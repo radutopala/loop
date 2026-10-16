@@ -76,3 +76,21 @@ func (s *TypesSuite) TestBuildPromptSessionWithMessages() {
 	}
 	require.Equal(s.T(), "latest", req.BuildPrompt())
 }
+
+func (s *TypesSuite) TestBackgroundSummary() {
+	tests := []struct {
+		name  string
+		tasks []BackgroundTask
+		want  string
+	}{
+		{name: "none", want: ""},
+		{name: "one without description", tasks: []BackgroundTask{{ID: "b1"}}, want: "1 background task"},
+		{name: "one", tasks: []BackgroundTask{{ID: "b1", Description: "watch CI"}}, want: "1 background task: watch CI"},
+		{name: "several, some described", tasks: []BackgroundTask{{Description: "a"}, {}, {Description: "b"}}, want: "3 background tasks: a, b"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			require.Equal(s.T(), tt.want, BackgroundSummary(tt.tasks))
+		})
+	}
+}

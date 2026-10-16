@@ -8,6 +8,7 @@ import type {
   AgentStatusData,
   AgentTasksData,
   AskUserQuestionData,
+  BackgroundTask,
   ExitPlanModeData,
   GateApprovalRequestedData,
   GateApprovalResolvedData,
@@ -32,7 +33,7 @@ export interface ActiveChatState {
    * CI"; null when none are running. Kept apart from agentActivity, which
    * each new activity replaces, so they stay in view until they finish.
    */
-  backgroundTasks: string | null;
+  backgroundTasks: BackgroundTask[] | null;
   askUserQuestions: AskUserQuestionData | null;
   exitPlanRequest: ExitPlanModeData | null;
   agentTasks: AgentTasksData | null;
@@ -953,7 +954,7 @@ export function applyEvent(state: ActiveChatState, event: WSEvent): void {
     }
     case "agent.activity": {
       const data = event.data as AgentActivityData;
-      if (data.activity === "background_tasks") state.backgroundTasks = data.description || null;
+      if (data.activity === "background_tasks") state.backgroundTasks = data.tasks?.length ? data.tasks : null;
       else state.agentActivity = data;
       break;
     }
