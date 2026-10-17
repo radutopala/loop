@@ -520,6 +520,33 @@ func (s *OrchestratorSuite) TestBeginLiveTurnRuns() {
 	s.store.AssertExpectations(s.T())
 }
 
+// A turn that ends answering nothing completes without posting a message,
+// and frees the channel for the queued one.
+func (s *OrchestratorSuite) TestBeginLiveTurnAnswersNothing() {
+	lr, _ := s.withLive()
+	hooks := s.startedHooks(lr)
+	ev := new(MockEventBroadcaster)
+	s.orch.SetEventBroadcaster(ev)
+	ev.On("BroadcastAgentStatus", "ch-1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+		return d.Status == "running" && d.Trigger == "live"
+	})).Once()
+	ev.On("BroadcastAgentStatus", "ch-1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+		return d.Status == "completed" && d.Trigger == "live"
+	})).Once()
+	s.store.On("UpdateSessionID", mock.Anything, "ch-1", "sess-1").Return(nil).Once()
+	s.store.On("MarkMessagesProcessed", mock.Anything, mock.Anything).Return(nil).Once()
+
+	req, done := hooks.BeginTurn()
+	require.NotNil(s.T(), req)
+	done(&agent.AgentResponse{SessionID: "sess-1"}, nil)
+	s.orch.drainWG.Wait()
+
+	require.True(s.T(), threadLockFree(&s.orch.channelLocks, "ch-1"), "released once the turn ends")
+	s.bot.AssertNotCalled(s.T(), "SendMessage", mock.Anything, mock.Anything)
+	ev.AssertExpectations(s.T())
+	s.store.AssertExpectations(s.T())
+}
+
 // A failed turn is reported as a failed run of the channel.
 func (s *OrchestratorSuite) TestBeginLiveTurnFails() {
 	tests := []struct {

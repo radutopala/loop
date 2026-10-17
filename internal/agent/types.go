@@ -120,7 +120,8 @@ type AgentRequest struct {
 type LiveHooks struct {
 	// BeginTurn is called when the process starts a turn by itself. The
 	// returned request's callbacks get the turn's events, and done gets its
-	// outcome.
+	// outcome. A nil request leaves the turn unstreamed; done still gets
+	// the outcome.
 	BeginTurn func() (req *AgentRequest, done func(*AgentResponse, error))
 	// Activity gets the activity reported while no turn runs.
 	Activity func(activity, detail string)

@@ -329,13 +329,33 @@ func (r *DockerRunner) LiveInfo(channelID string) (agent.LiveInfo, bool) {
 }
 
 // InterruptLive stops the turn the channel's live session runs, if any. The
-// process lives on.
+// process lives on, unless a turn it started by itself is still running
+// liveInterruptGrace later: nothing else waits for that turn's result, so
+// a process that doesn't answer the interrupt would hold the channel.
 func (r *DockerRunner) InterruptLive(channelID string) error {
 	s := r.liveSession(channelID)
 	if s == nil {
 		return ErrNoLiveSession
 	}
-	return s.write(interruptLine)
+	if err := s.write(interruptLine); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	turn := s.turn
+	s.mu.Unlock()
+	if turn == nil || turn.result != nil {
+		return nil
+	}
+	r.afterFunc(liveInterruptGrace, func() {
+		s.mu.Lock()
+		stuck := s.turn == turn
+		s.mu.Unlock()
+		if stuck {
+			r.endLive(s, "interrupt timed out")
+			r.stopLiveContainer(s.containerID)
+		}
+	})
+	return nil
 }
 
 // StopLiveTask stops the background task taskID of the channel's live
@@ -660,11 +680,21 @@ func (r *DockerRunner) readLive(s *liveSession) {
 			return
 		}
 		res := st.dispatch(line, cb)
-		if res == nil || res.flush() {
+		if res == nil || (res.flush() && !r.ownTurnRunning(s)) {
 			continue
 		}
 		r.liveResult(s, res, &st)
 	}
+}
+
+// ownTurnRunning reports whether the running turn is one the process
+// started by itself. A flush result ends such a turn: the process opened it
+// with an "init" while it drained a background-task notification, and
+// nothing else will end it.
+func (r *DockerRunner) ownTurnRunning(s *liveSession) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.turn != nil && s.turn.result == nil
 }
 
 // liveCallbacks routes the stream's events to the running turn's callbacks;
@@ -765,10 +795,13 @@ func (r *DockerRunner) beginOwnTurn(s *liveSession, started bool) *liveTurn {
 	s.used = true
 	s.mu.Unlock()
 	if s.hooks.BeginTurn != nil {
-		if req, done := s.hooks.BeginTurn(); req != nil {
+		// Without a request (the channel is busy) the turn goes unstreamed,
+		// and done still gets its answer.
+		req, done := s.hooks.BeginTurn()
+		if req != nil {
 			turn.cb = requestCallbacks(req)
-			turn.done = done
 		}
+		turn.done = done
 	}
 	s.mu.Lock()
 	s.turn = turn

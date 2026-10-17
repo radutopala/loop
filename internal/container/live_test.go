@@ -771,6 +771,21 @@ func (s *RunnerSuite) TestLiveOwnTurns() {
 	require.NoError(s.T(), got.err)
 	require.Equal(s.T(), "finished", got.resp.Response)
 
+	// One the process opens with an "init" while it drains a notification
+	// ends with the flush result, which answers nothing.
+	proc.emit(s.T(),
+		`{"type":"system","subtype":"init"}`,
+		`{"type":"result","origin":{"kind":"task-notification"},"num_turns":0,"session_id":"sess-1"}`,
+	)
+	waitFor(s.T(), log.begun)
+	got = waitFor(s.T(), log.done)
+	require.NoError(s.T(), got.err)
+	require.Empty(s.T(), got.resp.Response)
+	require.Eventually(s.T(), func() bool {
+		info, _ := s.runner.LiveInfo("ch-1")
+		return !info.Busy
+	}, 5*time.Second, time.Millisecond)
+
 	// One that comes without an "init", after a flush result that answers
 	// none.
 	proc.emit(s.T(),
@@ -817,11 +832,20 @@ func (s *RunnerSuite) TestLiveOwnTurns() {
 
 func (s *RunnerSuite) TestLiveOwnTurnsUnreported() {
 	tests := []struct {
-		name  string
-		hooks func(log *liveHookLog) agent.LiveHooks
+		name string
+		// answered is set when done still gets the unstreamed turn's answer.
+		answered bool
+		hooks    func(log *liveHookLog) agent.LiveHooks
 	}{
 		{name: "no hooks", hooks: func(*liveHookLog) agent.LiveHooks { return agent.LiveHooks{} }},
 		{name: "no request", hooks: func(log *liveHookLog) agent.LiveHooks { return log.hooks(nil) }},
+		{name: "busy channel", answered: true, hooks: func(log *liveHookLog) agent.LiveHooks {
+			hooks := log.hooks(nil)
+			hooks.BeginTurn = func() (*agent.AgentRequest, func(*agent.AgentResponse, error)) {
+				return nil, func(resp *agent.AgentResponse, err error) { log.done <- liveRun{resp, err} }
+			}
+			return hooks
+		}},
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
@@ -846,6 +870,9 @@ func (s *RunnerSuite) TestLiveOwnTurnsUnreported() {
 				`{"type":"result","result":"ok","num_turns":1}`)
 			require.NoError(s.T(), got.err)
 			require.Equal(s.T(), "ok", got.resp.Response)
+			if tc.answered {
+				require.Equal(s.T(), "r", waitFor(s.T(), log.done).resp.Response)
+			}
 			requireNone(s.T(), log.done)
 			require.NoError(s.T(), s.runner.StopLive("ch-1", "done"))
 		})
@@ -1043,4 +1070,71 @@ func (s *RunnerSuite) TestStartLiveWaitsForImageBuildAlone() {
 	waitFor(s.T(), created)
 	require.Equal(s.T(), [2]string{"image_ready", ""}, waitFor(s.T(), activities))
 	require.Equal(s.T(), []string{"ch-1"}, s.runner.LiveChannels())
+}
+
+// Stopping a turn the process started by itself gives the process
+// liveInterruptGrace to end it, then ends the session.
+func (s *RunnerSuite) TestLiveInterruptOwnTurn() {
+	tests := []struct {
+		name      string
+		answer    bool
+		wantEnded string
+	}{
+		{name: "the process ends the turn", answer: true},
+		{name: "the process is stuck", wantEnded: "interrupt timed out"},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			clock := s.setupLive(0)
+			log := newLiveHookLog()
+			turns := make(chan string, 4)
+			proc := newFakeLiveProc()
+			s.startLive(liveReq(nil), log.hooks(turns), "live-1", proc)
+
+			proc.emit(s.T(), `{"type":"system","subtype":"init"}`)
+			waitFor(s.T(), log.begun)
+			require.NoError(s.T(), s.runner.InterruptLive("ch-1"))
+			require.Equal(s.T(), string(interruptLine), waitFor(s.T(), proc.stdin))
+			grace := waitFor(s.T(), clock.armed)
+			require.Equal(s.T(), liveInterruptGrace, grace.d)
+
+			if tc.answer {
+				proc.emit(s.T(), `{"type":"result","subtype":"error_during_execution","is_error":true,"num_turns":1}`)
+				require.Error(s.T(), waitFor(s.T(), log.done).err)
+			}
+			grace.f()
+			if tc.wantEnded == "" {
+				requireNone(s.T(), log.ended)
+				s.client.AssertNotCalled(s.T(), "ContainerStop", mock.Anything, "live-1")
+				require.NoError(s.T(), s.runner.StopLive("ch-1", "done"))
+				return
+			}
+			require.Equal(s.T(), tc.wantEnded, waitFor(s.T(), log.ended))
+			require.ErrorIs(s.T(), waitFor(s.T(), log.done).err, errLiveEnded)
+			s.client.AssertCalled(s.T(), "ContainerStop", mock.Anything, "live-1")
+		})
+	}
+}
+
+// A turn given by a user line waits out its own interrupt (awaitLiveTurn),
+// and a process whose stdin is gone can't be interrupted.
+func (s *RunnerSuite) TestLiveInterruptNoGrace() {
+	clock := s.setupLive(0)
+	log := newLiveHookLog()
+	proc := newFakeLiveProc()
+	start := liveReq(nil)
+	s.startLive(start, log.hooks(nil), "live-1", proc)
+
+	run := s.goRun(context.Background(), withPrompt(start, "hi"))
+	waitFor(s.T(), proc.stdin)
+	require.NoError(s.T(), s.runner.InterruptLive("ch-1"))
+	require.Equal(s.T(), string(interruptLine), waitFor(s.T(), proc.stdin))
+	requireNone(s.T(), clock.armed)
+	proc.emit(s.T(), `{"type":"result","result":"ok","num_turns":1}`)
+	require.NoError(s.T(), waitFor(s.T(), run).err)
+
+	_ = proc.inR.CloseWithError(errors.New("gone"))
+	require.Error(s.T(), s.runner.InterruptLive("ch-1"))
+	require.NoError(s.T(), s.runner.StopLive("ch-1", "done"))
 }
