@@ -808,8 +808,10 @@ func (o *Orchestrator) deliverResponse(ctx context.Context, msg *bot.IncomingMes
 
 	// Skip final send/store/broadcast if it duplicates the last streamed turn
 	// (already stored and broadcast during streaming).
+	// An empty response (a live turn that ended answering nothing) has
+	// nothing to send.
 	isDuplicate := lastStreamedText != "" && resp.Response == lastStreamedText
-	if !isDuplicate {
+	if !isDuplicate && resp.Response != "" {
 		if err := o.bot.SendMessage(ctx, &bot.OutgoingMessage{
 			ChannelID:        msg.ChannelID,
 			Content:          resp.Response,
