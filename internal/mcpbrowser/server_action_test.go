@@ -83,7 +83,10 @@ func (s *ServerSuite) TestRunSuccess() {
 	require.NoError(s.T(), err)
 
 	cancel()
-	<-done
+	// The session can end before Run sees the cancel, so nil is fine too.
+	if err := <-done; err != nil {
+		require.ErrorIs(s.T(), err, context.Canceled)
+	}
 }
 
 // ==================== callAction ====================
