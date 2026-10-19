@@ -24,7 +24,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/moby/docker-image-spec v1.3.1
 	github.com/modelcontextprotocol/go-sdk v1.8.0
-	github.com/odvcencio/gotreesitter v0.55.1
+	github.com/odvcencio/gotreesitter v0.56.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/pmezard/go-difflib v1.0.0
 	github.com/radutopala/ticket v0.4.2

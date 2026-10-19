@@ -143,7 +143,11 @@ func (s *MCPServerSuite) TestRun() {
 	cancel()
 
 	select {
-	case <-runDone:
+	case err := <-runDone:
+		// The closed session can end Run before the cancel does.
+		if err != nil {
+			require.ErrorIs(s.T(), err, context.Canceled)
+		}
 	case <-time.After(2 * time.Second):
 		s.T().Fatal("Run did not return after ctx cancel + session close")
 	}

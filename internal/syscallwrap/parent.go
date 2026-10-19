@@ -187,7 +187,10 @@ func (a *app) runParent() error {
 	closeServer := func() {
 		_ = srv.Close()
 		cancelSrv()
-		go func() { <-serverErr }()
+		go func() {
+			err := <-serverErr
+			_ = err
+		}()
 		_ = uc.Close()
 	}
 
