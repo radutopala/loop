@@ -205,6 +205,33 @@ func (s *ServerSuite) TestEvents() {
 	require.Equal(s.T(), http.StatusNoContent, s.call(http.MethodPost, "/events", body).Code, "without Events the event is ignored")
 }
 
+func (s *ServerSuite) TestSwitches() {
+	var got []SwitchRequest
+	s.srv.Switches = map[string]SwitchFunc{
+		"mode": func(_ context.Context, req SwitchRequest) (SwitchState, error) {
+			got = append(got, req)
+			return SwitchState{On: req.On, Status: SwitchBusy, Title: "Starting"}, nil
+		},
+		"broken": func(context.Context, SwitchRequest) (SwitchState, error) {
+			return SwitchState{}, errors.New("no session")
+		},
+	}
+	s.h = s.srv.Handler()
+
+	w := s.call(http.MethodPost, "/switches/mode", `{"on":true,"thread_id":"th1"}`)
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	require.JSONEq(s.T(), `{"on":true,"status":"busy","title":"Starting"}`, w.Body.String())
+	require.Equal(s.T(), []SwitchRequest{{On: true, ThreadID: "th1"}}, got)
+
+	w = s.call(http.MethodPost, "/switches/broken", `{"on":true}`)
+	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
+	require.JSONEq(s.T(), `{"error":"no session"}`, w.Body.String())
+	require.Contains(s.T(), s.logs.String(), `msg="switch broken" err="no session"`)
+
+	require.Equal(s.T(), http.StatusBadRequest, s.call(http.MethodPost, "/switches/mode", `nope`).Code)
+	require.Equal(s.T(), http.StatusNotFound, s.call(http.MethodPost, "/switches/other", `{}`).Code)
+}
+
 func (s *ServerSuite) TestX() {
 	w := s.call(http.MethodPut, "/x/quizzes/3?q=1", `{"a":1}`)
 	require.Equal(s.T(), http.StatusOK, w.Code)

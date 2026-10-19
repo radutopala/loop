@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/orchestrator"
 	"github.com/radutopala/loop/internal/plugin"
 	"github.com/radutopala/loop/internal/plugin/proxy"
 	"github.com/radutopala/loop/internal/plugin/runtime"
@@ -15,7 +16,7 @@ import (
 // TestPluginEventTypes holds the events a manifest may subscribe to to
 // ones the hub sends.
 func (s *ServerSuite) TestPluginEventTypes() {
-	sent := []string{EventMessageCreated, EventAgentStatus, EventQualityScanned}
+	sent := []string{EventMessageCreated, EventAgentStatus, EventQualityScanned, orchestrator.EventLiveStatus, plugin.EventLiveSystem, plugin.EventSettingsChanged}
 	require.ElementsMatch(s.T(), sent, plugin.Events)
 }
 

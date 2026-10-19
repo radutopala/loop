@@ -53,6 +53,7 @@ type pluginStore interface {
 	install.ServiceStore
 	orchestrator.PluginRunStore
 	api.PluginBadgeStore
+	api.PluginSwitchStore
 }
 
 // plugins is the plugin system the daemon runs when plugins.enabled is set.

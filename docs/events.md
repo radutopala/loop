@@ -1119,6 +1119,28 @@ A [plugin](plugins.md) started an agent run with `POST /api/plugin/v1/runs`. `ch
 
 ---
 
+### `plugin.composer_switch`
+
+A plugin's [composer switch](plugins.md#composer-switches) changed in a chat: the owner turned it, or the plugin set or reset it. `channel_id` is the chat, a channel or one of its threads. The composer's pills follow it.
+
+**Payload schema:**
+
+```json
+{ "plugin_id": "demo", "switch_id": "mode", "on": true, "status": "ok", "title": "Mode is on" }
+```
+
+| Field       | Type   | Description |
+|-------------|--------|-------------|
+| `plugin_id` | string | The switch's plugin |
+| `switch_id` | string | The switch, as its manifest declares it |
+| `on`        | bool   | Whether it's on |
+| `status`    | string | `busy`, `ok`, `error`, or left out |
+| `title`     | string | Its tooltip, left out for the manifest's |
+
+**Scope:** Channel.
+
+---
+
 ## Broadcast Flow
 
 1. **Event source** calls a typed broadcast method (e.g., `BroadcastMessageCreated`).

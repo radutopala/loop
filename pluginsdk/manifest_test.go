@@ -35,7 +35,11 @@ func (s *ManifestSuite) TestParse() {
   "agents": [{ "id": "say", "read_only": true, "tools": ["echo"] }],
   "tools": [{ "name": "echo", "description": "Returns its input", "input_schema": { "type": "object" } }],
   "actions": [{ "id": "ping" }, { "id": "daily", "default_schedule": { "type": "cron", "schedule": "0 9 * * *", "enabled": true } }],
-  "ui": { "panels": [{ "id": "main", "label": "Echo", "entry": "ui/main/index.html", "singleton": true }] },
+  "live": { "control": ["set_mode"], "messages": ["mode_state"] },
+  "ui": {
+    "panels": [{ "id": "main", "label": "Echo", "entry": "ui/main/index.html", "singleton": true }],
+    "composer_switches": [{ "id": "mode", "label": "Mode", "icon": "ui/mode.svg", "title": "Turn the mode on" }],
+  },
   "resources": { "memory": "128m", "cpus": 0.5 },
   "unknown": "is ignored",
 }`))
@@ -48,11 +52,15 @@ func (s *ManifestSuite) TestParse() {
 			Commands: []CommandRule{{Commands: []string{"curl"}, ArgsPatterns: []string{"-o"}, Decision: "deny", Message: "no"}},
 			Files:    []FileRule{{Paths: []string{"/data/cache/**"}, Operations: []string{"delete"}, Decision: "deny"}},
 		},
-		Settings:  map[string]*Setting{"count": {Type: "integer", Minimum: &lo, Maximum: &hi, Default: float64(3), Items: &Setting{Type: "string"}}},
-		Agents:    []Agent{{ID: "say", ReadOnly: true, Tools: []string{"echo"}}},
-		Tools:     []Tool{{Name: "echo", Description: "Returns its input", InputSchema: json.RawMessage(`{ "type": "object" }`)}},
-		Actions:   []Action{{ID: "ping"}, {ID: "daily", DefaultSchedule: &Schedule{Type: "cron", Schedule: "0 9 * * *", Enabled: true}}},
-		UI:        &UI{Panels: []Panel{{ID: "main", Label: "Echo", Entry: "ui/main/index.html", Singleton: true}}},
+		Settings: map[string]*Setting{"count": {Type: "integer", Minimum: &lo, Maximum: &hi, Default: float64(3), Items: &Setting{Type: "string"}}},
+		Agents:   []Agent{{ID: "say", ReadOnly: true, Tools: []string{"echo"}}},
+		Tools:    []Tool{{Name: "echo", Description: "Returns its input", InputSchema: json.RawMessage(`{ "type": "object" }`)}},
+		Actions:  []Action{{ID: "ping"}, {ID: "daily", DefaultSchedule: &Schedule{Type: "cron", Schedule: "0 9 * * *", Enabled: true}}},
+		Live:     &Live{Control: []string{"set_mode"}, Messages: []string{"mode_state"}},
+		UI: &UI{
+			Panels:           []Panel{{ID: "main", Label: "Echo", Entry: "ui/main/index.html", Singleton: true}},
+			ComposerSwitches: []ComposerSwitch{{ID: "mode", Label: "Mode", Icon: "ui/mode.svg", Title: "Turn the mode on"}},
+		},
 		Resources: &Resources{Memory: "128m", CPUs: 0.5},
 	}, m)
 }

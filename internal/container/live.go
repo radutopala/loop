@@ -41,6 +41,14 @@ var ErrNoLiveTask = errors.New("no such background task")
 // has a live session.
 var ErrLiveSessionRunning = errors.New("a live session is already running")
 
+// LiveControlError is what SendLiveControl returns when the process
+// answers a control request with an error.
+type LiveControlError struct {
+	Message string
+}
+
+func (e *LiveControlError) Error() string { return e.Message }
+
 // errLiveEnded is what a turn waiting on a live session gets when the
 // session ends before it could run.
 var errLiveEnded = errors.New("live session ended")
@@ -116,6 +124,10 @@ type liveSession struct {
 	used      bool
 	idleTimer stopper
 	idleGen   uint64
+	// controls are the control requests SendLiveControl waits on the
+	// answers of, by id; controlSeq numbers them.
+	controls   map[string]chan []byte
+	controlSeq int
 }
 
 // write sends one line to the process.
@@ -454,6 +466,10 @@ func (r *DockerRunner) closeLive(s *liveSession, reason string) bool {
 	if s.idleTimer != nil {
 		s.idleTimer.Stop()
 	}
+	for id, answer := range s.controls {
+		close(answer)
+		delete(s.controls, id)
+	}
 	s.mu.Unlock()
 
 	r.liveMu.Lock()
@@ -492,14 +508,15 @@ func (r *DockerRunner) armLiveIdle(s *liveSession) {
 }
 
 // liveIdleFired ends the session unless it was used since, or still runs a
-// turn or a background task: those count as use, so the countdown restarts.
+// turn or a background task, or is held (see HoldLive): those count as
+// use, so the countdown restarts.
 func (r *DockerRunner) liveIdleFired(s *liveSession, gen uint64) {
 	s.mu.Lock()
 	if s.closed || s.idleGen != gen {
 		s.mu.Unlock()
 		return
 	}
-	if s.turn != nil || len(s.background) > 0 {
+	if s.turn != nil || len(s.background) > 0 || r.liveHeld(s.channelID) {
 		r.armLiveIdle(s)
 		s.mu.Unlock()
 		return
@@ -664,6 +681,9 @@ func (r *DockerRunner) restartLive(ctx context.Context, s *liveSession, req *age
 		}
 		return nil, err
 	}
+	if s.hooks.Restarted != nil {
+		s.hooks.Restarted(reason)
+	}
 	return ns, nil
 }
 
@@ -710,6 +730,17 @@ func (r *DockerRunner) liveCallbacks(s *liveSession) streamCallbacks {
 	}
 	return streamCallbacks{
 		onTurnStart: func() { r.liveTurnStarted(s) },
+		onSystem: func(subtype string, line []byte) {
+			if s.hooks.System != nil {
+				s.hooks.System(subtype, line)
+			}
+		},
+		onControlResponse: s.controlAnswered,
+		onPrompt: func(text string) {
+			if s.hooks.Prompt != nil {
+				s.hooks.Prompt(text)
+			}
+		},
 		onSession: func(id string) {
 			s.mu.Lock()
 			s.sessionID = id
@@ -867,4 +898,134 @@ func (r *DockerRunner) liveStreamEnded(s *liveSession, err error) {
 	if turn != nil {
 		r.finishLiveTurn(s, turn, liveOutcome{err: errLiveEnded})
 	}
+}
+
+// SendLiveControl writes request, a stream-json control request's body, to
+// the channel's live session and returns the body of its answer. An answer
+// that is an error is a *LiveControlError; the session ending first is
+// ErrNoLiveSession.
+func (r *DockerRunner) SendLiveControl(ctx context.Context, channelID string, request json.RawMessage) (json.RawMessage, error) {
+	s := r.liveSession(channelID)
+	if s == nil {
+		return nil, ErrNoLiveSession
+	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil, ErrNoLiveSession
+	}
+	s.controlSeq++
+	id := fmt.Sprintf("loop-control-%d", s.controlSeq)
+	answer := make(chan []byte, 1)
+	if s.controls == nil {
+		s.controls = map[string]chan []byte{}
+	}
+	s.controls[id] = answer
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.controls, id)
+		s.mu.Unlock()
+	}()
+
+	line, err := json.Marshal(struct {
+		Type      string          `json:"type"`
+		RequestID string          `json:"request_id"`
+		Request   json.RawMessage `json:"request"`
+	}{"control_request", id, request})
+	if err != nil {
+		return nil, fmt.Errorf("encoding the control request: %w", err)
+	}
+	if err := s.write(append(line, '\n')); err != nil {
+		return nil, fmt.Errorf("writing the control request: %w", err)
+	}
+	select {
+	case got, ok := <-answer:
+		if !ok {
+			return nil, ErrNoLiveSession
+		}
+		return controlAnswer(got)
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// controlAnswer is the body of a control_response line, or its error.
+func controlAnswer(line []byte) (json.RawMessage, error) {
+	var evt struct {
+		Response struct {
+			Subtype  string          `json:"subtype"`
+			Response json.RawMessage `json:"response"`
+			Error    string          `json:"error"`
+		} `json:"response"`
+	}
+	if err := json.Unmarshal(line, &evt); err != nil {
+		return nil, fmt.Errorf("decoding the control response: %w", err)
+	}
+	if evt.Response.Subtype != "success" {
+		msg := evt.Response.Error
+		if msg == "" {
+			msg = "control request failed"
+		}
+		return nil, &LiveControlError{Message: msg}
+	}
+	if len(evt.Response.Response) == 0 {
+		return json.RawMessage(`{}`), nil
+	}
+	return evt.Response.Response, nil
+}
+
+// controlAnswered hands a control_response line to the SendLiveControl
+// waiting on it; answers no one waits on, such as an interrupt's, are
+// dropped.
+func (s *liveSession) controlAnswered(requestID string, line []byte) {
+	s.mu.Lock()
+	answer := s.controls[requestID]
+	delete(s.controls, requestID)
+	s.mu.Unlock()
+	if answer != nil {
+		answer <- line
+	}
+}
+
+// HoldLive keeps the channel's live session from ending idle while holder
+// holds it, or with on false lets go of holder's hold. A hold outlasts the
+// session's process: one started while the channel is held is held too.
+func (r *DockerRunner) HoldLive(channelID, holder string, on bool) {
+	r.liveHoldMu.Lock()
+	defer r.liveHoldMu.Unlock()
+	if !on {
+		delete(r.liveHolds[channelID], holder)
+		if len(r.liveHolds[channelID]) == 0 {
+			delete(r.liveHolds, channelID)
+		}
+		return
+	}
+	if r.liveHolds == nil {
+		r.liveHolds = map[string]map[string]bool{}
+	}
+	if r.liveHolds[channelID] == nil {
+		r.liveHolds[channelID] = map[string]bool{}
+	}
+	r.liveHolds[channelID][holder] = true
+}
+
+// LiveHolds returns the holders of each held channel, sorted.
+func (r *DockerRunner) LiveHolds() map[string][]string {
+	r.liveHoldMu.Lock()
+	defer r.liveHoldMu.Unlock()
+	out := make(map[string][]string, len(r.liveHolds))
+	for channelID, holders := range r.liveHolds {
+		for holder := range holders {
+			out[channelID] = append(out[channelID], holder)
+		}
+		slices.Sort(out[channelID])
+	}
+	return out
+}
+
+func (r *DockerRunner) liveHeld(channelID string) bool {
+	r.liveHoldMu.Lock()
+	defer r.liveHoldMu.Unlock()
+	return len(r.liveHolds[channelID]) > 0
 }

@@ -323,6 +323,15 @@ func (in *Installer) validate(dir string) (*plugin.Manifest, error) {
 				return nil, fmt.Errorf("card %q: entry %s is not in the image", c.ID, c.Entry)
 			}
 		}
+		for _, sw := range m.UI.ComposerSwitches {
+			fi, err := os.Stat(filepath.Join(dir, filepath.FromSlash(sw.Icon)))
+			if err != nil {
+				return nil, fmt.Errorf("composer switch %q: icon %s is not in the image", sw.ID, sw.Icon)
+			}
+			if fi.Size() > plugin.ComposerSwitchIconMax {
+				return nil, fmt.Errorf("composer switch %q: icon %s is over %d KB", sw.ID, sw.Icon, plugin.ComposerSwitchIconMax>>10)
+			}
+		}
 	}
 	if m.Loop != "" {
 		v, err := semver.NewVersion(in.loopVersion)

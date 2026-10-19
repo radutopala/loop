@@ -177,6 +177,58 @@ func (s *ClientSuite) TestWrites() {
 	require.Equal(s.T(), int64(7), id)
 	s.requireCall(http.MethodPost, "/cards", "")
 	require.JSONEq(s.T(), `{"card":"score","title":"Quiz","data":{"score":3}}`, s.body)
+
+	s.answer(http.StatusNoContent, "")
+	require.NoError(s.T(), s.client.SetSwitch(ctx, "mode", "th1", SwitchState{On: true, Status: SwitchOK, Title: "On"}))
+	s.requireCall(http.MethodPut, "/composer/switches/mode", "")
+	require.JSONEq(s.T(), `{"on":true,"status":"ok","title":"On","thread_id":"th1"}`, s.body)
+
+	require.NoError(s.T(), s.client.SetSwitch(ctx, "mode", "", SwitchState{}))
+	require.JSONEq(s.T(), `{"on":false}`, s.body)
+
+	require.NoError(s.T(), s.client.ResetSwitch(ctx, "mode", "th1"))
+	s.requireCall(http.MethodDelete, "/composer/switches/mode", "thread_id=th1")
+
+	require.NoError(s.T(), s.client.ResetSwitch(ctx, "mode", ""))
+	s.requireCall(http.MethodDelete, "/composer/switches/mode", "")
+
+	require.NoError(s.T(), s.client.HoldLive(ctx, "th1"))
+	s.requireCall(http.MethodPut, "/channel/live/hold", "thread_id=th1")
+
+	require.NoError(s.T(), s.client.ReleaseLive(ctx, ""))
+	s.requireCall(http.MethodDelete, "/channel/live/hold", "")
+}
+
+func (s *ClientSuite) TestLiveControl() {
+	tests := []struct {
+		name     string
+		timeout  time.Duration
+		threadID string
+		wantBody string
+		wantLeft time.Duration
+	}{
+		{name: "waits for the session", timeout: 20 * time.Second, wantBody: `{"request":{"subtype":"set_mode","on":true}}`, wantLeft: liveControlTimeout},
+		{name: "a longer timeout stays", timeout: time.Minute, threadID: "th1",
+			wantBody: `{"request":{"subtype":"set_mode","on":true},"thread_id":"th1"}`, wantLeft: time.Minute},
+		{name: "no timeout", wantBody: `{"request":{"subtype":"set_mode","on":true}}`},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			d := &deadlineDoer{next: s.client.HTTP}
+			s.client.HTTP, s.client.Timeout = d, tt.timeout
+			s.answer(http.StatusOK, `{"response":{"url":"https://x"}}`)
+			res, err := s.client.LiveControl(context.Background(), tt.threadID, map[string]any{"subtype": "set_mode", "on": true})
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), map[string]any{"url": "https://x"}, res)
+			s.requireCall(http.MethodPost, "/channel/live/control", "")
+			require.JSONEq(s.T(), tt.wantBody, s.body)
+			require.Equal(s.T(), tt.wantLeft != 0, d.set)
+			if d.set {
+				require.InDelta(s.T(), tt.wantLeft, d.left, float64(time.Second))
+			}
+		})
+	}
 }
 
 // deadlineDoer records how long the request had to run.
@@ -323,6 +375,13 @@ func (s *ClientSuite) TestErrors() {
 			call:    func() error { _, err := s.client.PostCard(ctx, "x", "", nil); return err },
 			wantErr: "POST /cards: Loop answered 400: no card",
 			status:  http.StatusBadRequest,
+		},
+		{
+			name:    "live control refused",
+			setup:   func() { s.answer(http.StatusConflict, "the chat has no live session") },
+			call:    func() error { _, err := s.client.LiveControl(ctx, "", nil); return err },
+			wantErr: "POST /channel/live/control: Loop answered 409: the chat has no live session",
+			status:  http.StatusConflict,
 		},
 		{
 			name:    "run refused",

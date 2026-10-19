@@ -11,6 +11,7 @@ import (
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/plugin"
+	"github.com/radutopala/loop/internal/plugin/runtime"
 )
 
 // pluginProject is what a channel's project config says about plugins.
@@ -74,23 +75,45 @@ func (s *Server) PluginsChanged() {
 
 // pluginConfigChanged follows a config write: the panes learn of the
 // plugins' enablement anew, the containers of the projects that stopped
-// enabling their plugin are stopped, the plugins' scheduled tasks follow
-// and their badges there are cleared.
+// enabling their plugin are stopped, the plugins' scheduled tasks follow,
+// what they show or hold there is cleared and the running containers learn
+// their settings anew.
 func (s *Server) pluginConfigChanged(ctx context.Context) {
 	if s.plugins == nil {
 		return
 	}
 	s.plugins.StopDisabled(ctx)
 	s.syncPluginSchedules(ctx)
-	s.prunePluginBadges(ctx)
+	s.prunePluginState(ctx)
+	if err := s.plugins.NotifySettings(ctx, s.pluginSettings); err != nil {
+		s.logger.Warn("telling plugins their settings", "error", err)
+	}
 	s.PluginsChanged()
 }
 
+// pluginSettings returns the settings of the plugin id, with manifest m,
+// in the project of the channel ch.
+func (s *Server) pluginSettings(ctx context.Context, id string, m *plugin.Manifest, ch runtime.Channel) (map[string]any, error) {
+	c, err := s.store.GetChannel(ctx, ch.ID)
+	if err != nil {
+		return nil, err
+	}
+	if c == nil {
+		return nil, fmt.Errorf("channel %s not found", ch.ID)
+	}
+	proj, err := s.pluginProject(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	settings, _ := proj.settings(m, id)
+	return settings, nil
+}
+
 // PluginsStopped follows the plugin service stopping containers, idle or
-// of projects that stopped enabling their plugin: the badges no longer
-// shown are cleared and the app learns of it.
+// of projects that stopped enabling their plugin: what plugins may no longer
+// show or hold is cleared and the app learns of it.
 func (s *Server) PluginsStopped() {
-	s.prunePluginBadges(context.Background())
+	s.prunePluginState(context.Background())
 	s.PluginsChanged()
 }
 

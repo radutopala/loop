@@ -1,4 +1,4 @@
-.PHONY: help build build-linux install test test-integration test-integration-browser test-integration-plugin test-integration-pluginsdk test-component test-runner-build test-runner-push bdd-serve lint lint-go lint-app sdk-gen sdk-gen-check coverage coverage-check codeql-download codeql codeql-js docker-build docs-build docs-serve docs-capture run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-test app-install app-build-binary app-dist-linux app-icons _sync-loop-overrides
+.PHONY: help build build-linux install test test-integration test-integration-browser test-integration-plugin test-integration-pluginsdk test-component test-runner-build test-runner-push bdd-serve lint lint-go lint-app sdk-gen sdk-gen-check coverage coverage-check codeql-download codeql codeql-js docker-build docs-build docs-serve docs-capture docs-architecture run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-test app-install app-build-binary app-dist-linux app-icons _sync-loop-overrides
 .DEFAULT_GOAL := help
 
 # Strip gate-child env inheritance when invoking make from inside a
@@ -146,6 +146,9 @@ docs-capture: ## Capture documentation screenshots/GIFs from @docs BDD scenarios
 docs-capture-section: ## Capture+record a single docs section for fast iteration, e.g. SECTION=git or SECTION=browser (tags: intro chat gate shortcuts git editor memory terminal git-panel browser sessions swarm canvas playground kanban workflows-tab quality multi-panel worktrees tasks workflows-panel settings outro)
 	@test -n "$(SECTION)" || { echo "Usage: make docs-capture-section SECTION=<name>"; exit 1; }
 	$(MAKE) test-component-bdd GODOG_TAGS=@docs-$(SECTION) LOOP_DOCS_CAPTURE=1 TEST_RUN=TestBDDFrontendFeatures
+
+docs-architecture: ## Regenerate the README's architecture diagram, docs/static/images/architecture.svg
+	go run scripts/gen-architecture-svg.go docs/static/images/architecture.svg
 
 docs-journey: ## Record the WHOLE walkthrough as one continuous take (single browser session, one start/stop) into docs/videos/journey.mp4 with a continuous soundtrack — no per-section stitching. Regenerates journey.feature from docs_capture.feature first.
 	go run scripts/gen-journey-feature.go test/component/features/frontend/docs_capture.feature test/component/features/frontend/journey.feature

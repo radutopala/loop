@@ -9,6 +9,14 @@ const (
 	Running RunStateStatus = "running"
 )
 
+// Defines values for SwitchUpdateStatus.
+const (
+	Busy  SwitchUpdateStatus = "busy"
+	Empty SwitchUpdateStatus = ""
+	Error SwitchUpdateStatus = "error"
+	Ok    SwitchUpdateStatus = "ok"
+)
+
 // Badge defines model for Badge.
 type Badge struct {
 	// Text The label, one line.
@@ -134,6 +142,21 @@ type Hotspots struct {
 	TotalFunctions int     `json:"total_functions"`
 }
 
+// LiveControl defines model for LiveControl.
+type LiveControl struct {
+	// Request The control request, such as {"subtype":"…", …}.
+	Request map[string]any `json:"request"`
+
+	// ThreadID A listed thread of the channel, for its chat rather than the channel's.
+	ThreadID string `json:"thread_id,omitempty"`
+}
+
+// LiveControlResponse defines model for LiveControlResponse.
+type LiveControlResponse struct {
+	// Response The process's response; {} when it has none.
+	Response map[string]any `json:"response"`
+}
+
 // Memory defines model for Memory.
 type Memory struct {
 	// Content The file's Markdown.
@@ -190,6 +213,24 @@ type RunState struct {
 // RunStateStatus defines model for RunState.Status.
 type RunStateStatus string
 
+// SwitchUpdate defines model for SwitchUpdate.
+type SwitchUpdate struct {
+	// On Whether the switch shows on.
+	On bool `json:"on"`
+
+	// Status What the plugin says of the switch; empty is none.
+	Status SwitchUpdateStatus `json:"status,omitempty"`
+
+	// ThreadID A listed thread of the channel, for its chat rather than the channel's.
+	ThreadID string `json:"thread_id,omitempty"`
+
+	// Title The tooltip.
+	Title string `json:"title,omitempty"`
+}
+
+// SwitchUpdateStatus What the plugin says of the switch; empty is none.
+type SwitchUpdateStatus string
+
 // Tree defines model for Tree.
 type Tree struct {
 	// Files Paths relative to the channel's dir, with forward slashes.
@@ -218,6 +259,9 @@ type UIReply struct {
 	Results []map[string]any `json:"results"`
 }
 
+// ThreadID defines model for ThreadID.
+type ThreadID = string
+
 // GetFileParams defines parameters for GetFile.
 type GetFileParams struct {
 	// Path The file's path, relative to the channel's dir.
@@ -236,6 +280,18 @@ type GetGitRecentParams struct {
 	Days int `form:"days,omitempty" json:"days,omitempty"`
 }
 
+// ReleaseLiveParams defines parameters for ReleaseLive.
+type ReleaseLiveParams struct {
+	// ThreadID A listed thread of the channel, for its chat rather than the channel's.
+	ThreadID ThreadID `form:"thread_id,omitempty" json:"thread_id,omitempty"`
+}
+
+// HoldLiveParams defines parameters for HoldLive.
+type HoldLiveParams struct {
+	// ThreadID A listed thread of the channel, for its chat rather than the channel's.
+	ThreadID ThreadID `form:"thread_id,omitempty" json:"thread_id,omitempty"`
+}
+
 // GetHotspotsParams defines parameters for GetHotspots.
 type GetHotspotsParams struct {
 	// Limit How many functions to return. More than 100 counts as 100.
@@ -251,11 +307,23 @@ type GetTreeParams struct {
 	Glob string `form:"glob,omitempty" json:"glob,omitempty"`
 }
 
+// ResetSwitchParams defines parameters for ResetSwitch.
+type ResetSwitchParams struct {
+	// ThreadID A listed thread of the channel, for its chat rather than the channel's.
+	ThreadID ThreadID `form:"thread_id,omitempty" json:"thread_id,omitempty"`
+}
+
 // SetBadgeJSONRequestBody defines body for SetBadge for application/json ContentType.
 type SetBadgeJSONRequestBody = Badge
 
 // PostCardJSONRequestBody defines body for PostCard for application/json ContentType.
 type PostCardJSONRequestBody = Card
+
+// LiveControlJSONRequestBody defines body for LiveControl for application/json ContentType.
+type LiveControlJSONRequestBody = LiveControl
+
+// SetSwitchJSONRequestBody defines body for SetSwitch for application/json ContentType.
+type SetSwitchJSONRequestBody = SwitchUpdate
 
 // SendEventJSONRequestBody defines body for SendEvent for application/json ContentType.
 type SendEventJSONRequestBody = Event

@@ -19,3 +19,9 @@ actions:
   - target: $.components.schemas.UIReply.properties.results.items
     update:
       x-go-type: map[string]any
+  - target: $.components.schemas.LiveControl.properties.request
+    update:
+      x-go-type: map[string]any
+  - target: $.components.schemas.LiveControlResponse.properties.response
+    update:
+      x-go-type: map[string]any

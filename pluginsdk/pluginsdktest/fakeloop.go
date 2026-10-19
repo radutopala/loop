@@ -51,8 +51,15 @@ type Config struct {
 	// histogram, which the hotspots answer carries; the fake fills in the
 	// rest.
 	Quality pluginsdk.Hotspots
-	// Threads are the channel's threads a UI command may open.
+	// Threads are the channel's listed threads: those a UI command may
+	// open, and whose chats a switch or live call may pick.
 	Threads []string
+	// NotLive makes the chats not run live: holding a session and sending
+	// it control requests answer 409.
+	NotLive bool
+	// LiveResponses are the live sessions' responses to control requests,
+	// by subtype; a subtype not there answers {}.
+	LiveResponses map[string]map[string]any
 }
 
 // Event is an event the plugin sent to its panels.
@@ -79,6 +86,14 @@ type Card struct {
 	Card  string
 	Title string
 	Data  json.RawMessage
+}
+
+// LiveControl is a control request the plugin sent to a chat's live
+// session.
+type LiveControl struct {
+	// ThreadID is the thread whose chat it was for; "" for the channel's.
+	ThreadID string
+	Request  map[string]any
 }
 
 // StartedRun is an agent run the plugin started. The fake runs no agent:
@@ -109,7 +124,13 @@ type FakeLoop struct {
 	uiCommands    []pluginsdk.UICommand
 	badge         *Badge
 	cards         []Card
+	switches      map[switchKey]pluginsdk.SwitchState
+	liveControls  []LiveControl
+	holds         map[string]bool
 }
+
+// switchKey is a composer switch in a chat.
+type switchKey struct{ id, threadID string }
 
 // NewFakeLoop starts a FakeLoop serving cfg, stopped when t ends.
 func NewFakeLoop(t testing.TB, cfg Config) *FakeLoop {
@@ -117,7 +138,7 @@ func NewFakeLoop(t testing.TB, cfg Config) *FakeLoop {
 	if cfg.Channel.ID == "" {
 		cfg.Channel.ID = "ch1"
 	}
-	f := &FakeLoop{cfg: cfg, memory: map[string]string{}, token: "plugin-token", TokenFile: filepath.Join(t.TempDir(), "plugin-token")}
+	f := &FakeLoop{cfg: cfg, memory: map[string]string{}, switches: map[switchKey]pluginsdk.SwitchState{}, holds: map[string]bool{}, token: "plugin-token", TokenFile: filepath.Join(t.TempDir(), "plugin-token")}
 	require.NoError(t, os.WriteFile(f.TokenFile, []byte(f.token+"\n"), 0o600), "writing the plugin token")
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/plugin/v1/channel", f.channel)
@@ -138,6 +159,11 @@ func NewFakeLoop(t testing.TB, cfg Config) *FakeLoop {
 	mux.HandleFunc("PUT /api/plugin/v1/badge", f.allow(pluginsdk.CapUIBadge, f.setBadge))
 	mux.HandleFunc("DELETE /api/plugin/v1/badge", f.allow(pluginsdk.CapUIBadge, f.clearBadge))
 	mux.HandleFunc("POST /api/plugin/v1/cards", f.allow(pluginsdk.CapUICard, f.postCard))
+	mux.HandleFunc("PUT /api/plugin/v1/composer/switches/{id}", f.allow(pluginsdk.CapUISwitch, f.setSwitch))
+	mux.HandleFunc("DELETE /api/plugin/v1/composer/switches/{id}", f.allow(pluginsdk.CapUISwitch, f.resetSwitch))
+	mux.HandleFunc("POST /api/plugin/v1/channel/live/control", f.allow(pluginsdk.CapLiveControl, f.liveControl))
+	mux.HandleFunc("PUT /api/plugin/v1/channel/live/hold", f.allow(pluginsdk.CapLiveControl, f.holdLive))
+	mux.HandleFunc("DELETE /api/plugin/v1/channel/live/hold", f.allow(pluginsdk.CapLiveControl, f.releaseLive))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+f.token {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -200,6 +226,31 @@ func (f *FakeLoop) Cards() []Card {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.cards)
+}
+
+// Switch returns what the composer switch id shows in the chat of
+// threadID, "" for the channel's; ok is false while the plugin hasn't set
+// it.
+func (f *FakeLoop) Switch(id, threadID string) (state pluginsdk.SwitchState, ok bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	state, ok = f.switches[switchKey{id, threadID}]
+	return state, ok
+}
+
+// LiveControls returns the control requests the plugin sent, oldest first.
+func (f *FakeLoop) LiveControls() []LiveControl {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.liveControls)
+}
+
+// Holds returns the threads whose live sessions the plugin holds, "" for
+// the channel's, sorted.
+func (f *FakeLoop) Holds() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Sorted(maps.Keys(f.holds))
 }
 
 // Memory returns the plugin's memory files by name.
@@ -639,4 +690,130 @@ func (f *FakeLoop) uiRefusal(steps []pluginsdk.UIStep) string {
 		}
 	}
 	return ""
+}
+
+// chat checks threadID picks the channel's chat or one of its listed
+// threads', as Loop does, and returns it, "" for the channel's.
+func (f *FakeLoop) chat(w http.ResponseWriter, threadID string) (string, bool) {
+	if threadID == f.cfg.Channel.ID {
+		threadID = ""
+	}
+	if threadID != "" && !slices.Contains(f.cfg.Threads, threadID) {
+		http.Error(w, "thread not found in the plugin's channel", http.StatusNotFound)
+		return "", false
+	}
+	return threadID, true
+}
+
+// switchStatuses are the statuses a composer switch may show.
+var switchStatuses = []pluginsdk.SwitchStatus{pluginsdk.SwitchPlain, pluginsdk.SwitchBusy, pluginsdk.SwitchOK, pluginsdk.SwitchError}
+
+// setSwitch checks a switch's state as Loop does and keeps it.
+func (f *FakeLoop) setSwitch(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		pluginsdk.SwitchState
+		ThreadID string `json:"thread_id"`
+	}
+	if !pluginsdk.DecodeJSON(w, r, &req) {
+		return
+	}
+	if !slices.Contains(switchStatuses, req.Status) || utf8.RuneCountInString(req.Title) > 200 {
+		http.Error(w, "status must be busy, ok or error, and title at most 200 characters", http.StatusBadRequest)
+		return
+	}
+	id := r.PathValue("id")
+	threadID, ok := f.switchChat(w, id, req.ThreadID)
+	if !ok {
+		return
+	}
+	f.mu.Lock()
+	f.switches[switchKey{id, threadID}] = req.SwitchState
+	f.mu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (f *FakeLoop) resetSwitch(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	threadID, ok := f.switchChat(w, id, r.URL.Query().Get("thread_id"))
+	if !ok {
+		return
+	}
+	f.mu.Lock()
+	f.switches[switchKey{id, threadID}] = pluginsdk.SwitchState{}
+	f.mu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// switchChat checks the manifest declares the switch id, when there is
+// one, and returns the chat threadID picks.
+func (f *FakeLoop) switchChat(w http.ResponseWriter, id, threadID string) (string, bool) {
+	if m := f.cfg.Manifest; m != nil &&
+		(m.UI == nil || !slices.ContainsFunc(m.UI.ComposerSwitches, func(c pluginsdk.ComposerSwitch) bool { return c.ID == id })) {
+		http.Error(w, fmt.Sprintf("the plugin declares no composer switch %q", id), http.StatusNotFound)
+		return "", false
+	}
+	return f.chat(w, threadID)
+}
+
+// liveControl checks the manifest declares the request's subtype, when
+// there is one, keeps the request and answers the configured response.
+func (f *FakeLoop) liveControl(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Request  map[string]any `json:"request"`
+		ThreadID string         `json:"thread_id"`
+	}
+	if !pluginsdk.DecodeJSON(w, r, &req) {
+		return
+	}
+	subtype, _ := req.Request["subtype"].(string)
+	if subtype == "" {
+		http.Error(w, "request is an object with a subtype", http.StatusBadRequest)
+		return
+	}
+	if m := f.cfg.Manifest; m != nil && (m.Live == nil || !slices.Contains(m.Live.Control, subtype)) {
+		http.Error(w, "the plugin's manifest doesn't declare the control request "+subtype, http.StatusBadRequest)
+		return
+	}
+	threadID, ok := f.chat(w, req.ThreadID)
+	if !ok {
+		return
+	}
+	if f.cfg.NotLive {
+		http.Error(w, "the chat has no live session", http.StatusConflict)
+		return
+	}
+	f.mu.Lock()
+	f.liveControls = append(f.liveControls, LiveControl{ThreadID: threadID, Request: req.Request})
+	f.mu.Unlock()
+	res := f.cfg.LiveResponses[subtype]
+	if res == nil {
+		res = map[string]any{}
+	}
+	pluginsdk.WriteJSON(w, http.StatusOK, map[string]any{"response": res})
+}
+
+func (f *FakeLoop) holdLive(w http.ResponseWriter, r *http.Request) {
+	threadID, ok := f.chat(w, r.URL.Query().Get("thread_id"))
+	if !ok {
+		return
+	}
+	if f.cfg.NotLive {
+		http.Error(w, "the chat doesn't run live", http.StatusConflict)
+		return
+	}
+	f.mu.Lock()
+	f.holds[threadID] = true
+	f.mu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (f *FakeLoop) releaseLive(w http.ResponseWriter, r *http.Request) {
+	threadID, ok := f.chat(w, r.URL.Query().Get("thread_id"))
+	if !ok {
+		return
+	}
+	f.mu.Lock()
+	delete(f.holds, threadID)
+	f.mu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
 }

@@ -110,6 +110,7 @@ func (s *SQLiteStore) DeletePluginState(ctx context.Context, pluginID string) er
 			`DELETE FROM plugin_schedules WHERE plugin_id = ?`,
 			`DELETE FROM plugin_containers WHERE plugin_id = ?`,
 			`DELETE FROM plugin_badges WHERE plugin_id = ?`,
+			`DELETE FROM plugin_composer_switches WHERE plugin_id = ?`,
 			`DELETE FROM notifications WHERE plugin_id = ?`,
 			`DELETE FROM plugin_state WHERE plugin_id = ?`,
 		} {

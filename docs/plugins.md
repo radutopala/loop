@@ -101,7 +101,11 @@ install refuses a bigger one. See
     "panels": [{ "id": "main", "label": "Echo", "entry": "ui/main/index.html", "singleton": true }],
     // needs "ui.notification.card" in capabilities
     "cards": [{ "id": "score", "entry": "ui/score.html" }],
+    // needs "ui.composer_switch" in capabilities
+    "composer_switches": [{ "id": "mode", "label": "Mode", "icon": "ui/mode.svg", "title": "Mode is off" }],
   },
+  // needs "live.control" in capabilities
+  "live": { "control": ["some_request"], "messages": ["some_state"] },
   "resources": { "memory": "128m", "cpus": 0.5 },
 }
 ```
@@ -121,6 +125,17 @@ threads carries the thread's id and goes to the thread's own container; `"thread
 whole project, and `"both"` to both. Events in hidden threads, such as the plugin's own agent
 runs, aren't sent. Delivery is best effort: each event is sent once, in no set order, and
 dropped when the plugin doesn't take it.
+
+`live.status` follows the chat's [live session](chat.md#live-sessions), with the data of the app's
+[`live.status`](events.md#livestatus) event. `live.system` needs `live.control` too: it brings the
+live session's `system` messages whose subtype the manifest lists in `live.messages`, as
+`{"subtype", "message"}` with `message` the whole message as Claude wrote it. The app never sees
+them.
+
+`settings.changed` brings `{"settings"}`, the plugin's settings in the channel's project as
+`GET /channel` has them, after a config write or a project trust change. It goes only to
+containers already running, without a thread id, and the settings may be unchanged: a plugin
+compares them with the ones it acted on.
 
 ### Scheduled actions
 
@@ -174,6 +189,8 @@ Capabilities are approved by the owner at install and checked on every call:
 | `ui.run` | `POST /ui/commands`: drives an app window, in the plugin's channel and its threads |
 | `ui.badge` | `PUT /badge`, `DELETE /badge`: a short label on the channel's sidebar row |
 | `ui.notification.card` | the manifest's `ui.cards`, `POST /cards`: pages in the channel's notification drawer |
+| `ui.composer_switch` | the manifest's `ui.composer_switches`, `PUT` and `DELETE /composer/switches/{id}`: on/off pills in the chat's composer |
+| `live.control` | the manifest's `live`, `POST /channel/live/control`, `PUT` and `DELETE /channel/live/hold`: drives the chat's live session |
 
 ## Container environment
 
@@ -248,6 +265,7 @@ any other.
 | `POST /tools/{tool}` | `{"run_id", "agent", "thread_id", "input": {…}}` | `200 {"content": "…", "is_error": false, "structured_content": {…}}`; the agent sees `content`, and `is_error` lets it retry; a workflow takes `content` as the node's output, and `is_error` fails the node. `structured_content` is optional |
 | `POST /runs/{run_id}/done` | `{"status": "done"\|"failed", "error": "…"}` | `204`; sent when an agent run the plugin started ends |
 | `POST /events` | `{"type", "channel_id", "thread_id", "data": {…}, "timestamp"}` | `204`; a Loop event the manifest subscribes to, with `data` as the app's events WebSocket carries it |
+| `POST /switches/{switch}` | `{"on", "thread_id"?}` | `200 {"on", "status"?, "title"?}`; the owner clicked one of the manifest's [composer switches](#composer-switches), asking for `on`, in the channel or in its thread `thread_id`. The answer is what the switch shows |
 | `ANY /x/{path}` | whatever the plugin's UI sends | the plugin's own API for its UI, proxied by Loop with method, query, body and `Content-Type` |
 
 Tool input is validated against the tool's `input_schema` before it reaches the plugin.
@@ -283,7 +301,7 @@ and may run past 60 seconds when the node's `timeout` is longer.
 
 ### When a plugin stops answering
 
-Each call has a time limit: 10 s for actions, `/runs/{run_id}/done` and `/events`, 60 s for tools, 30 s for
+Each call has a time limit: 10 s for actions, `/runs/{run_id}/done`, `/events` and `/switches`, 60 s for tools, 30 s for
 `/x`. A tool answer is capped at 1 MB and an `/x` body at 8 MB.
 
 When a container leaves 3 calls in a row unanswered (it refused the connection or ran out of
@@ -317,6 +335,11 @@ channel id. A route needing a capability the owner didn't approve answers `403`.
 | `PUT /badge` | `ui.badge` | body `{"text", "title"?}` → `204`; shows `text` (trimmed, 1 to 16 characters on one line) on the sidebar row of the plugin's channel, or of the thread its container serves, with `title` (at most 200 characters) as its tooltip. It replaces the plugin's badge there and stays until the plugin clears it, is removed or loses `ui.badge`, the channel is deleted, or its project stops enabling the plugin; every open window drops it at once |
 | `DELETE /badge` | `ui.badge` | `204`, also when there was no badge |
 | `POST /cards` | `ui.notification.card` | body `{"card", "title"?, "data"?}` (up to 64 KB) → `201 {"id"}`; posts one of the manifest's cards to the notification drawer of the plugin's channel, or of the thread its container serves, with `data` for its page (see [Cards](#cards)). Shares `/notify`'s five a minute (`429`). `400` for a card the manifest doesn't declare, and outside the desktop app |
+| `PUT /composer/switches/{id}` | `ui.composer_switch` | body `{"on", "status"?, "title"?, "thread_id"?}` → `204`; sets what one of the manifest's [composer switches](#composer-switches) shows in the channel, or in its thread `thread_id`. `status` is `busy`, `ok`, `error` or empty, `title` at most 200 characters (`400` otherwise); `404` for a switch the manifest doesn't declare or a thread that isn't the channel's |
+| `DELETE /composer/switches/{id}?thread_id=` | `ui.composer_switch` | `204`; the switch shows off again, with the manifest's `title` |
+| `POST /channel/live/control` | `live.control` | body `{"request": {"subtype", …}, "thread_id"?}` → `200 {"response": {…}}`; sends `request` as a control request to the [live session](#live-sessions) of the channel or its thread, and answers with the session's response. `400` for a subtype the manifest's `live.control` doesn't list, `409` when the chat has no live session, `502` when the session refuses it, `503` while live sessions are unavailable, `504` after 30 s without an answer |
+| `PUT /channel/live/hold?thread_id=` | `live.control` | `204`; starts the chat's live session if it isn't running and keeps it from idling out until the plugin lets go. During an agent image build it answers before the session runs; `live.status` tells when it does. `409` when the chat doesn't run live |
+| `DELETE /channel/live/hold?thread_id=` | `live.control` | `204`; lets the live session idle out again |
 
 ### Agent runs
 
@@ -333,6 +356,34 @@ waiting in the thread's queue runs once Loop is back, and one that was going on 
 Each plugin starts at most `plugins.daily_runs` runs (50 by default) in any 24 hours, across all
 channels; past that, `POST /runs` answers `429`.
 
+### Composer switches
+
+A plugin approved for `ui.composer_switch` declares up to four on/off pills in the manifest's
+`ui.composer_switches`: `id`, `label` (at most 24 characters), `icon` (an `.svg` under `ui/`, at
+most 16 KB) and `title`, the tooltip until the plugin sets one (at most 200 characters). Each
+chat of a project that enables the plugin shows them in its composer, after the Learn and Explain
+switches; side chats and hidden threads don't. The icon is drawn in the pill's color: dim when
+off, the accent when on, red on `error`, with a dashed border while `busy`.
+
+A click calls `POST /switches/{switch}` on the channel's container, with the thread's id for a
+thread, and the pill shows the answer. Until then it shows the click; when the call fails it
+turns back, with the error in its tooltip. The plugin may change the pill later with `PUT
+/composer/switches/{id}`, when what the switch stands for changes, and `DELETE` resets it. Loop
+keeps each switch's state per chat, and forgets it when the chat is deleted, the plugin is
+removed, loses `ui.composer_switch`, stops declaring the switch or isn't enabled by the project
+anymore. When the daemon starts, it starts the plugin's container in each channel where one of
+its switches is on, so the plugin can bring back what the switch stands for; the pill shows its
+last state until the plugin changes it.
+
+### Live sessions
+
+A plugin approved for `live.control` drives the [live session](chat.md#live-sessions) of its
+channel and its threads, the `claude` process their turns run in. The manifest's `live.control`
+lists the subtypes of the control requests it may send with `POST /channel/live/control`, and
+`live.messages` the subtypes of the session's `system` messages it gets as `live.system` events.
+`PUT /channel/live/hold` keeps the session running while the plugin needs it; Loop lets it go
+when the plugin may no longer use it there.
+
 ## Go SDK
 
 `github.com/radutopala/loop/pluginsdk` implements both halves of the contract for a plugin
@@ -340,15 +391,17 @@ written in Go:
 
 - `LoadEnv` reads the container environment; `Env.Secret`, `Env.Client` and `Env.Listen` give the
   secret, a Plugin API client and the listener.
-- `Server` serves `/healthz`, `/actions`, `/tools`, `/runs/{run_id}/done`, `/events` and your own
-  `X` handler under `/x`, behind the secret. An action answers `202` and runs its `ActionFunc` in
+- `Server` serves `/healthz`, `/actions`, `/tools`, `/runs/{run_id}/done`, `/events`, `/switches`
+  (`Switches`, a `SwitchFunc` per composer switch) and your own `X` handler under `/x`, behind the
+  secret. An action answers `202` and runs its `ActionFunc` in
   the background; a tool's error becomes a result with `is_error` set, and `StructuredResult(v)`
   makes a result whose `content` and `structured_content` are both `v`'s JSON; `Events` takes each event
   while Loop waits, so hand long work to `Server.Go`. `Server.Go` runs other
   background work, which `Close` cancels.
 - `Client` (the `API` interface) calls the Plugin API; a non-2xx answer is a `StatusError`, which
   `HasStatus` checks. `Hotspots` returns the worst functions, `HotspotsPage` a page of them with
-  the scan's totals. `RunUI` waits as long as the command's timeout, past `Client.Timeout`.
+  the scan's totals. `RunUI` waits as long as the command's timeout, past `Client.Timeout`, and
+  `LiveControl` as long as Loop waits for the live session.
 - `ReadManifest` parses `plugin.json`, so `/healthz` can report its version.
 - `Serve` serves until the context ends, then waits for requests in flight.
 
@@ -369,10 +422,12 @@ return pluginsdk.Serve(ctx, ln, srv.Handler())
 
 Package `pluginsdktest` is for the plugin's tests. `NewFakeLoop` serves the Plugin API from
 memory, holding the plugin to its manifest's capabilities and agents, and records the events,
-notifications, runs, memory and UI commands it gets; a UI command answers that every step ran.
+notifications, runs, memory, UI commands, switch states, live control requests and holds it
+gets; a UI command answers that every step ran, and a live control request answers
+`Config.LiveResponses` for its subtype, or `409` with `Config.NotLive`.
 `Check` drives a plugin through the Loop → plugin contract: its health and version, the secret,
-every action with each trigger, every tool as an agent's and as a workflow's call, and the end
-of each run it started.
+every action with each trigger, every tool as an agent's and as a workflow's call, every
+composer switch turned on and off, and the end of each run it started.
 
 ```go
 loop := pluginsdktest.NewFakeLoop(t, pluginsdktest.Config{Manifest: m, Files: files})

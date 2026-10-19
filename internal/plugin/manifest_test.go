@@ -3,6 +3,7 @@ package plugin
 import (
 	"encoding/json"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -197,6 +198,42 @@ func (s *ManifestSuite) TestValidate() {
 			`ui.cards[2]: id "S" must match`,
 			`ui.cards[2]: entry "ui/s.js" must be`,
 		}},
+		{name: "live", edit: func(m *Manifest) {
+			m.Live = &Live{Control: []string{"set_mode", "Bad", "set_mode"}, Messages: []string{"mode_state", "mode_state"}}
+		}, wantErr: []string{
+			`live needs capability "live.control"`,
+			`live.control[1]: "Bad" must match`,
+			`live.control[2]: "set_mode" is listed twice`,
+			`live.messages[1]: "mode_state" is listed twice`,
+		}},
+		{name: "live with the capability", edit: func(m *Manifest) {
+			m.Capabilities = append(m.Capabilities, CapLiveControl)
+			m.Live = &Live{Control: []string{"set_mode"}, Messages: []string{"mode_state"}}
+		}},
+		{name: "composer switches", edit: func(m *Manifest) {
+			m.UI = &UI{ComposerSwitches: []ComposerSwitch{
+				{ID: "mode", Label: "Mode", Icon: "ui/mode.svg"},
+				{ID: "mode", Label: " ", Icon: "ui/../mode.svg", Title: strings.Repeat("t", 201)},
+				{ID: "R", Label: strings.Repeat("l", 25), Icon: "mode.svg"},
+				{ID: "four", Label: "Four", Icon: "ui/mode.png"},
+				{ID: "five", Label: "Five", Icon: "ui/mode.svg"},
+			}}
+		}, wantErr: []string{
+			`ui.composer_switches needs capability "ui.composer_switch"`,
+			"ui.composer_switches: at most 4",
+			`ui.composer_switches[1]: switch "mode" is declared twice`,
+			"ui.composer_switches[1]: label is required, at most 24 characters",
+			"ui.composer_switches[1]: title is at most 200 characters",
+			`ui.composer_switches[1]: icon "ui/../mode.svg" must be an .svg file under ui/`,
+			`ui.composer_switches[2]: id "R" must match`,
+			"ui.composer_switches[2]: label is required",
+			`ui.composer_switches[2]: icon "mode.svg" must be`,
+			`ui.composer_switches[3]: icon "ui/mode.png" must be`,
+		}},
+		{name: "composer switches with the capability", edit: func(m *Manifest) {
+			m.Capabilities = append(m.Capabilities, CapUISwitch)
+			m.UI = &UI{ComposerSwitches: []ComposerSwitch{{ID: "mode", Label: "Mode", Icon: "ui/mode.svg", Title: "Mode"}}}
+		}},
 		{name: "cards with the capability", edit: func(m *Manifest) {
 			m.Capabilities = []Capability{CapUICard}
 			m.UI = &UI{Cards: []Card{{ID: "score", Entry: "ui/score.html"}}}
@@ -204,7 +241,7 @@ func (s *ManifestSuite) TestValidate() {
 		{name: "empty ui", edit: func(m *Manifest) { m.UI = &UI{} }},
 		{name: "events", edit: func(m *Manifest) { m.Events = []string{"message.created", "message.streaming", "message.created"} }, wantErr: []string{
 			`events needs capability "events.subscribe"`,
-			`events[1]: "message.streaming" is not an event a plugin can subscribe to (message.created, agent.status, quality.scanned)`,
+			`events[1]: "message.streaming" is not an event a plugin can subscribe to (message.created, agent.status, quality.scanned, live.status, live.system, settings.changed)`,
 			`events[2]: "message.created" is listed twice`,
 		}},
 		{name: "events with the capability", edit: func(m *Manifest) {
@@ -246,6 +283,27 @@ func (s *ManifestSuite) TestCard() {
 	require.False(s.T(), ok)
 	_, ok = (&Manifest{}).Card("score")
 	require.False(s.T(), ok)
+}
+
+func (s *ManifestSuite) TestComposerSwitch() {
+	m := &Manifest{UI: &UI{ComposerSwitches: []ComposerSwitch{{ID: "mode", Label: "Mode", Icon: "ui/mode.svg"}}}}
+	sw, ok := m.ComposerSwitch("mode")
+	require.True(s.T(), ok)
+	require.Equal(s.T(), "ui/mode.svg", sw.Icon)
+	_, ok = m.ComposerSwitch("other")
+	require.False(s.T(), ok)
+	_, ok = (&Manifest{}).ComposerSwitch("mode")
+	require.False(s.T(), ok)
+}
+
+func (s *ManifestSuite) TestLiveControlAndMessage() {
+	m := &Manifest{Live: &Live{Control: []string{"set_mode"}, Messages: []string{"mode_state"}}}
+	require.True(s.T(), m.LiveControl("set_mode"))
+	require.False(s.T(), m.LiveControl("interrupt"))
+	require.True(s.T(), m.LiveMessage("mode_state"))
+	require.False(s.T(), m.LiveMessage("status"))
+	require.False(s.T(), (&Manifest{}).LiveControl("set_mode"))
+	require.False(s.T(), (&Manifest{}).LiveMessage("mode_state"))
 }
 
 func (s *ManifestSuite) TestToolValidateInput() {

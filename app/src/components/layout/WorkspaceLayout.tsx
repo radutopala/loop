@@ -8,6 +8,7 @@ import { ShortcutsVersionContext } from "../../hooks/shortcutsVersion";
 import { useAgentRegistry } from "../../hooks/useAgentRegistry";
 import { useChatState } from "../../hooks/useChatState";
 import type { ActiveChatState, ChatEventListener } from "../../hooks/useChatStateStore";
+import { ComposerSwitchesContext, useComposerSwitches } from "../../hooks/useComposerSwitches";
 import { useContainerStats } from "../../hooks/useContainerStats";
 import { useEditorState } from "../../hooks/useEditorState";
 import { ExplainContext, useExplain } from "../../hooks/useExplain";
@@ -422,6 +423,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   const openSideRef = useRef<(view: SideView) => void>(() => {});
   const showExplain = useCallback(() => openSideRef.current("explain"), []);
   const explain = useExplain(channelId, subscribeChatEvents, wsOpens, showExplain);
+  // The composer switches plugins put in the chat, beside Learn and Explain.
+  const composerSwitches = useComposerSwitches(channelId, subscribeChatEvents, wsOpens);
   // The channel's learn passes, shown in the Learn view beside the chat (see
   // chatHost) and at the end of the turns they reviewed.
   const showLearn = useCallback(() => openSideRef.current("learn"), []);
@@ -1381,19 +1384,21 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       <ComponentFocusContext.Provider value={(c) => openComponent(leafId, c)}>
         <LearnContext.Provider value={learn}>
           <ExplainContext.Provider value={explain}>
-            <ChatView
-              key={`layout-chat-${channelId}`}
-              channelId={channelId}
-              chatState={chatState}
-              roots={editorState.roots}
-              scrollToMessageId={scrollToMessageId}
-              onScrollComplete={onScrollComplete}
-              trustPending={!!channel.trust_pending}
-              onReviewTrust={onReviewProjectTrust}
-              onSelectThread={onSelectThread}
-              subscribeChatEvents={subscribeChatEvents}
-              wsOpens={wsOpens}
-            />
+            <ComposerSwitchesContext.Provider value={composerSwitches}>
+              <ChatView
+                key={`layout-chat-${channelId}`}
+                channelId={channelId}
+                chatState={chatState}
+                roots={editorState.roots}
+                scrollToMessageId={scrollToMessageId}
+                onScrollComplete={onScrollComplete}
+                trustPending={!!channel.trust_pending}
+                onReviewTrust={onReviewProjectTrust}
+                onSelectThread={onSelectThread}
+                subscribeChatEvents={subscribeChatEvents}
+                wsOpens={wsOpens}
+              />
+            </ComposerSwitchesContext.Provider>
           </ExplainContext.Provider>
         </LearnContext.Provider>
         {shownComponent?.leafId === leafId && <ChatComponentFull component={shownComponent.component} onClose={closeComponent} />}
@@ -1403,6 +1408,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       openComponent,
       learn,
       explain,
+      composerSwitches,
       channelId,
       chatState,
       editorState.roots,

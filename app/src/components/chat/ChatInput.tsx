@@ -12,6 +12,7 @@ import type { Message } from "../../types";
 import { firstClipboardImage, uploadPastedImage } from "../../utils/clipboardImage";
 import { storageGetJSON, storageSetJSON } from "../../utils/storage";
 import { AgentConfigPill } from "./AgentConfigPill";
+import { ComposerSwitchPills } from "./ComposerSwitchPills";
 import { ContinueIcon } from "./ContinueIcon";
 import { draftText } from "./chatDrafts";
 import { composerHeight, composerMaxHeight } from "./composerHeight";
@@ -1271,6 +1272,7 @@ export function ChatInput({
         <div style={{ flex: 1 }} />
         <LearnToggle />
         <ExplainToggle />
+        <ComposerSwitchPills />
         <AgentConfigPill channelId={channelId} />
         <div style={modeStyles.pill}>
           <button

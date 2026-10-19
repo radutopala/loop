@@ -469,7 +469,7 @@ func (s *Server) removeAgentContainers(ctx context.Context, channelID string) {
 // removed, keeping their data. Its notifications and badges go too.
 func (s *Server) cleanupChannelContainers(ctx context.Context, channelID string) {
 	s.dropChannelNotifications(ctx, channelID)
-	s.prunePluginBadges(ctx)
+	s.prunePluginState(ctx)
 	if s.plugins != nil {
 		removed, err := s.plugins.RemoveChannel(ctx, channelID)
 		if err != nil {

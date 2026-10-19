@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/plugin"
 	"github.com/radutopala/loop/internal/plugin/install"
+	"github.com/radutopala/loop/internal/plugin/runtime"
 	"github.com/radutopala/loop/internal/testutil"
 )
 
@@ -77,6 +79,7 @@ func (s *ServerSuite) TestListPluginsInProject() {
 	st := s.projectTrustStatus()
 	pm.On("StopDisabled", mock.Anything).Return(false).Once()
 	pm.On("SyncSchedules", mock.Anything).Return(nil).Once()
+	pm.On("NotifySettings", mock.Anything, mock.Anything).Return(nil).Once()
 	rec := s.testRequest("POST", "/api/config/project/trust?channel_id=ch-1", `{"hash":"`+st.Hash+`"}`)
 	require.Equal(s.T(), http.StatusNoContent, rec.Code, rec.Body.String())
 	s.store.On("GetChannel", mock.Anything, "th-1").Return(&db.Channel{ChannelID: "th-1", ParentID: "ch-1", DirPath: dir}, nil)
@@ -113,6 +116,22 @@ func (s *ServerSuite) TestListPluginsSettings() {
 	// A plugin that can't run has no manifest to resolve its settings by.
 	require.Nil(s.T(), quiz.SettingsSchema)
 	require.Nil(s.T(), quiz.Settings)
+
+	// The settings a running container is told of are the same.
+	ctx := context.Background()
+	m := &plugin.Manifest{Settings: schema}
+	settings, err := s.srv.pluginSettings(ctx, "echo", m, runtime.Channel{ID: "ch-1"})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), echo.Settings, settings)
+	s.store.On("GetChannel", mock.Anything, "gone").Return(nil, nil)
+	_, err = s.srv.pluginSettings(ctx, "echo", m, runtime.Channel{ID: "gone"})
+	require.EqualError(s.T(), err, "channel gone not found")
+	s.store.On("GetChannel", mock.Anything, "broken").Return(nil, errors.New("db down"))
+	_, err = s.srv.pluginSettings(ctx, "echo", m, runtime.Channel{ID: "broken"})
+	require.EqualError(s.T(), err, "db down")
+	s.srv.configs.load = func() (*config.Config, error) { return nil, errors.New("bad config") }
+	_, err = s.srv.pluginSettings(ctx, "echo", m, runtime.Channel{ID: "ch-1"})
+	require.Error(s.T(), err)
 }
 
 func (s *ServerSuite) TestListPluginsSchedules() {
@@ -146,6 +165,7 @@ func (s *ServerSuite) TestListPluginsSchedules() {
 	st := s.projectTrustStatus()
 	pm.On("StopDisabled", mock.Anything).Return(false).Once()
 	pm.On("SyncSchedules", mock.Anything).Return(nil).Once()
+	pm.On("NotifySettings", mock.Anything, mock.Anything).Return(nil).Once()
 	rec := s.testRequest("POST", "/api/config/project/trust?channel_id=ch-1", `{"hash":"`+st.Hash+`"}`)
 	require.Equal(s.T(), http.StatusNoContent, rec.Code, rec.Body.String())
 	list = s.listPluginsIn("ch-1")
@@ -290,14 +310,16 @@ func (s *ServerSuite) TestPluginsChangedEvents() {
 	require.Equal(s.T(), []string{EventPluginsChanged, EventPluginsChanged, EventPluginsChanged}, sent)
 
 	// A config write stops the containers of projects that disabled their
-	// plugin and syncs the plugins' schedules, then tells the app; a failed
-	// sync is only logged.
+	// plugin, syncs the plugins' schedules and tells the running containers
+	// their settings, then tells the app; a failed sync or notice is only
+	// logged.
 	sys := new(testutil.MockSystem)
 	sys.On("UserHomeDir").Return("/home/test", nil)
 	sys.On("WriteFile", "/home/test/.loop/config.json", mock.Anything, os.FileMode(0644)).Return(nil)
 	s.srv.sys = sys
 	pm.On("StopDisabled", mock.Anything).Return(true).Once()
 	pm.On("SyncSchedules", mock.Anything).Return(errors.New("boom")).Once()
+	pm.On("NotifySettings", mock.Anything, mock.Anything).Return(errors.New("bang")).Once()
 	require.Equal(s.T(), http.StatusNoContent, s.testRequest("PUT", "/api/config", `{"content":"{}"}`).Code)
 	require.Len(s.T(), sent, 4)
 	sent = sent[:3]

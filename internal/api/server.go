@@ -183,6 +183,7 @@ type Server struct {
 	plugins                 PluginManager
 	pluginRunner            PluginRunner
 	badges                  PluginBadgeStore
+	switches                PluginSwitchStore
 	notifications           NotificationStore
 	deliverAsync            func(func()) // runs a plugin event's delivery or a notification's recording; go in production, inline in tests
 	server                  *http.Server
@@ -714,6 +715,13 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/plugin/v1/ui/open_file", s.handlePluginOpenFile)
 	mux.HandleFunc("PUT /api/plugin/v1/badge", s.handlePutPluginBadge)
 	mux.HandleFunc("DELETE /api/plugin/v1/badge", s.handleDeletePluginBadge)
+	mux.HandleFunc("PUT /api/plugin/v1/composer/switches/{id}", s.handlePutPluginSwitch)
+	mux.HandleFunc("DELETE /api/plugin/v1/composer/switches/{id}", s.handleDeletePluginSwitch)
+	mux.HandleFunc("POST /api/plugin/v1/channel/live/control", s.handlePluginLiveControl)
+	mux.HandleFunc("PUT /api/plugin/v1/channel/live/hold", s.handlePutPluginLiveHold)
+	mux.HandleFunc("DELETE /api/plugin/v1/channel/live/hold", s.handleDeletePluginLiveHold)
+	mux.HandleFunc("GET /api/channels/{id}/composer-switches", s.handleListComposerSwitches)
+	mux.HandleFunc("PUT /api/channels/{id}/composer-switches/{plugin}/{switch}", s.handleTurnComposerSwitch)
 	mux.HandleFunc("POST /api/plugin/v1/cards", s.handlePostPluginCard)
 	mux.HandleFunc("GET /api/notifications", s.handleListNotifications)
 	mux.HandleFunc("GET /api/notifications/unread", s.handleUnreadNotifications)

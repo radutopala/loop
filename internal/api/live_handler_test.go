@@ -45,6 +45,25 @@ func (m *mockLiveSessions) WarmLiveSession(ctx context.Context, channelID, autho
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *mockLiveSessions) KeepLiveSession(ctx context.Context, channelID, authorID string) error {
+	return m.Called(ctx, channelID, authorID).Error(0)
+}
+
+func (m *mockLiveSessions) LiveControl(ctx context.Context, channelID string, request json.RawMessage) (json.RawMessage, error) {
+	args := m.Called(ctx, channelID, request)
+	res, _ := args.Get(0).(json.RawMessage)
+	return res, args.Error(1)
+}
+
+func (m *mockLiveSessions) HoldLive(channelID, holder string, on bool) error {
+	return m.Called(channelID, holder, on).Error(0)
+}
+
+func (m *mockLiveSessions) LiveHolds() map[string][]string {
+	holds, _ := m.Called().Get(0).(map[string][]string)
+	return holds
+}
+
 // useLive gives the suite's server a mock of its live sessions and
 // registers the live and side chat routes.
 func (s *ServerSuite) useLive() *mockLiveSessions {

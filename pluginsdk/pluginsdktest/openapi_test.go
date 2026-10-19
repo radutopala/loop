@@ -226,7 +226,7 @@ func (s *spec) checkObject(schema, obj map[string]any, at string) []string {
 // sample turns a route into a request path, filling in its parameters.
 func sample(route string) (method, path string) {
 	method, path, _ = strings.Cut(route, " ")
-	return method, strings.NewReplacer("{action}", "a", "{tool}", "t", "{run_id}", "r1", "{path}", "p/q", "{name}", "notes").Replace(path)
+	return method, strings.NewReplacer("{action}", "a", "{tool}", "t", "{run_id}", "r1", "{path}", "p/q", "{name}", "notes", "{id}", "s1", "{switch}", "s").Replace(path)
 }
 
 // muxPatterns returns the patterns file registers with Handle or HandleFunc.
@@ -321,6 +321,12 @@ func (s *OpenAPISuite) TestClient() {
 	require.NoError(s.T(), c.CancelRun(ctx, "r1"))
 	_, err = c.OpenFile(ctx, "a.go", 3)
 	require.NoError(s.T(), err)
+	require.NoError(s.T(), c.SetSwitch(ctx, "mode", "", pluginsdk.SwitchState{On: true}))
+	require.NoError(s.T(), c.ResetSwitch(ctx, "mode", ""))
+	_, err = c.LiveControl(ctx, "", map[string]any{"subtype": "set_mode"})
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), c.HoldLive(ctx, ""))
+	require.NoError(s.T(), c.ReleaseLive(ctx, ""))
 
 	require.NotContains(s.T(), rec.routes, "", "a call isn't in %s", apiSpec)
 	require.Len(s.T(), rec.routes, reflect.TypeFor[pluginsdk.API]().NumMethod(),
@@ -340,7 +346,10 @@ func (s *OpenAPISuite) TestServer() {
 			return pluginsdk.ToolResult{}, nil
 		}},
 		RunDone: func(context.Context, string, pluginsdk.RunDoneRequest) error { return nil },
-		X:       http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(xStatus) }),
+		Switches: map[string]pluginsdk.SwitchFunc{"s": func(context.Context, pluginsdk.SwitchRequest) (pluginsdk.SwitchState, error) {
+			return pluginsdk.SwitchState{On: true}, nil
+		}},
+		X: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(xStatus) }),
 	}
 	defer srv.Close()
 	h := srv.Handler()
@@ -380,7 +389,8 @@ func (s *OpenAPISuite) TestServer() {
 
 // TestEventTypes checks that the SDK names the events the contract sends.
 func (s *OpenAPISuite) TestEventTypes() {
-	require.ElementsMatch(s.T(), []string{pluginsdk.EventMessageCreated, pluginsdk.EventAgentStatus, pluginsdk.EventQualityScanned},
+	require.ElementsMatch(s.T(), []string{pluginsdk.EventMessageCreated, pluginsdk.EventAgentStatus, pluginsdk.EventQualityScanned,
+		pluginsdk.EventLiveStatus, pluginsdk.EventLiveSystem, pluginsdk.EventSettingsChanged},
 		s.contract.eventTypes)
 }
 
@@ -395,7 +405,8 @@ func (s *OpenAPISuite) TestFakeLoop() {
 	require.Equal(s.T(), s.api.routes(), served)
 
 	all := []string{pluginsdk.CapFilesRead, pluginsdk.CapGitRead, pluginsdk.CapQualityRead,
-		pluginsdk.CapAgentReadOnly, pluginsdk.CapAgentWrite, pluginsdk.CapUINotify, pluginsdk.CapMemoryWrite, pluginsdk.CapUIRun, pluginsdk.CapUIBadge, pluginsdk.CapUICard, pluginsdk.CapUIOpenFile}
+		pluginsdk.CapAgentReadOnly, pluginsdk.CapAgentWrite, pluginsdk.CapUINotify, pluginsdk.CapMemoryWrite, pluginsdk.CapUIRun, pluginsdk.CapUIBadge, pluginsdk.CapUICard, pluginsdk.CapUIOpenFile,
+		pluginsdk.CapUISwitch, pluginsdk.CapLiveControl}
 	tests := []struct {
 		name string
 		caps []string
@@ -407,7 +418,9 @@ func (s *OpenAPISuite) TestFakeLoop() {
 		s.Run(tt.name, func() {
 			loop := NewFakeLoop(s.T(), Config{
 				Manifest: &pluginsdk.Manifest{Capabilities: tt.caps, Agents: []pluginsdk.Agent{{ID: "gen", ReadOnly: true}},
-					UI: &pluginsdk.UI{Cards: []pluginsdk.Card{{ID: "c", Entry: "ui/c.html"}}}},
+					Live: &pluginsdk.Live{Control: []string{"set_mode"}},
+					UI: &pluginsdk.UI{Cards: []pluginsdk.Card{{ID: "c", Entry: "ui/c.html"}},
+						ComposerSwitches: []pluginsdk.ComposerSwitch{{ID: "s1", Label: "S", Icon: "ui/s.svg"}}}},
 				Channel:  pluginsdk.Channel{Settings: map[string]any{"n": 1}},
 				Files:    map[string]string{"a.go": "package a\n"},
 				Git:      &pluginsdk.GitRecent{Commits: []pluginsdk.Commit{{SHA: "abc"}}, Files: []pluginsdk.FileChurn{{Path: "a.go", Commits: 1}}},
@@ -427,7 +440,7 @@ func (s *OpenAPISuite) TestFakeLoop() {
 					path = strings.Replace(path, "r1", run.RunID, 1)
 				}
 				req, err := http.NewRequest(method, loop.URL+apiPrefix+path+"?path=a.go",
-					strings.NewReader(`{"card":"c","agent":"gen","prompt":"p","type":"t","title":"t","text":"t","path":"a.go","steps":[{"op":"select_channel","channel_id":"ch1"}]}`))
+					strings.NewReader(`{"card":"c","agent":"gen","prompt":"p","type":"t","title":"t","text":"t","path":"a.go","steps":[{"op":"select_channel","channel_id":"ch1"}],"on":true,"request":{"subtype":"set_mode"}}`))
 				require.NoError(s.T(), err)
 				req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(token)))
 				resp, err := http.DefaultClient.Do(req)

@@ -33,6 +33,8 @@ const (
 	EventTimeout = 10 * time.Second
 	// XTimeout caps a call to the plugin's own API for its UI.
 	XTimeout = 30 * time.Second
+	// SwitchTimeout caps turning one of the plugin's composer switches over.
+	SwitchTimeout = 10 * time.Second
 	// maxToolResult caps a tool call's answer.
 	maxToolResult = 1 << 20
 	// MaxXBody caps the bodies of calls to the plugin's own API, both ways.
@@ -77,6 +79,32 @@ type ToolResult struct {
 	Content           string          `json:"content"`
 	IsError           bool            `json:"is_error"`
 	StructuredContent json.RawMessage `json:"structured_content,omitempty"`
+}
+
+// SwitchRequest is the body of POST /switches/{id}: the owner turned one of
+// the plugin's composer switches on or off in a chat, the channel's own or
+// its thread ThreadID's.
+type SwitchRequest struct {
+	On       bool   `json:"on"`
+	ThreadID string `json:"thread_id,omitempty"`
+}
+
+// Composer switch statuses: a switch working on its state, at it, or failing.
+const (
+	SwitchStatusBusy  = "busy"
+	SwitchStatusOK    = "ok"
+	SwitchStatusError = "error"
+)
+
+// SwitchStatuses are the statuses a composer switch may have, "" for none.
+var SwitchStatuses = []string{"", SwitchStatusBusy, SwitchStatusOK, SwitchStatusError}
+
+// SwitchState is a composer switch's state, as the plugin answers a click
+// with it.
+type SwitchState struct {
+	On     bool   `json:"on"`
+	Status string `json:"status,omitempty"`
+	Title  string `json:"title,omitempty"`
 }
 
 // Run statuses sent to POST /runs/{run_id}/done.
@@ -215,6 +243,21 @@ func (c *Client) Event(ctx context.Context, ep runtime.Endpoint, evt Event) erro
 	return c.call(ctx, ep, EventTimeout, func(ctx context.Context) error {
 		return c.post(ctx, ep, "/events", body, nil)
 	})
+}
+
+// Switch asks the plugin at ep to turn its composer switch id over, and
+// returns the switch's state.
+func (c *Client) Switch(ctx context.Context, ep runtime.Endpoint, id string, req SwitchRequest) (*SwitchState, error) {
+	// SwitchRequest always encodes.
+	body, _ := json.Marshal(req)
+	var res SwitchState
+	err := c.call(ctx, ep, SwitchTimeout, func(ctx context.Context) error {
+		return c.post(ctx, ep, "/switches/"+url.PathEscape(id), body, &res)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &res, nil
 }
 
 // X sends req to /x/{path} on the plugin at ep and returns its answer,

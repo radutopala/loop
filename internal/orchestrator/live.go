@@ -2,7 +2,9 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"sync"
 
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/bot"
@@ -40,6 +42,9 @@ type LiveRunner interface {
 	InterruptLive(channelID string) error
 	LiveInfo(channelID string) (agent.LiveInfo, bool)
 	LiveChannels() []string
+	SendLiveControl(ctx context.Context, channelID string, request json.RawMessage) (json.RawMessage, error)
+	HoldLive(channelID, holder string, on bool)
+	LiveHolds() map[string][]string
 }
 
 // SetLiveRunner configures live sessions: lr runs them, and publish sends
@@ -47,6 +52,39 @@ type LiveRunner interface {
 func (o *Orchestrator) SetLiveRunner(lr LiveRunner, publish func(channelID, eventType string, data any)) {
 	o.live = lr
 	o.livePublish = publish
+}
+
+// SetLiveSystem sends fn the live sessions' "system" events but a turn's
+// "init", by subtype, as the CLI wrote them.
+func (o *Orchestrator) SetLiveSystem(fn func(channelID, subtype string, event json.RawMessage)) {
+	o.liveSystem = fn
+}
+
+// LiveControl sends request, a stream-json control request's body, to the
+// channel's live session and returns the body of its answer.
+func (o *Orchestrator) LiveControl(ctx context.Context, channelID string, request json.RawMessage) (json.RawMessage, error) {
+	if o.live == nil {
+		return nil, ErrLiveUnavailable
+	}
+	return o.live.SendLiveControl(ctx, channelID, request)
+}
+
+// HoldLive keeps the channel's live session from ending idle while holder
+// holds it, or with on false lets go of holder's hold.
+func (o *Orchestrator) HoldLive(channelID, holder string, on bool) error {
+	if o.live == nil {
+		return ErrLiveUnavailable
+	}
+	o.live.HoldLive(channelID, holder, on)
+	return nil
+}
+
+// LiveHolds returns the holders of each held channel.
+func (o *Orchestrator) LiveHolds() map[string][]string {
+	if o.live == nil {
+		return nil
+	}
+	return o.live.LiveHolds()
 }
 
 // EndLiveSession ends the channel's live session, telling its viewers
@@ -128,9 +166,27 @@ func (o *Orchestrator) useLive(req *agent.AgentRequest, msg *bot.IncomingMessage
 // WarmLiveSession starts the channel's live session ahead of its next
 // chat turn, as authorID's turn would, so the turn doesn't wait for the
 // container. It reports whether it started one: it doesn't when a session
-// already runs, a run holds the channel, or the channel's turns don't run
-// live.
+// already runs, a run holds the channel, the channel's turns don't run
+// live, or the start would wait out an image build: it holds the channel
+// meanwhile, so the turn being typed would sit queued with no word of the
+// build, which the turn's own start shows.
 func (o *Orchestrator) WarmLiveSession(ctx context.Context, channelID, authorID string) (bool, error) {
+	return o.warmLive(ctx, channelID, authorID, false)
+}
+
+// KeepLiveSession starts the channel's live session for a holder, as
+// WarmLiveSession does, except that an image build doesn't stop it: the
+// start goes on in the background, and the session's live status tells
+// when it runs.
+func (o *Orchestrator) KeepLiveSession(ctx context.Context, channelID, authorID string) error {
+	_, err := o.warmLive(ctx, channelID, authorID, true)
+	return err
+}
+
+// warmLive starts the channel's live session ahead of authorID's turn. A
+// start that waits out an image build is given up, or, with throughBuild,
+// left to go on in the background.
+func (o *Orchestrator) warmLive(ctx context.Context, channelID, authorID string, throughBuild bool) (bool, error) {
 	if o.live == nil {
 		return false, ErrLiveUnavailable
 	}
@@ -141,7 +197,12 @@ func (o *Orchestrator) WarmLiveSession(ctx context.Context, channelID, authorID 
 	if !lock.TryLock() {
 		return false, nil
 	}
-	defer lock.Unlock()
+	locked := true
+	defer func() {
+		if locked {
+			lock.Unlock()
+		}
+	}()
 	channel, err := o.store.GetChannel(ctx, channelID)
 	if err != nil {
 		return false, err
@@ -157,24 +218,48 @@ func (o *Orchestrator) WarmLiveSession(ctx context.Context, channelID, authorID 
 	if !req.Live {
 		return false, nil
 	}
-	// It gives up when the start would wait out an image build: it holds
-	// the channel meanwhile, so the turn being typed would sit queued with
-	// no word of the build, which the turn's own start shows.
 	startCtx, cancel := context.WithCancelCause(context.WithoutCancel(ctx))
+	building := make(chan struct{})
+	var buildOnce sync.Once
 	req.OnActivity = func(activity, _ string) {
-		if activity == "image_build" {
+		if activity != "image_build" {
+			return
+		}
+		if !throughBuild {
 			cancel(errWarmImageBuild)
+			return
 		}
+		buildOnce.Do(func() { close(building) })
 	}
-	if err := o.live.StartLive(startCtx, req, o.liveHooks(channelID)); err != nil {
-		if errors.Is(context.Cause(startCtx), errWarmImageBuild) {
-			o.logger.Info("not warming the live session during an image build", "channel_id", channelID)
-			return false, nil
+	done := make(chan error, 1)
+	locked = false
+	go func() {
+		defer lock.Unlock()
+		err := o.live.StartLive(startCtx, req, o.liveHooks(channelID))
+		if err == nil {
+			o.publishLive(channelID, o.LiveSession(startCtx, channelID))
 		}
-		return false, err
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			if errors.Is(context.Cause(startCtx), errWarmImageBuild) {
+				o.logger.Info("not warming the live session during an image build", "channel_id", channelID)
+				return false, nil
+			}
+			return false, err
+		}
+		return true, nil
+	case <-building:
+		o.logger.Info("starting the live session after an image build", "channel_id", channelID)
+		go func() {
+			if err := <-done; err != nil {
+				o.logger.Warn("starting a held live session", "channel_id", channelID, "error", err)
+			}
+		}()
+		return false, nil
 	}
-	o.publishLive(channelID, o.LiveSession(ctx, channelID))
-	return true, nil
 }
 
 // errWarmImageBuild is why a warm-up stops starting a live session.
@@ -223,6 +308,19 @@ func (o *Orchestrator) liveHooks(channelID string) agent.LiveHooks {
 		Ended: func(reason string) {
 			o.logger.Info("live session ended", "channel_id", channelID, "reason", reason)
 			o.publishLive(channelID, LiveStatus{LiveInfo: agent.LiveInfo{ChannelID: channelID}, Reason: reason})
+		},
+		Restarted: func(reason string) {
+			status := o.LiveSession(context.Background(), channelID)
+			status.Reason = reason
+			o.publishLive(channelID, status)
+		},
+		System: func(subtype string, event json.RawMessage) {
+			if o.liveSystem != nil {
+				o.liveSystem(channelID, subtype, event)
+			}
+		},
+		Prompt: func(text string) {
+			storeUserPrompt(context.Background(), o.store, o.events, channelID, liveAuthorID, "remote", text)
 		},
 	}
 }

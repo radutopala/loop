@@ -105,6 +105,11 @@ type API interface {
 	SetBadge(ctx context.Context, text, title string) error
 	ClearBadge(ctx context.Context) error
 	PostCard(ctx context.Context, card, title string, data any) (int64, error)
+	SetSwitch(ctx context.Context, id, threadID string, state SwitchState) error
+	ResetSwitch(ctx context.Context, id, threadID string) error
+	LiveControl(ctx context.Context, threadID string, request map[string]any) (map[string]any, error)
+	HoldLive(ctx context.Context, threadID string) error
+	ReleaseLive(ctx context.Context, threadID string) error
 }
 
 // StatusError is a non-2xx answer from Loop.
@@ -377,6 +382,64 @@ func (c *Client) PostCard(ctx context.Context, card, title string, data any) (in
 	}
 	err := c.do(ctx, http.MethodPost, "/cards", nil, map[string]any{"card": card, "title": title, "data": data}, &out)
 	return out.ID, err
+}
+
+// SetSwitch sets what the manifest's composer switch id shows in the
+// channel's chat, or with threadID one of its listed threads'. Needs
+// ui.composer_switch.
+func (c *Client) SetSwitch(ctx context.Context, id, threadID string, state SwitchState) error {
+	body := pluginapi.SwitchUpdate{On: state.On, Status: pluginapi.SwitchUpdateStatus(state.Status), Title: state.Title, ThreadID: threadID}
+	return c.do(ctx, http.MethodPut, "/composer/switches/"+url.PathEscape(id), nil, body, nil)
+}
+
+// ResetSwitch turns the composer switch id off in the chat, without a
+// status or tooltip. Needs ui.composer_switch.
+func (c *Client) ResetSwitch(ctx context.Context, id, threadID string) error {
+	return c.do(ctx, http.MethodDelete, "/composer/switches/"+url.PathEscape(id), threadQuery(threadID), nil, nil)
+}
+
+// liveControlTimeout is how long LiveControl waits at least: Loop waits up
+// to 30 s for the session's answer.
+const liveControlTimeout = 40 * time.Second
+
+// LiveControl sends request, a control request whose subtype the manifest
+// declares under live.control, to the live session of the channel's chat,
+// or with threadID one of its listed threads', and returns the session's
+// response. Needs live.control.
+func (c *Client) LiveControl(ctx context.Context, threadID string, request map[string]any) (map[string]any, error) {
+	timeout := c.Timeout
+	if timeout > 0 {
+		timeout = max(timeout, liveControlTimeout)
+	}
+	var out pluginapi.LiveControlResponse
+	err := c.doFor(ctx, timeout, http.MethodPost, "/channel/live/control", nil, pluginapi.LiveControl{Request: request, ThreadID: threadID}, &out)
+	if err != nil {
+		return nil, err
+	}
+	return out.Response, nil
+}
+
+// HoldLive starts the live session of the chat if it isn't running and
+// keeps it from ending when idle, until ReleaseLive. During an agent image
+// build it returns before the session runs; its live.status event tells
+// when it does. Needs live.control.
+func (c *Client) HoldLive(ctx context.Context, threadID string) error {
+	return c.do(ctx, http.MethodPut, "/channel/live/hold", threadQuery(threadID), nil, nil)
+}
+
+// ReleaseLive lets the live session of the chat end when idle again. Needs
+// live.control.
+func (c *Client) ReleaseLive(ctx context.Context, threadID string) error {
+	return c.do(ctx, http.MethodDelete, "/channel/live/hold", threadQuery(threadID), nil, nil)
+}
+
+// threadQuery is the query that picks the thread threadID; nil for the
+// channel's own chat.
+func threadQuery(threadID string) url.Values {
+	if threadID == "" {
+		return nil
+	}
+	return url.Values{"thread_id": {threadID}}
 }
 
 // uiGrace is how much longer than a UI command's timeout RunUI waits, so

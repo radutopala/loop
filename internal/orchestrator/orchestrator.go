@@ -111,6 +111,7 @@ type Orchestrator struct {
 	pluginRunStore    PluginRunStore        // keeps plugin runs across restarts; nil keeps them in memory only
 	live              LiveRunner            // runs the channels' live sessions; nil disables them
 	livePublish       func(channelID, eventType string, data any)
+	liveSystem        func(channelID, subtype string, event json.RawMessage)
 
 	// loadWorktreeProjectConfig merges global → root project → worktree
 	// config for a worktree dir and its root checkout.

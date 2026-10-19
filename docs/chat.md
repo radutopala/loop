@@ -670,6 +670,10 @@ Each channel has one hidden explain thread, `explain: <channel>`, created on fir
 
 ---
 
+## Plugin switches
+
+Plugins may add their own switches to the composer, after the Learn and Explain switches: a round pill each with the plugin's icon, dim when off, in the accent color when on, red when the plugin reports an error, with a dashed border while it works. The tooltip names the switch and says what the plugin reports. A click asks the plugin to turn it over; the pill shows the click at once, and turns back with the error in its tooltip when the plugin refuses. See [Plugins: Composer switches](plugins.md#composer-switches).
+
 ## Auto-Scroll
 
 The chat view tracks whether the user is scrolled to the bottom.
@@ -846,7 +850,7 @@ Above the composer, one row per [monitor](api.md#post-apichannelsidmonitors) the
 A chat's turns run in a live session: one Claude Code process, in its own Docker container, that stays up between turns and reads each new prompt from its input. Everything else about the chat is unchanged: messages queue and steer as before, Stop interrupts the turn, asks and plans prompt the same way, and a model or settings change applies from the next turn.
 
 - **Lazy start.** The session starts with the channel's next message when none is running, resuming the channel's Claude session, and every later message reuses it. In the app, typing a message already starts it, so the container is up by the time you send. It stops after `live_session_idle_sec` (default 600; 0 never stops it) without a turn or background task; the next message starts a new one on the same session.
-- **Background work.** Tasks the agent left in the background (shells, subagents, [monitors](#monitors)) keep running while the session waits. When one finishes, the agent can take a turn on its own; its reply posts to the chat like any other, on Slack and Discord too.
+- **Background work.** Tasks the agent left in the background (shells, subagents, [monitors](#monitors)) keep running while the session waits. When one finishes, the agent can take a turn on its own; its reply posts to the chat like any other, on Slack and Discord too. A turn someone starts from outside Loop shows its prompt in the chat as a user message from `remote`, before the reply.
 - **Threads.** A +thread or +wt thread's first turn forks the parent's session, as before, into its own live session; a fork at a message resumes at that message. A +wt thread runs in its worktree.
 - **Restarts.** A change to what the process was started with (its model, image, env, mounts, MCP servers, gates) restarts it on the same Claude session with reason `config changed`. A turn on another Claude session than the one running (a session resumed from the session list, say) restarts it with `session changed`.
 - **One-shot runs.** [Learn](#learn-from-a-run), [Explain](#explain-a-turn), reviews, plugin and read-only runs, workflow steps and scheduled tasks run one-shot (`claude --print`) as they did. A scheduled task that runs in a thread with a live session stops that session first (`scheduled run`), once it holds the thread; the next chat message resumes the session with the task's turns in it. A one-shot run on the channel's own session stops its live session the same way (`one-shot run`).

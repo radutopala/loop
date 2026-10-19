@@ -110,6 +110,7 @@ func (s *RunnerSuite) TestStreamCallbacksAny() {
 		{"onThinking", streamCallbacks{onThinking: func(string) {}}, true},
 		{"onToolResult", streamCallbacks{onToolResult: func(_, _ string, _ bool) {}}, true},
 		{"onSession", streamCallbacks{onSession: func(string) {}}, true},
+		{"onPrompt", streamCallbacks{onPrompt: func(string) {}}, true},
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {

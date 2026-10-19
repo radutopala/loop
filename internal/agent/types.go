@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -130,6 +131,15 @@ type LiveHooks struct {
 	BackgroundTasks func(tasks []BackgroundTask)
 	// Ended is called once, when the session ends, with why.
 	Ended func(reason string)
+	// Restarted is called when the session's process was replaced by a new
+	// one, with why; what was set on the old process, such as by control
+	// requests, is gone.
+	Restarted func(reason string)
+	// System gets the session's "system" events but a turn's "init", by
+	// subtype, as the CLI wrote them.
+	System func(subtype string, event json.RawMessage)
+	// Prompt gets the user message of a turn started from outside Loop.
+	Prompt func(text string)
 }
 
 // LiveInfo describes a channel's live session.

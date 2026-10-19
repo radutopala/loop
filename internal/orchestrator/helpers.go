@@ -74,6 +74,11 @@ func StoreSystemNotice(ctx context.Context, store db.Store, broadcaster events.B
 // is_triggered=1), so it can never be picked up and re-executed. Either store
 // or broadcaster may be nil.
 func storeUserTaskPrompt(ctx context.Context, store db.Store, broadcaster events.Broadcaster, channelID, content string) {
+	storeUserPrompt(ctx, store, broadcaster, channelID, "scheduled-task", "scheduled task", content)
+}
+
+// storeUserPrompt is storeUserTaskPrompt for any author.
+func storeUserPrompt(ctx context.Context, store db.Store, broadcaster events.Broadcaster, channelID, authorID, authorName, content string) {
 	msgID := generateMessageID()
 	var rowID int64
 	if store != nil {
@@ -83,8 +88,8 @@ func storeUserTaskPrompt(ctx context.Context, store db.Store, broadcaster events
 				ChatID:      ch.ID,
 				ChannelID:   channelID,
 				MsgID:       msgID,
-				AuthorID:    "scheduled-task",
-				AuthorName:  "scheduled task",
+				AuthorID:    authorID,
+				AuthorName:  authorName,
 				Content:     content,
 				IsBot:       false,
 				IsProcessed: true,
@@ -98,8 +103,8 @@ func storeUserTaskPrompt(ctx context.Context, store db.Store, broadcaster events
 		broadcaster.BroadcastMessageCreated(channelID, events.MessageEventData{
 			ID:         rowID,
 			MsgID:      msgID,
-			AuthorID:   "scheduled-task",
-			AuthorName: "scheduled task",
+			AuthorID:   authorID,
+			AuthorName: authorName,
 			Content:    content,
 			IsBot:      false,
 		})

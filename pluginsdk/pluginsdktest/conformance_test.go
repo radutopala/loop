@@ -43,8 +43,10 @@ func (s *ConformanceSuite) TestCheck() {
 		Agents:       []pluginsdk.Agent{{ID: "say", ReadOnly: true}},
 		Tools:        []pluginsdk.Tool{{Name: "echo"}},
 		Actions:      []pluginsdk.Action{{ID: "ping"}},
+		UI:           &pluginsdk.UI{ComposerSwitches: []pluginsdk.ComposerSwitch{{ID: "mode", Label: "Mode", Icon: "ui/mode.svg"}}},
 	}
 	loop := NewFakeLoop(s.T(), Config{Manifest: m})
+	var turned []bool
 	api := loop.Client()
 	ended := map[string]string{}
 	srv := &pluginsdk.Server{
@@ -65,6 +67,12 @@ func (s *ConformanceSuite) TestCheck() {
 			ended[runID] = req.Status
 			return nil
 		},
+		Switches: map[string]pluginsdk.SwitchFunc{
+			"mode": func(_ context.Context, req pluginsdk.SwitchRequest) (pluginsdk.SwitchState, error) {
+				turned = append(turned, req.On)
+				return pluginsdk.SwitchState{On: req.On, Status: pluginsdk.SwitchOK}, nil
+			},
+		},
 	}
 	s.T().Cleanup(srv.Close)
 	p := s.serve(srv.Handler())
@@ -72,10 +80,14 @@ func (s *ConformanceSuite) TestCheck() {
 	Check(s.T(), p, m, CheckOptions{Loop: loop, Settle: srv.Wait})
 	require.Len(s.T(), loop.Runs(), 3, "the action ran for each trigger")
 	require.Equal(s.T(), map[string]string{"run-1": pluginsdk.RunStatusDone, "run-2": pluginsdk.RunStatusFailed, "run-3": pluginsdk.RunStatusDone}, ended)
+	require.Equal(s.T(), []bool{true, false}, turned, "the switch was turned on and off")
 
 	// Without a FakeLoop or Settle the runs check is skipped.
 	Check(s.T(), p, m, CheckOptions{})
 	Check(s.T(), p, m, CheckOptions{Loop: NewFakeLoop(s.T(), Config{})})
+	noUI := *m
+	noUI.UI = nil
+	Check(s.T(), p, &noUI, CheckOptions{})
 }
 
 func (s *ConformanceSuite) TestCalls() {
@@ -108,6 +120,9 @@ func (s *ConformanceSuite) TestCalls() {
 		{"run done", func() (*Response, error) {
 			return p.RunDone(s.ctx, "r1", pluginsdk.RunDoneRequest{Status: pluginsdk.RunStatusDone})
 		}, http.MethodPost, "/runs/r1/done", `{"status":"done"}`, "application/json"},
+		{"switch", func() (*Response, error) {
+			return p.Switch(s.ctx, "mode", pluginsdk.SwitchRequest{On: true, ThreadID: "th1"})
+		}, http.MethodPost, "/switches/mode", `{"on":true,"thread_id":"th1"}`, "application/json"},
 		{"x with bytes", func() (*Response, error) { return p.X(s.ctx, http.MethodPut, "quizzes/1", []byte("raw")) }, http.MethodPut, "/x/quizzes/1", "raw", ""},
 	}
 	for _, tt := range tests {

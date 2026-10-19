@@ -8,7 +8,8 @@ info:
     plugin-api-v1.yaml.
 
     Every request carries the secret Loop hands the container; refuse any
-    other. Each call has a time limit: 10 s for actions, run ends and events, 60 s
+    other. Each call has a time limit: 10 s for actions, run ends, events
+    and composer switches, 60 s
     for tools, 30 s for /x. Loop reads at most 1 MB of a tool's answer and
     8 MB of an /x answer.
 
@@ -34,7 +35,7 @@ tags:
   - name: events
     description: Loop events the plugin subscribes to.
   - name: ui
-    description: The plugin's own API for its panels.
+    description: The plugin's own API for its panels, and its composer switches.
 paths:
   /healthz:
     get:
@@ -175,6 +176,40 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "500":
           description: The plugin failed to take it.
+  /switches/{switch}:
+    post:
+      operationId: turnSwitch
+      tags: [ui]
+      summary: Turn a composer switch over
+      description: |
+        The owner clicked one of the manifest's ui.composer_switches in a
+        chat: the channel's own, or its thread thread_id's. Do what the
+        switch is for, or start it, and answer the switch's state, which
+        Loop keeps and shows; set it again later through
+        `PUT /composer/switches/{switch}` of the Plugin API. A failed
+        answer leaves the switch as it was and shows the owner the error.
+      parameters:
+        - name: switch
+          in: path
+          required: true
+          description: A composer switch id from the manifest.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SwitchRequest"
+      responses:
+        "200":
+          description: The switch's state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SwitchState"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: The plugin has no such switch.
   /x/{path}:
     description: |
       The plugin's own API for its panels. Loop proxies calls from the
@@ -317,7 +352,16 @@ components:
       properties:
         type:
           type: string
-          enum: [message.created, agent.status, quality.scanned]
+          enum: [message.created, agent.status, quality.scanned, live.status, live.system, settings.changed]
+          description: |
+            live.status is sent when a chat's live session starts, restarts
+            (its process replaced, with what control requests set on it
+            gone) or ends. live.system carries one of the live session's
+            "system" events, of a subtype the manifest's live.messages
+            lists, as `{"subtype", "message"}`; it needs live.control.
+            settings.changed goes to the running containers only, after a
+            config write, with `{"settings"}` the plugin's settings in the
+            channel's project; they may be unchanged.
         channel_id:
           type: string
           description: The channel the container serves.
@@ -330,3 +374,29 @@ components:
           type: integer
           format: int64
           description: When Loop sent it, in Unix milliseconds.
+    SwitchRequest:
+      type: object
+      required: [on]
+      properties:
+        "on":
+          type: boolean
+          description: Whether the owner turned the switch on.
+        thread_id:
+          type: string
+          description: The thread of the channel the switch was clicked in, if any.
+    SwitchState:
+      type: object
+      required: ["on"]
+      properties:
+        "on":
+          type: boolean
+        status:
+          type: string
+          enum: ["", busy, ok, error]
+          description: |
+            How the switch is doing: busy while it works on its state, ok
+            once it's there, error when it failed. Empty shows it plain.
+        title:
+          type: string
+          maxLength: 200
+          description: The switch's tooltip; empty keeps the manifest's.

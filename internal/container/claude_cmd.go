@@ -430,5 +430,5 @@ func buildLiveClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.Age
 	live.ClaudeBatchDisallowedTools = withoutTool(cfg.ClaudeBatchDisallowedTools, monitorTool)
 	cmd := buildClaudeCmd(&live, mcpConfigPath, req)
 	cmd = cmd[:len(cmd)-1] // the prompt
-	return append(cmd, "--input-format", "stream-json")
+	return append(cmd, "--input-format", "stream-json", "--replay-user-messages")
 }

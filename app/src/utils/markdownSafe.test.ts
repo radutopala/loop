@@ -28,6 +28,13 @@ describe("renderMarkdownSafe", () => {
     expect(renderMarkdownSafe(md).toLowerCase()).not.toContain(banned);
   });
 
+  it("keeps an image's data: URI, as the README's inlined diagram has", () => {
+    const src = "data:image/svg+xml;base64,PHN2Zy8+";
+    const div = document.createElement("div");
+    div.innerHTML = renderMarkdownSafe(`<img src="${src}" alt="a">`);
+    expect(div.querySelector("img")?.getAttribute("src")).toBe(src);
+  });
+
   it.each([
     ["javascript", "[x](javascript:alert(1))"],
     ["file", "[x](file:///etc/passwd)"],
