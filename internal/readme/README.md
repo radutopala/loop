@@ -14,61 +14,18 @@ AI agents powered by Claude, running in Docker containers. Use the **desktop app
 
 ## Architecture
 
-```
-     Desktop App          Slack / Discord
-     (Electron)                 │
-          │             @mention / reply / !loop / DM
-          │                     │
-          ▼                     ▼
-     Local Bot             Slack/Discord Bot
-          │                     │
-          └──────────┬──────────┘
-                     ▼
-               Orchestrator ◀──────────────── Scheduler (poll loop)
-                     │                              │
-            build AgentRequest              due task? execute it
-            (messages + session +           (cron / interval / once)
-             channel dir_path)                      │
-                     │                              │
-                     ▼                              ▼
-               DockerRunner ◄───────────────────────┘
-                     │
-          ┌──────────┴──────────┐
-          │  create container   │
-          │  mount dir_path or  │
-          │  ~/.loop/<ch>/work  │
-          │  (path-preserving)  │
-          └──────────┬──────────┘
-                     ▼
-              Container (Docker)
-          ┌─────────────────────┐
-          │ claude --print      │
-          │   workDir (project) │
-          │   mcpDir  (logs)    │
-          │   MCP: loop         │
-          │   MCP: loop-browser │──▶ Host API ──▶ Chrome (Docker or Host)
-          └─────────┬───────────┘
-                    │
-         MCP tool calls (schedule, list, cancel…)
-                    ▼
-              API Server ◀──▶ SQLite
-                    │
-             /api/memory/search
-                    ▼
-           Memory Indexer + Embedder
-           (Ollama)
-
-  Standalone (no Docker):
-     Claude Code ──▶ loop mcp-host-browser ──▶ Host Chrome (CDP)
-```
+<p align="center">
+  <img src="docs/static/images/architecture.svg" alt="Loop architecture: clients (desktop app, Slack/Discord) talk to the loop daemon on the host (API server, bots, orchestrator, scheduler, workflow engine, plugin runtime, memory indexer, SQLite, DockerRunner), which runs agent containers (claude, MCP servers, security gate), plugin containers, Chrome and Ollama in Docker" width="100%">
+</p>
 
 - **Orchestrator** coordinates message handling, channel registration, session management, and scheduled tasks
-- **DockerRunner** mounts the channel's `dir_path` (falling back to `~/.loop/<channelID>/work`) at its original path inside the container, then runs `claude --print`
+- **DockerRunner** mounts the channel's `dir_path` (falling back to `~/.loop/<channelID>/work`) at its original path inside the container, then runs `claude`: a chat's turns go to a [live session](docs/chat.md#live-sessions), one process that stays up between turns, and one-shot runs (scheduled tasks, reviews, workflow steps) use `claude --print`
 - **Scheduler** polls for due tasks (cron, interval, once, manual) and executes them via DockerRunner — each task runs an agent prompt, a [workflow](docs/workflows.md), or a bash script in the agent container ([docs](docs/scheduling.md#scheduled-bash-scripts))
 - **Workflow Engine** runs declarative DAG pipelines — parallel fan-out of prompt and bash nodes with dependency tracking, trigger rules, and real-time status events
 - **MCP Server** (inside the container) gives Claude tools to schedule/manage tasks and run workflows — calls loop back through the API server
 - **Browser** supports Docker mode (headless Chrome container per channel) and Host mode (user's local Chrome via CDP). The desktop app toggles modes per channel; `loop mcp-host-browser` runs standalone without Docker
-- **API Server** exposes REST endpoints for task and channel management
+- **API Server** exposes REST endpoints for task and channel management, and streams events to the desktop app over a WebSocket
+- **Plugins** are Docker images Loop runs per channel, started when first needed and stopped when idle; they call back through the Plugin API and can add panels, tools, actions and composer switches. See [docs/plugins.md](docs/plugins.md)
 - **SQLite** stores channels, messages, scheduled tasks, run logs, and memory file embeddings
 - **Security Gate** — a seccomp `RET_USER_NOTIF` filter installed in every agent container (works on Linux, macOS, and Windows hosts — the filter + notify-loop server both run inside the container) traps sensitive syscalls (`connect`, `execve`/`execveat`, `openat*`, `renameat2`, `unlinkat`, …) and routes `approve`-rule hits to the chat as a three-button card. An in-container Docker HTTP proxy replaces the raw `docker.sock` bind and enforces method/path/body rules. Enabled by default; see [Configuration: Security Gate](docs/configuration.md#security-gate)
 - **Quality Engine** — pure-Go architectural-quality scanner under `internal/quality/`. Reduces a workspace to a single `quality_signal` (0–10000, geometric mean of 6 graph-level metrics: modularity (Leiden), cycles, depth, equality, redundancy (with SimHash clone detection folded in), and per-function complexity). Surfaced via the desktop `QualityPanel` (Overview / Diagnostics / Hotspots / Cycles / Evolution tabs), a chat-bar quality indicator, MCP tools (`quality_scan`, `quality_snapshot`, `quality_complexity`, `quality_clones`, …), HTTP endpoints, and `loop quality:scan` for CI gates. Snapshots persist per `(channel, branch)`. See [docs/quality.md](docs/quality.md)

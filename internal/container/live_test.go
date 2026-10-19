@@ -3,6 +3,7 @@ package container
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -130,18 +131,24 @@ type liveRun struct {
 
 // liveHookLog records what a live session reports through its hooks.
 type liveHookLog struct {
-	ended    chan string
-	activity chan string
-	begun    chan struct{}
-	done     chan liveRun
+	ended     chan string
+	restarted chan string
+	system    chan string
+	prompts   chan string
+	activity  chan string
+	begun     chan struct{}
+	done      chan liveRun
 }
 
 func newLiveHookLog() *liveHookLog {
 	return &liveHookLog{
-		ended:    make(chan string, 4),
-		activity: make(chan string, 16),
-		begun:    make(chan struct{}, 16),
-		done:     make(chan liveRun, 16),
+		ended:     make(chan string, 4),
+		restarted: make(chan string, 4),
+		system:    make(chan string, 16),
+		prompts:   make(chan string, 16),
+		activity:  make(chan string, 16),
+		begun:     make(chan struct{}, 16),
+		done:      make(chan liveRun, 16),
 	}
 }
 
@@ -161,7 +168,12 @@ func (l *liveHookLog) hooks(turns chan string) agent.LiveHooks {
 		BackgroundTasks: func(tasks []agent.BackgroundTask) {
 			l.activity <- "background_tasks=" + agent.BackgroundSummary(tasks)
 		},
-		Ended: func(reason string) { l.ended <- reason },
+		Ended:     func(reason string) { l.ended <- reason },
+		Restarted: func(reason string) { l.restarted <- reason },
+		System: func(subtype string, event json.RawMessage) {
+			l.system <- subtype + "=" + string(event)
+		},
+		Prompt: func(text string) { l.prompts <- text },
 	}
 }
 
@@ -497,6 +509,7 @@ func (s *RunnerSuite) TestRunLiveSessionChanged() {
 			waitFor(s.T(), proc.closed)
 			s.client.AssertCalled(s.T(), "ContainerStop", mock.Anything, "live-1")
 			requireNone(s.T(), log.ended)
+			require.Equal(s.T(), "session changed", waitFor(s.T(), log.restarted))
 			require.Equal(s.T(), []string{"ch-1"}, s.runner.LiveChannels())
 			info, _ := s.runner.LiveInfo("ch-1")
 			require.Equal(s.T(), liveStartedAt, info.StartedAt.Format(time.RFC3339))
@@ -565,6 +578,7 @@ func (s *RunnerSuite) TestRunLiveConfigChanged() {
 				require.NotContains(s.T(), cmd, tc.wantNot)
 			}
 			requireNone(s.T(), log.ended)
+			require.Equal(s.T(), "config changed", waitFor(s.T(), log.restarted))
 			require.NoError(s.T(), s.runner.StopLive("ch-1", "done"))
 		})
 	}
@@ -950,6 +964,169 @@ func (s *RunnerSuite) TestLiveIdle() {
 	requireNone(s.T(), log.ended)
 }
 
+// A hold keeps the session from idling out, across its processes, until
+// its last holder lets go.
+func (s *RunnerSuite) TestLiveHold() {
+	clock := s.setupLive(time.Minute)
+	log := newLiveHookLog()
+	s.runner.HoldLive("ch-1", "b", true)
+	s.runner.HoldLive("ch-1", "a", true)
+	s.runner.HoldLive("ch-2", "a", true)
+	require.Equal(s.T(), map[string][]string{"ch-1": {"a", "b"}, "ch-2": {"a"}}, s.runner.LiveHolds())
+	proc := newFakeLiveProc()
+	s.startLive(liveReq(nil), log.hooks(nil), "live-1", proc)
+	idle := waitFor(s.T(), clock.armed)
+
+	idle.f()
+	idle = waitFor(s.T(), clock.armed)
+	requireNone(s.T(), log.ended)
+
+	s.runner.HoldLive("ch-1", "a", false)
+	idle.f()
+	idle = waitFor(s.T(), clock.armed)
+	requireNone(s.T(), log.ended)
+
+	s.runner.HoldLive("ch-1", "b", false)
+	s.runner.HoldLive("ch-1", "b", false)
+	require.Equal(s.T(), map[string][]string{"ch-2": {"a"}}, s.runner.LiveHolds())
+	idle.f()
+	require.Equal(s.T(), "idle", waitFor(s.T(), log.ended))
+}
+
+// A prompt sent from outside the process's stdin goes to hooks.Prompt; the
+// replays of Loop's own stdin lines, which carry no origin, don't.
+func (s *RunnerSuite) TestLivePrompt() {
+	s.setupLive(0)
+	log := newLiveHookLog()
+	proc := newFakeLiveProc()
+	s.startLive(liveReq(nil), log.hooks(nil), "live-1", proc)
+	proc.emit(s.T(),
+		`{"type":"user","message":{"content":[{"type":"text","text":"from loop"}]},"isReplay":true}`,
+		`{"type":"user","message":{"content":"not replayed"},"origin":{"kind":"human"}}`,
+		`{"type":"user","message":{"content":"from a task"},"isReplay":true,"origin":{"kind":"task-notification"}}`,
+		`{"type":"user","message":{"role":"user","content":"hello from outside"},"isReplay":true,"origin":{"kind":"human"}}`,
+		`{"type":"user","message":{"content":[{"type":"text","text":"as blocks"}]},"isReplay":true,"origin":{"kind":"human"}}`,
+	)
+	require.Equal(s.T(), "hello from outside", waitFor(s.T(), log.prompts))
+	require.Equal(s.T(), "as blocks", waitFor(s.T(), log.prompts))
+	requireNone(s.T(), log.prompts)
+
+	// Without the hook a prompt goes nowhere.
+	s.runner.liveCallbacks(&liveSession{}).onPrompt("dropped")
+}
+
+// Control requests go to the process and come back with their answers,
+// matched by id; system events Loop doesn't handle go to hooks.System.
+func (s *RunnerSuite) TestSendLiveControl() {
+	s.setupLive(0)
+	log := newLiveHookLog()
+	proc := newFakeLiveProc()
+	s.startLive(liveReq(nil), log.hooks(nil), "live-1", proc)
+	ctx := context.Background()
+
+	type answer struct {
+		body json.RawMessage
+		err  error
+	}
+	send := func(ctx context.Context, request string) chan answer {
+		out := make(chan answer, 1)
+		go func() {
+			body, err := s.runner.SendLiveControl(ctx, "ch-1", json.RawMessage(request))
+			out <- answer{body, err}
+		}()
+		return out
+	}
+
+	got := send(ctx, `{"subtype":"set_mode","enabled":true}`)
+	require.JSONEq(s.T(),
+		`{"type":"control_request","request_id":"loop-control-1","request":{"subtype":"set_mode","enabled":true}}`,
+		waitFor(s.T(), proc.stdin))
+	proc.emit(s.T(),
+		`{"type":"control_response","response":{"subtype":"success","request_id":"loop-interrupt"}}`,
+		`{"type":"system","subtype":"init"}`,
+		`{"type":"system","subtype":"mode_state","state":"ready"}`,
+		`{"type":"control_response","response":{"subtype":"success","request_id":"loop-control-1","response":{"mode":"u"}}}`,
+	)
+	a := waitFor(s.T(), got)
+	require.NoError(s.T(), a.err)
+	require.JSONEq(s.T(), `{"mode":"u"}`, string(a.body))
+	require.Equal(s.T(), `mode_state={"type":"system","subtype":"mode_state","state":"ready"}`, waitFor(s.T(), log.system))
+	requireNone(s.T(), log.system)
+
+	tests := []struct {
+		name     string
+		response string
+		wantBody string
+		wantErr  string
+	}{
+		{"an answer without a body", `{"subtype":"success","request_id":"%s"}`, `{}`, ""},
+		{"an error", `{"subtype":"error","request_id":"%s","error":"nope"}`, "", "nope"},
+		{"an error without a message", `{"subtype":"error","request_id":"%s"}`, "", "control request failed"},
+		{"an answer that isn't one", `[]}`, "", "decoding the control response"},
+	}
+	for i, tc := range tests {
+		s.Run(tc.name, func() {
+			got := send(ctx, `{"subtype":"x"}`)
+			waitFor(s.T(), proc.stdin)
+			id := fmt.Sprintf("loop-control-%d", i+2)
+			if strings.HasPrefix(tc.response, "[") {
+				s.runner.liveSession("ch-1").controlAnswered(id, []byte(tc.response))
+			} else {
+				proc.emit(s.T(), `{"type":"control_response","response":`+fmt.Sprintf(tc.response, id)+`}`)
+			}
+			a := waitFor(s.T(), got)
+			if tc.wantErr != "" {
+				require.ErrorContains(s.T(), a.err, tc.wantErr)
+				return
+			}
+			require.NoError(s.T(), a.err)
+			require.JSONEq(s.T(), tc.wantBody, string(a.body))
+		})
+	}
+
+	var ctlErr *LiveControlError
+	_, err := s.runner.SendLiveControl(ctx, "ch-1", json.RawMessage(`{`))
+	require.ErrorContains(s.T(), err, "encoding the control request")
+	require.False(s.T(), errors.As(err, &ctlErr))
+
+	cancelled, cancel := context.WithCancel(ctx)
+	got = send(cancelled, `{"subtype":"x"}`)
+	waitFor(s.T(), proc.stdin)
+	cancel()
+	require.ErrorIs(s.T(), waitFor(s.T(), got).err, context.Canceled)
+
+	// The session ending fails the requests waiting on it.
+	got = send(ctx, `{"subtype":"x"}`)
+	waitFor(s.T(), proc.stdin)
+	require.NoError(s.T(), s.runner.StopLive("ch-1", "done"))
+	require.ErrorIs(s.T(), waitFor(s.T(), got).err, ErrNoLiveSession)
+	_, err = s.runner.SendLiveControl(ctx, "ch-1", json.RawMessage(`{}`))
+	require.ErrorIs(s.T(), err, ErrNoLiveSession)
+}
+
+// A session that ended but is still known to a caller takes no control
+// requests, and one whose stdin is gone fails them.
+func (s *RunnerSuite) TestSendLiveControlClosed() {
+	s.setupLive(0)
+	log := newLiveHookLog()
+	proc := newFakeLiveProc()
+	s.startLive(liveReq(nil), log.hooks(nil), "live-1", proc)
+	_ = proc.inR.CloseWithError(errors.New("gone"))
+	_, err := s.runner.SendLiveControl(context.Background(), "ch-1", json.RawMessage(`{}`))
+	require.ErrorContains(s.T(), err, "writing the control request: gone")
+
+	ls := s.runner.liveSession("ch-1")
+	ls.mu.Lock()
+	ls.closed = true
+	ls.mu.Unlock()
+	_, err = s.runner.SendLiveControl(context.Background(), "ch-1", json.RawMessage(`{}`))
+	require.ErrorIs(s.T(), err, ErrNoLiveSession)
+	ls.mu.Lock()
+	ls.closed = false
+	ls.mu.Unlock()
+	require.NoError(s.T(), s.runner.StopLive("ch-1", "done"))
+}
+
 func (s *RunnerSuite) TestCloseLiveSessions() {
 	s.setupLive(0)
 	log := newLiveHookLog()
@@ -976,7 +1153,7 @@ func (s *RunnerSuite) TestNewDockerRunnerAfterFunc() {
 func TestBuildLiveClaudeCmd(t *testing.T) {
 	cfg := &config.Config{ClaudeBinPath: "claude", ClaudeBatchDisallowedTools: []string{"Monitor", "WebSearch"}}
 	cmd := buildLiveClaudeCmd(cfg, "/mcp.json", &agent.AgentRequest{ChannelID: "ch-1", Prompt: "the prompt"})
-	require.Equal(t, []string{"--input-format", "stream-json"}, cmd[len(cmd)-2:])
+	require.Equal(t, []string{"--input-format", "stream-json", "--replay-user-messages"}, cmd[len(cmd)-3:])
 	require.NotContains(t, cmd, "the prompt")
 	require.False(t, slices.ContainsFunc(cmd, func(a string) bool { return strings.Contains(a, "Monitor") }))
 	require.True(t, slices.ContainsFunc(cmd, func(a string) bool { return strings.Contains(a, "WebSearch") }))

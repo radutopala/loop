@@ -8,6 +8,7 @@
 app
 bin
 docs
+!docs/static/images/architecture.svg
 memory
 test
 loop

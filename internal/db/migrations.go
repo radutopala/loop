@@ -573,6 +573,18 @@ var migrations = []migration{
 	// the owner's edits stand until the config changes; empty on a task
 	// Loop created before configs asked for them.
 	sqlMigration(`ALTER TABLE plugin_schedules ADD COLUMN applied TEXT NOT NULL DEFAULT ''`),
+	// plugin_composer_switches holds the state of the switches plugins put
+	// in a chat's composer (see PluginSwitch).
+	sqlMigration(`CREATE TABLE IF NOT EXISTS plugin_composer_switches (
+		plugin_id  TEXT NOT NULL,
+		channel_id TEXT NOT NULL,
+		switch_id  TEXT NOT NULL,
+		is_on      INTEGER NOT NULL DEFAULT 0,
+		status     TEXT NOT NULL DEFAULT '',
+		title      TEXT NOT NULL DEFAULT '',
+		updated_at DATETIME NOT NULL,
+		PRIMARY KEY (plugin_id, channel_id, switch_id)
+	)`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the

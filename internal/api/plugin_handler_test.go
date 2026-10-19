@@ -95,6 +95,20 @@ func (m *MockPluginManager) Shows(ctx context.Context, pluginID string, c plugin
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *MockPluginManager) Switch(ctx context.Context, pluginID, id string, ch runtime.Channel, req proxy.SwitchRequest) (*proxy.SwitchState, error) {
+	args := m.Called(ctx, pluginID, id, ch, req)
+	res, _ := args.Get(0).(*proxy.SwitchState)
+	return res, args.Error(1)
+}
+
+func (m *MockPluginManager) Wake(ctx context.Context, pluginID string, ch runtime.Channel) error {
+	return m.Called(ctx, pluginID, ch).Error(0)
+}
+
+func (m *MockPluginManager) NotifySettings(ctx context.Context, settings install.Settings) error {
+	return m.Called(ctx, settings).Error(0)
+}
+
 func (m *MockPluginManager) SyncSchedules(ctx context.Context) error {
 	return m.Called(ctx).Error(0)
 }

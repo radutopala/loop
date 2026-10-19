@@ -50,6 +50,9 @@ var (
 	// ErrNotEnabled is returned for a plugin the channel's project doesn't
 	// enable, whose container therefore doesn't start there.
 	ErrNotEnabled = errors.New("the plugin is not enabled in this project")
+	// ErrUnknownSwitch is returned for a composer switch the plugin's
+	// manifest doesn't declare.
+	ErrUnknownSwitch = errors.New("the plugin has no such composer switch")
 )
 
 // Project returns the config of the plugin pluginID in the project of the
@@ -87,6 +90,7 @@ type Caller interface {
 	RunDone(ctx context.Context, ep runtime.Endpoint, runID string, req proxy.RunDoneRequest) error
 	X(ctx context.Context, ep runtime.Endpoint, req proxy.XRequest) (*proxy.XResponse, error)
 	Event(ctx context.Context, ep runtime.Endpoint, evt proxy.Event) error
+	Switch(ctx context.Context, ep runtime.Endpoint, id string, req proxy.SwitchRequest) (*proxy.SwitchState, error)
 }
 
 // AgentRun is an agent run a plugin asks for: the agent and the tools it
@@ -523,6 +527,12 @@ func (s *Service) RunDone(ctx context.Context, pluginID string, ch runtime.Chann
 	return s.caller.RunDone(ctx, ep, runID, req)
 }
 
+// Wake starts the plugin's container in ch, if it isn't running.
+func (s *Service) Wake(ctx context.Context, pluginID string, ch runtime.Channel) error {
+	_, err := s.ensure(ctx, pluginID, ch)
+	return err
+}
+
 // X forwards a call from the plugin's UI to its own API on its container in
 // ch, starting it if it isn't running.
 func (s *Service) X(ctx context.Context, pluginID string, ch runtime.Channel, req proxy.XRequest) (*proxy.XResponse, error) {
@@ -533,9 +543,31 @@ func (s *Service) X(ctx context.Context, pluginID string, ch runtime.Channel, re
 	return s.caller.X(ctx, ep, req)
 }
 
+// Switch asks the plugin's container in ch, starting it if it isn't
+// running, to turn its composer switch id over, and returns the switch's
+// state.
+func (s *Service) Switch(ctx context.Context, pluginID, id string, ch runtime.Channel, req proxy.SwitchRequest) (*proxy.SwitchState, error) {
+	st, m, err := s.runnable(ctx, pluginID)
+	if err != nil {
+		return nil, err
+	}
+	if !slices.Contains(st.ApprovedCaps, string(plugin.CapUISwitch)) {
+		return nil, fmt.Errorf("%w: %s", ErrNotApproved, plugin.CapUISwitch)
+	}
+	if _, ok := m.ComposerSwitch(id); !ok {
+		return nil, fmt.Errorf("%w: %s", ErrUnknownSwitch, id)
+	}
+	ep, err := s.start(ctx, st, m, ch)
+	if err != nil {
+		return nil, err
+	}
+	return s.caller.Switch(ctx, ep, id, req)
+}
+
 // Deliver hands evt, a Loop event in ch or, when thread is set, in that
 // thread of ch, to each plugin that subscribes to its type, has
-// events.subscribe approved and is enabled by the project, starting its
+// events.subscribe approved and is enabled by the project (and for a
+// live.system event, asks for its subtype and has live.control approved), starting its
 // container if it isn't running. A thread's event goes to the thread's
 // container, the channel's or both, as the plugin's thread_events says. It
 // returns each plugin's failure.
@@ -554,7 +586,7 @@ func (s *Service) Deliver(ctx context.Context, ch runtime.Channel, thread *runti
 			errs = append(errs, fmt.Errorf("%s: %w", st.PluginID, err))
 			continue
 		}
-		if !slices.Contains(m.Events, evt.Type) {
+		if !slices.Contains(m.Events, evt.Type) || !liveSystemFor(st, m, evt) {
 			continue
 		}
 		targets := []runtime.Channel{ch}
@@ -575,6 +607,49 @@ func (s *Service) Deliver(ctx context.Context, ch runtime.Channel, thread *runti
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// Settings returns the settings of the plugin pluginID, with manifest m,
+// in the project of the channel ch.
+type Settings func(ctx context.Context, pluginID string, m *plugin.Manifest, ch runtime.Channel) (map[string]any, error)
+
+// NotifySettings hands each running container of a plugin that subscribes
+// to settings.changed, with events.subscribe approved, its settings as
+// settings returns them. It starts no container. It returns each
+// container's failure.
+func (s *Service) NotifySettings(ctx context.Context, settings Settings) error {
+	var errs []error
+	for _, r := range s.runtime.Running() {
+		st, m, err := s.runnable(ctx, r.PluginID)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", r.PluginID, err))
+			continue
+		}
+		if !slices.Contains(st.ApprovedCaps, string(plugin.CapEventsSub)) || !slices.Contains(m.Events, plugin.EventSettingsChanged) {
+			continue
+		}
+		values, err := settings(ctx, r.PluginID, m, r.Channel)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", r.PluginID, err))
+			continue
+		}
+		evt := proxy.Event{Type: plugin.EventSettingsChanged, ChannelID: r.Channel.ID, Data: plugin.SettingsChanged{Settings: values}, Timestamp: s.now().UnixMilli()}
+		if err := s.deliver(ctx, st, m, r.Channel, evt); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", r.PluginID, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// liveSystemFor reports whether evt, when it's a live.system event, goes to
+// the plugin st: it has live.control approved and its manifest asks for the
+// event's subtype.
+func liveSystemFor(st *db.PluginState, m *plugin.Manifest, evt proxy.Event) bool {
+	if evt.Type != plugin.EventLiveSystem {
+		return true
+	}
+	ls, ok := evt.Data.(plugin.LiveSystem)
+	return ok && slices.Contains(st.ApprovedCaps, string(plugin.CapLiveControl)) && m.LiveMessage(ls.Subtype)
 }
 
 // deliver hands evt to the plugin st's container in ch, unless ch's

@@ -315,6 +315,116 @@ func (s *FakeLoopSuite) TestCards() {
 	require.True(s.T(), pluginsdk.HasStatus(err, http.StatusForbidden))
 }
 
+func (s *FakeLoopSuite) TestSwitches() {
+	m := &pluginsdk.Manifest{Capabilities: []string{pluginsdk.CapUISwitch},
+		UI: &pluginsdk.UI{ComposerSwitches: []pluginsdk.ComposerSwitch{{ID: "mode", Label: "Mode", Icon: "ui/mode.svg"}}}}
+	f := NewFakeLoop(s.T(), Config{Manifest: m, Threads: []string{"th1"}})
+	c := f.Client()
+	_, ok := f.Switch("mode", "")
+	require.False(s.T(), ok)
+
+	on := pluginsdk.SwitchState{On: true, Status: pluginsdk.SwitchOK, Title: "On"}
+	require.NoError(s.T(), c.SetSwitch(s.ctx, "mode", "th1", on))
+	got, ok := f.Switch("mode", "th1")
+	require.True(s.T(), ok)
+	require.Equal(s.T(), on, got)
+	require.NoError(s.T(), c.SetSwitch(s.ctx, "mode", "ch1", on), "the channel's id picks its own chat")
+	got, _ = f.Switch("mode", "")
+	require.Equal(s.T(), on, got)
+
+	require.NoError(s.T(), c.ResetSwitch(s.ctx, "mode", "th1"))
+	got, ok = f.Switch("mode", "th1")
+	require.True(s.T(), ok)
+	require.Equal(s.T(), pluginsdk.SwitchState{}, got)
+
+	tests := []struct {
+		name  string
+		call  func() error
+		state int
+	}{
+		{"unknown status", func() error { return c.SetSwitch(s.ctx, "mode", "", pluginsdk.SwitchState{Status: "odd"}) }, http.StatusBadRequest},
+		{"long title", func() error {
+			return c.SetSwitch(s.ctx, "mode", "", pluginsdk.SwitchState{Title: strings.Repeat("a", 201)})
+		}, http.StatusBadRequest},
+		{"undeclared switch", func() error { return c.SetSwitch(s.ctx, "other", "", pluginsdk.SwitchState{}) }, http.StatusNotFound},
+		{"undeclared reset", func() error { return c.ResetSwitch(s.ctx, "other", "") }, http.StatusNotFound},
+		{"unknown thread", func() error { return c.SetSwitch(s.ctx, "mode", "th9", pluginsdk.SwitchState{}) }, http.StatusNotFound},
+		{"reset in an unknown thread", func() error { return c.ResetSwitch(s.ctx, "mode", "th9") }, http.StatusNotFound},
+		{"manifest without ui", func() error {
+			loop := NewFakeLoop(s.T(), Config{Manifest: &pluginsdk.Manifest{Capabilities: []string{pluginsdk.CapUISwitch}}})
+			return loop.Client().SetSwitch(s.ctx, "mode", "", pluginsdk.SwitchState{})
+		}, http.StatusNotFound},
+		{"not approved", func() error {
+			return NewFakeLoop(s.T(), Config{Manifest: &pluginsdk.Manifest{}}).Client().ResetSwitch(s.ctx, "mode", "")
+		}, http.StatusForbidden},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			require.True(s.T(), pluginsdk.HasStatus(tt.call(), tt.state))
+		})
+	}
+	require.Equal(s.T(), http.StatusBadRequest, s.raw(f, http.MethodPut, "/composer/switches/mode", "{"))
+	require.NoError(s.T(), NewFakeLoop(s.T(), Config{}).Client().SetSwitch(s.ctx, "any", "", on), "without a manifest any switch is taken")
+}
+
+func (s *FakeLoopSuite) TestLive() {
+	m := &pluginsdk.Manifest{Capabilities: []string{pluginsdk.CapLiveControl}, Live: &pluginsdk.Live{Control: []string{"set_mode", "get"}}}
+	f := NewFakeLoop(s.T(), Config{Manifest: m, Threads: []string{"th1"}, LiveResponses: map[string]map[string]any{"get": {"url": "https://x"}}})
+	c := f.Client()
+
+	res, err := c.LiveControl(s.ctx, "", map[string]any{"subtype": "set_mode", "on": true})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), map[string]any{}, res)
+	res, err = c.LiveControl(s.ctx, "th1", map[string]any{"subtype": "get"})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), map[string]any{"url": "https://x"}, res)
+	require.Equal(s.T(), []LiveControl{
+		{Request: map[string]any{"subtype": "set_mode", "on": true}},
+		{ThreadID: "th1", Request: map[string]any{"subtype": "get"}},
+	}, f.LiveControls())
+
+	require.NoError(s.T(), c.HoldLive(s.ctx, "th1"))
+	require.NoError(s.T(), c.HoldLive(s.ctx, ""))
+	require.Equal(s.T(), []string{"", "th1"}, f.Holds())
+	require.NoError(s.T(), c.ReleaseLive(s.ctx, "th1"))
+	require.Equal(s.T(), []string{""}, f.Holds())
+
+	notLive := NewFakeLoop(s.T(), Config{NotLive: true}).Client()
+	tests := []struct {
+		name  string
+		call  func() error
+		state int
+	}{
+		{"no subtype", func() error { _, err := c.LiveControl(s.ctx, "", map[string]any{}); return err }, http.StatusBadRequest},
+		{"undeclared subtype", func() error {
+			_, err := c.LiveControl(s.ctx, "", map[string]any{"subtype": "other"})
+			return err
+		}, http.StatusBadRequest},
+		{"manifest without live", func() error {
+			loop := NewFakeLoop(s.T(), Config{Manifest: &pluginsdk.Manifest{Capabilities: []string{pluginsdk.CapLiveControl}}})
+			_, err := loop.Client().LiveControl(s.ctx, "", map[string]any{"subtype": "get"})
+			return err
+		}, http.StatusBadRequest},
+		{"unknown thread", func() error {
+			_, err := c.LiveControl(s.ctx, "th9", map[string]any{"subtype": "get"})
+			return err
+		}, http.StatusNotFound},
+		{"hold in an unknown thread", func() error { return c.HoldLive(s.ctx, "th9") }, http.StatusNotFound},
+		{"release in an unknown thread", func() error { return c.ReleaseLive(s.ctx, "th9") }, http.StatusNotFound},
+		{"no live session", func() error { _, err := notLive.LiveControl(s.ctx, "", map[string]any{"subtype": "get"}); return err }, http.StatusConflict},
+		{"hold when not live", func() error { return notLive.HoldLive(s.ctx, "") }, http.StatusConflict},
+		{"not approved", func() error {
+			return NewFakeLoop(s.T(), Config{Manifest: &pluginsdk.Manifest{}}).Client().HoldLive(s.ctx, "")
+		}, http.StatusForbidden},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			require.True(s.T(), pluginsdk.HasStatus(tt.call(), tt.state))
+		})
+	}
+	require.Equal(s.T(), http.StatusBadRequest, s.raw(f, http.MethodPost, "/channel/live/control", "{"))
+}
+
 func (s *FakeLoopSuite) TestGitHead() {
 	_, err := NewFakeLoop(s.T(), Config{}).Client().GitHead(s.ctx)
 	require.True(s.T(), pluginsdk.HasStatus(err, http.StatusConflict))

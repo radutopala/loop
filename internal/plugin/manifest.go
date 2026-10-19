@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/docker/go-units"
@@ -57,6 +58,8 @@ const (
 	CapUIBadge       Capability = "ui.badge"
 	CapUICard        Capability = "ui.notification.card"
 	CapUICopy        Capability = "ui.copy"
+	CapLiveControl   Capability = "live.control"
+	CapUISwitch      Capability = "ui.composer_switch"
 )
 
 // Capabilities lists every capability a manifest may ask for.
@@ -65,11 +68,33 @@ var Capabilities = []Capability{
 	CapAgentReadOnly, CapAgentWrite, CapSchedule,
 	CapUIPanel, CapUINotify, CapUIOpenFile, CapMemoryWrite, CapEventsSub,
 	CapUIRun, CapUIBadge, CapUICard, CapUICopy,
+	CapLiveControl, CapUISwitch,
 }
 
 // Events lists the Loop events a manifest may subscribe to, each one in a
-// channel, as the app's events WebSocket names them.
-var Events = []string{"message.created", "agent.status", "quality.scanned"}
+// channel, as the app's events WebSocket names them; EventLiveSystem and
+// EventSettingsChanged are the plugins' own.
+var Events = []string{"message.created", "agent.status", "quality.scanned", "live.status", EventLiveSystem, EventSettingsChanged}
+
+// EventSettingsChanged brings a running container its plugin's settings in
+// its channel's project, as SettingsChanged, after a config write.
+const EventSettingsChanged = "settings.changed"
+
+// SettingsChanged is the data of a settings.changed event.
+type SettingsChanged struct {
+	Settings map[string]any `json:"settings"`
+}
+
+// EventLiveSystem carries a "system" event of a chat's live session, one
+// of the subtypes the manifest's live.messages lists, as a LiveSystem.
+const EventLiveSystem = "live.system"
+
+// LiveSystem is the data of a live.system event.
+type LiveSystem struct {
+	Subtype string `json:"subtype"`
+	// Message is the event as the claude process wrote it.
+	Message json.RawMessage `json:"message"`
+}
 
 // Where a manifest's thread_events sends an event in a channel's thread.
 const (
@@ -117,8 +142,20 @@ type Manifest struct {
 	// the thread's own (ThreadEventsThread, the default), the channel's
 	// (ThreadEventsChannel), or both.
 	ThreadEvents string     `json:"thread_events,omitempty"`
+	Live         *Live      `json:"live,omitempty"`
 	UI           *UI        `json:"ui,omitempty"`
 	Resources    *Resources `json:"resources,omitempty"`
+}
+
+// Live is what the plugin does with a chat's live session, the claude
+// process its turns run in.
+type Live struct {
+	// Control are the subtypes of the control requests the plugin may send
+	// the process.
+	Control []string `json:"control,omitempty"`
+	// Messages are the subtypes of the process's "system" events
+	// live.system events bring the plugin.
+	Messages []string `json:"messages,omitempty"`
 }
 
 // Gate is a plugin's agentgate rules.
@@ -262,9 +299,31 @@ func (m *Manifest) ScheduleProblems(id string, layers ...map[string]config.Plugi
 
 // UI is what the plugin draws in Loop.
 type UI struct {
-	Panels []Panel `json:"panels,omitempty"`
-	Cards  []Card  `json:"cards,omitempty"`
+	Panels           []Panel          `json:"panels,omitempty"`
+	Cards            []Card           `json:"cards,omitempty"`
+	ComposerSwitches []ComposerSwitch `json:"composer_switches,omitempty"`
 }
+
+// ComposerSwitch is an on/off pill the plugin adds to the chat composer.
+// A click asks the plugin's POST /switches/{id} to turn it over.
+type ComposerSwitch struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	// Icon is the pill's SVG icon, relative to /loop-plugin, under ui/.
+	Icon string `json:"icon"`
+	// Title is the pill's tooltip until the plugin sets its own.
+	Title string `json:"title,omitempty"`
+}
+
+// ComposerSwitchMax caps a manifest's composer switches,
+// ComposerSwitchTitleMax a switch's title, in characters, and
+// ComposerSwitchIconMax its icon's size, in bytes.
+const (
+	ComposerSwitchMax      = 4
+	ComposerSwitchTitleMax = 200
+	ComposerSwitchIconMax  = 16 << 10
+	composerSwitchLabelMax = 24
+)
 
 // Panel is a workspace pane the plugin draws, from a static bundle in its
 // image.
@@ -351,6 +410,7 @@ func (m *Manifest) Validate() error {
 	m.validateAgents(add, tools)
 	m.validateActions(add)
 	m.validateEvents(add)
+	m.validateLive(add)
 	m.validateUI(add)
 	m.validateResources(add)
 	if len(errs) > 0 {
@@ -512,10 +572,49 @@ func (m *Manifest) validateEvents(add func(string, ...any)) {
 	}
 }
 
+func (m *Manifest) validateLive(add func(string, ...any)) {
+	if m.Live == nil {
+		return
+	}
+	if !m.Has(CapLiveControl) {
+		add("live needs capability %q", CapLiveControl)
+	}
+	fields := []struct {
+		name     string
+		subtypes []string
+	}{{"control", m.Live.Control}, {"messages", m.Live.Messages}}
+	for _, f := range fields {
+		field, subtypes := f.name, f.subtypes
+		seen := map[string]bool{}
+		for i, st := range subtypes {
+			if !toolNameRe.MatchString(st) {
+				add("live.%s[%d]: %q must match %s", field, i, st, toolNameRe)
+			}
+			if seen[st] {
+				add("live.%s[%d]: %q is listed twice", field, i, st)
+			}
+			seen[st] = true
+		}
+	}
+}
+
+// LiveControl reports whether the manifest lets the plugin send control
+// requests of subtype.
+func (m *Manifest) LiveControl(subtype string) bool {
+	return m.Live != nil && slices.Contains(m.Live.Control, subtype)
+}
+
+// LiveMessage reports whether live.system events bring the plugin the
+// "system" events of subtype.
+func (m *Manifest) LiveMessage(subtype string) bool {
+	return m.Live != nil && slices.Contains(m.Live.Messages, subtype)
+}
+
 func (m *Manifest) validateUI(add func(string, ...any)) {
 	if m.UI == nil {
 		return
 	}
+	m.validateSwitches(add)
 	if len(m.UI.Panels) > 0 && !m.Has(CapUIPanel) {
 		add("ui.panels needs capability %q", CapUIPanel)
 	}
@@ -551,6 +650,48 @@ func (m *Manifest) validateUI(add func(string, ...any)) {
 			add("ui.cards[%d]: entry %q must be an .html file under ui/", i, c.Entry)
 		}
 	}
+}
+
+func (m *Manifest) validateSwitches(add func(string, ...any)) {
+	switches := m.UI.ComposerSwitches
+	if len(switches) > 0 && !m.Has(CapUISwitch) {
+		add("ui.composer_switches needs capability %q", CapUISwitch)
+	}
+	if len(switches) > ComposerSwitchMax {
+		add("ui.composer_switches: at most %d", ComposerSwitchMax)
+	}
+	seen := map[string]bool{}
+	for i, sw := range switches {
+		if !idRe.MatchString(sw.ID) {
+			add("ui.composer_switches[%d]: id %q must match %s", i, sw.ID, idRe)
+		}
+		if seen[sw.ID] {
+			add("ui.composer_switches[%d]: switch %q is declared twice", i, sw.ID)
+		}
+		seen[sw.ID] = true
+		if label := strings.TrimSpace(sw.Label); label == "" || utf8.RuneCountInString(label) > composerSwitchLabelMax {
+			add("ui.composer_switches[%d]: label is required, at most %d characters", i, composerSwitchLabelMax)
+		}
+		if utf8.RuneCountInString(sw.Title) > ComposerSwitchTitleMax {
+			add("ui.composer_switches[%d]: title is at most %d characters", i, ComposerSwitchTitleMax)
+		}
+		if path.Clean(sw.Icon) != sw.Icon || !strings.HasPrefix(sw.Icon, "ui/") || !strings.HasSuffix(sw.Icon, ".svg") {
+			add("ui.composer_switches[%d]: icon %q must be an .svg file under ui/", i, sw.Icon)
+		}
+	}
+}
+
+// ComposerSwitch returns the composer switch id the manifest declares, if
+// it does.
+func (m *Manifest) ComposerSwitch(id string) (ComposerSwitch, bool) {
+	if m.UI != nil {
+		for _, sw := range m.UI.ComposerSwitches {
+			if sw.ID == id {
+				return sw, true
+			}
+		}
+	}
+	return ComposerSwitch{}, false
 }
 
 // Card returns the card id the manifest declares, if it does.

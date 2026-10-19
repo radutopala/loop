@@ -6,6 +6,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 
@@ -25,6 +26,10 @@ type LiveSessions interface {
 	LiveSession(ctx context.Context, channelID string) orchestrator.LiveStatus
 	SweepLiveSessions(ctx context.Context)
 	WarmLiveSession(ctx context.Context, channelID, authorID string) (bool, error)
+	KeepLiveSession(ctx context.Context, channelID, authorID string) error
+	LiveControl(ctx context.Context, channelID string, request json.RawMessage) (json.RawMessage, error)
+	HoldLive(channelID, holder string, on bool) error
+	LiveHolds() map[string][]string
 }
 
 // SetLiveSessions configures the live sessions behind

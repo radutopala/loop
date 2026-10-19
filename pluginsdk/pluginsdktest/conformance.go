@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 
@@ -22,6 +23,7 @@ const (
 	ToolTimeout    = 60 * time.Second
 	RunDoneTimeout = 10 * time.Second
 	XTimeout       = 30 * time.Second
+	SwitchTimeout  = 10 * time.Second
 )
 
 // Plugin calls a plugin the way Loop does.
@@ -109,6 +111,11 @@ func (p *Plugin) RunDone(ctx context.Context, runID string, req pluginsdk.RunDon
 	return p.Do(ctx, http.MethodPost, "/runs/"+url.PathEscape(runID)+"/done", req, RunDoneTimeout)
 }
 
+// Switch calls POST /switches/{switch}.
+func (p *Plugin) Switch(ctx context.Context, id string, req pluginsdk.SwitchRequest) (*Response, error) {
+	return p.Do(ctx, http.MethodPost, "/switches/"+url.PathEscape(id), req, SwitchTimeout)
+}
+
 // X calls the plugin's own API at /x/{path}, as its UI does through Loop.
 func (p *Plugin) X(ctx context.Context, method, path string, body any) (*Response, error) {
 	return p.Do(ctx, method, "/x/"+path, body, XTimeout)
@@ -125,7 +132,8 @@ type CheckOptions struct {
 
 // Check drives the plugin p, described by m, through the Loop → plugin
 // contract: its health check and version, the secret, every action with
-// each trigger, every tool as an agent and a workflow call it, and the end
+// each trigger, every tool as an agent and a workflow call it, every
+// composer switch turned on and off, and the end
 // of each agent run it started on opts.Loop. A plugin's
 // tests call it with the plugin serving against a FakeLoop.
 func Check(t *testing.T, p *Plugin, m *pluginsdk.Manifest, opts CheckOptions) {
@@ -172,6 +180,23 @@ func Check(t *testing.T, p *Plugin, m *pluginsdk.Manifest, opts CheckOptions) {
 				require.Equal(t, http.StatusOK, resp.Status, "tool %s answers 200, with is_error for a call it can't take: %s", tool.Name, resp.Body)
 				var res pluginsdk.ToolResult
 				require.NoError(t, json.Unmarshal(resp.Body, &res), "tool %s answers a tool result", tool.Name)
+			}
+		}
+	})
+
+	t.Run("switches", func(t *testing.T) {
+		if m.UI == nil {
+			return
+		}
+		for _, sw := range m.UI.ComposerSwitches {
+			for _, on := range []bool{true, false} {
+				resp, err := p.Switch(ctx, sw.ID, pluginsdk.SwitchRequest{On: on})
+				require.NoError(t, err, "switch %s answers within %s", sw.ID, SwitchTimeout)
+				require.Equal(t, http.StatusOK, resp.Status, "switch %s answers 200 when turned on=%t: %s", sw.ID, on, resp.Body)
+				var state pluginsdk.SwitchState
+				require.NoError(t, json.Unmarshal(resp.Body, &state), "switch %s answers its state", sw.ID)
+				require.Contains(t, switchStatuses, state.Status, "switch %s answers a known status", sw.ID)
+				require.LessOrEqual(t, utf8.RuneCountInString(state.Title), 200, "switch %s answers a title of at most 200 characters", sw.ID)
 			}
 		}
 	})

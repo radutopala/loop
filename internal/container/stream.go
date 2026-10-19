@@ -285,6 +285,16 @@ type streamCallbacks struct {
 	// onTurnStart is called when a turn starts (a "system" "init" event),
 	// before any of the turn's other events.
 	onTurnStart func()
+	// onSystem gets every "system" event but a turn's "init", by subtype,
+	// as the CLI wrote it.
+	onSystem func(subtype string, line []byte)
+	// onControlResponse gets each "control_response" event: the answer to
+	// a control request written to the process's stdin, as the CLI wrote
+	// it.
+	onControlResponse func(requestID string, line []byte)
+	// onPrompt gets the user message of a turn started from outside the
+	// process's stdin, which the CLI replays with --replay-user-messages.
+	onPrompt func(text string)
 }
 
 // any reports whether at least one callback is set. collectOutput uses it to
@@ -297,7 +307,8 @@ type streamCallbacks struct {
 func (cb streamCallbacks) any() bool {
 	return cb.onTurn != nil || cb.onToolUse != nil || cb.onToolUseRaw != nil ||
 		cb.onActivity != nil || cb.onBackgroundTasks != nil || cb.onThinking != nil ||
-		cb.onToolResult != nil || cb.onSession != nil || cb.onTurnStart != nil
+		cb.onToolResult != nil || cb.onSession != nil || cb.onTurnStart != nil ||
+		cb.onSystem != nil || cb.onControlResponse != nil || cb.onPrompt != nil
 }
 
 // requestCallbacks are the stream callbacks req sets.
@@ -342,6 +353,25 @@ type userMessage struct {
 			IsError   bool            `json:"is_error"`
 		} `json:"content"`
 	} `json:"message"`
+}
+
+// replayedPrompt returns the text of a user event the CLI replays for a
+// prompt a person sent from outside the process's stdin. The process's own
+// stdin lines are replayed too, but without an origin.
+func replayedPrompt(line []byte) (string, bool) {
+	var evt struct {
+		IsReplay bool `json:"isReplay"`
+		Origin   struct {
+			Kind string `json:"kind"`
+		} `json:"origin"`
+		Message struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"message"`
+	}
+	if json.Unmarshal(line, &evt) != nil || !evt.IsReplay || evt.Origin.Kind != "human" {
+		return "", false
+	}
+	return parseToolResultContent(evt.Message.Content), true
 }
 
 // parseToolResultContent extracts the textual body of a tool_result content
@@ -647,6 +677,12 @@ func (st *streamState) dispatch(line []byte, cb streamCallbacks) *claudeResponse
 			}
 		}
 	case "user":
+		if cb.onPrompt != nil {
+			if text, ok := replayedPrompt(line); ok {
+				cb.onPrompt(text)
+				return nil
+			}
+		}
 		if cb.onToolResult == nil {
 			return nil
 		}
@@ -668,6 +704,18 @@ func (st *streamState) dispatch(line []byte, cb streamCallbacks) *claudeResponse
 			return nil
 		}
 		st.system(evt, cb)
+		if evt.Subtype != "init" && cb.onSystem != nil {
+			cb.onSystem(evt.Subtype, line)
+		}
+	case "control_response":
+		var evt struct {
+			Response struct {
+				RequestID string `json:"request_id"`
+			} `json:"response"`
+		}
+		if cb.onControlResponse != nil && json.Unmarshal(line, &evt) == nil {
+			cb.onControlResponse(evt.Response.RequestID, line)
+		}
 	case "tool_progress":
 		// Periodic heartbeat the CLI emits while a long-running tool
 		// executes (e.g. a multi-minute Bash call): tool name + elapsed

@@ -14,6 +14,14 @@ const (
 	TriggerWorkflow Trigger = "workflow"
 )
 
+// Defines values for SwitchStateStatus.
+const (
+	SwitchStateStatusBusy  SwitchStateStatus = "busy"
+	SwitchStateStatusEmpty SwitchStateStatus = ""
+	SwitchStateStatusError SwitchStateStatus = "error"
+	SwitchStateStatusOk    SwitchStateStatus = "ok"
+)
+
 // ActionRequest defines model for ActionRequest.
 type ActionRequest struct {
 	// Input A workflow node's input, a JSON object with its templates
@@ -44,8 +52,17 @@ type Event struct {
 	ThreadID string `json:"thread_id,omitempty"`
 
 	// Timestamp When Loop sent it, in Unix milliseconds.
-	Timestamp int64  `json:"timestamp"`
-	Type      string `json:"type"`
+	Timestamp int64 `json:"timestamp"`
+
+	// Type live.status is sent when a chat's live session starts, restarts
+	// (its process replaced, with what control requests set on it
+	// gone) or ends. live.system carries one of the live session's
+	// "system" events, of a subtype the manifest's live.messages
+	// lists, as `{"subtype", "message"}`; it needs live.control.
+	// settings.changed goes to the running containers only, after a
+	// config write, with `{"settings"}` the plugin's settings in the
+	// channel's project; they may be unchanged.
+	Type string `json:"type"`
 }
 
 // Health defines model for Health.
@@ -63,6 +80,31 @@ type RunDoneRequest struct {
 	Error  string `json:"error,omitempty"`
 	Status string `json:"status"`
 }
+
+// SwitchRequest defines model for SwitchRequest.
+type SwitchRequest struct {
+	// On Whether the owner turned the switch on.
+	On bool `json:"on"`
+
+	// ThreadID The thread of the channel the switch was clicked in, if any.
+	ThreadID string `json:"thread_id,omitempty"`
+}
+
+// SwitchState defines model for SwitchState.
+type SwitchState struct {
+	On bool `json:"on"`
+
+	// Status How the switch is doing: busy while it works on its state, ok
+	// once it's there, error when it failed. Empty shows it plain.
+	Status SwitchStateStatus `json:"status,omitempty"`
+
+	// Title The switch's tooltip; empty keeps the manifest's.
+	Title string `json:"title,omitempty"`
+}
+
+// SwitchStateStatus How the switch is doing: busy while it works on its state, ok
+// once it's there, error when it failed. Empty shows it plain.
+type SwitchStateStatus string
 
 // ToolRequest defines model for ToolRequest.
 type ToolRequest struct {
@@ -102,6 +144,9 @@ type EventJSONRequestBody = Event
 
 // RunDoneJSONRequestBody defines body for RunDone for application/json ContentType.
 type RunDoneJSONRequestBody = RunDoneRequest
+
+// TurnSwitchJSONRequestBody defines body for TurnSwitch for application/json ContentType.
+type TurnSwitchJSONRequestBody = SwitchRequest
 
 // CallToolJSONRequestBody defines body for CallTool for application/json ContentType.
 type CallToolJSONRequestBody = ToolRequest

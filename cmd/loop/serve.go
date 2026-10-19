@@ -817,6 +817,7 @@ func (a *app) serve() error {
 	if plug != nil {
 		apiSrv.SetPluginManager(plug.service)
 		apiSrv.SetPluginBadges(plug.store)
+		apiSrv.SetPluginSwitches(plug.store)
 		eventsHub.Observe(apiSrv.ForwardToPlugins)
 		go plug.service.Run(ctx, pluginIdleInterval, apiSrv.PluginsStopped, logger)
 		executor.SetPluginActions(pluginActionRunner(plug.service))
@@ -858,6 +859,7 @@ func (a *app) serve() error {
 	orch.SetLiveRunner(runner, apiSrv.PublishChannelEvent)
 	executor.SetLiveSessions(orch)
 	apiSrv.SetLiveSessions(orch)
+	orch.SetLiveSystem(apiSrv.ForwardLiveSystem)
 	apiSrv.SetRunCanceller(orch)
 	apiSrv.SetExplainer(orch)
 	apiSrv.SetLearnTurner(orch)
@@ -891,6 +893,7 @@ func (a *app) serve() error {
 	if err := apiSrv.Start(cfg.APIAddr); err != nil {
 		return fmt.Errorf("starting api server: %w", err)
 	}
+	go apiSrv.WakePluginSwitches(ctx)
 
 	// Start the bot + scheduler only after the API is listening so any run they
 	// trigger (a due scheduled task, an inbound message) can call back into the

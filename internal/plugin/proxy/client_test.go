@@ -194,6 +194,44 @@ func (s *ClientSuite) TestRunDone() {
 	require.Equal(s.T(), req, got)
 }
 
+func (s *ClientSuite) TestSwitch() {
+	tests := []struct {
+		name    string
+		status  int
+		body    string
+		want    *SwitchState
+		wantErr string
+	}{
+		{name: "state", status: http.StatusOK, body: `{"on":true,"status":"busy","title":"Connecting"}`, want: &SwitchState{On: true, Status: SwitchStatusBusy, Title: "Connecting"}},
+		{name: "refused", status: http.StatusConflict, body: "no session\n", wantErr: "the plugin answered 409 Conflict: no session"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			var got SwitchRequest
+			var path, auth string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				path, auth = r.URL.EscapedPath(), r.Header.Get("Authorization")
+				_ = json.NewDecoder(r.Body).Decode(&got)
+				w.WriteHeader(tt.status)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer srv.Close()
+
+			req := SwitchRequest{On: true, ThreadID: "th1"}
+			res, err := NewClient(srv.Client()).Switch(context.Background(), runtime.Endpoint{URL: srv.URL, Secret: "sec"}, "mode", req)
+			require.Equal(s.T(), "/switches/mode", path)
+			require.Equal(s.T(), "Bearer sec", auth)
+			require.Equal(s.T(), req, got)
+			if tt.wantErr != "" {
+				require.ErrorContains(s.T(), err, tt.wantErr)
+				return
+			}
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tt.want, res)
+		})
+	}
+}
+
 func (s *ClientSuite) TestEvent() {
 	var got map[string]any
 	var path, auth string

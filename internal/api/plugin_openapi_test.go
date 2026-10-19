@@ -129,6 +129,7 @@ func (s *ServerSuite) TestPluginAPISpecResponses() {
 		"POST /ui/commands":             reflect.TypeFor[uibridge.Reply](),
 		"POST /ui/open_file":            reflect.TypeFor[uibridge.Reply](),
 		"POST /cards":                   reflect.TypeFor[pluginCardResponse](),
+		"POST /channel/live/control":    reflect.TypeFor[pluginLiveControlResponse](),
 	}
 	spec := loadSpecSchemas(s.T(), pluginAPISpec)
 	require.Equal(s.T(), slices.Sorted(maps.Keys(spec.answers)), slices.Sorted(maps.Keys(answers)),

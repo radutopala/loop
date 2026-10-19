@@ -75,6 +75,26 @@ type RunDoneRequest = plugincontract.RunDoneRequest
 // when Loop sent it, in Unix milliseconds.
 type Event = plugincontract.Event
 
+// SwitchRequest is the body of POST /switches/{switch}: the owner turned a
+// composer switch on or off, in the channel's chat or, when ThreadID is
+// set, one of its threads'.
+type SwitchRequest = plugincontract.SwitchRequest
+
+// SwitchState is what a composer switch shows: whether it's on, its status
+// and its tooltip.
+type SwitchState = plugincontract.SwitchState
+
+// SwitchStatus is how a composer switch is doing.
+type SwitchStatus = plugincontract.SwitchStateStatus
+
+// The statuses of SwitchState.
+const (
+	SwitchPlain = plugincontract.SwitchStateStatusEmpty
+	SwitchBusy  = plugincontract.SwitchStateStatusBusy
+	SwitchOK    = plugincontract.SwitchStateStatusOk
+	SwitchError = plugincontract.SwitchStateStatusError
+)
+
 // Health is the answer to GET /healthz.
 type Health = plugincontract.Health
 
@@ -86,6 +106,12 @@ type ToolFunc func(ctx context.Context, req ToolRequest) (ToolResult, error)
 
 // RunDoneFunc learns that an agent run the plugin started ended.
 type RunDoneFunc func(ctx context.Context, runID string, req RunDoneRequest) error
+
+// SwitchFunc turns a composer switch over and answers the state it shows.
+// An error leaves the switch as it was and shows the owner the error. Loop
+// waits for it for up to 10 s; answer SwitchBusy and hand long work to
+// Server.Go.
+type SwitchFunc func(ctx context.Context, req SwitchRequest) (SwitchState, error)
 
 // EventFunc takes a Loop event the plugin subscribes to. Loop waits for it
 // for up to 10 s; hand long work to Server.Go.
@@ -101,7 +127,7 @@ const (
 )
 
 // Server serves the Loop → plugin contract: /healthz, /actions, /tools,
-// /runs/{run_id}/done, /events and the plugin's own API under /x, behind the secret
+// /runs/{run_id}/done, /events, /switches and the plugin's own API under /x, behind the secret
 // Loop hands the container.
 type Server struct {
 	// Secret is the contents of LOOP_PLUGIN_SECRET_FILE. A Server without
@@ -117,6 +143,8 @@ type Server struct {
 	RunDone RunDoneFunc
 	// Events, when set, takes the Loop events the manifest subscribes to.
 	Events EventFunc
+	// Switches are the manifest's composer switches by id.
+	Switches map[string]SwitchFunc
 	// X serves the plugin's API for its UI, with the /x prefix stripped.
 	X http.Handler
 	// Logger gets failures; nil discards them.
@@ -172,6 +200,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /tools/{tool}", s.tool)
 	mux.HandleFunc("POST /runs/{run_id}/done", s.runDone)
 	mux.HandleFunc("POST /events", s.event)
+	mux.HandleFunc("POST /switches/{switch}", s.turnSwitch)
 	if s.X != nil {
 		mux.Handle("/x/", http.StripPrefix("/x", http.MaxBytesHandler(s.X, MaxXBody)))
 	}
@@ -277,4 +306,25 @@ func (s *Server) event(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) turnSwitch(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("switch")
+	fn, ok := s.Switches[id]
+	if !ok {
+		WriteError(w, http.StatusNotFound, "unknown switch")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, MaxBody)
+	var req SwitchRequest
+	if !DecodeJSON(w, r, &req) {
+		return
+	}
+	state, err := fn(r.Context(), req)
+	if err != nil {
+		s.Logger.Error("switch "+id, "err", err)
+		WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	WriteJSON(w, http.StatusOK, state)
 }

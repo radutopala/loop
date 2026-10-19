@@ -212,6 +212,10 @@ type DockerRunner struct {
 	live   map[string]*liveSession
 	// liveStarting marks the channels whose session is starting.
 	liveStarting map[string]bool
+	// liveHolds are the holders that keep each channel's live session from
+	// ending idle (see HoldLive).
+	liveHoldMu sync.Mutex
+	liveHolds  map[string]map[string]bool
 	// now and afterFunc are the clock live sessions run on.
 	now       func() time.Time
 	afterFunc func(d time.Duration, f func()) stopper

@@ -692,7 +692,7 @@ func (s *ServerSuite) TestGetReadme() {
 
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 	require.Equal(s.T(), "text/plain; charset=utf-8", rec.Header().Get("Content-Type"))
-	require.NotEmpty(s.T(), rec.Body.String())
+	require.Contains(s.T(), rec.Body.String(), `src="data:image/svg+xml;base64,`)
 }
 
 // --- containsFold tests ---

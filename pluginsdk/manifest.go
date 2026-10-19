@@ -28,14 +28,46 @@ const (
 	CapUIBadge       = "ui.badge"
 	CapUICard        = "ui.notification.card"
 	CapUICopy        = "ui.copy"
+	CapLiveControl   = "live.control"
+	CapUISwitch      = "ui.composer_switch"
 )
 
 // Loop events a manifest may subscribe to.
 const (
-	EventMessageCreated = "message.created"
-	EventAgentStatus    = "agent.status"
-	EventQualityScanned = "quality.scanned"
+	EventMessageCreated  = "message.created"
+	EventAgentStatus     = "agent.status"
+	EventQualityScanned  = "quality.scanned"
+	EventLiveStatus      = "live.status"
+	EventLiveSystem      = "live.system"
+	EventSettingsChanged = "settings.changed"
 )
+
+// SettingsChanged is the data of a settings.changed event: the plugin's
+// settings in the channel's project, as GET /channel has them, after a
+// config write. They may be the ones the plugin already has.
+type SettingsChanged struct {
+	Settings map[string]any `json:"settings"`
+}
+
+// LiveStatus is the data of a live.status event: the chat's live session
+// started, restarted, or ended when Running is false. Reason says why it
+// ended or restarted; a restarted process has lost what control requests
+// set on it.
+type LiveStatus struct {
+	Running   bool   `json:"running"`
+	SessionID string `json:"session_id,omitempty"`
+	Busy      bool   `json:"busy"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+// LiveSystem is the data of a live.system event: a "system" message of the
+// chat's live session whose subtype the manifest lists under
+// live.messages.
+type LiveSystem struct {
+	Subtype string `json:"subtype"`
+	// Message is the message as the claude process wrote it.
+	Message json.RawMessage `json:"message"`
+}
 
 // Manifest is a plugin's plugin.json. Loop checks it at install; reading it
 // here checks only that it parses.
@@ -61,6 +93,19 @@ type Manifest struct {
 	// ThreadEvents is where an event in a channel's thread goes: "thread"
 	// (the thread's container, the default), "channel" or "both".
 	ThreadEvents string `json:"thread_events,omitempty"`
+	// Live is what the plugin does with its chats' live sessions; it needs
+	// CapLiveControl.
+	Live *Live `json:"live,omitempty"`
+}
+
+// Live lists the live session messages a plugin sends and hears.
+type Live struct {
+	// Control are the subtypes of the control requests LiveControl may
+	// send.
+	Control []string `json:"control,omitempty"`
+	// Messages are the subtypes of the "system" messages live.system
+	// events bring.
+	Messages []string `json:"messages,omitempty"`
 }
 
 // Gate is the agentgate rules a plugin asks for on top of Loop's baseline.
@@ -140,6 +185,8 @@ type Schedule struct {
 type UI struct {
 	Panels []Panel `json:"panels,omitempty"`
 	Cards  []Card  `json:"cards,omitempty"`
+	// ComposerSwitches need CapUISwitch.
+	ComposerSwitches []ComposerSwitch `json:"composer_switches,omitempty"`
 }
 
 // Panel is a pane the plugin draws from a static bundle in its image.
@@ -157,6 +204,18 @@ type Card struct {
 	ID string `json:"id"`
 	// Entry is the card's HTML page, relative to /loop-plugin.
 	Entry string `json:"entry"`
+}
+
+// ComposerSwitch is an on/off pill the plugin adds to the chat composer; a
+// click calls the Server's Switches[ID].
+type ComposerSwitch struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	// Icon is the pill's SVG icon, relative to /loop-plugin, under ui/, at
+	// most 16 KB.
+	Icon string `json:"icon"`
+	// Title is the pill's tooltip until the plugin sets its own.
+	Title string `json:"title,omitempty"`
 }
 
 // Resources caps the plugin's container.

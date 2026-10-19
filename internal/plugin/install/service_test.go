@@ -70,6 +70,12 @@ func (m *mockCaller) Event(ctx context.Context, ep runtime.Endpoint, evt proxy.E
 	return m.Called(ctx, ep, evt).Error(0)
 }
 
+func (m *mockCaller) Switch(ctx context.Context, ep runtime.Endpoint, id string, req proxy.SwitchRequest) (*proxy.SwitchState, error) {
+	args := m.Called(ctx, ep, id, req)
+	res, _ := args.Get(0).(*proxy.SwitchState)
+	return res, args.Error(1)
+}
+
 func (m *mockRuntime) StopIdle(ctx context.Context) bool {
 	return m.Called(ctx).Bool(0)
 }
@@ -884,6 +890,16 @@ func (s *ServiceSuite) TestRunDoneAndX() {
 		require.Equal(s.T(), xres, got)
 	})
 
+	s.Run("woken", func() {
+		s.SetupTest()
+		defer s.TearDownTest()
+		s.store.On("GetPluginState", s.ctx, "echo").Return(s.installed(db.PluginStatusInstalled), nil).Once()
+		s.runtime.On("Ensure", s.ctx, mock.Anything, ch).Return(ep, nil).Once()
+		require.NoError(s.T(), s.svc.Wake(s.ctx, "echo", ch))
+		s.store.On("GetPluginState", s.ctx, "gone").Return(nil, nil).Once()
+		require.ErrorIs(s.T(), s.svc.Wake(s.ctx, "gone", ch), ErrNotInstalled)
+	})
+
 	s.Run("not installed", func() {
 		s.SetupTest()
 		defer s.TearDownTest()
@@ -984,6 +1000,66 @@ func (s *ServiceSuite) TestDeliver() {
 	})
 }
 
+func (s *ServiceSuite) TestNotifySettings() {
+	ch := runtime.Channel{ID: "ch1", DirPath: "/src"}
+	ep := runtime.Endpoint{URL: "http://127.0.0.1:1234", Secret: "s"}
+	at := time.UnixMilli(7)
+	values := map[string]any{"on": true}
+	evt := proxy.Event{Type: plugin.EventSettingsChanged, ChannelID: "ch1", Data: plugin.SettingsChanged{Settings: values}, Timestamp: 7}
+	sub := string(plugin.CapEventsSub)
+	// listener returns echo subscribed to settings.changed, with caps
+	// approved.
+	listener := func(caps ...string) *db.PluginState {
+		st := s.subscriber(caps...)
+		manifest := strings.Replace(eventsManifest, `"message.created"`, `"settings.changed"`, 1)
+		require.NoError(s.T(), os.WriteFile(filepath.Join(s.in.Dir(st), "plugin.json"), []byte(manifest), 0o644))
+		return st
+	}
+	tests := []struct {
+		name        string
+		state       func() *db.PluginState
+		settingsErr error
+		setup       func()
+		wantErr     string
+	}{
+		{name: "notified", state: func() *db.PluginState { return listener(sub) }, setup: func() {
+			s.runtime.On("Ensure", s.ctx, mock.Anything, ch).Return(ep, nil).Once()
+			s.caller.On("Event", s.ctx, ep, evt).Return(nil).Once()
+		}},
+		{name: "not subscribed", state: func() *db.PluginState { return s.subscriber(sub) }},
+		{name: "not approved", state: func() *db.PluginState { return listener() }},
+		{name: "not installed", state: func() *db.PluginState { return nil }, wantErr: "echo: " + ErrNotInstalled.Error()},
+		{name: "settings fail", state: func() *db.PluginState { return listener(sub) }, settingsErr: errors.New("bad config"), wantErr: "echo: bad config"},
+		{name: "call fails", state: func() *db.PluginState { return listener(sub) }, setup: func() {
+			s.runtime.On("Ensure", s.ctx, mock.Anything, ch).Return(ep, nil).Once()
+			s.caller.On("Event", s.ctx, ep, evt).Return(errors.New("the plugin answered 500")).Once()
+		}, wantErr: "echo: the plugin answered 500"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			defer s.TearDownTest()
+			s.svc.now = func() time.Time { return at }
+			s.runtime.On("Running").Return([]runtime.Running{{PluginID: "echo", Channel: ch}}).Once()
+			s.store.On("GetPluginState", s.ctx, "echo").Return(tt.state(), nil).Once()
+			if tt.setup != nil {
+				tt.setup()
+			}
+			err := s.svc.NotifySettings(s.ctx, func(_ context.Context, pluginID string, m *plugin.Manifest, got runtime.Channel) (map[string]any, error) {
+				require.Equal(s.T(), "echo", pluginID)
+				require.Equal(s.T(), "echo", m.ID)
+				require.Equal(s.T(), ch, got)
+				return values, tt.settingsErr
+			})
+			if tt.wantErr == "" {
+				require.NoError(s.T(), err)
+				return
+			}
+			require.EqualError(s.T(), err, tt.wantErr)
+		})
+	}
+}
+
 func (s *ServiceSuite) TestDeliverThreadEvent() {
 	ch := runtime.Channel{ID: "ch1", DirPath: "/src"}
 	thread := runtime.Channel{ID: "th1", DirPath: "/src/.worktrees/th1"}
@@ -1023,6 +1099,101 @@ func (s *ServiceSuite) TestDeliverThreadEvent() {
 				return
 			}
 			require.NoError(s.T(), err)
+		})
+	}
+}
+
+const switchManifest = `{
+	"id": "echo", "name": "Echo", "version": "1.0.0", "api": "1",
+	"capabilities": ["ui.composer_switch", "live.control", "events.subscribe"],
+	"events": ["live.system"],
+	"live": {"control": ["set_mode"], "messages": ["mode_state"]},
+	"ui": {"composer_switches": [{"id": "mode", "label": "Mode", "icon": "ui/mode.svg"}]},
+}`
+
+// switcher returns echo installed with switchManifest and caps approved.
+func (s *ServiceSuite) switcher(caps ...string) *db.PluginState {
+	st := s.installed(db.PluginStatusInstalled)
+	require.NoError(s.T(), os.WriteFile(filepath.Join(s.in.Dir(st), "plugin.json"), []byte(switchManifest), 0o644))
+	st.ApprovedCaps = caps
+	return st
+}
+
+func (s *ServiceSuite) TestSwitch() {
+	ch := runtime.Channel{ID: "ch1", DirPath: "/src"}
+	ep := runtime.Endpoint{URL: "http://127.0.0.1:1234", Secret: "s"}
+	req := proxy.SwitchRequest{On: true, ThreadID: "th1"}
+	sw := string(plugin.CapUISwitch)
+	tests := []struct {
+		name    string
+		id      string
+		state   func() *db.PluginState
+		setup   func()
+		want    *proxy.SwitchState
+		wantIs  error
+		wantErr string
+	}{
+		{name: "forwarded", id: "mode", state: func() *db.PluginState { return s.switcher(sw) }, setup: func() {
+			s.runtime.On("Ensure", s.ctx, mock.Anything, ch).Return(ep, nil).Once()
+			s.caller.On("Switch", s.ctx, ep, "mode", req).Return(&proxy.SwitchState{On: true}, nil).Once()
+		}, want: &proxy.SwitchState{On: true}},
+		{name: "not installed", id: "mode", state: func() *db.PluginState { return nil }, wantIs: ErrNotInstalled},
+		{name: "not approved", id: "mode", state: func() *db.PluginState { return s.switcher() }, wantIs: ErrNotApproved},
+		{name: "unknown switch", id: "nope", state: func() *db.PluginState { return s.switcher(sw) }, wantIs: ErrUnknownSwitch},
+		{name: "start", id: "mode", state: func() *db.PluginState { return s.switcher(sw) }, setup: func() {
+			s.runtime.On("Ensure", s.ctx, mock.Anything, ch).Return(runtime.Endpoint{}, errors.New("unhealthy")).Once()
+		}, wantErr: "starting the plugin: unhealthy"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			defer s.TearDownTest()
+			s.store.On("GetPluginState", s.ctx, "echo").Return(tt.state(), nil).Once()
+			if tt.setup != nil {
+				tt.setup()
+			}
+			res, err := s.svc.Switch(s.ctx, "echo", tt.id, ch, req)
+			switch {
+			case tt.wantIs != nil:
+				require.ErrorIs(s.T(), err, tt.wantIs)
+			case tt.wantErr != "":
+				require.EqualError(s.T(), err, tt.wantErr)
+			default:
+				require.NoError(s.T(), err)
+				require.Equal(s.T(), tt.want, res)
+			}
+		})
+	}
+}
+
+func (s *ServiceSuite) TestDeliverLiveSystem() {
+	ch := runtime.Channel{ID: "ch1", DirPath: "/src"}
+	ep := runtime.Endpoint{URL: "http://127.0.0.1:1234", Secret: "s"}
+	sub, live := string(plugin.CapEventsSub), string(plugin.CapLiveControl)
+	event := func(data any) proxy.Event {
+		return proxy.Event{Type: plugin.EventLiveSystem, ChannelID: "ch1", Data: data}
+	}
+	tests := []struct {
+		name      string
+		caps      []string
+		evt       proxy.Event
+		delivered bool
+	}{
+		{name: "asked for", caps: []string{sub, live}, evt: event(plugin.LiveSystem{Subtype: "mode_state"}), delivered: true},
+		{name: "another subtype", caps: []string{sub, live}, evt: event(plugin.LiveSystem{Subtype: "status"})},
+		{name: "live.control not approved", caps: []string{sub}, evt: event(plugin.LiveSystem{Subtype: "mode_state"})},
+		{name: "not a live system message", caps: []string{sub, live}, evt: event("x")},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			defer s.TearDownTest()
+			s.store.On("ListPluginStates", s.ctx).Return([]*db.PluginState{s.switcher(tt.caps...)}, nil).Once()
+			if tt.delivered {
+				s.runtime.On("Ensure", s.ctx, mock.Anything, ch).Return(ep, nil).Once()
+				s.caller.On("Event", s.ctx, ep, tt.evt).Return(nil).Once()
+			}
+			require.NoError(s.T(), s.svc.Deliver(s.ctx, ch, nil, tt.evt))
 		})
 	}
 }

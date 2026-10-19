@@ -34,6 +34,8 @@ tags:
     description: The plugin's panels and the desktop.
   - name: memory
     description: Memory files the channel's agents search.
+  - name: live
+    description: The live session of the channel's chat.
 paths:
   /channel:
     get:
@@ -635,6 +637,162 @@ paths:
           content: { text/plain: { schema: { type: string } } }
         "500": { $ref: "#/components/responses/InternalError" }
         "501": { $ref: "#/components/responses/PluginsDisabled" }
+  /composer/switches/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: The id of a switch under the manifest's ui.composer_switches.
+        schema: { type: string }
+    put:
+      operationId: setSwitch
+      tags: [ui]
+      summary: Set what a composer switch shows
+      description: |
+        Sets what one of the plugin's composer switches shows in the chat:
+        whether it's on, its status and its tooltip. Loop also stores what
+        the plugin answers when the user turns the switch (POST
+        /switches/{switch} of the plugin contract); this route is for
+        changes the plugin makes by itself, such as a status it learns
+        later. The body is capped at 64 KB.
+      x-loop-capabilities: [ui.composer_switch]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SwitchUpdate"
+      responses:
+        "204":
+          description: The switch shows the state.
+        "400":
+          description: The body isn't JSON or is over 64 KB, the status isn't one of busy, ok and error, or the title is too long.
+          content: { text/plain: { schema: { type: string } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: The channel, the thread or the switch doesn't exist.
+          content: { text/plain: { schema: { type: string } } }
+        "409": { $ref: "#/components/responses/NotRunnable" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { $ref: "#/components/responses/PluginsDisabled" }
+    delete:
+      operationId: resetSwitch
+      tags: [ui]
+      summary: Reset a composer switch
+      description: Turns the switch off in the chat, without a status or tooltip.
+      x-loop-capabilities: [ui.composer_switch]
+      parameters:
+        - $ref: "#/components/parameters/ThreadID"
+      responses:
+        "204":
+          description: The switch is reset.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: The channel, the thread or the switch doesn't exist.
+          content: { text/plain: { schema: { type: string } } }
+        "409": { $ref: "#/components/responses/NotRunnable" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { $ref: "#/components/responses/PluginsDisabled" }
+  /channel/live/control:
+    post:
+      operationId: liveControl
+      tags: [live]
+      summary: Send a control request to the chat's live session
+      description: |
+        Sends a control request to the claude process of the chat's live
+        session, as Claude Code's stream-json input takes them, and answers
+        with the response the process gives. The request's subtype must be
+        one the manifest declares under live.control. What a request sets on
+        the process is gone when Loop restarts it; the live.status event
+        with a reason tells of that. The body is capped at 64 KB; Loop waits
+        up to 30 seconds for the answer.
+      x-loop-capabilities: [live.control]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LiveControl"
+      responses:
+        "200":
+          description: The process's response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiveControlResponse"
+        "400":
+          description: The body isn't JSON or is over 64 KB, the request has no subtype, or the manifest doesn't declare it.
+          content: { text/plain: { schema: { type: string } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: The channel or the thread doesn't exist.
+          content: { text/plain: { schema: { type: string } } }
+        "409":
+          description: The plugin can't run, or the chat has no live session.
+          content: { text/plain: { schema: { type: string } } }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { $ref: "#/components/responses/PluginsDisabled" }
+        "502":
+          description: The process refused the request; the message is its error.
+          content: { text/plain: { schema: { type: string } } }
+        "503":
+          description: Live sessions aren't available.
+          content: { text/plain: { schema: { type: string } } }
+        "504":
+          description: The process didn't answer in time.
+          content: { text/plain: { schema: { type: string } } }
+  /channel/live/hold:
+    parameters:
+      - $ref: "#/components/parameters/ThreadID"
+    put:
+      operationId: holdLive
+      tags: [live]
+      summary: Keep the chat's live session running
+      description: |
+        Starts the chat's live session if it isn't running and keeps it
+        from ending when idle, until the plugin releases it. The user can
+        still stop it, and Loop still restarts it when its settings change.
+        During an agent image build it answers before the session runs;
+        the session's live.status event tells when it does.
+      x-loop-capabilities: [live.control]
+      responses:
+        "204":
+          description: The session is held, and runs or is starting.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: The channel or the thread doesn't exist.
+          content: { text/plain: { schema: { type: string } } }
+        "409":
+          description: The plugin can't run, or the chat doesn't run live.
+          content: { text/plain: { schema: { type: string } } }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { $ref: "#/components/responses/PluginsDisabled" }
+        "503":
+          description: Live sessions aren't available.
+          content: { text/plain: { schema: { type: string } } }
+    delete:
+      operationId: releaseLive
+      tags: [live]
+      summary: Let the chat's live session end when idle
+      x-loop-capabilities: [live.control]
+      responses:
+        "204":
+          description: The plugin no longer holds the session.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: The channel or the thread doesn't exist.
+          content: { text/plain: { schema: { type: string } } }
+        "409": { $ref: "#/components/responses/NotRunnable" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { $ref: "#/components/responses/PluginsDisabled" }
+        "503":
+          description: Live sessions aren't available.
+          content: { text/plain: { schema: { type: string } } }
 components:
   securitySchemes:
     pluginToken:
@@ -643,6 +801,12 @@ components:
       description: |
         The contents of LOOP_PLUGIN_TOKEN_FILE. Loop replaces the token when
         it restarts, so read the file on every call.
+  parameters:
+    ThreadID:
+      name: thread_id
+      in: query
+      description: A listed thread of the channel, for its chat rather than the channel's.
+      schema: { type: string }
   responses:
     Unauthorized:
       description: The token is missing or unknown.
@@ -914,3 +1078,44 @@ components:
           description: Shown above the card, on one line; whitespace runs collapse and it's cut at 120 characters.
         data:
           description: Any JSON, which the card's page gets; null when left out.
+    SwitchUpdate:
+      type: object
+      required: ["on"]
+      properties:
+        "on":
+          type: boolean
+          description: Whether the switch shows on.
+        status:
+          type: string
+          enum: ["", busy, ok, error]
+          description: What the plugin says of the switch; empty is none.
+        title:
+          type: string
+          maxLength: 200
+          description: The tooltip.
+        thread_id:
+          type: string
+          description: A listed thread of the channel, for its chat rather than the channel's.
+    LiveControl:
+      type: object
+      required: [request]
+      properties:
+        request:
+          type: object
+          required: [subtype]
+          additionalProperties: true
+          description: The control request, such as {"subtype":"…", …}.
+          properties:
+            subtype:
+              type: string
+        thread_id:
+          type: string
+          description: A listed thread of the channel, for its chat rather than the channel's.
+    LiveControlResponse:
+      type: object
+      required: [response]
+      properties:
+        response:
+          type: object
+          additionalProperties: true
+          description: The process's response; {} when it has none.

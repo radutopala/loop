@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"time"
@@ -45,6 +46,21 @@ func (m *MockLiveRunner) LiveInfo(channelID string) (agent.LiveInfo, bool) {
 func (m *MockLiveRunner) LiveChannels() []string {
 	args := m.Called()
 	return args.Get(0).([]string)
+}
+
+func (m *MockLiveRunner) SendLiveControl(ctx context.Context, channelID string, request json.RawMessage) (json.RawMessage, error) {
+	args := m.Called(ctx, channelID, request)
+	body, _ := args.Get(0).(json.RawMessage)
+	return body, args.Error(1)
+}
+
+func (m *MockLiveRunner) HoldLive(channelID, holder string, on bool) {
+	m.Called(channelID, holder, on)
+}
+
+func (m *MockLiveRunner) LiveHolds() map[string][]string {
+	args := m.Called()
+	return args.Get(0).(map[string][]string)
 }
 
 // livePublished is one live.status event the orchestrator published.
@@ -436,6 +452,67 @@ func (s *OrchestratorSuite) TestLiveHooksActivityAndEnded() {
 	}, got[len(got)-1])
 }
 
+// A restart is published as the session running on, and system events go
+// to the live system sink once there is one.
+func (s *OrchestratorSuite) TestLiveHooksRestartedAndSystem() {
+	lr, rec := s.withLive()
+	hooks := s.startedHooks(lr)
+
+	hooks.Restarted("config changed")
+	got := rec.all()
+	require.Equal(s.T(), livePublished{
+		channelID: "ch-1", eventType: EventLiveStatus,
+		data: LiveStatus{Enabled: true, Reason: "config changed"},
+	}, got[len(got)-1])
+
+	// Without a sink system events go nowhere.
+	hooks.System("mode_state", json.RawMessage(`{}`))
+	var sunk []string
+	s.orch.SetLiveSystem(func(channelID, subtype string, event json.RawMessage) {
+		sunk = append(sunk, channelID+" "+subtype+" "+string(event))
+	})
+	hooks.System("mode_state", json.RawMessage(`{"state":"ready"}`))
+	require.Equal(s.T(), []string{`ch-1 mode_state {"state":"ready"}`}, sunk)
+}
+
+// A prompt sent to the session from outside Loop shows in the channel as a
+// user message.
+func (s *OrchestratorSuite) TestLiveHooksPrompt() {
+	lr, _ := s.withLive()
+	hooks := s.startedHooks(lr)
+	ev := new(MockEventBroadcaster)
+	s.orch.SetEventBroadcaster(ev)
+	s.store.On("InsertMessage", mock.Anything, mock.MatchedBy(func(m *db.Message) bool {
+		return m.ChannelID == "ch-1" && m.AuthorID == liveAuthorID && m.AuthorName == "remote" &&
+			m.Content == "hello from outside" && !m.IsBot && m.IsProcessed
+	})).Return(nil).Once()
+	ev.On("BroadcastMessageCreated", "ch-1", mock.MatchedBy(func(d events.MessageEventData) bool {
+		return d.AuthorID == liveAuthorID && d.Content == "hello from outside" && !d.IsBot
+	})).Once()
+	hooks.Prompt("hello from outside")
+	s.store.AssertExpectations(s.T())
+	ev.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestLiveControlAndHolds() {
+	_, err := s.orch.LiveControl(s.ctx, "ch-1", nil)
+	require.ErrorIs(s.T(), err, ErrLiveUnavailable)
+	require.ErrorIs(s.T(), s.orch.HoldLive("ch-1", "p", true), ErrLiveUnavailable)
+	require.Nil(s.T(), s.orch.LiveHolds())
+
+	lr, _ := s.withLive()
+	lr.On("SendLiveControl", s.ctx, "ch-1", json.RawMessage(`{"subtype":"x"}`)).Return(json.RawMessage(`{"ok":1}`), nil).Once()
+	body, err := s.orch.LiveControl(s.ctx, "ch-1", json.RawMessage(`{"subtype":"x"}`))
+	require.NoError(s.T(), err)
+	require.JSONEq(s.T(), `{"ok":1}`, string(body))
+
+	lr.On("HoldLive", "ch-1", "p", true).Once()
+	require.NoError(s.T(), s.orch.HoldLive("ch-1", "p", true))
+	lr.On("LiveHolds").Return(map[string][]string{"ch-1": {"p"}}).Once()
+	require.Equal(s.T(), map[string][]string{"ch-1": {"p"}}, s.orch.LiveHolds())
+	lr.AssertExpectations(s.T())
+}
+
 // A turn the session starts while a run holds the channel goes unstreamed;
 // only its answer is posted.
 func (s *OrchestratorSuite) TestBeginLiveTurnChannelBusy() {
@@ -706,6 +783,76 @@ func (s *OrchestratorSuite) TestWarmLiveSession() {
 				require.True(s.T(), channelLock(&s.orch.channelLocks, "ch-1").TryLock())
 				channelLock(&s.orch.channelLocks, "ch-1").Unlock()
 			}
+		})
+	}
+}
+
+func (s *OrchestratorSuite) TestKeepLiveSession() {
+	require.ErrorIs(s.T(), s.orch.KeepLiveSession(s.ctx, "ch-1", "user-1"), ErrLiveUnavailable)
+
+	local := &db.Channel{ChannelID: "ch-1", Platform: types.PlatformLocal, SessionID: "sess-1"}
+	tests := []struct {
+		name     string
+		build    bool
+		startErr error
+		wantErr  string
+	}{
+		{name: "started"},
+		{name: "start fails", startErr: errors.New("spawn failed"), wantErr: "spawn failed"},
+		// The hold returns once the build begins; the session's live
+		// status tells when it runs.
+		{name: "through an image build", build: true},
+		{name: "fails after an image build", build: true, startErr: errors.New("spawn failed")},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			lr, rec := s.withLive()
+			s.orch.cfg.Store(&config.Config{LiveSessions: true, LiveSessionPlatforms: []types.Platform{types.PlatformLocal}, ContainerTimeout: time.Minute})
+			lr.On("LiveInfo", "ch-1").Return(agent.LiveInfo{}, false).Once()
+			s.store.On("GetChannel", mock.Anything, "ch-1").Return(local, nil)
+			s.store.On("GetRecentMessages", mock.Anything, "ch-1", mock.Anything).Return([]*db.Message{}, nil)
+			release := make(chan struct{})
+			lr.On("StartLive", mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+				req := args.Get(1).(*agent.AgentRequest)
+				req.OnActivity("image_ready", "")
+				if tt.build {
+					req.OnActivity("image_build", "")
+					req.OnActivity("image_build", "")
+					<-release
+				}
+				require.NoError(s.T(), args.Get(0).(context.Context).Err())
+			}).Return(tt.startErr)
+			lr.On("LiveInfo", "ch-1").Return(agent.LiveInfo{ChannelID: "ch-1", SessionID: "sess-1"}, true)
+
+			err := s.orch.KeepLiveSession(s.ctx, "ch-1", "user-1")
+			if tt.wantErr != "" {
+				require.EqualError(s.T(), err, tt.wantErr)
+			} else {
+				require.NoError(s.T(), err)
+			}
+			lock := channelLock(&s.orch.channelLocks, "ch-1")
+			if tt.build {
+				// The start still holds the channel.
+				require.False(s.T(), lock.TryLock())
+				require.Empty(s.T(), rec.all())
+				close(release)
+				require.Eventually(s.T(), func() bool {
+					if !lock.TryLock() {
+						return false
+					}
+					lock.Unlock()
+					return true
+				}, time.Second, time.Millisecond)
+			}
+			if tt.startErr == nil {
+				require.Eventually(s.T(), func() bool { return len(rec.all()) == 1 }, time.Second, time.Millisecond)
+				require.True(s.T(), rec.all()[0].data.(LiveStatus).Running)
+			} else {
+				require.Empty(s.T(), rec.all())
+			}
+			require.True(s.T(), lock.TryLock())
+			lock.Unlock()
 		})
 	}
 }

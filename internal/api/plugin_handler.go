@@ -40,6 +40,9 @@ type PluginManager interface {
 	StopDisabled(ctx context.Context) bool
 	SyncSchedules(ctx context.Context) error
 	Shows(ctx context.Context, pluginID string, c plugin.Capability, ch runtime.Channel) (bool, error)
+	Switch(ctx context.Context, pluginID, id string, ch runtime.Channel, req proxy.SwitchRequest) (*proxy.SwitchState, error)
+	Wake(ctx context.Context, pluginID string, ch runtime.Channel) error
+	NotifySettings(ctx context.Context, settings install.Settings) error
 }
 
 const pluginsDisabled = "plugins are disabled; set plugins.enabled in the global config"
@@ -279,7 +282,7 @@ func (s *Server) handleInstallPlugin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.syncPluginSchedules(r.Context())
-	s.prunePluginBadges(r.Context())
+	s.prunePluginState(r.Context())
 	s.PluginsChanged()
 	writeHTTPJSON(w, http.StatusOK, newPluginCandidate(c), s.logger)
 }
@@ -305,6 +308,7 @@ func (s *Server) handleRemovePlugin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.deletePluginThreads(r.Context(), threads)
+	s.releasePluginHolds(r.Context())
 	// Removing the plugin dropped its badges and its notifications.
 	for _, b := range badges {
 		s.broadcastPluginBadge(b.ChannelID, pluginBadge{PluginID: id})

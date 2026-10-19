@@ -3379,6 +3379,28 @@ A notification from one of the plugin's panel or card pages (the bridge's `ui.no
 
 **Errors:** `400` without `channel_id` or `title`; `403` if the plugin isn't enabled in the channel or wasn't approved for `ui.notification.notify`; `404` if the channel doesn't exist; `429` with `Retry-After` past five a minute.
 
+### `GET /api/channels/{id}/composer-switches`
+
+The [composer switches](plugins.md#composer-switches) of the plugins the chat's project enables, in plugin order, with their state in the chat (a channel or a listed thread):
+
+```json
+[{"plugin_id": "demo", "switch_id": "mode", "label": "Mode", "icon": "data:image/svg+xml;base64,…", "default_title": "Mode is off", "on": true, "status": "ok", "title": "Mode is on"}]
+```
+
+`icon` is the plugin's SVG as a data URL, `default_title` the manifest's tooltip for when the plugin set no `title`. The app follows the state with `plugin.composer_switch` events, and lists them again on `plugins.changed`.
+
+**Errors:** `404` if the chat doesn't exist or is a side chat or hidden thread; `501` when plugins are off.
+
+### `PUT /api/channels/{id}/composer-switches/{plugin}/{switch}`
+
+The owner clicked a switch: Loop calls the plugin's `POST /switches/{switch}` on the container of the chat's channel, with the thread's id for a thread, keeps the state it answers, broadcasts it as `plugin.composer_switch` and returns it.
+
+**Request body:** `{"on": true}`
+
+**Response:** `{"on": true, "status": "busy", "title": "Connecting…"}`
+
+**Errors:** `404` if the chat, plugin or switch doesn't exist; `403` if the plugin isn't approved for `ui.composer_switch` or enabled in the chat's project; `409` if it isn't runnable; `502` if the call fails or the plugin answers an invalid state; `501` when plugins are off.
+
 ### `ANY /api/plugins/{plugin}/x/{path...}?channel_id=`
 
 The plugin's own API for its panels. Loop sends the method, the query (without `channel_id`), the body (up to 8 MB) and its `Content-Type` to the plugin's `/x/{path}` in the container of the channel, thread or worktree thread, starting it if needed, and answers with the plugin's status, body and `Content-Type`.
@@ -3407,6 +3429,11 @@ Called by a plugin's container with the token in its `LOOP_PLUGIN_TOKEN_FILE`; t
 | `DELETE /api/plugin/v1/badge` | `ui.badge` | removes the plugin's badge → `204`, also when there was none; broadcasts `plugin.badge` with an empty `text` |
 | `POST /api/plugin/v1/cards` | `ui.notification.card` | body `{"card", "title"?, "data"?}` (up to 64 KB) → `201 {"id"}`; keeps a `card` [notification](#notifications) for the channel with `data` and broadcasts `notifications.changed`. `title` is cut to one line of 120 characters. Shares notify's limit (`429`). `400` for a card the manifest doesn't declare (`ui.cards`) and on Slack or Discord |
 | `POST /api/plugin/v1/ui/commands` | `ui.run` | as [`POST /api/ui/commands`](#post-apiuicommands), held to the channel: the first step is `select_channel`, and each `select_channel` names the channel or one of its threads that isn't hidden (`403` otherwise) |
+| `PUT /api/plugin/v1/composer/switches/{id}` | `ui.composer_switch` | body `{"on", "status"?, "title"?, "thread_id"?}` → `204`; keeps what one of the manifest's switches (`ui.composer_switches`) shows in the composer of the channel, or of its listed thread `thread_id`, and broadcasts a `plugin.composer_switch` event for that chat with `{"plugin_id", "switch_id", "on", "status"?, "title"?}`. `status` is `busy`, `ok`, `error` or empty, `title` at most 200 characters (`400` otherwise); `404` for a switch the manifest doesn't declare or a thread that isn't the channel's |
+| `DELETE /api/plugin/v1/composer/switches/{id}?thread_id=` | `ui.composer_switch` | forgets the switch's state there → `204`, so it shows off; broadcasts `plugin.composer_switch` |
+| `POST /api/plugin/v1/channel/live/control` | `live.control` | body `{"request": {"subtype", …}, "thread_id"?}` → `200 {"response"}`; sends `request` to the [live session](chat.md#live-sessions) of the channel or its listed thread as a control request and answers with its response. `400` without a subtype or for one the manifest's `live.control` doesn't list; `409` without a live session; `502` with the session's error when it refuses; `503` while live sessions are unavailable; `504` after 30 s |
+| `PUT /api/plugin/v1/channel/live/hold?thread_id=` | `live.control` | `204`; starts the chat's live session if needed and keeps it from idling out while the plugin holds it. During an agent image build it answers before the session runs; the session's `live.status` event tells when it does. `409` when the chat's turns don't run live. Loop lets go of the hold once the plugin may no longer control the chat |
+| `DELETE /api/plugin/v1/channel/live/hold?thread_id=` | `live.control` | `204`; lets the session idle out again |
 | `POST /api/plugin/v1/ui/open_file` | `ui.open_file` | body `{"path", "line"?}`; runs `select_channel` for the channel, then the `open_file` step, and answers as `POST /api/ui/commands`. `400` for an empty, absolute or `..` path, or a negative line |
 
 ---
