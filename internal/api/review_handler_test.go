@@ -84,6 +84,11 @@ func (m *mockGitHubReview) DeletePRReviewComment(ctx context.Context, workdir, g
 	return args.Error(0)
 }
 
+func (m *mockGitHubReview) ApprovePR(ctx context.Context, workdir, ghUser string, slug githubapi.RepoSlug, prNum int, commitID, body string) error {
+	args := m.Called(ctx, workdir, ghUser, slug, prNum, commitID, body)
+	return args.Error(0)
+}
+
 // mockPR is a testify mock for review.PR.
 type mockPR struct {
 	mock.Mock
@@ -110,6 +115,31 @@ func (m *mockPR) Remove(ctx context.Context, parentDir, worktreePath string) err
 	return args.Error(0)
 }
 
+func (m *mockPR) ResolveScope(ctx context.Context, worktreePath, baseRef string, want review.Scope, lastHead string) (review.ScopeResult, error) {
+	args := m.Called(ctx, worktreePath, baseRef, want, lastHead)
+	return args.Get(0).(review.ScopeResult), args.Error(1)
+}
+
+// newMockPR returns a mockPR whose runs review the whole PR, as they did
+// before a run had a scope. onScope replaces that.
+func newMockPR() *mockPR {
+	m := new(mockPR)
+	m.On("ResolveScope", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(review.ScopeResult{Scope: review.ScopeFull}, nil).Maybe()
+	return m
+}
+
+// onScope drops the default scope, for a test that expects its own.
+func (m *mockPR) onScope(worktreePath, baseRef string, want review.Scope, lastHead string) *mock.Call {
+	calls := m.ExpectedCalls[:0]
+	for _, c := range m.ExpectedCalls {
+		if c.Method != "ResolveScope" {
+			calls = append(calls, c)
+		}
+	}
+	m.ExpectedCalls = calls
+	return m.On("ResolveScope", mock.Anything, worktreePath, baseRef, want, lastHead)
+}
+
 type ReviewHandlerSuite struct {
 	suite.Suite
 	srv   *Server
@@ -128,7 +158,7 @@ func (s *ReviewHandlerSuite) SetupTest() {
 	s.srv = newServerForReviewTests(s.T())
 	s.store = s.srv.store.(*MockChannelLister)
 	s.gh = new(mockGitHubReview)
-	s.wt = new(mockPR)
+	s.wt = newMockPR()
 	s.rs = review.NewStore()
 	s.srv.review.setBackends(s.gh, s.rs, s.wt)
 	// Stub config loaders so resolveGHUser/resolveReviewEnabled are
@@ -1034,6 +1064,26 @@ func (s *ReviewHandlerSuite) TestPushAllMixedResults() {
 	s.gh.AssertNotCalled(s.T(), "PostPRComment", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, "z.go", mock.Anything, mock.Anything, mock.Anything)
 }
 
+func (s *ReviewHandlerSuite) TestPushAllBlockingOnly() {
+	s.rs.Put("ch1", &review.Session{PR: &githubapi.PRInfo{Number: 7}, HeadSHA: "abc"})
+	s.rs.AddComment("ch1", &review.Comment{ID: "b", Path: "x.go", Line: 1, Body: "body-b", Side: "RIGHT", Verdict: review.VerdictReal, Impact: review.ImpactBlocking})
+	s.rs.AddComment("ch1", &review.Comment{ID: "n", Path: "y.go", Line: 2, Body: "body-n", Side: "RIGHT", Verdict: review.VerdictReal, Impact: review.ImpactNiceToHave})
+	s.rs.AddComment("ch1", &review.Comment{ID: "u", Path: "z.go", Line: 3, Body: "body-u", Side: "RIGHT"})
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
+	slug := &githubapi.RepoSlug{Owner: "o", Name: "r"}
+	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return(slug, nil)
+	s.gh.On("PostPRComment", mock.Anything, "/repo", "", *slug, 7, "abc", "x.go", "RIGHT", 1, "body-b").Return(int64(1001), nil).Once()
+
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/push-all?impact=blocking", nil))
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	require.JSONEq(s.T(), `{"pushed":1,"skipped":0,"failed":0}`, w.Body.String())
+	s.gh.AssertExpectations(s.T())
+	n, _ := s.rs.FindComment("ch1", "n")
+	require.False(s.T(), n.Pushed)
+}
+
 func (s *ReviewHandlerSuite) TestPushAllEmptySession() {
 	s.rs.Put("ch1", &review.Session{PR: &githubapi.PRInfo{Number: 7}, HeadSHA: "abc"})
 	w := httptest.NewRecorder()
@@ -1157,6 +1207,8 @@ func (s *ReviewHandlerSuite) TestUpdateComment() {
 		{name: "bad json", target: "/api/channels/ch1/review/comments/a", body: `{`, want: http.StatusBadRequest, wantMsg: "invalid JSON body"},
 		{name: "empty body", target: "/api/channels/ch1/review/comments/a", body: `{"body":"  "}`, want: http.StatusBadRequest, wantMsg: "body or verdict is required"},
 		{name: "unknown verdict", target: "/api/channels/ch1/review/comments/a", body: `{"verdict":"maybe"}`, want: http.StatusBadRequest, wantMsg: "verdict must be"},
+		{name: "unknown impact", target: "/api/channels/ch1/review/comments/a", body: `{"verdict":"real","impact":"major"}`, want: http.StatusBadRequest, wantMsg: "impact must be"},
+		{name: "impact without real", target: "/api/channels/ch1/review/comments/a", body: `{"verdict":"false_positive","impact":"blocking"}`, want: http.StatusBadRequest, wantMsg: "impact must be"},
 		{name: "verdict on github comment", target: "/api/channels/ch1/review/comments/gh-9", body: `{"verdict":"false_positive"}`, want: http.StatusConflict, wantMsg: "only agent comments can take a verdict"},
 		{name: "pushed body with verdict", target: "/api/channels/ch1/review/comments/p", body: `{"body":"x","verdict":"real"}`, want: http.StatusConflict, wantMsg: "only unpushed agent comments"},
 		{name: "no session", target: "/api/channels/ch2/review/comments/a", body: `{"body":"x"}`, want: http.StatusNotFound, wantMsg: "no review session"},
@@ -1204,9 +1256,11 @@ func (s *ReviewHandlerSuite) TestUpdateCommentVerdict() {
 		wantBody   string
 		wantReason string
 		wantResult string
+		wantImpact string
 	}{
 		{name: "verdict alone", id: "a", body: `{"verdict":"false_positive","verdict_reason":" one goroutine "}`, wantBody: "Race.", wantReason: "one goroutine", wantResult: review.VerdictFalsePositive},
 		{name: "body and verdict", id: "a", body: `{"body":"Race, rarely.","verdict":"real"}`, wantBody: "Race, rarely.", wantResult: review.VerdictReal},
+		{name: "real with impact", id: "a", body: `{"verdict":"real","impact":"nice_to_have"}`, wantBody: "Race, rarely.", wantResult: review.VerdictReal, wantImpact: review.ImpactNiceToHave},
 		{name: "pushed comment", id: "p", body: `{"verdict":"already_fixed","verdict_reason":"fixed in abc"}`, wantBody: "Pushed.", wantReason: "fixed in abc", wantResult: review.VerdictAlreadyFixed},
 	}
 	for _, tt := range tests {
@@ -1218,6 +1272,7 @@ func (s *ReviewHandlerSuite) TestUpdateCommentVerdict() {
 			require.Equal(s.T(), tt.wantBody, c.Body)
 			require.Equal(s.T(), tt.wantResult, c.Verdict)
 			require.Equal(s.T(), tt.wantReason, c.VerdictReason)
+			require.Equal(s.T(), tt.wantImpact, c.Impact)
 		})
 	}
 }
@@ -1827,17 +1882,29 @@ func (s *ReviewHandlerSuite) TestSetForkStoresChoiceAndEchoesSession() {
 	}
 }
 
-// Every run's Claude session id is recorded, oldest first, so a Discuss
-// chat turn can point the agent at the transcript that produced a finding.
-// The second run doubles as the proof that the refresh preceding each run
-// — which replaces the whole session — carries the earlier ids across.
-func (s *ReviewHandlerSuite) TestRunRecordsClaudeSessionIDPerRun() {
-	s.wireReadySession()
+// withHome makes /home/u the user's home, where Claude's transcripts live.
+func (s *ReviewHandlerSuite) withHome() {
 	sys := new(testutil.MockSystem)
 	sys.On("UserHomeDir").Return("/home/u", nil)
 	s.srv.sys = sys
+}
+
+// runTranscript is the transcript path of an agent pass that ran in
+// sessionID in wireReadySession's worktree, under withHome's home.
+func runTranscript(sessionID string) string {
+	return "/home/u/.claude/projects/-repo--worktrees-pr-7/" + sessionID + ".jsonl"
+}
+
+// Each run's transcript goes onto the findings it reported, so a Discuss
+// chat turn can point the agent at the transcript that produced a finding.
+// A finding a later run doesn't touch keeps only its own; the second run
+// doubles as the proof that the refresh preceding each run, which replaces
+// the whole session, carries the transcripts across.
+func (s *ReviewHandlerSuite) TestRunAttachesTranscriptToItsFindings() {
+	s.wireReadySession()
+	s.withHome()
 	for _, id := range []string{"run-1", "run-2"} {
-		runner := &mockReviewRunner{done: make(chan struct{})}
+		runner := &mockReviewRunner{done: make(chan struct{}), findings: []*review.Comment{{ID: "f-" + id, Body: "bug", Source: "agent"}}}
 		runner.runFn = func() (*agent.AgentResponse, error) {
 			return &agent.AgentResponse{SessionID: id}, nil
 		}
@@ -1849,65 +1916,51 @@ func (s *ReviewHandlerSuite) TestRunRecordsClaudeSessionIDPerRun() {
 		<-runner.done
 		s.waitFor(func() bool { return s.rs.Get("ch1").Status == review.StatusReady })
 	}
-	got := s.rs.Get("ch1")
-	require.Equal(s.T(), []string{"run-1", "run-2"}, got.RunSessionIDs)
 	// Keyed by the run's CWD — the worktree, not the channel's dir — because
 	// that is where Claude actually wrote the transcripts.
-	require.Equal(s.T(), "/home/u/.claude/projects/-repo--worktrees-pr-7", got.TranscriptDir)
-}
-
-// Without a home dir there is no path to hand out, and half an address
-// (an id under an unknown directory) is worse than none — the ids are
-// still recorded, the directory stays empty, and the panel omits the
-// whole block.
-func (s *ReviewHandlerSuite) TestRunRecordsNoTranscriptDirWhenHomeUnreadable() {
-	s.wireReadySession()
-	sys := new(testutil.MockSystem)
-	sys.On("UserHomeDir").Return("", errors.New("no home"))
-	s.srv.sys = sys
-
-	runner := &mockReviewRunner{done: make(chan struct{})}
-	runner.runFn = func() (*agent.AgentResponse, error) {
-		return &agent.AgentResponse{SessionID: "run-1"}, nil
+	for _, id := range []string{"run-1", "run-2"} {
+		c, _ := s.rs.FindComment("ch1", "f-"+id)
+		require.Equal(s.T(), []string{runTranscript(id)}, c.Transcripts)
 	}
-	s.srv.review.setAgent(runner, "sys", "p")
-
-	w := httptest.NewRecorder()
-	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
-	require.Equal(s.T(), http.StatusAccepted, w.Code)
-	<-runner.done
-	s.waitFor(func() bool { return s.rs.Get("ch1").Status == review.StatusReady })
-
-	got := s.rs.Get("ch1")
-	require.Equal(s.T(), []string{"run-1"}, got.RunSessionIDs)
-	require.Empty(s.T(), got.TranscriptDir)
 }
 
+// Without a home dir, or a session id, there is no path to hand out, and
+// half an address is worse than none: the findings get no transcript.
 // A run that ended in an error usually reported findings before it died,
-// so its transcript is still the one to read. A runner that returned no
-// response at all has no id to record — and must not panic reaching for it.
-func (s *ReviewHandlerSuite) TestRunRecordsClaudeSessionIDFromFailedRuns() {
+// so its transcript is still the one to read; a runner that returned no
+// response at all must not panic reaching for one.
+func (s *ReviewHandlerSuite) TestRunTranscriptEdgeCases() {
 	tests := []struct {
-		name string
-		resp *agent.AgentResponse
-		want []string
+		name    string
+		homeErr error
+		resp    *agent.AgentResponse
+		runErr  error
+		status  review.Status
+		want    []string
 	}{
-		{name: "failed run keeps its session", resp: &agent.AgentResponse{SessionID: "run-err"}, want: []string{"run-err"}},
-		{name: "no response, nothing to record", resp: nil},
+		{name: "home unreadable", homeErr: errors.New("no home"), resp: &agent.AgentResponse{SessionID: "run-1"}, status: review.StatusReady},
+		{name: "no session id", resp: &agent.AgentResponse{}, status: review.StatusReady},
+		{name: "failed run keeps its transcript", resp: &agent.AgentResponse{SessionID: "run-err"}, runErr: errors.New("boom"), status: review.StatusError,
+			want: []string{runTranscript("run-err")}},
+		{name: "no response", runErr: errors.New("boom"), status: review.StatusError},
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			s.wireReadySession()
-			runner := &mockReviewRunner{done: make(chan struct{})}
-			runner.runFn = func() (*agent.AgentResponse, error) { return tc.resp, errors.New("boom") }
+			sys := new(testutil.MockSystem)
+			sys.On("UserHomeDir").Return("/home/u", tc.homeErr).Maybe()
+			s.srv.sys = sys
+			runner := &mockReviewRunner{done: make(chan struct{}), findings: []*review.Comment{{ID: "f1", Body: "bug", Source: "agent"}}}
+			runner.runFn = func() (*agent.AgentResponse, error) { return tc.resp, tc.runErr }
 			s.srv.review.setAgent(runner, "sys", "p")
 
 			w := httptest.NewRecorder()
 			s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
 			require.Equal(s.T(), http.StatusAccepted, w.Code)
 			<-runner.done
-			s.waitFor(func() bool { return s.rs.Get("ch1").Status == review.StatusError })
-			require.Equal(s.T(), tc.want, s.rs.Get("ch1").RunSessionIDs)
+			s.waitFor(func() bool { return s.rs.Get("ch1").Status == tc.status })
+			c, _ := s.rs.FindComment("ch1", "f1")
+			require.Equal(s.T(), tc.want, c.Transcripts)
 		})
 	}
 }
@@ -2781,7 +2834,7 @@ func (s *ReviewHandlerSuite) TestMaybeRediffGuards() {
 			WorktreePath: "/wt",
 			RawDiff:      raw,
 		})
-		wt := new(mockPR)
+		wt := newMockPR()
 		wt.On("Diff", mock.Anything, "/repo", "/wt", "main", mock.Anything).Return([]byte(nil), errors.New("boom"))
 		s.srv.review.setBackends(s.gh, s.rs, wt)
 		s.srv.logger = logger
@@ -2798,7 +2851,7 @@ func (s *ReviewHandlerSuite) TestMaybeRediffGuards() {
 			WorktreePath: "/wt",
 			RawDiff:      raw,
 		})
-		wt := new(mockPR)
+		wt := newMockPR()
 		wt.On("Diff", mock.Anything, "/repo", "/wt", "main", mock.Anything).Return([]byte(raw), nil)
 		s.srv.review.setBackends(s.gh, s.rs, wt)
 		hub := NewEventsHub(logger)

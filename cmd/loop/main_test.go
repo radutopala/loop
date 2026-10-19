@@ -569,6 +569,8 @@ func (s *MainSuite) setupServeMocks() *serveMocks {
 	m.store.On("ResetStaleRunningMessages", mock.Anything).Return(([]db.StaleRunningMessage)(nil), nil).Maybe()
 	m.store.On("FailInterruptedExplanations", mock.Anything).Return(int64(0), nil).Maybe()
 	m.store.On("FailInterruptedLearnPasses", mock.Anything).Return(int64(0), nil).Maybe()
+	m.store.On("PruneReviewHistory", mock.Anything, mock.Anything).Return(int64(0), nil).Maybe()
+	m.store.On("ListReviewSessions", mock.Anything).Return(nil, nil).Maybe()
 	m.store.On("ListPausedChannels", mock.Anything).Return(nil, nil).Maybe()
 	m.store.On("ListPendingChannels", mock.Anything).Return(([]string)(nil), nil).Maybe()
 	m.dockerClient.On("LatestClaudeVersion").Return("1.0.0").Maybe()

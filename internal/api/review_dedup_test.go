@@ -127,6 +127,7 @@ func (s *ReviewHandlerSuite) TestDedupRemovesDuplicates() {
 	}
 	s.rs.UpdateAgent("ch1", "claude-opus-5-5", "high")
 	s.srv.review.setDedupTimeout(time.Minute)
+	s.withHome()
 
 	hub := NewEventsHub(slog.Default())
 	var removed []string
@@ -189,7 +190,6 @@ func (s *ReviewHandlerSuite) TestDedupRemovesDuplicates() {
 
 	sess := s.rs.Get("ch1")
 	require.Equal(s.T(), review.StatusReady, sess.Status)
-	require.Equal(s.T(), []string{"sess-1"}, sess.RunSessionIDs)
 	var left []string
 	for _, c := range sess.Comments {
 		left = append(left, c.ID)
@@ -208,6 +208,11 @@ func (s *ReviewHandlerSuite) TestDedupRemovesDuplicates() {
 	unread, _ := s.rs.FindComment("ch1", "u")
 	require.Equal(s.T(), 5, unread.Line)
 	require.Empty(s.T(), unread.Verdict)
+	// The pass's transcript goes onto the comments it changed.
+	transcript := []string{runTranscript("sess-1")}
+	require.Equal(s.T(), transcript, keptA.Transcripts)
+	require.Equal(s.T(), transcript, keptC.Transcripts)
+	require.Empty(s.T(), unread.Transcripts)
 	hubMu.Lock()
 	require.Equal(s.T(), []string{"b", "d", "f"}, removed)
 	require.Equal(s.T(), []events.ReviewCommentEventData{
@@ -215,9 +220,37 @@ func (s *ReviewHandlerSuite) TestDedupRemovesDuplicates() {
 		{ID: "a", Path: "x.go", Line: 11, Body: keptA.Body},
 		{ID: "a", Path: "x.go", Line: 11, Body: keptA.Body, Verdict: review.VerdictReal, VerdictReason: "no make()"},
 		{ID: "c", Path: "x.go", Line: 40, Body: keptC.Body, Verdict: review.VerdictFalsePositive, VerdictReason: "made in init"},
+		{ID: "a", Path: "x.go", Line: 11, Body: keptA.Body, Verdict: review.VerdictReal, VerdictReason: "no make()", Transcripts: transcript},
+		{ID: "c", Path: "x.go", Line: 40, Body: keptC.Body, Verdict: review.VerdictFalsePositive, VerdictReason: "made in init", Transcripts: transcript},
 	}, updated)
 	hubMu.Unlock()
 	require.False(s.T(), s.srv.review.isReviewRunActive("ch1"))
+}
+
+// A dedup pass restates the verdict of every comment it checks. Only a
+// verdict it actually changes puts its transcript on the comment: a reason
+// reworded under the same verdict would otherwise pile up one transcript
+// per pass on every finding, mostly passes that said "still real".
+func (s *ReviewHandlerSuite) TestDedupTranscriptSkipsRestatedVerdicts() {
+	s.wireDedupSession()
+	s.rs.SetVerdict("ch1", review.DedupVerdict{ID: "a", Verdict: review.VerdictReal, Reason: "no make()"})
+	s.rs.SetVerdict("ch1", review.DedupVerdict{ID: "d", Verdict: review.VerdictReal, Reason: "looks wrong"})
+	s.withHome()
+	reply := `{"clusters":[],"verdicts":[{"id":"a","verdict":"real","reason":"still no make()"},` +
+		`{"id":"d","verdict":"false_positive","reason":"handled upstream"}]}`
+	runner := &mockReviewRunner{reads: []review.FileRead{{Path: "/repo/.worktrees/pr-7/x.go"}, {Path: "/repo/.worktrees/pr-7/y.go"}}, runFn: func() (*agent.AgentResponse, error) {
+		return &agent.AgentResponse{SessionID: "sess-1", Response: reply}, nil
+	}}
+	s.srv.review.setAgent(runner, "", "")
+
+	require.Equal(s.T(), http.StatusOK, s.postDedup().Code)
+
+	restated, _ := s.rs.FindComment("ch1", "a")
+	require.Equal(s.T(), "still no make()", restated.VerdictReason)
+	require.Empty(s.T(), restated.Transcripts)
+	flipped, _ := s.rs.FindComment("ch1", "d")
+	require.Equal(s.T(), review.VerdictFalsePositive, flipped.Verdict)
+	require.Equal(s.T(), []string{runTranscript("sess-1")}, flipped.Transcripts)
 }
 
 // A bundled comment shares one of its issues with a single-issue one. The
@@ -321,7 +354,7 @@ func (s *ReviewHandlerSuite) TestDedupClaimsNeedTheLineRead() {
 // comment keeps its verdict, a dismissed one included.
 func (s *ReviewHandlerSuite) TestDedupNoteKeepsVerdict() {
 	s.wireDedupSession()
-	require.NotNil(s.T(), s.rs.SetVerdict("ch1", "a", review.VerdictFalsePositive, "x.go:3 checks it"))
+	require.NotNil(s.T(), s.rs.SetVerdict("ch1", review.DedupVerdict{ID: "a", Verdict: review.VerdictFalsePositive, Reason: "x.go:3 checks it"}))
 	s.srv.review.setAgent(&mockReviewRunner{runFn: func() (*agent.AgentResponse, error) {
 		return &agent.AgentResponse{Response: `{"clusters":[{"keep":"a","drop":["b"],"note":"n"}]}`}, nil
 	}}, "", "")

@@ -15,19 +15,20 @@ func TestVerifySuite(t *testing.T) {
 	suite.Run(t, new(VerifySuite))
 }
 
-func (s *VerifySuite) TestHasAgentComments() {
+func (s *VerifySuite) TestNeedsVerify() {
 	cases := []struct {
 		name     string
 		comments []*Comment
 		want     bool
 	}{
 		{name: "none", comments: nil, want: false},
-		{name: "only github", comments: []*Comment{{ID: "gh-1", Source: "github"}, nil}, want: false},
-		{name: "an agent one", comments: []*Comment{{ID: "gh-1", Source: "github"}, {ID: "a", Source: "agent"}}, want: true},
+		{name: "only resolved github threads and replies", comments: []*Comment{{ID: "gh-1", Source: "github", GitHubID: 1, Resolved: true}, {ID: "gh-2", Source: "github", GitHubID: 2, ReplyTo: 9}, nil}, want: false},
+		{name: "an unresolved github thread", comments: []*Comment{{ID: "gh-1", Source: "github", GitHubID: 1}}, want: true},
+		{name: "an agent one", comments: []*Comment{{ID: "gh-1", Source: "github", GitHubID: 1, Resolved: true}, {ID: "a", Source: "agent"}}, want: true},
 	}
 	for _, tc := range cases {
 		s.Run(tc.name, func() {
-			require.Equal(s.T(), tc.want, HasAgentComments(tc.comments))
+			require.Equal(s.T(), tc.want, NeedsVerify(tc.comments))
 		})
 	}
 }

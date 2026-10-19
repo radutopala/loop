@@ -90,17 +90,20 @@ func (s *reviewService) verifyAfterRun(runCtx context.Context, channelID, parent
 	s.broadcastReviewStatus(channelID, review.StatusReady, "")
 }
 
-// runVerifyStep checks every agent comment of the session. It runs the dedup
-// pass over the whole session first (as `loop review:dedup` does, without
-// refreshing it, so the checkout stays at the reviewed commit); a failed
-// pass is logged and the step goes on. Then a read-only agent, allowed only
-// to record verdicts on top of reading, judges each comment against the code
-// and its reply is posted to the channel. A session without agent comments
-// has nothing to check. The status reads verifying while it runs; the caller
-// settles it.
+// runVerifyStep checks every agent comment of the session and assesses the
+// PR's unresolved GitHub threads. It runs the dedup pass over the whole
+// session first (as `loop review:dedup` does, without refreshing it, so the
+// checkout stays at the reviewed commit); a failed pass is logged and the
+// step goes on. Then a read-only agent, allowed only to record verdicts and
+// thread assessments on top of reading, judges each comment against the
+// code, and its reply is posted to the channel with the PR outcome. A
+// session with nothing to check is reviewed as it is. The status reads
+// verifying while it runs; the caller settles it.
 func (s *reviewService) runVerifyStep(ctx context.Context, channelID, parentDirPath, instructions string) error {
 	sess := s.sessions.Get(channelID)
-	if sess == nil || !review.HasAgentComments(sess.Comments) {
+	s.sessions.StartVerify(channelID)
+	if sess == nil || !review.NeedsVerify(sess.Comments) {
+		s.sessions.MarkReviewed(channelID)
 		return nil
 	}
 	s.sessions.UpdateStatus(channelID, review.StatusVerifying, "")
@@ -111,7 +114,8 @@ func (s *reviewService) runVerifyStep(ctx context.Context, channelID, parentDirP
 		return ctx.Err()
 	}
 	// The pass may have deleted comments, or the session itself.
-	if sess = s.sessions.Get(channelID); sess == nil || !review.HasAgentComments(sess.Comments) {
+	if sess = s.sessions.Get(channelID); sess == nil || !review.NeedsVerify(sess.Comments) {
+		s.sessions.MarkReviewed(channelID)
 		return nil
 	}
 	vc := review.VerifyContext{HeadSHA: sess.HeadSHA, Checkout: sess.WorktreePath, Dedup: dedup}
@@ -120,6 +124,7 @@ func (s *reviewService) runVerifyStep(ctx context.Context, channelID, parentDirP
 	}
 	verifyCtx, cancel := withTimeout(ctx, s.verifyTimeout)
 	defer cancel()
+	states := s.findingStates(channelID, true)
 	resp, err := s.runner.Run(verifyCtx, review.RunRequest{
 		ChannelID:     channelID,
 		DirPath:       sess.WorktreePath,
@@ -131,7 +136,7 @@ func (s *reviewService) runVerifyStep(ctx context.Context, channelID, parentDirP
 		Effort:        sess.Effort,
 	})
 	if resp != nil {
-		s.sessions.AppendRunSession(channelID, resp.SessionID, s.transcriptDir(sess.WorktreePath))
+		s.attachTranscript(channelID, sess.WorktreePath, resp.SessionID, states)
 	}
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || verifyCtx.Err() == context.DeadlineExceeded {
@@ -139,9 +144,13 @@ func (s *reviewService) runVerifyStep(ctx context.Context, channelID, parentDirP
 		}
 		return fmt.Errorf("verification run: %w", err)
 	}
+	s.sessions.MarkReviewed(channelID)
 	summary := strings.TrimSpace(resp.Response)
 	if summary == "" || s.messages == nil {
 		return nil
+	}
+	if sess = s.sessions.Get(channelID); sess != nil {
+		summary += "\n\nOutcome: " + review.DeriveOutcome(sess).Summary()
 	}
 	if err := s.messages.PostMessage(ctx, channelID, summary); err != nil {
 		s.deps.logger.Warn("review: posting the verification summary failed", "channel_id", channelID, "error", err)

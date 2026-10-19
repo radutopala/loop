@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/radutopala/loop/internal/githubapi"
 )
 
 type SessionSuite struct {
@@ -159,48 +162,71 @@ func (s *SessionSuite) TestUpdateAgent() {
 	require.Empty(s.T(), got.Effort)
 }
 
-func (s *SessionSuite) TestAppendRunSessionRejects() {
+func (s *SessionSuite) TestUpdateScopeAndLastRun() {
 	store := NewStore()
-	store.Put("ch1", &Session{})
-	tests := []struct {
-		name      string
-		channelID string
-		sessionID string
-	}{
-		{name: "no session", channelID: "nope", sessionID: "sess-1"},
-		{name: "empty id", channelID: "ch1"},
-	}
-	for _, tc := range tests {
-		s.Run(tc.name, func() {
-			require.False(s.T(), store.AppendRunSession(tc.channelID, tc.sessionID, "/dir"))
-			require.Empty(s.T(), store.Get("ch1").RunSessionIDs)
-			require.Empty(s.T(), store.Get("ch1").TranscriptDir)
-		})
-	}
-}
+	require.False(s.T(), store.UpdateScope("nope", ScopeFull))
+	require.False(s.T(), store.SetLastRunScope("nope", ScopeFull, ""))
 
-// One entry per run, in run order, and a repeat of an id already recorded
-// is dropped — a resumed run would otherwise list itself twice. The dir is
-// last-run-wins, but an unknown dir must not blank a known one.
-func (s *SessionSuite) TestAppendRunSessionAppendsOnceInOrder() {
-	store := NewStore()
 	store.Put("ch1", &Session{})
-	require.True(s.T(), store.AppendRunSession("ch1", "sess-1", "/dir-a"))
-	require.True(s.T(), store.AppendRunSession("ch1", "sess-2", ""))
-	require.Equal(s.T(), "/dir-a", store.Get("ch1").TranscriptDir)
-	require.True(s.T(), store.AppendRunSession("ch1", "sess-3", "/dir-b"))
-	require.False(s.T(), store.AppendRunSession("ch1", "sess-1", "/dir-c"))
-	require.Equal(s.T(), []string{"sess-1", "sess-2", "sess-3"}, store.Get("ch1").RunSessionIDs)
-	require.Equal(s.T(), "/dir-b", store.Get("ch1").TranscriptDir)
-}
-
-func (s *SessionSuite) TestGetReturnsCopyWithIndependentRunSessionIDs() {
-	store := NewStore()
-	store.Put("ch1", &Session{})
-	store.AppendRunSession("ch1", "sess-1", "/dir")
+	require.True(s.T(), store.UpdateScope("ch1", ScopeIncremental))
+	require.True(s.T(), store.SetLastRunScope("ch1", ScopeIncremental, "abc"))
 	got := store.Get("ch1")
-	got.RunSessionIDs = append(got.RunSessionIDs, "sess-2")
-	require.Equal(s.T(), []string{"sess-1"}, store.Get("ch1").RunSessionIDs)
+	require.Equal(s.T(), ScopeIncremental, got.Scope)
+	require.Equal(s.T(), ScopeIncremental, got.LastRunScope)
+	require.Equal(s.T(), "abc", got.LastRunFromSHA)
+}
+
+func (s *SessionSuite) TestReviewRuns() {
+	store := NewStore()
+	require.False(s.T(), store.StartReview("nope", "r1"))
+	require.False(s.T(), store.AddReviewRun("nope", 1))
+
+	store.Put("ch1", &Session{})
+	require.True(s.T(), store.StartReview("ch1", "r1"))
+	require.True(s.T(), store.AddReviewRun("ch1", 4))
+	before := store.Get("ch1")
+	require.True(s.T(), store.AddReviewRun("ch1", 5))
+	got := store.Get("ch1")
+	require.Equal(s.T(), "r1", got.ReviewID)
+	require.Equal(s.T(), []int64{4, 5}, got.ReviewRuns)
+	require.Equal(s.T(), []int64{4}, before.ReviewRuns, "a copy taken before keeps its runs")
+
+	require.True(s.T(), store.StartReview("ch1", "r2"))
+	got = store.Get("ch1")
+	require.Equal(s.T(), "r2", got.ReviewID)
+	require.Empty(s.T(), got.ReviewRuns)
+}
+
+func (s *SessionSuite) TestAddTranscriptNoSession() {
+	require.Nil(s.T(), NewStore().AddTranscript("nope", "/t/a.jsonl", map[string]bool{"c1": true}))
+}
+
+// A transcript goes once onto each listed agent comment, after the ones
+// already there; GitHub comments and unlisted ones are left alone, and the
+// comment a caller already holds doesn't change.
+func (s *SessionSuite) TestAddTranscript() {
+	store := NewStore()
+	held := &Comment{ID: "c1", Transcripts: []string{"/t/a.jsonl"}}
+	store.Put("ch1", &Session{Comments: []*Comment{
+		held,
+		{ID: "c2"},
+		{ID: "gh", Source: "github"},
+		{ID: "c3"},
+	}})
+	ids := map[string]bool{"c1": true, "c2": true, "gh": true}
+
+	got := store.AddTranscript("ch1", "/t/b.jsonl", ids)
+	require.Equal(s.T(), []*Comment{
+		{ID: "c1", Transcripts: []string{"/t/a.jsonl", "/t/b.jsonl"}},
+		{ID: "c2", Transcripts: []string{"/t/b.jsonl"}},
+	}, got)
+	require.Equal(s.T(), []string{"/t/a.jsonl"}, held.Transcripts)
+	require.Nil(s.T(), store.AddTranscript("ch1", "/t/b.jsonl", ids))
+
+	comments := store.Get("ch1").Comments
+	require.Equal(s.T(), []string{"/t/a.jsonl", "/t/b.jsonl"}, comments[0].Transcripts)
+	require.Empty(s.T(), comments[2].Transcripts)
+	require.Empty(s.T(), comments[3].Transcripts)
 }
 
 func (s *SessionSuite) TestUpdateStatus() {
@@ -385,7 +411,7 @@ func (s *SessionSuite) TestSetVerdict() {
 			}})
 			before, _ := store.FindComment("ch1", tc.id)
 
-			got := store.SetVerdict(tc.channel, tc.id, VerdictFalsePositive, "Closed in defer.")
+			got := store.SetVerdict(tc.channel, DedupVerdict{ID: tc.id, Verdict: VerdictReal, Impact: ImpactNiceToHave, Reason: "Closed in defer."})
 			if !tc.want {
 				require.Nil(s.T(), got)
 				for _, c := range store.Get("ch1").Comments {
@@ -395,7 +421,8 @@ func (s *SessionSuite) TestSetVerdict() {
 			}
 			after, _ := store.FindComment("ch1", tc.id)
 			require.Equal(s.T(), got, after)
-			require.Equal(s.T(), VerdictFalsePositive, after.Verdict)
+			require.Equal(s.T(), VerdictReal, after.Verdict)
+			require.Equal(s.T(), ImpactNiceToHave, after.Impact)
 			require.Equal(s.T(), "Closed in defer.", after.VerdictReason)
 			require.Empty(s.T(), before.Verdict)
 		})
@@ -453,19 +480,70 @@ func (s *SessionSuite) TestEditLocalCommentVerdict() {
 		edit        func(*Comment)
 		wantVerdict string
 		wantReason  string
+		wantImpact  string
 	}{
 		{name: "body changed", edit: func(c *Comment) { c.Body = "Leak on retry." }},
-		{name: "line moved", edit: func(c *Comment) { c.Line = 5 }, wantVerdict: VerdictReal, wantReason: "x.go:3 leaks"},
+		{name: "line moved", edit: func(c *Comment) { c.Line = 5 }, wantVerdict: VerdictReal, wantReason: "x.go:3 leaks", wantImpact: ImpactBlocking},
 	}
 	for _, tc := range cases {
 		s.Run(tc.name, func() {
 			store := NewStore()
 			store.Put("ch1", &Session{Comments: []*Comment{
-				{ID: "local", Line: 3, Body: "Leak.", Source: "agent", Verdict: VerdictReal, VerdictReason: "x.go:3 leaks"},
+				{ID: "local", Line: 3, Body: "Leak.", Source: "agent", Verdict: VerdictReal, VerdictReason: "x.go:3 leaks", Impact: ImpactBlocking},
 			}})
 			got := store.EditLocalComment("ch1", "local", tc.edit)
 			require.Equal(s.T(), tc.wantVerdict, got.Verdict)
 			require.Equal(s.T(), tc.wantReason, got.VerdictReason)
+			require.Equal(s.T(), tc.wantImpact, got.Impact)
 		})
 	}
+}
+
+type mockSaver struct{ mock.Mock }
+
+func (m *mockSaver) SaveSession(saved *Saved)       { m.Called(saved) }
+func (m *mockSaver) DeleteSession(channelID string) { m.Called(channelID) }
+
+// The saver gets a session once it is on a PR, and again only when its
+// choices change; the runs and the status aren't kept.
+func (s *SessionSuite) TestSaver() {
+	store := NewStore()
+	store.Put("ch1", &Session{PR: &githubapi.PRInfo{Number: 6}})
+	store.Delete("ch1")
+
+	sv := new(mockSaver)
+	store.SetSaver(sv)
+	sv.On("SaveSession", &Saved{ChannelID: "ch1", PRNumber: 7, ForkMode: ForkCurrent}).Return().Once()
+	sv.On("SaveSession", &Saved{ChannelID: "ch1", PRNumber: 7, ForkMode: ForkCurrent, Model: "opus", Effort: "high"}).Return().Once()
+	sv.On("SaveSession", &Saved{ChannelID: "ch1", PRNumber: 7, ForkMode: ForkCustom, ForkSessionID: "s0", Model: "opus", Effort: "high"}).Return().Once()
+	sv.On("SaveSession", &Saved{ChannelID: "ch1", PRNumber: 7, ForkMode: ForkCustom, ForkSessionID: "s0", Model: "opus", Effort: "high", Scope: ScopeFull}).Return().Once()
+	sv.On("SaveSession", &Saved{ChannelID: "ch1", PRNumber: 7, ForkMode: ForkCustom, ForkSessionID: "s0", Model: "opus", Effort: "high", Scope: ScopeFull, ReviewedSHA: "abc"}).Return().Once()
+	sv.On("SaveSession", &Saved{ChannelID: "ch1", PRNumber: 7, ForkMode: ForkCustom, ForkSessionID: "s0", Model: "opus", Effort: "high", Scope: ScopeFull, ReviewedSHA: "abc", ApprovedSHA: "abc"}).Return().Once()
+	sv.On("SaveSession", &Saved{ChannelID: "ch1", PRNumber: 7, ForkMode: ForkCustom, ForkSessionID: "s0", Model: "opus", Effort: "high", Scope: ScopeFull, ReviewedSHA: "abc", ApprovedSHA: "abc", Threads: `{"9":{"status":"addressed"}}`}).Return().Once()
+	sv.On("SaveSession", &Saved{ChannelID: "ch1", PRNumber: 7, ForkMode: ForkCustom, ForkSessionID: "s0", Model: "opus", Effort: "high", Scope: ScopeFull, ReviewedSHA: "abc", ApprovedSHA: "abc"}).Return().Once()
+	sv.On("DeleteSession", "ch1").Return().Once()
+
+	store.Put("ch1", &Session{Status: StatusLoading})
+	store.Put("ch1", &Session{PR: &githubapi.PRInfo{Number: 7}, ForkMode: ForkCurrent, HeadSHA: "abc", Comments: []*Comment{{ID: "gh-9", Source: "github", GitHubID: 9}}})
+	store.UpdateStatus("ch1", StatusReviewing, "")
+	store.UpdateAgent("ch1", "opus", "high")
+	store.UpdateAgent("ch1", "opus", "high")
+	store.UpdateFork("ch1", ForkCustom, "s0")
+	store.UpdateScope("ch1", ScopeFull)
+	store.SetLastRunScope("ch1", ScopeFull, "")
+	store.MarkReviewed("ch1")
+	store.MarkApproved("ch1", "abc")
+	store.AssessThread("ch1", "gh-9", ThreadAssessment{Status: ThreadAddressed})
+	store.StartVerify("ch1")
+	store.Delete("ch1")
+	sv.AssertExpectations(s.T())
+}
+
+func (s *SessionSuite) TestSavedApply() {
+	sess := &Session{Model: "sonnet", HeadSHA: "abc"}
+	(&Saved{ForkMode: ForkCustom, ForkSessionID: "s0", Model: "opus", Effort: "high", Scope: ScopeIncremental, ReviewedSHA: "abc", ApprovedSHA: "abd", Threads: `{"9":{"status":"open","impact":"blocking"}}`}).Apply(sess)
+	require.Equal(s.T(), &Session{
+		ForkMode: ForkCustom, ForkSessionID: "s0", Model: "opus", Effort: "high", Scope: ScopeIncremental, HeadSHA: "abc",
+		ReviewedSHA: "abc", ApprovedSHA: "abd", Threads: map[int64]ThreadAssessment{9: {Status: ThreadOpen, Impact: ImpactBlocking}},
+	}, sess)
 }

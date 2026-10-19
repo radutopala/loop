@@ -585,6 +585,77 @@ var migrations = []migration{
 		updated_at DATETIME NOT NULL,
 		PRIMARY KEY (plugin_id, channel_id, switch_id)
 	)`),
+	// review_runs and review_findings keep the review history of a PR, keyed
+	// by the repo's main dir (see ReviewRun, ReviewFinding).
+	sqlMigration(`CREATE TABLE IF NOT EXISTS review_runs (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		dir_path    TEXT NOT NULL,
+		pr_number   INTEGER NOT NULL,
+		base_ref    TEXT NOT NULL DEFAULT '',
+		channel_id  TEXT NOT NULL DEFAULT '',
+		head_sha    TEXT NOT NULL DEFAULT '',
+		scope       TEXT NOT NULL DEFAULT '',
+		from_sha    TEXT NOT NULL DEFAULT '',
+		model       TEXT NOT NULL DEFAULT '',
+		effort      TEXT NOT NULL DEFAULT '',
+		fork_mode   TEXT NOT NULL DEFAULT '',
+		session_id  TEXT NOT NULL DEFAULT '',
+		status      TEXT NOT NULL DEFAULT '',
+		error       TEXT NOT NULL DEFAULT '',
+		started_at  DATETIME NOT NULL,
+		finished_at DATETIME
+	)`),
+	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_review_runs_pr ON review_runs(dir_path, pr_number, started_at)`),
+	sqlMigration(`CREATE TABLE IF NOT EXISTS review_findings (
+		dir_path       TEXT NOT NULL,
+		pr_number      INTEGER NOT NULL,
+		id             TEXT NOT NULL,
+		run_id         INTEGER,
+		path           TEXT NOT NULL DEFAULT '',
+		line           INTEGER NOT NULL DEFAULT 0,
+		side           TEXT NOT NULL DEFAULT '',
+		category       TEXT NOT NULL DEFAULT '',
+		body           TEXT NOT NULL DEFAULT '',
+		verdict        TEXT NOT NULL DEFAULT '',
+		verdict_reason TEXT NOT NULL DEFAULT '',
+		github_id      INTEGER NOT NULL DEFAULT 0,
+		url            TEXT NOT NULL DEFAULT '',
+		pushed_at      DATETIME,
+		outcome        TEXT NOT NULL DEFAULT '',
+		deleted_reason TEXT NOT NULL DEFAULT '',
+		superseded_by  TEXT NOT NULL DEFAULT '',
+		created_at     DATETIME NOT NULL,
+		updated_at     DATETIME NOT NULL,
+		PRIMARY KEY (dir_path, pr_number, id)
+	)`),
+	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_review_findings_run ON review_findings(run_id)`),
+	// review_sessions keeps which PR each channel's review session is on, and
+	// the user's choices for its runs, across daemon restarts (see
+	// ReviewSession).
+	sqlMigration(`CREATE TABLE IF NOT EXISTS review_sessions (
+		channel_id        TEXT PRIMARY KEY,
+		pr_number         INTEGER NOT NULL,
+		fork_mode         TEXT NOT NULL DEFAULT '',
+		fork_session_id   TEXT NOT NULL DEFAULT '',
+		model             TEXT NOT NULL DEFAULT '',
+		effort            TEXT NOT NULL DEFAULT '',
+		scope             TEXT NOT NULL DEFAULT '',
+		updated_at        DATETIME NOT NULL
+	)`),
+	// transcripts lists, one per line, the Claude transcripts of the agent
+	// passes that reported or changed a finding (see ReviewFinding).
+	sqlMigration(`ALTER TABLE review_findings ADD COLUMN transcripts TEXT NOT NULL DEFAULT ''`),
+	// impact is how much a real finding weighs on the PR: blocking or
+	// nice_to_have, empty with any other verdict.
+	sqlMigration(`ALTER TABLE review_findings ADD COLUMN impact TEXT NOT NULL DEFAULT ''`),
+	// A review session's reviewed and approved commits, and its GitHub
+	// thread assessments as JSON (see ReviewSession).
+	sqlMigration(`ALTER TABLE review_sessions ADD COLUMN reviewed_sha TEXT NOT NULL DEFAULT ''`),
+	sqlMigration(`ALTER TABLE review_sessions ADD COLUMN approved_sha TEXT NOT NULL DEFAULT ''`),
+	sqlMigration(`ALTER TABLE review_sessions ADD COLUMN threads TEXT NOT NULL DEFAULT ''`),
+	// review_id groups the runs of one review: a review loop records one
+	// run per iteration (see ReviewRun).
+	sqlMigration(`ALTER TABLE review_runs ADD COLUMN review_id TEXT NOT NULL DEFAULT ''`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the

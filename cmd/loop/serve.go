@@ -641,6 +641,7 @@ func (a *app) serve() error {
 		api.WithWorkflowBashLocal(cfg.WorkflowBashLocal),
 		api.WithProjectTrust(config.NewTrustStoreIn(a.userConfigDir)),
 		api.WithConfigHistory(store),
+		api.WithReviewHistory(store),
 		api.WithContainerKeepAlive(cfg.ContainerKeepAlive),
 	}
 
@@ -757,6 +758,8 @@ func (a *app) serve() error {
 	branchPoller.SetOnDirChange(apiSrv.InvalidatePRCacheForDir)
 	go branchPoller.Run(ctx)
 	go apiSrv.RunConfigHistory(ctx, time.Minute)
+	go apiSrv.RunReviewHistoryPrune(ctx, 24*time.Hour)
+	go apiSrv.RestoreReviewSessions(ctx)
 	home, _ := a.sys.UserHomeDir()
 	backups := backup.NewRunner(backup.Deps{
 		Store:    store,

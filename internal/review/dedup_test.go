@@ -77,7 +77,7 @@ func (s *DedupSuite) TestBuildDedupPrompt() {
 		{ID: "b2", Path: "y.go", Line: 1, Body: strings.Repeat("é", dedupBodyMax)},
 	}
 	got := BuildDedupPrompt(cands, nil)
-	require.Contains(s.T(), got, `{"clusters":[{"keep":"<id>","drop":["<id>"],"reason":"...","note":"..."}],"trims":[{"id":"<id>","covered_by":"<id>","body":"...","reason":"..."}],"related":[{"ids":["<id>","<id>"],"reason":"..."}],"moves":[{"id":"<id>","line":0}],"verdicts":[{"id":"<id>","verdict":"real","reason":"..."}]}`)
+	require.Contains(s.T(), got, `{"clusters":[{"keep":"<id>","drop":["<id>"],"reason":"...","note":"..."}],"trims":[{"id":"<id>","covered_by":"<id>","body":"...","reason":"..."}],"related":[{"ids":["<id>","<id>"],"reason":"..."}],"moves":[{"id":"<id>","line":0}],"verdicts":[{"id":"<id>","verdict":"real","impact":"nice_to_have","reason":"..."}]}`)
 	require.Contains(s.T(), got, "a lone closing brace")
 	// Every kept agent comment is checked against the code; a verdict deletes nothing.
 	require.Contains(s.T(), got, `For every [agent] comment you don't drop, open its file with the Read tool around its line and decide whether the finding holds: "real"`)
@@ -252,14 +252,14 @@ func (s *DedupSuite) TestParseDedupReply() {
 		{
 			name: "verdicts only for kept agent comments with a known value, first one wins",
 			reply: `{"clusters":[{"keep":"a","drop":["b"]}],"verdicts":[` +
-				`{"id":"a","verdict":"real","reason":" nil map "},{"id":"a","verdict":"false_positive"},` +
+				`{"id":"a","verdict":"real","impact":"blocking","reason":" nil map "},{"id":"a","verdict":"false_positive"},` +
 				`{"id":"b","verdict":"real"},{"id":"g","verdict":"real"},{"id":"zz","verdict":"real"},` +
-				`{"id":"c","verdict":"maybe"},{"id":"c","verdict":"false_positive","reason":"guarded above"},` +
+				`{"id":"c","verdict":"maybe"},{"id":"c","verdict":"false_positive","impact":"blocking","reason":"guarded above"},` +
 				`{"id":"e","verdict":"already_fixed"}]}`,
 			want: DedupPlan{
 				Clusters: []DedupCluster{{Keep: "a", Drop: []string{"b"}}},
 				Verdicts: []DedupVerdict{
-					{ID: "a", Verdict: VerdictReal, Reason: "nil map"},
+					{ID: "a", Verdict: VerdictReal, Impact: ImpactBlocking, Reason: "nil map"},
 					{ID: "c", Verdict: VerdictFalsePositive, Reason: "guarded above"},
 					{ID: "e", Verdict: VerdictAlreadyFixed},
 				},
@@ -502,5 +502,25 @@ func (s *DedupSuite) TestDismissed() {
 		VerdictAlreadyFixed:  true,
 	} {
 		require.Equal(s.T(), want, Dismissed(verdict), verdict)
+	}
+}
+
+// Only a real verdict keeps an impact, and only a known one.
+func (s *DedupSuite) TestImpactOf() {
+	cases := []struct {
+		name    string
+		verdict string
+		impact  string
+		want    string
+	}{
+		{"real and blocking", VerdictReal, ImpactBlocking, ImpactBlocking},
+		{"real and nice to have", VerdictReal, ImpactNiceToHave, ImpactNiceToHave},
+		{"real and unknown", VerdictReal, "major", ""},
+		{"false positive", VerdictFalsePositive, ImpactBlocking, ""},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			require.Equal(s.T(), tc.want, ImpactOf(tc.verdict, tc.impact))
+		})
 	}
 }

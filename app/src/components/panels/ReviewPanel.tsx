@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchAgentConfig, sendMessage } from "../../api/channels";
 import {
+  approveReview,
   deleteReviewComment,
   deleteReviewSession,
   getReviewSession,
@@ -11,11 +12,13 @@ import {
   type ReviewComment,
   type ReviewForkMode,
   type ReviewPR,
+  type ReviewScope,
   type ReviewSession,
   type ReviewStatus,
   type ReviewVerdict,
   setReviewAgent,
   setReviewFork,
+  setReviewScope,
   stopReview,
   syncReviewSession,
 } from "../../api/review";
@@ -27,8 +30,11 @@ import type { GateApprovalRequestedData, WSEvent } from "../../types";
 import { ApprovalCard } from "../chat/ApprovalCard";
 import { EFFORT_PRESETS, shortModel } from "../chat/agentPresets";
 import { ContextMenu, type MenuItem } from "../shared/ContextMenu";
+import { ReviewApproveDialog } from "./ReviewApproveDialog";
 import { ReviewDiffView } from "./ReviewDiffView";
 import { ReviewRunDrawer } from "./ReviewRunDrawer";
+import { ReviewStatsView } from "./ReviewStatsView";
+import { approveBody, approveDisabledReason, canApprove, deriveOutcome, isApprovedAtHead, outcomeColor, outcomeLabel, outcomeTitle } from "./reviewOutcome";
 
 type ReviewMode = "review-only" | "review-fix";
 
@@ -142,26 +148,26 @@ export function buildAddressPrompt(c: ReviewComment, session?: ReviewSession | n
   lines.push(`Comment:`);
   lines.push("");
   for (const ln of c.body.split("\n")) lines.push(`> ${ln}`);
-  const refs = transcriptRefs(session);
+  const refs = transcriptRefs(c);
   if (refs.length > 0) {
     lines.push("");
-    lines.push(`Transcripts of the review runs that produced this, oldest first:`);
+    lines.push(`Transcripts of the review passes behind this, oldest first:`);
     for (const ref of refs) lines.push(`- ${ref}`);
   }
   return lines.join("\n");
 }
 
-// transcriptRefs turns a session's run ids into transcript paths, oldest
-// first. The reasoning behind a finding lives in those files and nowhere else
-// — the panel only keeps the verdict. Full paths, not bare session ids: Claude
-// keys transcripts by the agent's CWD, which for a review run is the PR
-// worktree, so the directory is not one the chat agent can derive from its own
-// channel. The paths resolve as-is inside the agent container, which runs with
-// HOME set to the host home and ~/.claude bind-mounted at its host path.
-function transcriptRefs(session?: ReviewSession | null): string[] {
-  const dir = session?.transcript_dir;
-  if (!dir) return [];
-  return (session?.run_session_ids ?? []).filter((id) => id).map((id) => `${dir}/${id}.jsonl`);
+// transcriptRefs lists the transcripts of the agent passes that reported or
+// changed c, oldest first. Each finding carries its own, even in a batch,
+// so the agent knows which transcript explains which finding. The reasoning behind a
+// finding lives in those files and nowhere else — the panel only keeps the
+// verdict. Full paths, not bare session ids: Claude keys transcripts by the
+// agent's CWD, which for a review run is the PR worktree, so the directory is
+// not one the chat agent can derive from its own channel. The paths resolve
+// as-is inside the agent container, which runs with HOME set to the host home
+// and ~/.claude bind-mounted at its host path.
+function transcriptRefs(c: ReviewComment): string[] {
+  return (c.transcripts ?? []).filter((t) => t);
 }
 
 // buildDiscussDraft renders a finding as a quoted block to drop into the
@@ -202,6 +208,19 @@ export function reviewEffortOptions(defaultEffort: string): SelectOption[] {
   return [{ value: "", label: defaultEffort ? `Default (${defaultEffort})` : "Default effort" }, ...EFFORT_PRESETS.map((e) => ({ value: e, label: mark(e) }))];
 }
 
+export const REVIEW_SCOPE_OPTIONS: { value: ReviewScope; label: string }[] = [
+  { value: "", label: "Auto scope" },
+  { value: "incremental", label: "Changes since last review" },
+  { value: "full", label: "Whole PR" },
+];
+
+// reviewScopeChip says what the latest run reviewed, or "" before any run.
+export function reviewScopeChip(session?: ReviewSession | null): string {
+  if (session?.last_run_scope === "incremental" && session.last_run_from_sha) return `since ${session.last_run_from_sha.slice(0, 7)}`;
+  if (session?.last_run_scope === "full") return "whole PR";
+  return "";
+}
+
 export const WHY_QUESTION = "Please explain why we need this.";
 
 // withoutComment drops comment id from the session, for a
@@ -213,18 +232,49 @@ export function withoutComment(session: ReviewSession | null, id: string): Revie
 
 // withUpdatedComment swaps in the fields of a `review.comment_updated`
 // event, keeping the rest (pushed state, GitHub link) of the held comment.
+// The event leaves out empty fields, so the verdict, its reason and the
+// impact are taken as given: one missing was cleared (a body edit clears
+// them), not left as it was.
 export function withUpdatedComment(session: ReviewSession | null, c: Partial<ReviewComment> & { id: string }): ReviewSession | null {
   if (!session) return session;
-  return { ...session, comments: session.comments.map((x) => (x.id === c.id ? { ...x, ...c } : x)) };
+  return {
+    ...session,
+    comments: session.comments.map((x) => (x.id === c.id ? { ...x, ...c, verdict: c.verdict, verdict_reason: c.verdict_reason, impact: c.impact } : x)),
+  };
 }
 
-export function buildDiscussDraft(c: ReviewComment, session?: ReviewSession | null, ask?: string): string {
+// withVerdictState takes the parts of a fresh GET that only change behind
+// the comment events (thread assessments, the reviewed and approved heads,
+// the latest review's runs) into the held session.
+export function withVerdictState(session: ReviewSession | null, fresh: ReviewSession): ReviewSession | null {
+  if (!session) return session;
+  return {
+    ...session,
+    threads: fresh.threads,
+    reviewed_sha: fresh.reviewed_sha,
+    approved_sha: fresh.approved_sha,
+    review_id: fresh.review_id,
+    review_runs: fresh.review_runs,
+  };
+}
+
+// withThreads hands each GitHub comment that starts a thread the
+// verification step's assessment of it, for its badge.
+export function withThreads(comments: ReviewComment[], threads?: ReviewSession["threads"]): ReviewComment[] {
+  if (!threads) return comments;
+  return comments.map((c) => {
+    const a = c.source === "github" && !c.reply_to && c.github_id ? threads[String(c.github_id)] : undefined;
+    return a ? { ...c, thread: a } : c;
+  });
+}
+
+export function buildDiscussDraft(c: ReviewComment, ask?: string): string {
   const lines = [`> ${c.path}:${c.line}`];
   for (const ln of c.body.split("\n")) lines.push(ln ? `> ${ln}` : ">");
-  const refs = transcriptRefs(session);
+  const refs = transcriptRefs(c);
   if (refs.length > 0) {
     lines.push(">");
-    lines.push("> transcripts of the review runs that produced this, oldest first:");
+    lines.push("> transcripts of the review passes behind this, oldest first:");
     for (const ref of refs) lines.push(`> ${ref}`);
   }
   // Trailing blank line: markdown needs one to close the blockquote, and it
@@ -237,8 +287,9 @@ export function buildDiscussDraft(c: ReviewComment, session?: ReviewSession | nu
 
 // The batch form of buildAddressPrompt: same request, same metadata, same
 // trailing transcripts — the findings are numbered blocks instead of one quote.
-// The transcripts belong to the session rather than to any one finding, so they
-// are listed once at the end rather than repeated under every block.
+// A transcript often covers several of the findings (one review run reports
+// many), so the transcripts are listed once at the end rather than repeated
+// under every block.
 export function buildAddressAllPrompt(cs: ReviewComment[], session?: ReviewSession | null): string {
   const prNumber = session?.pr?.number;
   const headSHA = session?.head_sha;
@@ -254,18 +305,15 @@ export function buildAddressAllPrompt(cs: ReviewComment[], session?: ReviewSessi
     b.push(`### ${i + 1}. \`${c.path}\`:${c.line} (${c.side || "RIGHT"} — ${sideLabel(c.side)})${c.author ? ` — @${c.author}` : ""}`);
     b.push("");
     for (const ln of c.body.split("\n")) b.push(`> ${ln}`);
+    const refs = transcriptRefs(c);
+    if (refs.length > 0) {
+      b.push("");
+      b.push(`Transcripts of the review passes behind this, oldest first:`);
+      for (const ref of refs) b.push(`- ${ref}`);
+    }
     return b.join("\n");
   });
-  const refs = transcriptRefs(session);
-  const tail: string[] = [];
-  if (refs.length > 0) {
-    tail.push("");
-    tail.push(`---`);
-    tail.push("");
-    tail.push(`Transcripts of the review runs that produced these, oldest first:`);
-    for (const ref of refs) tail.push(`- ${ref}`);
-  }
-  return [...header, ...blocks, ...tail].join("\n");
+  return [...header, ...blocks].join("\n");
 }
 
 // buildCheckAllPrompt asks the chat agent to verify this session's own
@@ -307,6 +355,12 @@ export function isActionable(c: ReviewComment): boolean {
   return !c.pushed && c.verdict !== "false_positive" && c.verdict !== "already_fixed";
 }
 
+// isBlocking reports whether Address blocking and Push blocking take c: an
+// actionable finding judged blocking.
+export function isBlocking(c: ReviewComment): boolean {
+  return isActionable(c) && c.impact === "blocking";
+}
+
 // skippedNote names the unpushed comments Address all and Push all leave
 // out, in the verdict badges' words: " · skips 1 false positive, 2 already
 // fixed". It's empty when they leave none out.
@@ -323,10 +377,22 @@ export function skippedNote(comments: ReviewComment[]): string {
 // allActionItems lists the header's "All" menu: the actions over every
 // comment of a kind, each with its count, and only those with something
 // to act on. skipped is skippedNote's text, which Address all and Push all
-// carry so their count reads against Check all's. A click while another
+// carry so their count reads against Check all's. The blocking variants
+// show when some, but not all, of those are blocking. A click while another
 // action is busy does nothing, since the menu can stay open while one
 // starts.
-export function allActionItems(a: { newCount: number; pendingCount: number; skipped?: string; busy: boolean; onCheckAll: () => void; onAddressAll: () => void; onPushAll: () => void }): MenuItem[] {
+export function allActionItems(a: {
+  newCount: number;
+  pendingCount: number;
+  blockingCount?: number;
+  skipped?: string;
+  busy: boolean;
+  onCheckAll: () => void;
+  onAddressAll: () => void;
+  onPushAll: () => void;
+  onAddressBlocking?: () => void;
+  onPushBlocking?: () => void;
+}): MenuItem[] {
   const guard = (fn: () => void) => () => {
     if (!a.busy) fn();
   };
@@ -334,9 +400,47 @@ export function allActionItems(a: { newCount: number; pendingCount: number; skip
   if (a.newCount > 0) items.push({ label: `Check all (${a.newCount})`, onClick: guard(a.onCheckAll) });
   if (a.pendingCount > 0) {
     const skipped = a.skipped ?? "";
+    const blocking = a.blockingCount ?? 0;
+    const some = blocking > 0 && blocking < a.pendingCount;
     items.push({ label: `Address all (${a.pendingCount})${skipped}`, onClick: guard(a.onAddressAll) });
+    if (some && a.onAddressBlocking) items.push({ label: `Address blocking only (${blocking})`, onClick: guard(a.onAddressBlocking) });
     items.push({ label: `Push all to GitHub (${a.pendingCount})${skipped}`, onClick: guard(a.onPushAll) });
+    if (some && a.onPushBlocking) items.push({ label: `Push blocking to GitHub (${blocking})`, onClick: guard(a.onPushBlocking) });
   }
+  return items;
+}
+
+// runSettingsSummary is the gear's tooltip while the settings row is hidden:
+// what the next run goes with.
+export function runSettingsSummary(a: { maxIter: number; model: string; effort: string; forkMode: ReviewForkMode; scope: ReviewScope }): string {
+  const fork = a.forkMode === "current" ? "fork chat session" : a.forkMode === "custom" ? "fork session id" : "fresh session";
+  const scope = REVIEW_SCOPE_OPTIONS.find((o) => o.value === a.scope)?.label ?? a.scope;
+  return [`${a.maxIter} iteration${a.maxIter === 1 ? "" : "s"}`, a.model ? shortModel(a.model) : "default model", a.effort || "default effort", fork, scope].join(", ");
+}
+
+// moreMenuItems lists the header's ⋯ menu, the actions that don't need to
+// sit in the header: Sync, the All actions (see allActionItems), Approve
+// anyway when the outcome doesn't allow a plain approval, Stats and Close.
+// An item whose action can't run now is left out, or does nothing when
+// clicked, as allActionItems' are.
+export function moreMenuItems(a: {
+  syncDisabled: boolean;
+  all: MenuItem[];
+  approveAnyway: boolean;
+  showStats: boolean;
+  closeDisabled: boolean;
+  onSync: () => void;
+  onApproveAnyway: () => void;
+  onToggleStats: () => void;
+  onClose: () => void;
+}): MenuItem[] {
+  const items: MenuItem[] = [];
+  if (!a.syncDisabled) items.push({ label: "Sync with GitHub", onClick: a.onSync });
+  items.push(...a.all);
+  if (a.approveAnyway) items.push({ label: "Approve anyway…", onClick: a.onApproveAnyway });
+  if (items.length > 0) items.push({ label: "", onClick: () => {}, separator: true });
+  items.push({ label: a.showStats ? "Back to the review" : "Stats", onClick: a.onToggleStats });
+  if (!a.closeDisabled) items.push({ label: "Close review", onClick: a.onClose, danger: true });
   return items;
 }
 
@@ -432,8 +536,6 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
   });
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const caretRef = useRef<HTMLButtonElement | null>(null);
-  const [allMenuPos, setAllMenuPos] = useState<{ x: number; y: number } | null>(null);
-  const allBtnRef = useRef<HTMLButtonElement | null>(null);
   // The fork control is edited locally and committed to the daemon on
   // change/blur. Two drafts because "custom" is only a legal server-side
   // choice once an id exists — the dropdown can sit on it while the
@@ -443,8 +545,19 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
   // The config's model/effort for this channel, so the "Default" choices
   // name what they fall back to.
   const [agentDefaults, setAgentDefaults] = useState<{ model: string; effort: string; models: string[] }>({ model: "", effort: "", models: [] });
+  const [showStats, setShowStats] = useState(false);
+  const [moreMenuPos, setMoreMenuPos] = useState<{ x: number; y: number } | null>(null);
+  const moreBtnRef = useRef<HTMLButtonElement | null>(null);
+  // The run settings (iterations, model, effort, fork, scope) sit in a row
+  // of their own under the header, shown on demand.
+  const [showSettings, setShowSettings] = useState(false);
+  // The approve dialog's text; null while it's closed. force approves past
+  // an outcome that doesn't allow it.
+  const [approveDraft, setApproveDraft] = useState<{ body: string; force: boolean } | null>(null);
 
   const hasSession = session !== null && session.status !== "idle" && session.status !== "error";
+  const outcome = useMemo(() => (session ? deriveOutcome(session) : null), [session]);
+  const threadedComments = useMemo(() => withThreads(session?.comments ?? [], session?.threads), [session]);
 
   // The sidebar `rev` pill is a "go look" badge — once this panel is
   // mounted, the user is already looking. Register the channel with the
@@ -465,6 +578,8 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
     setForkModeDraft("");
     setForkDraft("");
     setAgentDefaults({ model: "", effort: "", models: [] });
+    setShowStats(false);
+    setApproveDraft(null);
     fetchAgentConfig(channelId)
       .then((cfg) => {
         if (!cancelled) setAgentDefaults({ model: cfg.default_model, effort: cfg.default_effort, models: cfg.models ?? [] });
@@ -808,6 +923,20 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
       } else if (event.type === "review.status") {
         const d = event.data as { status: ReviewStatus; error?: string };
         setSession((prev) => (prev ? { ...prev, status: d.status, error: d.error ?? "" } : prev));
+        // Thread assessments, the reviewed head and the review's runs change
+        // behind no event of their own; a run starting, or a run or
+        // verification settling, is when they move.
+        if (d.status === "ready" || d.status === "reviewing") {
+          getReviewSession(channelId, { diff: false })
+            .then((resp) => {
+              const fresh = resp.session;
+              if (fresh) setSession((prev) => withVerdictState(prev, fresh));
+            })
+            .catch(() => {});
+        }
+      } else if (event.type === "review.approved") {
+        const d = event.data as { commit: string };
+        setSession((prev) => (prev ? { ...prev, approved_sha: d.commit } : prev));
       } else if (event.type === "review.diff") {
         // Backend re-rendered the diff with widened context after an
         // agent comment landed outside the current hunks. Swap the
@@ -946,11 +1075,11 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
     setMenuPos({ x: r.left, y: r.bottom + 2 });
   }, []);
 
-  const openAllMenu = useCallback(() => {
-    const el = allBtnRef.current;
+  const openMoreMenu = useCallback(() => {
+    const el = moreBtnRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
-    setAllMenuPos({ x: r.left, y: r.bottom + 2 });
+    setMoreMenuPos({ x: r.left, y: r.bottom + 2 });
   }, []);
 
   // Push the fork choice to the daemon, which stores it on the review
@@ -978,6 +1107,19 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
       setError(null);
       try {
         const resp = await setReviewAgent(channelId, model, effort);
+        if (resp.present && resp.session) setSession(resp.session);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [channelId],
+  );
+
+  const commitScope = useCallback(
+    async (scope: ReviewScope) => {
+      setError(null);
+      try {
+        const resp = await setReviewScope(channelId, scope);
         if (resp.present && resp.session) setSession(resp.session);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -1100,11 +1242,11 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
       ensureChatOpen();
       window.dispatchEvent(
         new CustomEvent("loop:chat-compose", {
-          detail: { channelId, text: buildDiscussDraft(c, session) },
+          detail: { channelId, text: buildDiscussDraft(c) },
         }),
       );
     },
-    [channelId, ensureChatOpen, session],
+    [channelId, ensureChatOpen],
   );
 
   // Why? and Address both send. There is nothing left to type in either, so
@@ -1123,28 +1265,32 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
     [channelId, ensureChatOpen],
   );
 
-  const onWhyOne = useCallback((c: ReviewComment) => sendAboutComment(buildDiscussDraft(c, session, WHY_QUESTION)), [sendAboutComment, session]);
+  const onWhyOne = useCallback((c: ReviewComment) => sendAboutComment(buildDiscussDraft(c, WHY_QUESTION)), [sendAboutComment]);
   const onAddressOne = useCallback((c: ReviewComment) => sendAboutComment(buildAddressPrompt(c, session)), [sendAboutComment, session]);
 
-  const onAddressAll = useCallback(async () => {
-    const pending = (session?.comments ?? []).filter(isActionable);
-    if (pending.length === 0) return;
-    // Toggle `busy` for the duration of the sendMessage round-trip so the
-    // header buttons (which all gate on `busy`) actually disable. Without
-    // this the disabled={busy} on "Address all" was a no-op and
-    // double-clicks queued duplicate prompts to the agent.
-    setBusy(true);
-    setError(null);
-    try {
-      ensureChatOpen();
-      const prompt = buildAddressAllPrompt(pending, session);
-      await sendMessage(channelId, prompt);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }, [channelId, ensureChatOpen, session]);
+  // Address all, or with blockingOnly the blocking findings alone.
+  const onAddressAll = useCallback(
+    async (blockingOnly = false) => {
+      const pending = (session?.comments ?? []).filter(blockingOnly ? isBlocking : isActionable);
+      if (pending.length === 0) return;
+      // Toggle `busy` for the duration of the sendMessage round-trip so the
+      // header buttons (which all gate on `busy`) actually disable. Without
+      // this the disabled={busy} on "Address all" was a no-op and
+      // double-clicks queued duplicate prompts to the agent.
+      setBusy(true);
+      setError(null);
+      try {
+        ensureChatOpen();
+        const prompt = buildAddressAllPrompt(pending, session);
+        await sendMessage(channelId, prompt);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [channelId, ensureChatOpen, session],
+  );
 
   const newCount = useMemo(() => (session?.comments ?? []).filter((c) => c.source !== "github").length, [session]);
 
@@ -1178,29 +1324,34 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
     }
   }, [channelId, loopActive, loopRunId, reviewRunning]);
 
-  const onPushAll = useCallback(async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const result = await pushAllReviewComments(channelId);
-      // The backend's PushAllResult only reports aggregate counts, not
-      // per-id outcomes — and a partial failure leaves some comments
-      // still pending server-side. Refetch the session so the FE
-      // reflects the authoritative pushed/unpushed split and the user
-      // can retry just the ones that actually failed.
-      const resp = await getReviewSession(channelId);
-      if (resp.present && resp.session) setSession(resp.session);
-      if (result.failed > 0) {
-        setError(`${result.failed} comment(s) failed to push: ${(result.errors ?? []).join("; ")}`);
+  // Push all, or with blockingOnly the blocking findings alone.
+  const onPushAll = useCallback(
+    async (blockingOnly = false) => {
+      setBusy(true);
+      setError(null);
+      try {
+        const result = await pushAllReviewComments(channelId, blockingOnly ? { impact: "blocking" } : {});
+        // The backend's PushAllResult only reports aggregate counts, not
+        // per-id outcomes — and a partial failure leaves some comments
+        // still pending server-side. Refetch the session so the FE
+        // reflects the authoritative pushed/unpushed split and the user
+        // can retry just the ones that actually failed.
+        const resp = await getReviewSession(channelId);
+        if (resp.present && resp.session) setSession(resp.session);
+        if (result.failed > 0) {
+          setError(`${result.failed} comment(s) failed to push: ${(result.errors ?? []).join("; ")}`);
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setBusy(false);
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }, [channelId]);
+    },
+    [channelId],
+  );
 
   const pendingCount = useMemo(() => (session?.comments ?? []).filter(isActionable).length, [session]);
+  const blockingCount = useMemo(() => (session?.comments ?? []).filter(isBlocking).length, [session]);
   const skipped = useMemo(() => skippedNote(session?.comments ?? []), [session]);
 
   const btnStyle: React.CSSProperties = {
@@ -1220,6 +1371,10 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
     borderColor: colors.active,
   };
 
+  // An icon-only button: a larger glyph, with the line height pinned so the
+  // button stays as tall as its text neighbours.
+  const glyphBtnStyle: React.CSSProperties = { fontSize: 15, lineHeight: "13px", padding: "4px 8px" };
+
   // Disabled styling is applied inline so the button visibly dims and
   // shows a not-allowed cursor — otherwise `disabled` is a no-op visual.
   const disabledStyle: React.CSSProperties = { opacity: 0.4, cursor: "not-allowed" };
@@ -1235,7 +1390,39 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
   // (e.g. "deleted" from engine.DeleteRun, or anything added later) left
   // isLoopTerminal false and trapped the Run button until the user reloaded.
   const runDisabled = busy || session?.status !== "ready" || loopActive;
+  const statsBtn = (
+    <button
+      data-testid="review-stats-btn"
+      onClick={() => setShowStats((v) => !v)}
+      aria-pressed={showStats}
+      style={showStats ? primaryBtnStyle : btnStyle}
+      title={showStats ? "Back to the review" : "Review stats of this repo: runs, findings, verdicts and what became of them"}
+    >
+      Stats
+    </button>
+  );
   const closeDisabled = busy;
+  const approveDisabled = busy || reviewRunning || !outcome || !canApprove(outcome);
+  // Approving past the outcome: offered when the plain button is held back
+  // by the outcome alone.
+  const approveAnyway = !!session && !!outcome && !canApprove(outcome) && !isApprovedAtHead(session) && !busy && !reviewRunning;
+  const openApprove = (force: boolean) => {
+    if (!session || !outcome) return;
+    setApproveDraft({ body: approveBody(outcome, session.comments), force });
+  };
+  const onApprove = async (body: string) => {
+    if (!approveDraft) return;
+    const sha = await approveReview(channelId, { body, force: approveDraft.force });
+    setSession((prev) => (prev ? { ...prev, approved_sha: sha } : prev));
+    setApproveDraft(null);
+  };
+  const settingsSummary = runSettingsSummary({
+    maxIter,
+    model: session?.model ?? "",
+    effort: session?.effort ?? "",
+    forkMode: forkModeDraft,
+    scope: session?.scope ?? "",
+  });
 
   return (
     <div
@@ -1261,7 +1448,10 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
         }}
       >
         {!hasSession ? (
-          <div style={{ flex: 1, fontSize: 12, color: colors.textDim, fontFamily: fonts.sans }}>Select a PR to review</div>
+          <>
+            <div style={{ flex: 1, fontSize: 12, color: colors.textDim, fontFamily: fonts.sans }}>{showStats ? "Review stats" : "Select a PR to review"}</div>
+            {statsBtn}
+          </>
         ) : (
           <>
             <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
@@ -1303,137 +1493,73 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
                 )}
                 {" · "}
                 {session ? statusLabel(session.status) : ""}
+                {reviewScopeChip(session) && (
+                  <span data-testid="review-scope-chip" title="What the latest review run reviewed">
+                    {" · last run: "}
+                    {reviewScopeChip(session)}
+                  </span>
+                )}
+                {loopChip && (
+                  <span
+                    data-testid="review-loop-chip"
+                    style={{
+                      marginLeft: 6,
+                      fontSize: 10,
+                      fontFamily: fonts.sans,
+                      color: colors.textDim,
+                      padding: "2px 6px",
+                      border: `1px solid ${colors.border}`,
+                      borderRadius: 10,
+                    }}
+                    title={`Workflow run ${loopRunId ?? ""}`}
+                  >
+                    {loopChip}
+                  </span>
+                )}
               </div>
             </div>
-            <button
-              data-testid="review-sync-btn"
-              onClick={() => void onSync()}
-              disabled={syncDisabled}
-              style={syncDisabled ? { ...btnStyle, ...disabledStyle } : btnStyle}
-              title="Pull the latest PR head, diff, and GitHub comments"
-            >
-              Sync
-            </button>
-            <input
-              data-testid="review-max-iter"
-              type="number"
-              min={1}
-              max={10}
-              value={maxIter}
-              onChange={(e) => {
-                const v = parseInt(e.target.value, 10);
-                if (!Number.isFinite(v)) return;
-                setMaxIter(Math.min(10, Math.max(1, v)));
-              }}
-              disabled={runDisabled}
-              aria-label="Maximum review iterations (1-10)"
-              title="Maximum review iterations (1-10)"
-              style={{
-                width: 40,
-                background: "transparent",
-                color: colors.text,
-                border: `1px solid ${colors.border}`,
-                borderRadius: 4,
-                padding: "3px 4px",
-                fontSize: 11,
-                fontFamily: fonts.sans,
-                textAlign: "right",
-              }}
-            />
-            <select
-              data-testid="review-model"
-              value={session?.model ?? ""}
-              onChange={(e) => void commitAgent(e.target.value, session?.effort ?? "")}
-              disabled={runDisabled}
-              aria-label="Model the review run uses"
-              title="Model the review run uses. Default follows the config's claude_model."
-              style={{
-                background: "transparent",
-                color: colors.text,
-                border: `1px solid ${colors.border}`,
-                borderRadius: 4,
-                padding: "3px 4px",
-                fontSize: 11,
-                fontFamily: fonts.sans,
-              }}
-            >
-              {reviewModelOptions(session?.model ?? "", agentDefaults.model, agentDefaults.models).map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-            <select
-              data-testid="review-effort"
-              value={session?.effort ?? ""}
-              onChange={(e) => void commitAgent(session?.model ?? "", e.target.value)}
-              disabled={runDisabled}
-              aria-label="Reasoning effort the review run uses"
-              title="Reasoning effort the review run uses. high, xhigh or max are recommended for reviews; lower levels miss findings."
-              style={{
-                background: "transparent",
-                color: colors.text,
-                border: `1px solid ${colors.border}`,
-                borderRadius: 4,
-                padding: "3px 4px",
-                fontSize: 11,
-                fontFamily: fonts.sans,
-              }}
-            >
-              {reviewEffortOptions(agentDefaults.effort).map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-            <select
-              data-testid="review-fork-mode"
-              value={forkModeDraft}
-              onChange={(e) => onForkModeChange(e.target.value as ReviewForkMode)}
-              disabled={runDisabled}
-              aria-label="Session the review run forks from"
-              title="Which Claude session the review run starts from. Forking gives the reviewer the chat's context; it never appends to the chat session."
-              style={{
-                background: "transparent",
-                color: colors.text,
-                border: `1px solid ${colors.border}`,
-                borderRadius: 4,
-                padding: "3px 4px",
-                fontSize: 11,
-                fontFamily: fonts.sans,
-              }}
-            >
-              <option value="current">Fork chat session</option>
-              <option value="">Fresh session</option>
-              <option value="custom">Fork session id...</option>
-            </select>
-            {forkModeDraft === "custom" && (
-              <input
-                data-testid="review-fork-session-id"
-                value={forkDraft}
-                onChange={(e) => setForkDraft(e.target.value)}
-                onBlur={() => {
-                  const v = forkDraft.trim();
-                  if (v && v !== session?.fork_session_id) void commitFork("custom", v);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") e.currentTarget.blur();
-                }}
-                disabled={runDisabled}
-                placeholder="session id"
-                aria-label="Claude session id to fork"
-                title="Claude session id to fork (from ~/.claude/projects/<project>/<id>.jsonl)"
+            {outcome && (
+              <span
+                data-testid="review-outcome-chip"
+                data-state={outcome.state}
                 style={{
-                  width: 120,
-                  background: "transparent",
-                  color: colors.text,
-                  border: `1px solid ${session?.fork_session_id ? colors.border : colors.dangerText}`,
-                  borderRadius: 4,
-                  padding: "3px 4px",
-                  fontSize: 11,
-                  fontFamily: fonts.mono,
+                  fontSize: 10,
+                  fontFamily: fonts.sans,
+                  color: outcomeColor(colors, outcome.state),
+                  padding: "2px 6px",
+                  border: `1px solid ${outcomeColor(colors, outcome.state)}`,
+                  borderRadius: 10,
+                  whiteSpace: "nowrap",
                 }}
-              />
+                title={outcomeTitle(outcome)}
+              >
+                {outcomeLabel(outcome.state)}
+              </span>
+            )}
+            {session && isApprovedAtHead(session) ? (
+              <span
+                data-testid="review-approved-chip"
+                style={{ fontSize: 10, fontFamily: fonts.sans, color: colors.active, whiteSpace: "nowrap" }}
+                title={`Approved on GitHub at ${session.approved_sha}`}
+              >
+                ✓ Approved at <span style={{ fontFamily: "monospace" }}>{session.approved_sha?.slice(0, 7)}</span>
+              </span>
+            ) : (
+              <button
+                data-testid="review-approve-btn"
+                onClick={() => openApprove(false)}
+                disabled={approveDisabled}
+                style={approveDisabled ? { ...btnStyle, ...disabledStyle } : { ...btnStyle, color: colors.text }}
+                title={
+                  outcome && !canApprove(outcome)
+                    ? approveDisabledReason(outcome)
+                    : reviewRunning
+                      ? "Wait for the review to finish"
+                      : `Approve the PR on GitHub at ${session?.head_sha?.slice(0, 7) ?? "its head"}`
+                }
+              >
+                Approve on GitHub
+              </button>
             )}
             <div style={{ display: "flex", alignItems: "stretch" }}>
               <button
@@ -1479,41 +1605,198 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
                 Stop
               </button>
             )}
-            {loopChip && (
-              <span
-                data-testid="review-loop-chip"
-                style={{
-                  fontSize: 10,
-                  fontFamily: fonts.sans,
-                  color: colors.textDim,
-                  padding: "2px 6px",
-                  border: `1px solid ${colors.border}`,
-                  borderRadius: 10,
-                }}
-                title={`Workflow run ${loopRunId ?? ""}`}
-              >
-                {loopChip}
-              </span>
-            )}
-            {(newCount > 0 || pendingCount > 0) && (
-              <button
-                ref={allBtnRef}
-                data-testid="review-all-menu-btn"
-                onClick={openAllMenu}
-                disabled={allDisabled}
-                aria-haspopup="menu"
-                style={allDisabled ? { ...btnStyle, ...disabledStyle } : btnStyle}
-                title={verifying ? "Waiting for the verification's verdicts" : "Check, address or push every comment"}
-              >
-                All ▾
-              </button>
-            )}
-            <button data-testid="review-close-btn" onClick={() => void onCloseSession()} disabled={closeDisabled} style={btnStyle} title="Close review session and remove worktree">
-              Close
+            <button
+              data-testid="review-settings-btn"
+              onClick={() => setShowSettings((v) => !v)}
+              aria-pressed={showSettings}
+              aria-label="Run settings"
+              style={{ ...(showSettings ? primaryBtnStyle : btnStyle), ...glyphBtnStyle }}
+              title={showSettings ? "Hide the run settings" : `Run settings: ${settingsSummary}`}
+            >
+              ⚙
+            </button>
+            <button
+              ref={moreBtnRef}
+              data-testid="review-more-btn"
+              onClick={openMoreMenu}
+              aria-haspopup="menu"
+              aria-label="More review actions"
+              style={btnStyle}
+              title="Sync, the All actions, Stats and Close"
+            >
+              ⋯
             </button>
           </>
         )}
       </div>
+
+      {/* Run settings, shown on demand from the header's gear */}
+      {hasSession && showSettings && (
+        <div
+          data-testid="review-settings-row"
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 6,
+            padding: "4px 8px",
+            borderBottom: `1px solid ${colors.border}`,
+            alignItems: "center",
+            fontSize: 10,
+            color: colors.textDim,
+            fontFamily: fonts.sans,
+          }}
+        >
+          <span>Iterations</span>
+          <input
+            data-testid="review-max-iter"
+            type="number"
+            min={1}
+            max={10}
+            value={maxIter}
+            onChange={(e) => {
+              const v = parseInt(e.target.value, 10);
+              if (!Number.isFinite(v)) return;
+              setMaxIter(Math.min(10, Math.max(1, v)));
+            }}
+            disabled={runDisabled}
+            aria-label="Maximum review iterations (1-10)"
+            title="Maximum review iterations (1-10)"
+            style={{
+              width: 40,
+              background: "transparent",
+              color: colors.text,
+              border: `1px solid ${colors.border}`,
+              borderRadius: 4,
+              padding: "3px 4px",
+              fontSize: 11,
+              fontFamily: fonts.sans,
+              textAlign: "right",
+            }}
+          />
+          <span>Model</span>
+          <select
+            data-testid="review-model"
+            value={session?.model ?? ""}
+            onChange={(e) => void commitAgent(e.target.value, session?.effort ?? "")}
+            disabled={runDisabled}
+            aria-label="Model the review run uses"
+            title="Model the review run uses. Default follows the config's claude_model."
+            style={{
+              background: "transparent",
+              color: colors.text,
+              border: `1px solid ${colors.border}`,
+              borderRadius: 4,
+              padding: "3px 4px",
+              fontSize: 11,
+              fontFamily: fonts.sans,
+            }}
+          >
+            {reviewModelOptions(session?.model ?? "", agentDefaults.model, agentDefaults.models).map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <span>Effort</span>
+          <select
+            data-testid="review-effort"
+            value={session?.effort ?? ""}
+            onChange={(e) => void commitAgent(session?.model ?? "", e.target.value)}
+            disabled={runDisabled}
+            aria-label="Reasoning effort the review run uses"
+            title="Reasoning effort the review run uses. high, xhigh or max are recommended for reviews; lower levels miss findings."
+            style={{
+              background: "transparent",
+              color: colors.text,
+              border: `1px solid ${colors.border}`,
+              borderRadius: 4,
+              padding: "3px 4px",
+              fontSize: 11,
+              fontFamily: fonts.sans,
+            }}
+          >
+            {reviewEffortOptions(agentDefaults.effort).map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <span>Session</span>
+          <select
+            data-testid="review-fork-mode"
+            value={forkModeDraft}
+            onChange={(e) => onForkModeChange(e.target.value as ReviewForkMode)}
+            disabled={runDisabled}
+            aria-label="Session the review run forks from"
+            title="Which Claude session the review run starts from. Forking gives the reviewer the chat's context; it never appends to the chat session."
+            style={{
+              background: "transparent",
+              color: colors.text,
+              border: `1px solid ${colors.border}`,
+              borderRadius: 4,
+              padding: "3px 4px",
+              fontSize: 11,
+              fontFamily: fonts.sans,
+            }}
+          >
+            <option value="current">Fork chat session</option>
+            <option value="">Fresh session</option>
+            <option value="custom">Fork session id...</option>
+          </select>
+          <span>Scope</span>
+          <select
+            data-testid="review-scope"
+            value={session?.scope ?? ""}
+            onChange={(e) => void commitScope(e.target.value as ReviewScope)}
+            disabled={runDisabled}
+            aria-label="What the review run reviews"
+            title="What the review run reviews. Auto reviews only the commits since the last review when an earlier run finished and its head is still in the branch, else the whole PR."
+            style={{
+              background: "transparent",
+              color: colors.text,
+              border: `1px solid ${colors.border}`,
+              borderRadius: 4,
+              padding: "3px 4px",
+              fontSize: 11,
+              fontFamily: fonts.sans,
+            }}
+          >
+            {REVIEW_SCOPE_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          {forkModeDraft === "custom" && (
+            <input
+              data-testid="review-fork-session-id"
+              value={forkDraft}
+              onChange={(e) => setForkDraft(e.target.value)}
+              onBlur={() => {
+                const v = forkDraft.trim();
+                if (v && v !== session?.fork_session_id) void commitFork("custom", v);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") e.currentTarget.blur();
+              }}
+              disabled={runDisabled}
+              placeholder="session id"
+              aria-label="Claude session id to fork"
+              title="Claude session id to fork (from ~/.claude/projects/<project>/<id>.jsonl)"
+              style={{
+                width: 120,
+                background: "transparent",
+                color: colors.text,
+                border: `1px solid ${session?.fork_session_id ? colors.border : colors.dangerText}`,
+                borderRadius: 4,
+                padding: "3px 4px",
+                fontSize: 11,
+                fontFamily: fonts.mono,
+              }}
+            />
+          )}
+        </div>
+      )}
 
       {/* Error banner */}
       {(error || session?.error) && (
@@ -1550,15 +1833,17 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
             </div>
           );
         })()}
-        {!hasSession && <PRListPicker prs={prList} loading={listLoading} loadingPR={loadingPR} disabled={busy} colors={colors} onSelect={onSelectPR} />}
-        {hasSession && session && session.status === "reviewing" && session.comments.length === 0 && (
+        {showStats && <ReviewStatsView channelId={channelId} prNumber={hasSession ? session?.pr?.number : undefined} colors={colors} />}
+        {!showStats && !hasSession && <PRListPicker prs={prList} loading={listLoading} loadingPR={loadingPR} disabled={busy} colors={colors} onSelect={onSelectPR} />}
+        {!showStats && hasSession && session && session.status === "reviewing" && session.comments.length === 0 && (
           <div style={{ padding: "6px 12px", color: colors.textDim, fontSize: 11, borderBottom: `1px solid ${colors.border}` }}>Reviewing... comments will appear inline as the agent emits them.</div>
         )}
-        {hasSession && session && (
+        {!showStats && hasSession && session && (
           <ReviewDiffView
             channelId={channelId}
             rawDiff={session.raw_diff ?? ""}
-            comments={session.comments}
+            comments={threadedComments}
+            reviewRuns={session.review_runs}
             worktreePath={session.worktree_path}
             onPushComment={onPushOne}
             onDiscussComment={onDiscussOne}
@@ -1599,20 +1884,47 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
           ]}
         />
       )}
-      {allMenuPos && (
+      {moreMenuPos && (
         <ContextMenu
-          x={allMenuPos.x}
-          y={allMenuPos.y}
-          onClose={() => setAllMenuPos(null)}
-          items={allActionItems({
-            newCount,
-            pendingCount,
-            skipped,
-            busy: allDisabled,
-            onCheckAll: () => void onCheckAll(),
-            onAddressAll: () => void onAddressAll(),
-            onPushAll: () => void onPushAll(),
+          x={moreMenuPos.x}
+          y={moreMenuPos.y}
+          onClose={() => setMoreMenuPos(null)}
+          items={moreMenuItems({
+            syncDisabled,
+            // Address all and Push all wait for the verification's verdicts.
+            all: allDisabled
+              ? []
+              : allActionItems({
+                  newCount,
+                  pendingCount,
+                  blockingCount,
+                  skipped,
+                  busy: allDisabled,
+                  onCheckAll: () => void onCheckAll(),
+                  onAddressAll: () => void onAddressAll(),
+                  onPushAll: () => void onPushAll(),
+                  onAddressBlocking: () => void onAddressAll(true),
+                  onPushBlocking: () => void onPushAll(true),
+                }),
+            approveAnyway,
+            showStats,
+            closeDisabled,
+            onSync: () => void onSync(),
+            onApproveAnyway: () => openApprove(true),
+            onToggleStats: () => setShowStats((v) => !v),
+            onClose: () => void onCloseSession(),
           })}
+        />
+      )}
+      {approveDraft && session && (
+        <ReviewApproveDialog
+          prNumber={session.pr?.number}
+          headSha={session.head_sha}
+          initialBody={approveDraft.body}
+          force={approveDraft.force}
+          warning={outcome ? approveDisabledReason(outcome).split(";")[0] : undefined}
+          onCancel={() => setApproveDraft(null)}
+          onSubmit={onApprove}
         />
       )}
     </div>

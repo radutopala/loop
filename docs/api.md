@@ -56,7 +56,7 @@ Browsers can't set headers on a WebSocket, so WebSocket clients send it as a sub
 
 An agent token works only on the routes in-container clients call (the table is `agentRoutes` in `internal/api/agent_scope.go`): messages, threads, tasks, shortcuts, memory, playground, workflows, learn proposals, review, quality, the UI bridge (`GET /api/ui/state`, `POST /api/ui/commands`), and the browser action. Every other route answers 403, among them config, terminals, gates, images, token rotation and content links.
 
-On the routes it may call, an agent is held to its own project. Every channel, thread, task, workflow run and `dir_path` a request names, in the path, the query or the JSON body, must be the agent's own channel or dir, or share its project root (after symlinks). A request that names anything else gets 403. The exception is `POST /api/messages` (the `send_message` tool): its `channel_id` may be any channel, so one agent can hand work or news to another project's channel. Agents may also only change `project` bash shortcuts, and can't start workflows while `workflow_bash_local` runs workflow bash on the host. The routes that change review comments (delete, edit, push one, push all) are held to the agent's own channel, not its project: they act on the PR as the user. An agent may not delete a GitHub comment.
+On the routes it may call, an agent is held to its own project. Every channel, thread, task, workflow run and `dir_path` a request names, in the path, the query or the JSON body, must be the agent's own channel or dir, or share its project root (after symlinks). A request that names anything else gets 403. The exception is `POST /api/messages` (the `send_message` tool): its `channel_id` may be any channel, so one agent can hand work or news to another project's channel. Agents may also only change `project` bash shortcuts, and can't start workflows while `workflow_bash_local` runs workflow bash on the host. The routes that change review comments (delete, edit, assess a thread, push one, push all) are held to the agent's own channel, not its project: they act on the PR as the user. An agent may not delete a GitHub comment, and may not approve a PR (`POST .../review/approve` is owner only).
 
 On the UI bridge, an agent's command must start with `select_channel` to a channel of its project, and every `select_channel` in it must name a channel of the project. `GET /api/ui/state` leaves out the `state` of windows showing a channel outside it. The UI WebSocket stays owner-only.
 
@@ -2533,7 +2533,7 @@ Do what the Review panel's Run button does, in one call: load the PR unless
 the session is already ready on it, record the model and effort on the
 session, and start the review workflow. Used by the `run_review` MCP tool.
 
-Body: `{"pr_number": 42, "model": "opus", "effort": "high", "mode": "review", "max_iterations": 1, "fork": "chat"}`.
+Body: `{"pr_number": 42, "model": "opus", "effort": "high", "mode": "review", "max_iterations": 1, "fork": "chat", "scope": "auto"}`.
 Only `pr_number` is required. `model` and `effort` default to the
 channel's own overrides, and empty after that means the config default.
 `mode` is `review` (default, the `review-loop` workflow) or `review-fix`
@@ -2542,12 +2542,15 @@ channel's own overrides, and empty after that means the config default.
 does: `chat` (the channel's chat session), `fresh` (a new session) or a
 Claude session id. It is stored on the review session; empty keeps the
 session's choice, which is `chat` for a newly loaded PR.
+`scope` is `auto`, `full` or `incremental`, stored on the session as
+[`PUT .../review/scope`](#put-apichannelsidreviewscope) does; empty keeps
+the session's choice.
 
 Response (`201`): `{"run_id": "...", "workflow_name": "review-loop", "model": "opus", "effort": "high", "session": { ... }}`.
 A Review panel on the channel picks the run up from its
 `workflow.run_started` event, or from the run list when it opens later.
 
-**Errors:** `400` on an invalid body, mode, `max_iterations` or effort.
+**Errors:** `400` on an invalid body, mode, `max_iterations`, effort or scope.
 `404` if the channel or the PR does not exist. `409` while the channel has
 a review run in flight, a session loading or reviewing, a `review-loop` /
 `review-fix-loop` run running or paused, or another start in progress.
@@ -2557,7 +2560,39 @@ Load errors as for [`POST .../review/load`](#post-apichannelsidreviewload).
 
 Return the channel's review session, or `{"present": false}` if none.
 `?diff=false` leaves out `raw_diff`, by far the largest field, for callers
-that only want the comments.
+that only want the comments. Each agent comment's `transcripts` lists the
+Claude transcripts of the agent passes that reported or changed it, oldest
+first ([details](review.md#every-form-carries-the-transcripts)). A real
+agent comment carries its `impact` (`blocking` or `nice_to_have`), and a
+GitHub reply carries `reply_to`, the GitHub id of its thread's first
+comment.
+
+The session also carries:
+
+- `reviewed_sha`: the commit the latest finished review run or
+  verification step judged.
+- `approved_sha`: the commit the PR was approved at from the panel
+  ([`POST .../review/approve`](#post-apichannelsidreviewapprove)).
+- `threads`: the verification step's assessments of the unresolved GitHub
+  threads a person started, keyed by the GitHub id of the thread's first
+  comment: `{"88": {"status": "open", "impact": "blocking", "reason": "..."}}`.
+- `review_id` and `review_runs`: the latest review, which a
+  [`POST .../review/start`](#post-apichannelsidreviewstart) begins, and
+  the history ids of its runs, one per iteration of its loop. An agent
+  comment's `run_id` is the run that reported it, so the comments whose
+  `run_id` is in `review_runs` are the latest review's.
+
+Next to `session`, the response carries the PR
+[`outcome`](review.md#outcome), worked out on each GET:
+
+```json
+{"state": "approve_with_nits", "blocking": [], "nits": ["<id>"], "pending": [], "reason": "", "reviewed_sha": "abc123"}
+```
+
+`state` is `approve`, `approve_with_nits`, `request_changes` or `unknown`.
+`blocking`, `nits` and `pending` list the comments that decide it (a
+GitHub thread by its first comment's id); `reason` says why it is
+`unknown`.
 
 ### `DELETE /api/channels/{id}/review`
 
@@ -2588,6 +2623,14 @@ step's dedup pass covers the whole session. An optional body
 pass above (`loop review:run --no-verify`). An empty body or `{}` keeps
 the config's choice. A body that isn't valid JSON gets a `400`.
 
+The body's optional `scope` (`""` for auto, `full` or `incremental`)
+overrides the session's [scope](review.md#incremental-re-review) for this
+run (`loop review:run --scope`); an unknown one gets a `400`. The run
+resolves it against the PR's [review history](review.md#review-history)
+and reports what it resolved to as the session's `last_run_scope` and,
+for an incremental run, `last_run_from_sha`. If resolving fails, the run
+reviews the whole PR.
+
 If the session is configured to fork (see below), the chosen session's
 transcript is copied into the worktree's Claude project dir before the
 agent starts, and the run is launched with `--resume <id> --fork-session`.
@@ -2609,14 +2652,21 @@ The step goes on in the background, with the session in status
 2. A read-only agent reads, in the PR worktree at the reviewed commit, the
    code each agent comment points at. It records a verdict (`real`,
    `false_positive`, `already_fixed`) and a reason on each one through
-   `update_review_comment`, the one change the agent is allowed to make.
+   `update_review_comment`, with the impact (`blocking` or `nice_to_have`)
+   of a real one. It also assesses each unresolved GitHub thread a person
+   started through `assess_review_thread`: addressed, or still open with
+   an impact. Those two tools are the only changes the agent may make.
    The prompt is `review.verify_prompt`, or the built-in one, followed by
    the PR, the reviewed commit, the checkout and the dedup outcome.
-3. Loop posts the agent's reply, a per-comment summary, to the channel.
+3. Loop records the head as reviewed (`reviewed_sha`) and posts the
+   agent's reply, a per-comment summary, to the channel, followed by
+   `Outcome: ` and the PR [outcome](review.md#outcome) in one line.
 
-The session then turns `ready`. If the agent fails or times out (15
+The step drops the previous step's thread assessments when it starts. The
+session then turns `ready`. If the agent fails or times out (15
 minutes), it turns `error`; Stop settles it `ready`. A session with no
-agent comments skips the step. When `review.verify` is off, the endpoint
+agent comment and no unresolved GitHub thread a person started has
+nothing to check: no agent runs, and the head is recorded as reviewed. When `review.verify` is off, the endpoint
 returns `202 {"status":"disabled"}` and does nothing. It is in the agent
 token scope.
 
@@ -2718,8 +2768,10 @@ session the user is still talking to. `session_id` is stored only for
 
 The choice lives on the review session (not on the run request) because
 the desktop app's Run button dispatches a workflow whose `loop review:run`
-step has nowhere to carry per-run options. It is in-memory, so it resets
-when the daemon restarts.
+step has nowhere to carry per-run options. It survives a daemon restart,
+which loads the session's PR again with its choices (see
+[Review history](review.md#review-history)), and resets when a PR is
+loaded.
 
 Response: `{"present": true, "session": { ... }}` — the updated session.
 
@@ -2733,7 +2785,7 @@ Choose the model and reasoning effort the *next* review run uses. Body:
 `{"model": "", "effort": ""}`. `model` is any Claude model id, passed to
 the CLI verbatim; `effort` is one of `low`, `medium`, `high`, `xhigh`,
 `max`. Empty inherits the config's `claude_model` / `claude_effort`.
-Values are trimmed. Stored on the in-memory review session like the fork
+Values are trimmed. Stored on the review session like the fork
 choice, and reported back as the session's `model` / `effort`.
 
 Response: `{"present": true, "session": { ... }}` — the updated session.
@@ -2741,6 +2793,51 @@ Response: `{"present": true, "session": { ... }}` — the updated session.
 **Errors:** `400` on invalid JSON or an unknown `effort`. `404` if the
 channel has no review session. `501` if the review service is not
 configured.
+
+### `PUT /api/channels/{id}/review/scope`
+
+Choose what the *next* review run reviews. Body: `{"scope": ""}`, where
+`scope` is `""` (auto), `"full"` or `"incremental"`; see
+[Incremental re-review](review.md#incremental-re-review). Stored on the
+review session like the fork choice, and reported back as the
+session's `scope`.
+
+Response: `{"present": true, "session": { ... }}` — the updated session.
+
+**Errors:** `400` on invalid JSON or an unknown `scope`. `404` if the
+channel has no review session. `501` if the review service is not
+configured.
+
+### `GET /api/channels/{id}/review/stats`
+
+The [review stats](review.md#stats) of the channel's repo (its main dir,
+so every worktree of the repo counts), from the review history. `?days=`
+sets the window (default `90`); `?pr=` limits them to one PR. In the agent
+token scope.
+
+```json
+{
+  "runs": {"total": 4, "completed": 3, "failed": 1, "cancelled": 0, "running": 0,
+           "full": 3, "incremental": 1, "prs": 2, "median_ms": 192400, "p90_ms": 310000},
+  "findings": {"added": 10, "folded": 2, "deleted": 1, "pushed": 4,
+               "real": 5, "false_positive": 1, "already_fixed": 1, "unjudged": 3,
+               "blocking": 2, "nice_to_have": 3, "resolved": 2, "outdated": 1, "false_positive_rate": 0.14},
+  "by_model": [{"key": "opus", "runs": 3, "added": 8, "...": "..."}],
+  "by_effort": [],
+  "by_scope": [],
+  "by_category": []
+}
+```
+
+The durations are of completed runs. `false_positive_rate` is false
+positives over the findings with a verdict. `blocking` and
+`nice_to_have` split the real findings by impact. Each breakdown row carries the
+`findings` counts for its key (an empty key for runs that recorded none,
+and for findings reported outside a run); category rows have `runs: 0`, since a run reports findings of many
+categories.
+
+**Errors:** `400` if `days` or `pr` isn't a positive number. `404` if the
+channel has no `dir_path`. `501` if the daemon keeps no review history.
 
 ### `DELETE /api/channels/{id}/review/comments/{cid}`
 
@@ -2757,21 +2854,62 @@ the review service is not configured.
 
 Replace a comment's body, e.g. to fold in what a duplicate adds, and/or
 record a verdict on it, replacing the dedup pass's. Body:
-`{"body": "...", "verdict": "false_positive", "verdict_reason": "..."}`;
+`{"body": "...", "verdict": "real", "impact": "nice_to_have", "verdict_reason": "..."}`;
 give `body`, `verdict` or both. `verdict` is `real`, `false_positive` or
-`already_fixed`. Only an unpushed agent comment's body can change; a verdict
-goes on any agent comment. Broadcasts `review.comment_updated`.
+`already_fixed`. `impact` is `blocking` or `nice_to_have` and goes with
+`real` only; a verdict without one clears it. Only an unpushed agent
+comment's body can change; a verdict goes on any agent comment. Broadcasts
+`review.comment_updated`.
 
 Response: the updated comment.
 
-**Errors:** `400` on invalid JSON, an unknown verdict, or neither a body nor
-a verdict. `404` if session or comment id is unknown. `409` for a GitHub
+**Errors:** `400` on invalid JSON, an unknown verdict, neither a body nor
+a verdict, or an impact that is unknown or not with `real`. `404` if session or comment id is unknown. `409` for a GitHub
 comment, or a body for a pushed one. `501` if the review service is not
 configured.
 
+### `POST /api/channels/{id}/review/comments/{cid}/assess`
+
+Record the verification step's call on a GitHub thread a person started,
+by the id of its first comment. Body:
+`{"status": "open", "impact": "blocking", "reason": "..."}`. `status` is
+`addressed` (a later commit or a reply settles it) or `open`; an open
+thread needs `impact` (`blocking` or `nice_to_have`), an addressed one
+takes none. The assessment is stored in the session's `threads` and counts
+toward the [outcome](review.md#outcome). An agent may call it for its own
+channel only.
+
+Response: the assessment recorded, its `reason` trimmed.
+
+**Errors:** `400` on invalid JSON, an unknown status, an open thread
+without an impact, or an addressed one with one. `404` if session or
+comment id is unknown. `409` for an agent comment (it takes a verdict
+instead) or a reply. `501` if the review service is not configured.
+
+### `POST /api/channels/{id}/review/approve`
+
+Approve the PR on GitHub at the session's head commit, as the configured
+gh user: the panel's **Approve on GitHub**. It runs
+`gh api repos/{owner}/{repo}/pulls/{N}/reviews` with `event=APPROVE`,
+`commit_id` set to the head and the body as the review's text, records
+the head as the session's `approved_sha` and broadcasts `review.approved`.
+Owner only: an agent token gets `403`.
+
+Body (optional): `{"body": "...", "force": false}`. Without `force`, the
+[outcome](review.md#outcome) has to be `approve` or `approve_with_nits`.
+
+Response: `{"approved_sha": "<head sha>"}`.
+
+**Errors:** `400` on invalid JSON. `404` if no session. `409` if the session
+has no PR or head SHA, the outcome doesn't allow it and `force` is off,
+or the PR's head moved past the session's (Sync and verify again). `403`
+if review is disabled. `502` when reading the PR head or the repo fails,
+or GitHub refuses the approval (an own PR, a merged one), with GitHub's
+message. `501` if the review service is not configured.
+
 ### `POST /api/channels/{id}/review/comments/{cid}/push`
 
-Push one comment to the PR via `gh api /repos/{owner}/{repo}/pulls/{N}/comments`. Flips `pushed=true` on the in-memory session on success.
+Push one comment to the PR via `gh api /repos/{owner}/{repo}/pulls/{N}/comments`. Flips `pushed=true` on the session on success.
 
 Response: `{"pushed": true}` (or `{"pushed": true, "already": true}` if already pushed).
 
@@ -2783,7 +2921,8 @@ Push every unpushed comment in the session, except those the dedup pass
 marked `false_positive` or `already_fixed`; `skipped` counts them. Errors
 are accumulated rather than short-circuiting — one bad comment does not
 block the rest. Returns `409` while the session is `verifying`, so it
-waits for the verdicts.
+waits for the verdicts. `?impact=blocking` (or `nice_to_have`) pushes only
+the findings of that impact; the others aren't counted.
 
 Response: `{"pushed": N, "skipped": S, "failed": M, "errors": ["id: msg", ...]}`.
 

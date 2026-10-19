@@ -59,12 +59,12 @@ func (a *app) newReviewCmd() *cobra.Command {
 		Use:   "review",
 		Short: "Drive review-panel runs from the CLI",
 	}
-	cmd.AddCommand(a.newReviewRunCmd(), a.newReviewDedupCmd(), a.newReviewVerifyCmd())
+	cmd.AddCommand(a.newReviewRunCmd(), a.newReviewDedupCmd(), a.newReviewVerifyCmd(), a.newReviewStatsCmd())
 	return cmd
 }
 
 func (a *app) newReviewRunCmd() *cobra.Command {
-	var channelID, apiURL, timeoutStr, pr string
+	var channelID, apiURL, timeoutStr, pr, scope string
 	var wait, noVerify bool
 
 	cmd := &cobra.Command{
@@ -74,6 +74,10 @@ func (a *app) newReviewRunCmd() *cobra.Command {
 			timeout, err := time.ParseDuration(timeoutStr)
 			if err != nil {
 				return fmt.Errorf("invalid --timeout: %w", err)
+			}
+			body, err := reviewRunBody(noVerify, c.Flags().Changed("scope"), scope)
+			if err != nil {
+				return err
 			}
 			// Both values are injected into the agent container's environment
 			// (LOOP_CHANNEL_ID / LOOP_API_URL), so a workflow's bash node can just run
@@ -100,11 +104,7 @@ func (a *app) newReviewRunCmd() *cobra.Command {
 					}
 				}
 			}
-			kickoff := reviewKickoff{action: "run", body: `{}`}
-			if noVerify {
-				kickoff.body = `{"verify":false}`
-			}
-			return a.kickoffReview(c.Context(), c.OutOrStdout(), resolvedURL, channelID, kickoff, wait, timeout)
+			return a.kickoffReview(c.Context(), c.OutOrStdout(), resolvedURL, channelID, reviewKickoff{action: "run", body: body}, wait, timeout)
 		},
 	}
 
@@ -113,6 +113,7 @@ func (a *app) newReviewRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&pr, "pr", "", "PR number or URL to load and review first (default: the channel's already-loaded review)")
 	cmd.Flags().BoolVar(&wait, "wait", false, "Block until the daemon flips to a terminal status, then print JSON")
 	cmd.Flags().BoolVar(&noVerify, "no-verify", false, "Skip the verification step the config runs after the review (a review loop runs it once, at the end)")
+	cmd.Flags().StringVar(&scope, "scope", "", "What the run reviews: full (the whole PR), incremental (the commits since the last reviewed head) or auto; default: the session's choice")
 	// 90m default chosen to sit above the daemon-side ceilings of a run,
 	// the dedup pass and the verification after it (api.WithReviewRunTimeout,
 	// api.WithReviewDedupTimeout and api.WithReviewVerifyTimeout in
@@ -211,6 +212,27 @@ func (a *app) dedupReview(ctx context.Context, stdout io.Writer, apiURL, channel
 	}
 	_, err = fmt.Fprintln(stdout, strings.TrimSpace(string(body)))
 	return err
+}
+
+// reviewRunScopes maps --scope to the scope the run body carries.
+var reviewRunScopes = map[string]string{"auto": "", "full": "full", "incremental": "incremental"}
+
+// reviewRunBody is the body of POST /review/run. The scope is sent only
+// when set, so the session's own choice applies otherwise.
+func reviewRunBody(noVerify, scopeSet bool, scope string) (string, error) {
+	body := map[string]any{}
+	if noVerify {
+		body["verify"] = false
+	}
+	if scopeSet {
+		v, ok := reviewRunScopes[scope]
+		if !ok {
+			return "", fmt.Errorf("invalid --scope %q: expected auto, full or incremental", scope)
+		}
+		body["scope"] = v
+	}
+	enc, _ := json.Marshal(body) // a map of bools and strings; cannot fail
+	return string(enc), nil
 }
 
 // resolveReviewAPIURL applies precedence: --api-url flag > $LOOP_API_URL env >

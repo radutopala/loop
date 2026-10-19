@@ -131,6 +131,18 @@ type Store interface {
 	ActiveLearnPass(ctx context.Context, channelID, messageID string) (*LearnPass, error)
 	LearnPassRunning(ctx context.Context, learnChannelID string) (bool, error)
 	FailInterruptedLearnPasses(ctx context.Context) (int64, error)
+	CreateReviewRun(ctx context.Context, run *ReviewRun) (int64, error)
+	FinishReviewRun(ctx context.Context, id int64, status, sessionID, model, errText string) error
+	LastReviewedHead(ctx context.Context, dirPath string, prNumber int) (string, error)
+	ListReviewRuns(ctx context.Context, dirPath string, prNumber int) ([]*ReviewRun, error)
+	SaveReviewFinding(ctx context.Context, f *ReviewFinding) error
+	DeleteReviewFinding(ctx context.Context, dirPath string, prNumber int, id, reason, supersededBy string) error
+	ListReviewFindings(ctx context.Context, dirPath string, prNumber int) ([]*ReviewFinding, error)
+	PruneReviewHistory(ctx context.Context, before time.Time) (int64, error)
+	ReviewStats(ctx context.Context, f ReviewStatsFilter) (*ReviewStats, error)
+	SaveReviewSession(ctx context.Context, rs *ReviewSession) error
+	DeleteReviewSession(ctx context.Context, channelID string) error
+	ListReviewSessions(ctx context.Context) ([]*ReviewSession, error)
 	BackupInto(ctx context.Context, path string) error
 	Close() error
 }

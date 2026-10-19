@@ -537,8 +537,9 @@ For development: `make docker-build` builds from `container/Dockerfile` in the r
 | `loop backup:restore <file>` | | Restore the database and playgrounds from a backup, stopping and restarting the daemon (`--identity <file>` holds an encrypted backup's private key, or paste it when asked); see [docs/backup.md](docs/backup.md) |
 | `loop mcp-host-browser` | | Standalone MCP server for host Chrome browser automation |
 | `loop quality:scan` | | One-shot architectural quality scan (`--root <dir>`, `--max-files <n>`, `--json`); see [docs/quality.md](docs/quality.md) |
-| `loop review:run` | | Drive a channel's review pass via the daemon (`--channel-id`, `--api-url`, `--wait`, `--timeout`, `--no-verify`); used by the seeded `review-loop` / `review-fix-loop` workflows. See [docs/review.md](docs/review.md) |
+| `loop review:run` | | Drive a channel's review pass via the daemon (`--channel-id`, `--api-url`, `--wait`, `--timeout`, `--no-verify`, `--scope`); used by the seeded `review-loop` / `review-fix-loop` workflows. See [docs/review.md](docs/review.md) |
 | `loop review:verify` | | Run the verification step over a channel's review session: dedup, then a verdict on each agent comment, posted to the channel (`--channel-id`, `--api-url`, `--wait`, `--timeout`). See [docs/review.md](docs/review.md#lifecycle) |
+| `loop review:stats` | | Print the review stats of a channel's repo: runs, findings, verdicts, impact and what became of the pushed ones, per model, effort, scope and category (`--channel-id`, `--api-url`, `--pr`, `--days`, `--json`). See [docs/review.md](docs/review.md#stats) |
 | `loop api:rotate-token` | | Replace the API token the desktop app and CLI use; see [docs/api.md](docs/api.md) |
 | `loop app:url` | | Print the web UI's URL signed in with the API token (`--base`, default `http://localhost:5173/`), for running the UI in a browser |
 | `loop ui:state` | | Print the desktop app windows' state (`--watch` to print each change); see [docs/api.md](docs/api.md#ui-bridge) |
@@ -1140,10 +1141,11 @@ In headless/Linux environments where Electron can't launch, `LOOP_NO_ELECTRON=1 
 | `resume_session` | Make another of those sessions the channel's, so its next message resumes it; the agent's own channel switches when its run ends |
 | `run_review` | Start a PR review in this or another channel/thread, as the Review panel's Run button does (PR number, model, effort, mode, iterations, session to fork) |
 | `report_review_findings` | Add findings to the channel's PR review session (path, line, side, body); duplicates are skipped |
-| `get_review_comments` | Read the channel's review session: the PR, head SHA, status and every comment with its id, location, pushed state, source (agent or GitHub, with the GitHub id), category and the dedup pass's verdict; filter to unpushed agent comments or one file. The diff is left out |
+| `get_review_comments` | Read the channel's review session: the PR, head SHA, status, the PR outcome (approve, approve with nits, request changes or unknown) and every comment with its id, location, pushed state, source (agent or GitHub, with the GitHub id), category, verdict and impact, a GitHub thread's assessment and its replies; filter to unpushed agent comments or one file. The diff is left out |
 | `dedup_review_findings` | Run the review dedup pass: drop agent comments that repeat another, trim bundled ones, re-anchor misplaced ones, and record a real / false-positive / already-fixed verdict on the rest |
 | `delete_review_comment` | Delete an agent review comment (from the PR too if pushed); GitHub comments are refused |
-| `update_review_comment` | Replace an unpushed agent review comment's body and/or record a verdict on it |
+| `update_review_comment` | Replace an unpushed agent review comment's body and/or record a verdict on it, with the impact (blocking or nice to have) of a real one |
+| `assess_review_thread` | Record whether an unresolved GitHub thread a person started is addressed or still open, with its impact |
 | `push_review_comment` | Post one agent review comment to the PR |
 | `push_all_review_comments` | Post every unpushed agent review comment to the PR |
 | `search_memory` | Semantic search across memory files (ranked by similarity) |

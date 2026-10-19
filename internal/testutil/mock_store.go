@@ -699,3 +699,62 @@ func (m *MockStore) FailInterruptedLearnPasses(ctx context.Context) (int64, erro
 	args := m.Called(ctx)
 	return args.Get(0).(int64), args.Error(1)
 }
+
+func (m *MockStore) CreateReviewRun(ctx context.Context, run *db.ReviewRun) (int64, error) {
+	args := m.Called(ctx, run)
+	return args.Get(0).(int64), args.Error(1)
+}
+
+func (m *MockStore) FinishReviewRun(ctx context.Context, id int64, status, sessionID, model, errText string) error {
+	return m.Called(ctx, id, status, sessionID, model, errText).Error(0)
+}
+
+func (m *MockStore) LastReviewedHead(ctx context.Context, dirPath string, prNumber int) (string, error) {
+	args := m.Called(ctx, dirPath, prNumber)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockStore) ListReviewRuns(ctx context.Context, dirPath string, prNumber int) ([]*db.ReviewRun, error) {
+	args := m.Called(ctx, dirPath, prNumber)
+	v, _ := args.Get(0).([]*db.ReviewRun)
+	return v, args.Error(1)
+}
+
+func (m *MockStore) SaveReviewFinding(ctx context.Context, f *db.ReviewFinding) error {
+	return m.Called(ctx, f).Error(0)
+}
+
+func (m *MockStore) DeleteReviewFinding(ctx context.Context, dirPath string, prNumber int, id, reason, supersededBy string) error {
+	return m.Called(ctx, dirPath, prNumber, id, reason, supersededBy).Error(0)
+}
+
+func (m *MockStore) ListReviewFindings(ctx context.Context, dirPath string, prNumber int) ([]*db.ReviewFinding, error) {
+	args := m.Called(ctx, dirPath, prNumber)
+	v, _ := args.Get(0).([]*db.ReviewFinding)
+	return v, args.Error(1)
+}
+
+func (m *MockStore) PruneReviewHistory(ctx context.Context, before time.Time) (int64, error) {
+	args := m.Called(ctx, before)
+	return args.Get(0).(int64), args.Error(1)
+}
+
+func (m *MockStore) ReviewStats(ctx context.Context, f db.ReviewStatsFilter) (*db.ReviewStats, error) {
+	args := m.Called(ctx, f)
+	v, _ := args.Get(0).(*db.ReviewStats)
+	return v, args.Error(1)
+}
+
+func (m *MockStore) SaveReviewSession(ctx context.Context, rs *db.ReviewSession) error {
+	return m.Called(ctx, rs).Error(0)
+}
+
+func (m *MockStore) DeleteReviewSession(ctx context.Context, channelID string) error {
+	return m.Called(ctx, channelID).Error(0)
+}
+
+func (m *MockStore) ListReviewSessions(ctx context.Context) ([]*db.ReviewSession, error) {
+	args := m.Called(ctx)
+	v, _ := args.Get(0).([]*db.ReviewSession)
+	return v, args.Error(1)
+}

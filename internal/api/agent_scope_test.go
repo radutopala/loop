@@ -155,6 +155,11 @@ func (s *AgentScopeSuite) TestGuard() {
 		{name: "delete review comment in project channel", tok: "agent", method: "DELETE", target: "/api/channels/ch2/review/comments/c1", want: 403, wantMsg: "own channel"},
 		{name: "edit review comment in project channel", tok: "agent", method: "PATCH", target: "/api/channels/ch2/review/comments/c1", body: `{"body":"x"}`, want: 403, wantMsg: "own channel"},
 		{name: "push review comment in project channel", tok: "agent", method: "POST", target: "/api/channels/ch2/review/comments/c1/push", want: 403, wantMsg: "own channel"},
+		{name: "assess own review thread", tok: "agent", method: "POST", target: "/api/channels/ch1/review/comments/c1/assess", body: `{"status":"addressed"}`, want: 200},
+		{name: "assess review thread in project channel", tok: "agent", method: "POST", target: "/api/channels/ch2/review/comments/c1/assess", want: 403, wantMsg: "own channel"},
+		// Approving a PR is the user's click, never an agent's.
+		{name: "approve own channel's PR", tok: "agent", method: "POST", target: "/api/channels/ch1/review/approve", want: 403},
+		{name: "owner approves", tok: "owner", method: "POST", target: "/api/channels/ch1/review/approve", want: 200},
 		{name: "push all in project channel", tok: "agent", method: "POST", target: "/api/channels/ch2/review/push-all", want: 403, wantMsg: "own channel"},
 		{name: "push all in other project channel", tok: "agent", method: "POST", target: "/api/channels/ch3/review/push-all", want: 403, wantMsg: "own channel"},
 		{name: "owner pushes any channel's comments", tok: "owner", method: "POST", target: "/api/channels/ch3/review/push-all", want: 200},

@@ -897,19 +897,20 @@ func (s *RunnerSuite) TestBuildClaudeCmdReadOnlyAllowTools() {
 		ChannelID:  "ch-1",
 		Messages:   []agent.AgentMessage{{Role: "user", Content: "verify"}},
 		ReadOnly:   true,
-		AllowTools: []string{"mcp__loop__update_review_comment"},
+		AllowTools: []string{"mcp__loop__update_review_comment", "mcp__loop__assess_review_thread"},
 	}
 
 	cmd := buildClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", req)
 	denied := strings.Split(cmd[slices.Index(cmd, "--disallowedTools")+1], ",")
 	require.NotContains(s.T(), denied, "mcp__loop__update_review_comment")
+	require.NotContains(s.T(), denied, "mcp__loop__assess_review_thread")
 	require.Contains(s.T(), denied, "mcp__loop__push_review_comment")
 	require.Contains(s.T(), denied, "mcp__loop__dedup_review_findings")
 	require.Contains(s.T(), denied, "mcp__loop__run_review")
 	require.Contains(s.T(), denied, "mcp__loop__monitor")
 	require.Contains(s.T(), denied, "mcp__loop__cancel_monitor")
-	require.Len(s.T(), denied, len(readOnlyDisallowedTools)-1)
-	require.Contains(s.T(), readOnlyDisallowedTools, "mcp__loop__update_review_comment")
+	require.Len(s.T(), denied, len(readOnlyDisallowedTools)-2)
+	require.Subset(s.T(), readOnlyDisallowedTools, req.AllowTools)
 }
 
 func (s *RunnerSuite) TestBuildClaudeCmdPermissionPromptTool() {

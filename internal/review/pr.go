@@ -26,6 +26,7 @@ type PR interface {
 	Refresh(ctx context.Context, parentDir, worktreePath string, prNum int) error
 	Diff(ctx context.Context, parentDir, worktreePath, baseRef string, comments []*Comment) ([]byte, error)
 	Remove(ctx context.Context, parentDir, worktreePath string) error
+	ResolveScope(ctx context.Context, worktreePath, baseRef string, want Scope, lastHead string) (ScopeResult, error)
 }
 
 // unsafeDirChars are the characters a channel id may carry (a Slack

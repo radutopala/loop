@@ -87,9 +87,11 @@ var agentRoutes = []string{
 	"POST /api/channels/{id}/review/start",
 	"POST /api/channels/{id}/review/dedup",
 	"POST /api/channels/{id}/review/verify",
+	"GET /api/channels/{id}/review/stats",
 	"DELETE /api/channels/{id}/review/comments/{cid}",
 	"PATCH /api/channels/{id}/review/comments/{cid}",
 	"POST /api/channels/{id}/review/comments/{cid}/push",
+	"POST /api/channels/{id}/review/comments/{cid}/assess",
 	"POST /api/channels/{id}/review/push-all",
 
 	"POST /api/channels/{id}/quality/scan",
@@ -119,10 +121,11 @@ var agentRoutes = []string{
 // or a delete the PR on GitHub, as the user. An agent may make them only for
 // its own channel, not for every channel in its project.
 var ownChannelRoutes = map[string]bool{
-	"DELETE /api/channels/{id}/review/comments/{cid}":    true,
-	"PATCH /api/channels/{id}/review/comments/{cid}":     true,
-	"POST /api/channels/{id}/review/comments/{cid}/push": true,
-	"POST /api/channels/{id}/review/push-all":            true,
+	"DELETE /api/channels/{id}/review/comments/{cid}":      true,
+	"PATCH /api/channels/{id}/review/comments/{cid}":       true,
+	"POST /api/channels/{id}/review/comments/{cid}/push":   true,
+	"POST /api/channels/{id}/review/comments/{cid}/assess": true,
+	"POST /api/channels/{id}/review/push-all":              true,
 }
 
 // pluginRoutes are what a plugin container calls: the Plugin API, and
