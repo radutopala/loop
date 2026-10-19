@@ -67,12 +67,25 @@ const (
 	VerdictAlreadyFixed  = "already_fixed"
 )
 
+// The impacts a real finding has on the pull request: whether it has to be
+// fixed before the PR is approved, or could be left for later.
+const (
+	ImpactBlocking   = "blocking"
+	ImpactNiceToHave = "nice_to_have"
+)
+
+// ImpactRule tells an agent judging findings how to tell the two impacts
+// apart. The dedup pass and the verification step share it.
+const ImpactRule = `"blocking" when merging it as is would do harm: wrong behaviour in production, data loss or corruption, a security hole, a broken build or failing tests, a broken API, contract or migration. "nice_to_have" when the code works and the finding would make it better: style, naming, readability, conventions, docs, fixtures only used locally, test gaps around code that works.`
+
 // DedupVerdict is the model's check of one agent comment against the code:
 // Verdict is one of the Verdict constants, Reason says why.
 type DedupVerdict struct {
 	ID      string `json:"id"`
 	Verdict string `json:"verdict"`
-	Reason  string `json:"reason,omitempty"`
+	// Impact is one of the Impact constants, for a real finding only.
+	Impact string `json:"impact,omitempty"`
+	Reason string `json:"reason,omitempty"`
 }
 
 // DedupPlan is the model's reply once checked against the candidates.
@@ -166,7 +179,7 @@ Rules:
 - "note": one or two sentences on what the dropped comments raise that the kept one does not, such as another consequence or another place the fix must cover. It is appended to the kept comment. Leave it empty when they add nothing.
 - Only [agent] comments may be dropped.
 - Comments about the same code path or behaviour that still need separate fixes, where fixing either one leaves the other standing, are related, not duplicates: list them under "related" with a reason. Nothing is dropped for them.
-- For every [agent] comment you don't drop, open its file with the Read tool around its line and decide whether the finding holds: "real" (the issue is there), "false_positive" (the code doesn't do what the comment says, or the behaviour is intended, handled elsewhere, or exactly what the pull request sets out to do), or "already_fixed" (it was real, but this checkout no longer has it). List it under "verdicts" with a one-sentence "reason" citing the file:line you read that decided it. A verdict deletes nothing. Verdicts and moves for a comment whose line none of your Read calls showed are discarded, and reading through Bash (cat, sed, grep) doesn't count, so Read the lines before you judge; never judge from the comment text alone.
+- For every [agent] comment you don't drop, open its file with the Read tool around its line and decide whether the finding holds: "real" (the issue is there), "false_positive" (the code doesn't do what the comment says, or the behaviour is intended, handled elsewhere, or exactly what the pull request sets out to do), or "already_fixed" (it was real, but this checkout no longer has it). List it under "verdicts" with a one-sentence "reason" citing the file:line you read that decided it. For a "real" one add its "impact": ` + ImpactRule + ` A verdict deletes nothing. Verdicts and moves for a comment whose line none of your Read calls showed are discarded, and reading through Bash (cat, sed, grep) doesn't count, so Read the lines before you judge; never judge from the comment text alone.
 - The line numbers were often counted from diff hunks and can be a few lines off. For every [agent] comment you don't drop, read its file with line numbers (the Read tool shows them) and check that its line is the statement the finding is about. When it isn't, as when it sits on a blank line, a lone closing brace, or a neighbouring statement, list the right line in the same file under "moves".
 - A body longer than ` + fmt.Sprint(dedupBodyMax) + ` characters is cut and ends in "...". When the cut part matters to your call, read the full body with the get_review_comments tool (pass "path" to list one file's comments); the ids are the ones below.
 - You may read the files in your working directory. Do not change anything.
@@ -179,7 +192,7 @@ Rules:
 	}
 	b.WriteString(`
 Reply with only a JSON object, no other text:
-{"clusters":[{"keep":"<id>","drop":["<id>"],"reason":"...","note":"..."}],"trims":[{"id":"<id>","covered_by":"<id>","body":"...","reason":"..."}],"related":[{"ids":["<id>","<id>"],"reason":"..."}],"moves":[{"id":"<id>","line":0}],"verdicts":[{"id":"<id>","verdict":"real","reason":"..."}]}
+{"clusters":[{"keep":"<id>","drop":["<id>"],"reason":"...","note":"..."}],"trims":[{"id":"<id>","covered_by":"<id>","body":"...","reason":"..."}],"related":[{"ids":["<id>","<id>"],"reason":"..."}],"moves":[{"id":"<id>","line":0}],"verdicts":[{"id":"<id>","verdict":"real","impact":"nice_to_have","reason":"..."}]}
 Outside "verdicts", leave out comments that have no duplicate, nothing related, and the right line; use [] for an empty list.
 
 Comments, by file:
@@ -344,7 +357,7 @@ func ParseDedupReply(reply string, cands []*Comment, fresh map[string]bool) (Ded
 			continue
 		}
 		judged[v.ID] = true
-		plan.Verdicts = append(plan.Verdicts, DedupVerdict{ID: v.ID, Verdict: v.Verdict, Reason: strings.TrimSpace(v.Reason)})
+		plan.Verdicts = append(plan.Verdicts, DedupVerdict{ID: v.ID, Verdict: v.Verdict, Impact: ImpactOf(v.Verdict, v.Impact), Reason: strings.TrimSpace(v.Reason)})
 	}
 	return plan, nil
 }
@@ -378,6 +391,20 @@ func Dismissed(verdict string) bool {
 // KnownVerdict reports whether v is one of the Verdict constants.
 func KnownVerdict(v string) bool {
 	return v == VerdictReal || v == VerdictFalsePositive || v == VerdictAlreadyFixed
+}
+
+// KnownImpact reports whether v is one of the Impact constants.
+func KnownImpact(v string) bool {
+	return v == ImpactBlocking || v == ImpactNiceToHave
+}
+
+// ImpactOf returns the impact a comment keeps with verdict: impact when the
+// verdict is real and impact is known, empty otherwise.
+func ImpactOf(verdict, impact string) string {
+	if verdict != VerdictReal || !KnownImpact(impact) {
+		return ""
+	}
+	return impact
 }
 
 // WithDedupNote returns body with note appended as its own paragraph, for a

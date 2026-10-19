@@ -9,10 +9,13 @@ import (
 	"net/http"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/radutopala/loop/internal/apiauth"
+	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/githubapi"
 	"github.com/radutopala/loop/internal/review"
 )
@@ -63,6 +66,8 @@ type reviewLoadRequest struct {
 type reviewSessionResponse struct {
 	Present bool            `json:"present"`
 	Session *review.Session `json:"session,omitempty"`
+	// Outcome is whether the PR can be approved, on GET only.
+	Outcome *review.Outcome `json:"outcome,omitempty"`
 }
 
 func (s *reviewService) handleReviewLoad(w http.ResponseWriter, r *http.Request) {
@@ -89,7 +94,7 @@ func (s *reviewService) handleReviewLoad(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "pr_number is required", http.StatusBadRequest)
 		return
 	}
-	if _, err := s.loadPR(r.Context(), channelID, req.PRNumber); err != nil {
+	if _, err := s.loadPR(r.Context(), channelID, req.PRNumber, nil); err != nil {
 		respondReviewError(w, err)
 		return
 	}
@@ -97,9 +102,11 @@ func (s *reviewService) handleReviewLoad(w http.ResponseWriter, r *http.Request)
 }
 
 // loadPR checks PR prNumber out for channelID's review and replaces the
-// channel's session with a ready one. Errors that call for a status other
-// than 500 are *reviewHTTPError; respondReviewError answers either kind.
-func (s *reviewService) loadPR(ctx context.Context, channelID string, prNumber int) (*review.Session, error) {
+// channel's session with a ready one, with seed's choices when it is set
+// (a session restored after a daemon restart). Errors that call for a
+// status other than 500 are *reviewHTTPError; respondReviewError answers
+// either kind.
+func (s *reviewService) loadPR(ctx context.Context, channelID string, prNumber int, seed *review.Saved) (*review.Session, error) {
 	ch, err := s.deps.store.GetChannel(ctx, channelID)
 	if err != nil {
 		return nil, &reviewHTTPError{http.StatusInternalServerError, "failed to look up channel"}
@@ -180,7 +187,17 @@ func (s *reviewService) loadPR(ctx context.Context, channelID string, prNumber i
 	// any out-of-hunk comment lines into the rendered diff.
 	ghComments := s.fetchExistingReviewComments(ctx, dirPath, ghUser, prNumber)
 
-	diff, err := s.worktree.Diff(ctx, dirPath, worktreePath, pr.BaseRef, ghComments)
+	// The PR's history is kept per repo, under its main dir, so every
+	// worktree of the repo shares it. The agent findings recorded there
+	// come back, merged with their GitHub copies the way a Sync merges.
+	historyDir := parentDirPath
+	if historyDir == "" {
+		historyDir = dirPath
+	}
+	restored := s.restoreFindings(ctx, historyDir, prNumber)
+	comments := mergeReviewComments(restored, ghComments)
+
+	diff, err := s.worktree.Diff(ctx, dirPath, worktreePath, pr.BaseRef, comments)
 	if err != nil {
 		return fail(err)
 	}
@@ -190,14 +207,20 @@ func (s *reviewService) loadPR(ctx context.Context, channelID string, prNumber i
 		HeadSHA:      headSHA,
 		WorktreePath: worktreePath,
 		RawDiff:      string(diff),
-		Comments:     ghComments,
+		Comments:     comments,
 		Status:       review.StatusReady,
 		// Reviews start from the chat's context by default: the conversation
 		// that produced the change is usually what the reviewer is missing.
 		// With no chat yet, the run falls back to a fresh session.
-		ForkMode: review.ForkCurrent,
+		ForkMode:   review.ForkCurrent,
+		HistoryDir: historyDir,
 	}
+	if seed != nil {
+		seed.Apply(sess)
+	}
+	s.restoreRuns(ctx, channelID, sess)
 	s.sessions.Put(channelID, sess)
+	s.saveOutcomes(channelID, restored, comments)
 	return sess, nil
 }
 
@@ -332,7 +355,8 @@ func (s *reviewService) handleReviewGet(w http.ResponseWriter, r *http.Request) 
 	if r.URL.Query().Get("diff") == "false" {
 		sess.RawDiff = ""
 	}
-	writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: true, Session: sess}, s.deps.logger)
+	outcome := review.DeriveOutcome(sess)
+	writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: true, Session: sess, Outcome: &outcome}, s.deps.logger)
 }
 
 // reviewForkRequest is the body of PUT /review/fork. mode is one of
@@ -407,6 +431,72 @@ func (s *reviewService) handleReviewSetAgent(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: true, Session: s.sessions.Get(channelID)}, s.deps.logger)
+}
+
+// handleReviewSetScope records what the session's next run reviews:
+// "" (auto), "full" or "incremental". It lives on the session for the same
+// reason the fork choice does.
+func (s *reviewService) handleReviewSetScope(w http.ResponseWriter, r *http.Request) {
+	if s.sessions == nil {
+		http.Error(w, "review service not configured", http.StatusNotImplemented)
+		return
+	}
+	channelID := r.PathValue("id")
+	var body struct {
+		Scope review.Scope `json:"scope"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	if !review.KnownScope(body.Scope) {
+		http.Error(w, "invalid scope: must be full, incremental or empty", http.StatusBadRequest)
+		return
+	}
+	if !s.sessions.UpdateScope(channelID, body.Scope) {
+		http.Error(w, "no review session for channel", http.StatusNotFound)
+		return
+	}
+	writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: true, Session: s.sessions.Get(channelID)}, s.deps.logger)
+}
+
+// reviewStatsDays is the window the stats route covers without ?days.
+const reviewStatsDays = 90
+
+// handleReviewStats answers the review stats of the channel's repo, over
+// the last ?days (default reviewStatsDays), for one PR with ?pr.
+func (s *reviewService) handleReviewStats(w http.ResponseWriter, r *http.Request) {
+	if s.history == nil {
+		http.Error(w, "review history not configured", http.StatusNotImplemented)
+		return
+	}
+	q := r.URL.Query()
+	pr, days := 0, reviewStatsDays
+	for name, v := range map[string]*int{"pr": &pr, "days": &days} {
+		if raw := q.Get(name); raw != "" {
+			n, err := strconv.Atoi(raw)
+			if err != nil || n <= 0 {
+				http.Error(w, name+" must be a positive number", http.StatusBadRequest)
+				return
+			}
+			*v = n
+		}
+	}
+	_, dir := s.reviewRunDirs(r.Context(), r.PathValue("id"))
+	if dir == "" {
+		http.Error(w, "channel has no dir_path", http.StatusNotFound)
+		return
+	}
+	stats, err := s.history.ReviewStats(r.Context(), db.ReviewStatsFilter{
+		DirPath:  dir,
+		PRNumber: pr,
+		Since:    time.Now().AddDate(0, 0, -days),
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeHTTPJSON(w, http.StatusOK, stats, s.deps.logger)
 }
 
 // handleReviewSessions returns a (channel_id, status) summary for every
@@ -593,9 +683,11 @@ func (s *reviewService) handleReviewPushAll(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "session busy (status="+string(sess.Status)+")", http.StatusConflict)
 		return
 	}
+	// ?impact=blocking pushes only the findings of that impact.
+	impact := r.URL.Query().Get("impact")
 	var result pushAllResult
 	for _, c := range sess.Comments {
-		if c.Pushed {
+		if c.Pushed || (impact != "" && c.Impact != impact) {
 			continue
 		}
 		// The dedup pass ruled it out; a push of that one comment still
@@ -654,7 +746,7 @@ func (s *reviewService) handleReviewDeleteComment(w http.ResponseWriter, r *http
 		return
 	}
 
-	if err := s.deleteOneComment(r.Context(), channelID, c); err != nil {
+	if err := s.deleteOneComment(r.Context(), channelID, c, db.ReviewFindingUserDeleted, ""); err != nil {
 		var herr *reviewHTTPError
 		if errors.As(err, &herr) {
 			http.Error(w, herr.msg, herr.status)
@@ -670,8 +762,9 @@ func (s *reviewService) handleReviewDeleteComment(w http.ResponseWriter, r *http
 // a duplicate added into the comment kept, and records a verdict on it, as
 // when an agent checking the comments judges one. Only an unpushed agent
 // comment's body can change: a GitHub comment isn't ours, and a pushed one
-// would drift from its copy on the PR. A verdict goes on any agent comment.
-// Answers the updated comment and broadcasts it.
+// would drift from its copy on the PR. A verdict goes on any agent comment,
+// and a real one may carry its impact. Answers the updated comment and
+// broadcasts it.
 func (s *reviewService) handleReviewUpdateComment(w http.ResponseWriter, r *http.Request) {
 	if s.sessions == nil {
 		http.Error(w, "review service not configured", http.StatusNotImplemented)
@@ -680,6 +773,7 @@ func (s *reviewService) handleReviewUpdateComment(w http.ResponseWriter, r *http
 	var body struct {
 		Body    string `json:"body"`
 		Verdict string `json:"verdict"`
+		Impact  string `json:"impact"`
 		Reason  string `json:"verdict_reason"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -693,6 +787,10 @@ func (s *reviewService) handleReviewUpdateComment(w http.ResponseWriter, r *http
 	}
 	if body.Verdict != "" && !review.KnownVerdict(body.Verdict) {
 		http.Error(w, "verdict must be real, false_positive or already_fixed", http.StatusBadRequest)
+		return
+	}
+	if body.Impact != "" && (body.Verdict != review.VerdictReal || !review.KnownImpact(body.Impact)) {
+		http.Error(w, "impact must be blocking or nice_to_have, with verdict real", http.StatusBadRequest)
 		return
 	}
 	channelID := r.PathValue("id")
@@ -714,7 +812,7 @@ func (s *reviewService) handleReviewUpdateComment(w http.ResponseWriter, r *http
 		}
 	}
 	if body.Verdict != "" {
-		v := review.DedupVerdict{ID: commentID, Verdict: body.Verdict, Reason: strings.TrimSpace(body.Reason)}
+		v := review.DedupVerdict{ID: commentID, Verdict: body.Verdict, Impact: body.Impact, Reason: strings.TrimSpace(body.Reason)}
 		if updated = s.setVerdict(channelID, v); updated == nil {
 			http.Error(w, "only agent comments can take a verdict", http.StatusConflict)
 			return
@@ -735,8 +833,9 @@ func (e *reviewHTTPError) Error() string { return e.msg }
 // deleteOneComment deletes c on GitHub when it has a GitHub-side copy, then
 // removes it from the session and tells the panel. On any failure the local
 // comment is kept, so the user (or the dedup pass) can retry: half-deleting,
-// gone locally but still on GitHub, would be confusing.
-func (s *reviewService) deleteOneComment(ctx context.Context, channelID string, c *review.Comment) error {
+// gone locally but still on GitHub, would be confusing. The history records
+// the deletion for reason; supersededBy is the comment a dedup fold kept.
+func (s *reviewService) deleteOneComment(ctx context.Context, channelID string, c *review.Comment, reason, supersededBy string) error {
 	// Only call GitHub when there's actually a GH-side comment to delete.
 	// Agent comments that were never pushed have GitHubID==0 and live
 	// purely in the in-memory session; just drop them locally.
@@ -773,6 +872,7 @@ func (s *reviewService) deleteOneComment(ctx context.Context, channelID string, 
 		}
 	}
 
+	s.deleteFinding(channelID, c, reason, supersededBy)
 	s.sessions.RemoveComment(channelID, c.ID)
 	if hub := s.deps.eventsHub; hub != nil {
 		hub.BroadcastReviewCommentRemoved(channelID, c.ID)
@@ -801,11 +901,17 @@ func (s *reviewService) handleReviewRun(w http.ResponseWriter, r *http.Request) 
 	// The body is optional: {"verify": false} skips the verification step
 	// the config would otherwise run after this one (a review loop runs it
 	// once, after its last iteration).
+	// {"scope": ...} overrides the session's scope for this run only.
 	var body struct {
-		Verify *bool `json:"verify"`
+		Verify *bool         `json:"verify"`
+		Scope  *review.Scope `json:"scope"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
 		http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.Scope != nil && !review.KnownScope(*body.Scope) {
+		http.Error(w, "invalid scope: must be full, incremental or empty", http.StatusBadRequest)
 		return
 	}
 
@@ -894,7 +1000,19 @@ func (s *reviewService) handleReviewRun(w http.ResponseWriter, r *http.Request) 
 		}
 		prompt = reviewPromptAt(effort)
 	}
-	reviewContext := buildReviewContext(sess, ghUser)
+	// What the run reviews: the whole PR, or the commits since the head the
+	// last completed run reviewed. A failure to tell reviews the whole PR,
+	// as every run did before there was a choice.
+	want := sess.Scope
+	if body.Scope != nil {
+		want = *body.Scope
+	}
+	scope, err := s.worktree.ResolveScope(r.Context(), worktreePath, sess.PR.BaseRef, want, s.lastReviewedHead(r.Context(), sess))
+	if err != nil {
+		s.deps.logger.Warn("review: resolving the run's scope failed", "channel_id", channelID, "error", err)
+		scope = review.ScopeResult{Scope: review.ScopeFull, Reason: "the changes since the last review couldn't be read"}
+	}
+	reviewContext := buildReviewContext(sess, ghUser, scope)
 	fullPrompt := prompt
 	sysPrompt := s.systemPrompt
 	if strings.HasPrefix(prompt, "/") {
@@ -928,6 +1046,8 @@ func (s *reviewService) handleReviewRun(w http.ResponseWriter, r *http.Request) 
 		verify.on = false
 	}
 	s.sessions.SetSuperseded(channelID, nil)
+	s.sessions.SetLastRunScope(channelID, scope.Scope, scope.FromSHA)
+	s.startHistoryRun(r.Context(), channelID, sess, scope)
 	s.sessions.UpdateStatus(channelID, review.StatusReviewing, "")
 	s.broadcastReviewStatus(channelID, review.StatusReviewing, "")
 
@@ -1107,6 +1227,7 @@ func (s *reviewService) runDedupPass(ctx context.Context, channelID, parentDirPa
 	res := newReviewDedupResult()
 	res.Checked = len(cands)
 	reads := &fileReads{}
+	states := s.findingStates(channelID, false)
 	resp, err := s.runner.Run(ctx, review.RunRequest{
 		ChannelID:     channelID,
 		DirPath:       sess.WorktreePath,
@@ -1117,12 +1238,19 @@ func (s *reviewService) runDedupPass(ctx context.Context, channelID, parentDirPa
 		Effort:        sess.Effort,
 		OnFileRead:    reads.add,
 	})
-	if resp != nil {
-		s.sessions.AppendRunSession(channelID, resp.SessionID, s.transcriptDir(sess.WorktreePath))
-	}
 	if err != nil {
 		return res, fmt.Errorf("dedup run: %w", err)
 	}
+	// The plan's edits are what the transcript explains, so it is attached
+	// once they are applied: to the comments they changed, and to the
+	// keepers of the comments they folded.
+	defer func() {
+		var kept []string
+		for _, cl := range res.Clusters {
+			kept = append(kept, cl.Kept)
+		}
+		s.attachTranscript(channelID, sess.WorktreePath, resp.SessionID, states, kept...)
+	}()
 	plan, err := review.ParseDedupReply(resp.Response, cands, fresh)
 	if err != nil {
 		return res, err
@@ -1140,7 +1268,7 @@ func (s *reviewService) runDedupPass(ctx context.Context, channelID, parentDirPa
 			if c == nil {
 				continue
 			}
-			if err := s.deleteOneComment(ctx, channelID, c); err != nil {
+			if err := s.deleteOneComment(ctx, channelID, c, db.ReviewFindingDedupFolded, cl.Keep); err != nil {
 				res.Errors = append(res.Errors, id+": "+err.Error())
 				continue
 			}
@@ -1160,7 +1288,7 @@ func (s *reviewService) runDedupPass(ctx context.Context, channelID, parentDirPa
 				c.Body = review.WithDedupNote(c.Body, cl.Note)
 			}) != nil
 			if out.NoteAdded && kept.Verdict != "" {
-				s.setVerdict(channelID, review.DedupVerdict{ID: cl.Keep, Verdict: kept.Verdict, Reason: kept.VerdictReason})
+				s.setVerdict(channelID, review.DedupVerdict{ID: cl.Keep, Verdict: kept.Verdict, Impact: kept.Impact, Reason: kept.VerdictReason})
 			}
 		}
 		res.Clusters = append(res.Clusters, out)
@@ -1309,10 +1437,12 @@ Do not print the findings as your reply and do not emit XML blocks — the tool 
 // the agent can quote it verbatim and so a missing field (e.g. empty Title)
 // just drops one line without breaking the rest. When ghUser is set, an
 // auth block tells the agent to switch the gh CLI to that account before
-// running gh commands. The session's existing comments are left out: the
-// review repeated some of them anyway, and the dedup pass after the run
-// folds the repeats.
-func buildReviewContext(sess *review.Session, ghUser string) string {
+// running gh commands. On a full review the session's existing comments
+// are left out: the review repeated some of them anyway, and the dedup pass
+// after the run folds the repeats. An incremental one names the range to
+// review and lists the open agent findings, since code outside the range
+// was already reviewed and its findings stand.
+func buildReviewContext(sess *review.Session, ghUser string, scope review.ScopeResult) string {
 	var b strings.Builder
 	b.WriteString("Pull request under review:\n")
 	if sess.PR != nil {
@@ -1339,12 +1469,51 @@ func buildReviewContext(sess *review.Session, ghUser string) string {
 	if sess.PR != nil && sess.PR.BaseRef != "" {
 		fmt.Fprintf(&b, " Run `git diff origin/%s...HEAD` to read the diff before commenting.", sess.PR.BaseRef)
 	}
-	b.WriteString("\n\n" + reviewLineRule + "\n")
+	b.WriteString("\n")
+	if scope.Scope == review.ScopeIncremental {
+		writeIncrementalScope(&b, sess, scope)
+	}
+	b.WriteString("\n" + reviewLineRule + "\n")
 	if ghUser != "" {
 		fmt.Fprintf(&b, "\nGitHub CLI account: %s\n", ghUser)
 		fmt.Fprintf(&b, "If you need to run gh, switch to that account first with `gh auth switch -u %s` (only if it isn't already active).\n", ghUser)
 	}
 	return b.String()
+}
+
+// reviewScopeFindings caps the earlier findings an incremental run's
+// context lists.
+const reviewScopeFindings = 50
+
+// writeIncrementalScope tells an incremental run which commits to review
+// and which findings the PR already has.
+func writeIncrementalScope(b *strings.Builder, sess *review.Session, scope review.ScopeResult) {
+	base := ""
+	if sess.PR != nil {
+		base = sess.PR.BaseRef
+	}
+	fmt.Fprintf(b, "\nScope: incremental. An earlier review covered this PR up to %s. Review only what changed since, in the PR's files: `git diff %s HEAD -- $(git diff --name-only origin/%s...HEAD)`. Check how those changes interact with the rest of the PR, but don't report issues in code they didn't change.\n", scope.FromSHA, scope.FromSHA, base)
+	if scope.Rebased {
+		fmt.Fprintf(b, "The branch was rebased since that review, so the range can also show changes that came from %s; skip those.\n", base)
+	}
+	var open []*review.Comment
+	for _, c := range sess.Comments {
+		if c.Source != "github" {
+			open = append(open, c)
+		}
+	}
+	if len(open) == 0 {
+		return
+	}
+	b.WriteString("\nFindings already reported on this PR; don't report them again:\n")
+	for i, c := range open {
+		if i == reviewScopeFindings {
+			fmt.Fprintf(b, "- and %d more\n", len(open)-i)
+			break
+		}
+		first, _, _ := strings.Cut(c.Body, "\n")
+		fmt.Fprintf(b, "- %s:%d %s\n", c.Path, c.Line, first)
+	}
 }
 
 // reviewSubagentContext carries the line rule to the subagents the review

@@ -4,8 +4,10 @@
 //
 // Sessions are in-memory and per channel: opening a Review panel for a
 // channel creates one, switching to a different PR replaces it, closing
-// the panel tears it down. They do not survive daemon restart, which
-// matches how the rest of the per-channel ephemeral state behaves.
+// the panel tears it down. A Saver keeps the PR each one is on and the
+// user's choices for its runs (see Saved), so the daemon can load the PR
+// again after a restart; the findings and runs are kept in the daemon's
+// review history, and loading the PR brings them back.
 package review
 
 import (
@@ -31,22 +33,39 @@ type Comment struct {
 	// Verdict is the dedup pass's check of an agent comment against the
 	// code: VerdictReal, VerdictFalsePositive or VerdictAlreadyFixed, with
 	// VerdictReason saying why. Empty until a pass has checked it.
-	Verdict       string    `json:"verdict,omitempty"`
-	VerdictReason string    `json:"verdict_reason,omitempty"`
-	Pushed        bool      `json:"pushed"`
-	PushedAt      time.Time `json:"pushed_at,omitzero"`
-	Source        string    `json:"source,omitempty"`     // "agent" | "github"
-	Author        string    `json:"author,omitempty"`     // GitHub login (for source=github)
-	URL           string    `json:"url,omitempty"`        // html_url for source=github
-	CreatedAt     string    `json:"created_at,omitempty"` // GitHub createdAt for source=github
-	Outdated      bool      `json:"outdated,omitempty"`   // true when GH could not anchor to current head
-	Resolved      bool      `json:"resolved,omitempty"`   // true when the GH review thread is marked resolved
+	Verdict       string `json:"verdict,omitempty"`
+	VerdictReason string `json:"verdict_reason,omitempty"`
+	// Impact is how much a real finding weighs on the PR: ImpactBlocking or
+	// ImpactNiceToHave. Empty with any other verdict, or until judged.
+	Impact    string    `json:"impact,omitempty"`
+	Pushed    bool      `json:"pushed"`
+	PushedAt  time.Time `json:"pushed_at,omitzero"`
+	Source    string    `json:"source,omitempty"`     // "agent" | "github"
+	Author    string    `json:"author,omitempty"`     // GitHub login (for source=github)
+	URL       string    `json:"url,omitempty"`        // html_url for source=github
+	CreatedAt string    `json:"created_at,omitempty"` // GitHub createdAt for source=github
+	Outdated  bool      `json:"outdated,omitempty"`   // true when GH could not anchor to current head
+	Resolved  bool      `json:"resolved,omitempty"`   // true when the GH review thread is marked resolved
 	// GitHubID is the numeric comment id assigned by GitHub. Set when we
 	// load existing GH comments (parsed from PRReviewComment.ID) or when
 	// we successfully push an agent comment (captured from the POST
 	// response). Used as the address for DELETE /pulls/comments/{id} —
 	// zero means "no GH-side state to clean up; local removal only".
 	GitHubID int64 `json:"github_id,omitempty"`
+	// ReplyTo is the GitHub id of the first comment of the thread a GitHub
+	// reply belongs to; zero for a thread's first comment and for agent
+	// comments.
+	ReplyTo int64 `json:"reply_to,omitempty"`
+	// Transcripts are the Claude transcripts of the agent passes that
+	// reported an agent comment or changed it (the review run, the dedup
+	// pass, the verification), oldest first: the reasoning behind a
+	// finding lives there and nowhere else. Absolute, and valid inside an
+	// agent container too: containers run with HOME set to the host home
+	// and ~/.claude bind-mounted at its host path.
+	Transcripts []string `json:"transcripts,omitempty"`
+	// RunID is the history id of the review run that reported an agent
+	// comment, 0 when none was in flight or there is no history.
+	RunID int64 `json:"run_id,omitempty"`
 }
 
 // Status describes where the session is in its lifecycle so the FE
@@ -109,34 +128,128 @@ type Session struct {
 	// Empty inherits the config's claude_model / claude_effort.
 	Model  string `json:"model,omitempty"`
 	Effort string `json:"effort,omitempty"`
-	// RunSessionIDs are the Claude sessions the review runs for this
-	// session actually used, oldest first. Runs always fork, so each one
-	// mints a new id and the list grows by one per run. Kept so a chat
-	// turn can be pointed at the transcripts that produced a finding —
-	// the reasoning behind a finding lives there and nowhere else.
-	RunSessionIDs []string `json:"run_session_ids,omitempty"`
-	// TranscriptDir is the directory those transcripts live in — Claude
-	// keys them by CWD, which for a review run is the PR worktree, so it
-	// is not a path anyone can guess from the channel. Absolute and valid
-	// *inside* an agent container too: containers run with HOME set to the
-	// host home and ~/.claude bind-mounted at its host path.
-	TranscriptDir string `json:"transcript_dir,omitempty"`
 	// Superseded maps each comment the latest run's dedup pass deleted to
 	// the comment it was folded into, so `loop review:run --wait` can tell
 	// a review loop's stop check that a reworded repeat isn't a new
 	// finding. Each run replaces it wholesale; it is never mutated.
 	Superseded map[string]string `json:"superseded,omitempty"`
+	// Scope is the user's choice of what the next run reviews, kept on the
+	// session for the same reason as ForkMode. ScopeAuto picks per run.
+	Scope Scope `json:"scope,omitempty"`
+	// LastRunScope / LastRunFromSHA are the scope the latest run resolved
+	// to, and for an incremental one the commit its range starts at.
+	LastRunScope   Scope  `json:"last_run_scope,omitempty"`
+	LastRunFromSHA string `json:"last_run_from_sha,omitempty"`
+	// ReviewedSHA is the commit the latest finished review run or
+	// verification step judged. The outcome only holds while it is the
+	// head.
+	ReviewedSHA string `json:"reviewed_sha,omitempty"`
+	// ApprovedSHA is the commit the PR was approved at from the panel.
+	ApprovedSHA string `json:"approved_sha,omitempty"`
+	// Threads are the verification step's assessments of the PR's
+	// unresolved GitHub threads a person started, keyed by the GitHub id of
+	// the thread's first comment. Replaced wholesale, never mutated.
+	Threads map[int64]ThreadAssessment `json:"threads,omitempty"`
+	// ReviewID names the latest review: a Run starts one, and every run of
+	// its review loop belongs to it. ReviewRuns are the history ids of
+	// those runs, so the comments they reported (by RunID) are the
+	// review's new ones.
+	ReviewID   string  `json:"review_id,omitempty"`
+	ReviewRuns []int64 `json:"review_runs,omitempty"`
+	// HistoryDir keys the session's review history: the repo's main dir,
+	// so every worktree of the repo shares it. Empty keeps no history.
+	HistoryDir string `json:"-"`
+}
+
+// Saved is the part of a session kept across daemon restarts: the PR it is
+// on and the user's choices for its runs. The rest is rebuilt by loading
+// the PR again, the runs and findings from the review history.
+type Saved struct {
+	ChannelID     string
+	PRNumber      int
+	ForkMode      ForkMode
+	ForkSessionID string
+	Model         string
+	Effort        string
+	Scope         Scope
+	ReviewedSHA   string
+	ApprovedSHA   string
+	// Threads is Session.Threads as JSON, so that Saved stays comparable.
+	Threads string
+}
+
+// saved returns what of sess is kept, nil while it is on no PR.
+func (sess *Session) saved() *Saved {
+	if sess.PR == nil {
+		return nil
+	}
+	return &Saved{
+		ChannelID:     sess.ChannelID,
+		PRNumber:      sess.PR.Number,
+		ForkMode:      sess.ForkMode,
+		ForkSessionID: sess.ForkSessionID,
+		Model:         sess.Model,
+		Effort:        sess.Effort,
+		Scope:         sess.Scope,
+		ReviewedSHA:   sess.ReviewedSHA,
+		ApprovedSHA:   sess.ApprovedSHA,
+		Threads:       encodeThreads(sess.Threads),
+	}
+}
+
+// Apply sets the choices sv keeps on sess, which is on the same PR.
+func (sv *Saved) Apply(sess *Session) {
+	sess.ForkMode, sess.ForkSessionID = sv.ForkMode, sv.ForkSessionID
+	sess.Model, sess.Effort = sv.Model, sv.Effort
+	sess.Scope = sv.Scope
+	sess.ReviewedSHA, sess.ApprovedSHA = sv.ReviewedSHA, sv.ApprovedSHA
+	sess.Threads = decodeThreads(sv.Threads)
+}
+
+// Saver keeps sessions across daemon restarts. The store calls it under
+// its lock, so the saves of a channel land in order, and only when what
+// is kept changed.
+type Saver interface {
+	SaveSession(saved *Saved)
+	DeleteSession(channelID string)
 }
 
 // Store is the in-memory registry of active sessions keyed by channel id.
 type Store struct {
 	mu       sync.RWMutex
 	sessions map[string]*Session
+	saver    Saver
+	// saved is what saver last got per channel.
+	saved map[string]*Saved
 }
 
 // NewStore returns an empty store.
 func NewStore() *Store {
-	return &Store{sessions: make(map[string]*Session)}
+	return &Store{sessions: make(map[string]*Session), saved: make(map[string]*Saved)}
+}
+
+// SetSaver keeps the sessions changed from now on with sv.
+func (s *Store) SetSaver(sv Saver) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.saver = sv
+}
+
+// save hands sess to the saver when what is kept of it changed. The
+// caller holds the write lock.
+func (s *Store) save(sess *Session) {
+	if s.saver == nil {
+		return
+	}
+	cur := sess.saved()
+	if cur == nil {
+		return
+	}
+	if prev := s.saved[sess.ChannelID]; prev != nil && *prev == *cur {
+		return
+	}
+	s.saver.SaveSession(cur)
+	s.saved[sess.ChannelID] = cur
 }
 
 // Get returns a copy of the session for channelID, or nil if there is
@@ -155,7 +268,6 @@ func (s *Store) Get(channelID string) *Session {
 	// instead of `null` when there are no comments yet — the renderer reads
 	// `session.comments.length` directly and crashes on null.
 	cp.Comments = append(make([]*Comment, 0, len(sess.Comments)), sess.Comments...)
-	cp.RunSessionIDs = append([]string(nil), sess.RunSessionIDs...)
 	return &cp
 }
 
@@ -167,6 +279,7 @@ func (s *Store) Put(channelID string, sess *Session) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sessions[channelID] = sess
+	s.save(sess)
 }
 
 // SessionSummary is the minimal (channel_id, status, updated_at) triple
@@ -198,35 +311,35 @@ func (s *Store) Delete(channelID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.sessions, channelID)
+	delete(s.saved, channelID)
+	if s.saver != nil {
+		s.saver.DeleteSession(channelID)
+	}
 }
 
-// AppendRunSession records the Claude session a review run used, together
-// with the directory its transcript landed in. Both are recorded under one
-// lock because an id without its directory is not addressable.
-//
-// Empty ids (the runner returned no response) and ids already recorded are
-// ignored, so a resumed run cannot double-list itself. Returns false when
-// nothing was recorded.
-func (s *Store) AppendRunSession(channelID, sessionID, transcriptDir string) bool {
-	if sessionID == "" {
-		return false
-	}
+// AddTranscript appends path to the transcripts of the agent comments in
+// ids that don't list it yet, and returns the comments it changed.
+func (s *Store) AddTranscript(channelID, path string, ids map[string]bool) []*Comment {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sess, ok := s.sessions[channelID]
 	if !ok {
-		return false
+		return nil
 	}
-	if slices.Contains(sess.RunSessionIDs, sessionID) {
-		return false
+	var out []*Comment
+	for i, c := range sess.Comments {
+		if !ids[c.ID] || !deletable(c) || slices.Contains(c.Transcripts, path) {
+			continue
+		}
+		updated := *c
+		updated.Transcripts = append(slices.Clone(c.Transcripts), path)
+		sess.Comments[i] = &updated
+		out = append(out, &updated)
 	}
-	sess.RunSessionIDs = append(sess.RunSessionIDs, sessionID)
-	// Last run wins: a worktree that moved re-keys the project dir, and the
-	// newest run is the one most likely to be asked about.
-	if transcriptDir != "" {
-		sess.TranscriptDir = transcriptDir
+	if len(out) > 0 {
+		sess.UpdatedAt = time.Now()
 	}
-	return true
+	return out
 }
 
 // UpdateStatus transitions the session's status. Returns false if no
@@ -274,6 +387,7 @@ func (s *Store) UpdateFork(channelID string, mode ForkMode, sessionID string) bo
 		sess.ForkSessionID = sessionID
 	}
 	sess.UpdatedAt = time.Now()
+	s.save(sess)
 	return true
 }
 
@@ -290,6 +404,61 @@ func (s *Store) UpdateAgent(channelID, model, effort string) bool {
 	sess.Model = model
 	sess.Effort = effort
 	sess.UpdatedAt = time.Now()
+	s.save(sess)
+	return true
+}
+
+// UpdateScope records what the next review run reviews. Returns false if
+// no session exists for channelID.
+func (s *Store) UpdateScope(channelID string, scope Scope) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[channelID]
+	if !ok {
+		return false
+	}
+	sess.Scope = scope
+	sess.UpdatedAt = time.Now()
+	s.save(sess)
+	return true
+}
+
+// SetLastRunScope records the scope the run starting now resolved to.
+// Returns false if no session exists for channelID.
+func (s *Store) SetLastRunScope(channelID string, scope Scope, fromSHA string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[channelID]
+	if !ok {
+		return false
+	}
+	sess.LastRunScope, sess.LastRunFromSHA = scope, fromSHA
+	return true
+}
+
+// StartReview makes reviewID the latest review, with no runs yet.
+// Returns false if no session exists for channelID.
+func (s *Store) StartReview(channelID, reviewID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[channelID]
+	if !ok {
+		return false
+	}
+	sess.ReviewID, sess.ReviewRuns = reviewID, nil
+	return true
+}
+
+// AddReviewRun adds the history id of a run of the latest review.
+// Returns false if no session exists for channelID.
+func (s *Store) AddReviewRun(channelID string, runID int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[channelID]
+	if !ok {
+		return false
+	}
+	sess.ReviewRuns = append(slices.Clip(sess.ReviewRuns), runID)
 	return true
 }
 
@@ -423,7 +592,7 @@ func (s *Store) EditLocalComment(channelID, commentID string, edit func(*Comment
 		updated := *c
 		edit(&updated)
 		if updated.Body != c.Body {
-			updated.Verdict, updated.VerdictReason = "", ""
+			updated.Verdict, updated.VerdictReason, updated.Impact = "", "", ""
 		}
 		sess.Comments[i] = &updated
 		sess.UpdatedAt = time.Now()
@@ -432,11 +601,12 @@ func (s *Store) EditLocalComment(channelID, commentID string, edit func(*Comment
 	return nil
 }
 
-// SetVerdict records the dedup pass's verdict on the agent comment with
-// the matching ID. Unlike EditLocalComment it takes a pushed comment too:
-// the verdict stays local and never reaches the PR. Returns the updated
-// comment, or nil when there is none or it is a GitHub comment.
-func (s *Store) SetVerdict(channelID, commentID, verdict, reason string) *Comment {
+// SetVerdict records a verdict on the agent comment with ID v.ID, with its
+// impact when the verdict is real (any other verdict clears it). Unlike
+// EditLocalComment it takes a pushed comment too: the verdict stays local
+// and never reaches the PR. Returns the updated comment, or nil when there
+// is none or it is a GitHub comment.
+func (s *Store) SetVerdict(channelID string, v DedupVerdict) *Comment {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sess, ok := s.sessions[channelID]
@@ -444,14 +614,14 @@ func (s *Store) SetVerdict(channelID, commentID, verdict, reason string) *Commen
 		return nil
 	}
 	for i, c := range sess.Comments {
-		if c.ID != commentID {
+		if c.ID != v.ID {
 			continue
 		}
 		if !deletable(c) {
 			return nil
 		}
 		updated := *c
-		updated.Verdict, updated.VerdictReason = verdict, reason
+		updated.Verdict, updated.VerdictReason, updated.Impact = v.Verdict, v.Reason, ImpactOf(v.Verdict, v.Impact)
 		sess.Comments[i] = &updated
 		sess.UpdatedAt = time.Now()
 		return &updated

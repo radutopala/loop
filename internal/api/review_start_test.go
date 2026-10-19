@@ -38,7 +38,7 @@ func (s *ReviewStartSuite) SetupTest() {
 	s.srv = newServerForReviewTests(s.T())
 	s.store = s.srv.store.(*MockChannelLister)
 	s.gh = new(mockGitHubReview)
-	s.wt = new(mockPR)
+	s.wt = newMockPR()
 	s.rs = review.NewStore()
 	s.eng = new(MockWorkflowEngine)
 	s.srv.review.setBackends(s.gh, s.rs, s.wt)
@@ -103,6 +103,7 @@ func (s *ReviewStartSuite) TestBadRequest() {
 		{"too many iterations", map[string]any{"pr_number": 7, "max_iterations": 11}},
 		{"negative iterations", map[string]any{"pr_number": 7, "max_iterations": -1}},
 		{"unknown effort", map[string]any{"pr_number": 7, "effort": "huge"}},
+		{"unknown scope", map[string]any{"pr_number": 7, "scope": "partial"}},
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
@@ -181,6 +182,9 @@ func (s *ReviewStartSuite) TestKeepsTheLoadedPR() {
 	s.channel("opus", "high")
 	s.eng.On("ListRuns", mock.Anything, "ch1", 50, 0).Return(nil, errors.New("db down"))
 	s.readySession(7)
+	s.rs.StartReview("ch1", "rev-0")
+	s.rs.AddReviewRun("ch1", 3)
+	s.srv.review.newReviewID = func() string { return "rev-1" }
 	s.eng.On("StartRun", mock.Anything, workflow.StartRunOptions{
 		WorkflowName: reviewFixLoopWorkflow,
 		ChannelID:    "ch1",
@@ -194,6 +198,9 @@ func (s *ReviewStartSuite) TestKeepsTheLoadedPR() {
 	sess := s.rs.Get("ch1")
 	require.Equal(s.T(), "sonnet", sess.Model)
 	require.Equal(s.T(), "low", sess.Effort)
+	// The loop's runs start a new review, with none of the last one's runs.
+	require.Equal(s.T(), "rev-1", sess.ReviewID)
+	require.Empty(s.T(), sess.ReviewRuns)
 }
 
 func (s *ReviewStartSuite) TestReloadsAnotherPR() {
@@ -273,6 +280,31 @@ func (s *ReviewStartSuite) TestFork() {
 			require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
 			require.Equal(s.T(), tt.wantMode, resp.Session.ForkMode)
 			require.Equal(s.T(), tt.wantSID, resp.Session.ForkSessionID)
+		})
+	}
+}
+
+func (s *ReviewStartSuite) TestScope() {
+	tests := []struct {
+		name  string
+		scope string
+		want  review.Scope
+	}{
+		{"empty keeps the session's choice", "", review.ScopeFull},
+		{"auto", "auto", review.ScopeAuto},
+		{"incremental", "incremental", review.ScopeIncremental},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			s.channel("", "")
+			s.noRuns()
+			s.rs.Put("ch1", &review.Session{PR: &githubapi.PRInfo{Number: 7}, WorktreePath: "/repo/.worktrees/pr-7-ch1", Status: review.StatusReady, Scope: review.ScopeFull})
+			s.eng.On("StartRun", mock.Anything, mock.Anything).Return("run-1", nil)
+
+			w := s.start(map[string]any{"pr_number": 7, "scope": tt.scope})
+			require.Equal(s.T(), http.StatusCreated, w.Code, w.Body.String())
+			require.Equal(s.T(), tt.want, s.rs.Get("ch1").Scope)
 		})
 	}
 }

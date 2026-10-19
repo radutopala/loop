@@ -378,6 +378,28 @@ func (c *Client) DeletePRReviewComment(ctx context.Context, workdir, ghUser stri
 	return nil
 }
 
+// ApprovePR submits an approving review of the PR at commitID, with body
+// as its text (empty for none). Approving the commit that was reviewed,
+// rather than the PR as it is, keeps later commits out of the approval:
+// GitHub answers 422 when commitID isn't on the PR.
+func (c *Client) ApprovePR(ctx context.Context, workdir, ghUser string, slug RepoSlug, prNum int, commitID, body string) error {
+	if workdir == "" || prNum <= 0 || commitID == "" || slug.Owner == "" || slug.Name == "" {
+		return fmt.Errorf("workdir, slug, prNum and commitID are required")
+	}
+	env, err := c.tokenEnv(ctx, workdir, ghUser)
+	if err != nil {
+		return err
+	}
+	endpoint := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", slug.Owner, slug.Name, prNum)
+	_, err = c.runner.Run(ctx, workdir, env,
+		"api", endpoint, "--method", "POST",
+		"-f", "event=APPROVE",
+		"-f", "commit_id="+commitID,
+		"-f", "body="+body,
+	)
+	return err
+}
+
 // ListOpenPRs returns all open pull requests in the repo backing workdir.
 // Drafts are included (the FE flags them visually). The list is capped
 // at 100 — repos with more open PRs are an edge case for a review-panel
@@ -448,6 +470,9 @@ type PRReviewComment struct {
 	CreatedAt string `json:"created_at,omitempty"`
 	Outdated  bool   `json:"outdated,omitempty"`
 	Resolved  bool   `json:"resolved,omitempty"`
+	// ReplyTo is the id of the thread's first comment, for a reply; zero
+	// for the first comment itself.
+	ReplyTo int64 `json:"reply_to,omitempty"`
 }
 
 // reviewCommentsGraphQLQuery fetches every review thread on a PR and the
@@ -546,7 +571,8 @@ func (c *Client) FetchPRReviewComments(ctx context.Context, workdir, ghUser stri
 	}
 	var comments []PRReviewComment
 	for _, t := range raw.Data.Repository.PullRequest.ReviewThreads.Nodes {
-		for _, r := range t.Comments.Nodes {
+		var root int64
+		for i, r := range t.Comments.Nodes {
 			line, outdated := 0, r.Outdated
 			if r.Line != nil {
 				line = *r.Line
@@ -572,7 +598,11 @@ func (c *Client) FetchPRReviewComments(ctx context.Context, workdir, ghUser stri
 				CreatedAt: r.CreatedAt,
 				Outdated:  outdated,
 				Resolved:  t.IsResolved,
+				ReplyTo:   root,
 			})
+			if i == 0 {
+				root = r.DatabaseID
+			}
 		}
 	}
 	return comments, nil

@@ -14,6 +14,31 @@ export type ReviewStatus = "idle" | "loading" | "ready" | "reviewing" | "verifyi
 
 export type ReviewVerdict = "real" | "false_positive" | "already_fixed";
 
+// How much a real finding, or a GitHub thread still open, weighs on
+// approving the PR.
+export type ReviewImpact = "blocking" | "nice_to_have";
+
+// The verification step's call on a GitHub thread a person started.
+export interface ReviewThreadAssessment {
+  status: "addressed" | "open";
+  impact?: ReviewImpact;
+  reason?: string;
+}
+
+export type ReviewOutcomeState = "approve" | "approve_with_nits" | "request_changes" | "unknown";
+
+// Whether the PR can be approved, and the comment ids that decide it.
+// GitHub threads are listed by their first comment's id.
+export interface ReviewOutcome {
+  state: ReviewOutcomeState;
+  blocking: string[];
+  nits: string[];
+  pending: string[];
+  /** Why the state is unknown. */
+  reason?: string;
+  reviewed_sha?: string;
+}
+
 export interface ReviewComment {
   id: string;
   path: string;
@@ -26,6 +51,8 @@ export interface ReviewComment {
   verdict?: ReviewVerdict;
   /** One sentence on what in the code decided the verdict. */
   verdict_reason?: string;
+  /** With verdict real: whether it blocks approving the PR. */
+  impact?: ReviewImpact;
   pushed: boolean;
   pushed_at?: string;
   source?: "agent" | "github";
@@ -35,12 +62,25 @@ export interface ReviewComment {
   outdated?: boolean;
   resolved?: boolean;
   github_id?: number;
+  /** The GitHub id of the comment that starts this reply's thread. */
+  reply_to?: number;
+  /** Claude transcripts of the agent passes (review run, dedup, verification) that reported or changed this agent comment, oldest first. */
+  transcripts?: string[];
+  /** The history id of the review run that reported this agent comment. */
+  run_id?: number;
+  /** Set by the panel, not the daemon: the verification step's assessment of the GitHub thread this comment starts. */
+  thread?: ReviewThreadAssessment;
 }
 
 // Which Claude session a review run starts from. "" (the default) runs
 // the review in a fresh session; "current" forks whatever session the
 // channel's chat is on when the run starts; "custom" forks fork_session_id.
 export type ReviewForkMode = "" | "current" | "custom";
+
+// What a review run reviews. "" (auto) reviews only the commits since the
+// last reviewed head when an earlier run of the PR finished and its head is
+// still an ancestor, else the whole PR.
+export type ReviewScope = "" | "full" | "incremental";
 
 export interface ReviewSession {
   channel_id: string;
@@ -57,17 +97,30 @@ export interface ReviewSession {
   // config's claude_model / claude_effort.
   model?: string;
   effort?: string;
-  // Claude sessions the review runs used, oldest first — one per run, and
-  // the directory their transcripts live in (keyed by the run's CWD, i.e.
-  // the PR worktree, so it is not derivable from the channel).
-  run_session_ids?: string[];
-  transcript_dir?: string;
+  scope?: ReviewScope;
+  // The scope the latest run resolved to, and for an incremental one the
+  // commit its range starts at.
+  last_run_scope?: Exclude<ReviewScope, "">;
+  last_run_from_sha?: string;
+  // The verification step's thread assessments, by the GitHub id of each
+  // thread's first comment.
+  threads?: Record<string, ReviewThreadAssessment>;
+  // The head the last review run or verification step finished on, and the
+  // one the PR was last approved at from here.
+  reviewed_sha?: string;
+  approved_sha?: string;
+  // The latest review (a Run, every iteration of its loop included) and the
+  // history ids of its runs: the agent comments those reported are new.
+  review_id?: string;
+  review_runs?: number[];
   updated_at: string;
 }
 
 export interface ReviewSessionResponse {
   present: boolean;
   session?: ReviewSession;
+  /** Only GET /review sends it. */
+  outcome?: ReviewOutcome;
 }
 
 export interface PushAllResult {
@@ -115,8 +168,8 @@ export async function listReviewPRs(channelId: string): Promise<ReviewPR[]> {
   return Array.isArray(body.prs) ? body.prs : [];
 }
 
-export async function getReviewSession(channelId: string): Promise<ReviewSessionResponse> {
-  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/review`);
+export async function getReviewSession(channelId: string, opts: { diff?: boolean } = {}): Promise<ReviewSessionResponse> {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/review${opts.diff === false ? "?diff=false" : ""}`);
   if (!res.ok) throw new Error(`Failed to fetch review session: ${res.statusText}`);
   return normalizeSession(await res.json());
 }
@@ -190,6 +243,80 @@ export async function setReviewAgent(channelId: string, model: string, effort: s
   return normalizeSession(await res.json());
 }
 
+/**
+ * Record what the next review run reviews. Stored on the review session for
+ * the same reason as the fork choice. Returns the updated session.
+ */
+export async function setReviewScope(channelId: string, scope: ReviewScope): Promise<ReviewSessionResponse> {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/review/scope`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ scope }),
+  });
+  if (!res.ok) throw new Error((await res.text()) || `Failed to set review scope: ${res.statusText}`);
+  return normalizeSession(await res.json());
+}
+
+// Finding counts: added in all, folded by the dedup pass, deleted by the
+// user, pushed; then per verdict, and per outcome of the pushed ones.
+export interface ReviewFindingStats {
+  added: number;
+  folded: number;
+  deleted: number;
+  pushed: number;
+  real: number;
+  false_positive: number;
+  already_fixed: number;
+  unjudged: number;
+  // The real ones by impact.
+  blocking: number;
+  nice_to_have: number;
+  resolved: number;
+  outdated: number;
+  // False positives over the findings with a verdict, 0..1.
+  false_positive_rate: number;
+}
+
+export interface ReviewStatsGroup extends ReviewFindingStats {
+  key: string;
+  runs: number;
+}
+
+export interface ReviewStats {
+  runs: {
+    total: number;
+    completed: number;
+    failed: number;
+    cancelled: number;
+    running: number;
+    full: number;
+    incremental: number;
+    prs: number;
+    median_ms: number;
+    p90_ms: number;
+  };
+  findings: ReviewFindingStats;
+  by_model: ReviewStatsGroup[] | null;
+  by_effort: ReviewStatsGroup[] | null;
+  by_scope: ReviewStatsGroup[] | null;
+  by_category: ReviewStatsGroup[] | null;
+}
+
+/**
+ * Fetch the review stats of the channel's repo over the last `days`, for one
+ * PR when `pr` is set. Throws with the daemon's message, which says so when
+ * the daemon keeps no review history.
+ */
+export async function getReviewStats(channelId: string, opts: { pr?: number; days?: number } = {}): Promise<ReviewStats> {
+  const q = new URLSearchParams();
+  if (opts.days) q.set("days", String(opts.days));
+  if (opts.pr) q.set("pr", String(opts.pr));
+  const qs = q.toString();
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/review/stats${qs ? `?${qs}` : ""}`);
+  if (!res.ok) throw new Error((await res.text()) || `Failed to load review stats: ${res.statusText}`);
+  return res.json();
+}
+
 export async function pushReviewComment(channelId: string, commentId: string): Promise<void> {
   const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/review/comments/${encodeURIComponent(commentId)}/push`, { method: "POST" });
   if (!res.ok) throw new Error((await res.text()) || `Failed to push comment: ${res.statusText}`);
@@ -200,8 +327,27 @@ export async function deleteReviewComment(channelId: string, commentId: string):
   if (!res.ok) throw new Error((await res.text()) || `Failed to delete comment: ${res.statusText}`);
 }
 
-export async function pushAllReviewComments(channelId: string): Promise<PushAllResult> {
-  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/review/push-all`, { method: "POST" });
+/** Push every unpushed comment, or with `impact` only the findings of that impact. */
+export async function pushAllReviewComments(channelId: string, opts: { impact?: ReviewImpact } = {}): Promise<PushAllResult> {
+  const qs = opts.impact ? `?impact=${opts.impact}` : "";
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/review/push-all${qs}`, { method: "POST" });
   if (!res.ok) throw new Error((await res.text()) || `Failed to push comments: ${res.statusText}`);
   return res.json();
+}
+
+/**
+ * Approve the PR on GitHub at the session's head, as the configured gh user.
+ * force approves when the outcome isn't approve or approve_with_nits. Throws
+ * the daemon's message: the outcome, a head that moved since the review, or
+ * GitHub's refusal. Returns the commit approved.
+ */
+export async function approveReview(channelId: string, opts: { body?: string; force?: boolean } = {}): Promise<string> {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/review/approve`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ body: opts.body ?? "", force: !!opts.force }),
+  });
+  if (!res.ok) throw new Error((await res.text()) || `Failed to approve the PR: ${res.statusText}`);
+  const body = (await res.json()) as { approved_sha: string };
+  return body.approved_sha;
 }

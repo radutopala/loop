@@ -66,7 +66,7 @@ const reviewSessionJSON = `{"present":true,"session":{
 	"pr":{"number":104,"url":"https://github.com/o/r/pull/104","title":"Add thing"},
 	"head_sha":"abc123","status":"ready","error":"",
 	"comments":[
-		{"id":"c1","path":"a.go","line":3,"side":"RIGHT","body":"bug one\nsecond line","pushed":false,"source":"agent","category":"correctness","verdict":"false_positive","verdict_reason":"made in init"},
+		{"id":"c1","path":"a.go","line":3,"side":"RIGHT","body":"bug one\nsecond line","pushed":false,"source":"agent","category":"correctness","verdict":"false_positive","verdict_reason":"made in init","transcripts":["/t/run.jsonl","/t/dedup.jsonl"]},
 		{"id":"c2","path":"b.go","line":9,"side":"LEFT","body":"bug two","pushed":true,"source":"agent","github_id":77},
 		{"id":"c3","path":"a.go","line":5,"side":"RIGHT","body":"human note","pushed":true,"source":"github","author":"octo","github_id":88,"outdated":true,"resolved":true},
 		{"id":"c4","path":"a.go","line":7,"side":"RIGHT","body":"no source","pushed":false}
@@ -88,7 +88,7 @@ func (s *ReviewToolSuite) TestGetReviewComments() {
 				"PR #104 Add thing\nhttps://github.com/o/r/pull/104\n",
 				"head_sha: abc123\nstatus: ready\n",
 				"4 of 4 comment(s):",
-				"[c1] a.go:3 RIGHT, agent, unpushed, category correctness, verdict false_positive\n  bug one\n  second line\n  (verdict: made in init)\n",
+				"[c1] a.go:3 RIGHT, agent, unpushed, category correctness, verdict false_positive\n  bug one\n  second line\n  (verdict: made in init)\n  (transcript: /t/run.jsonl)\n  (transcript: /t/dedup.jsonl)\n",
 				"[c2] b.go:9 LEFT, agent, pushed (id 77)\n",
 				"[c3] a.go:5 RIGHT, github by octo (id 88), outdated, resolved\n",
 				"[c4] a.go:7 RIGHT, agent, unpushed\n",
@@ -126,6 +126,49 @@ func (s *ReviewToolSuite) TestGetReviewComments() {
 			for _, unwanted := range tc.notContains {
 				require.NotContains(s.T(), text, unwanted)
 			}
+		})
+	}
+}
+
+func (s *ReviewToolSuite) TestGetReviewCommentsOutcome() {
+	s.httpClient.doFunc = func(*http.Request) (*http.Response, error) {
+		return jsonResponse(200, `{"present":true,"session":{
+			"head_sha":"abc123","status":"ready","approved_sha":"abc123",
+			"threads":{"88":{"status":"open","impact":"blocking","reason":"Still racy."},"90":{"status":"addressed"}},
+			"comments":[
+				{"id":"c1","path":"a.go","line":3,"side":"RIGHT","body":"bug","pushed":true,"source":"agent","github_id":77,"verdict":"real","impact":"nice_to_have"},
+				{"id":"gh-88","path":"a.go","line":5,"side":"RIGHT","body":"race here","pushed":true,"source":"github","author":"octo","github_id":88},
+				{"id":"gh-89","path":"a.go","line":5,"side":"RIGHT","body":"intended\nsee docs","pushed":true,"source":"github","author":"dev","github_id":89,"reply_to":88},
+				{"id":"gh-90","path":"b.go","line":1,"side":"RIGHT","body":"typo","pushed":true,"source":"github","author":"octo","github_id":90}
+			]},
+			"outcome":{"state":"request_changes","blocking":["gh-88"]}}`), nil
+	}
+	text, isError := s.callTool("get_review_comments", map[string]any{})
+	require.False(s.T(), isError)
+	require.Equal(s.T(), "head_sha: abc123\nstatus: ready\n"+
+		"outcome: request_changes (blocking: gh-88)\n"+
+		"approved at: abc123\n"+
+		"\n3 of 3 comment(s):\n"+
+		"\n[c1] a.go:3 RIGHT, agent, pushed (id 77), verdict real, impact nice_to_have\n  bug\n"+
+		"\n[gh-88] a.go:5 RIGHT, github by octo (id 88), thread open, impact blocking\n  race here\n  (assessment: Still racy.)\n"+
+		"  reply by dev (github id 89):\n    intended\n    see docs\n"+
+		"\n[gh-90] b.go:1 RIGHT, github by octo (id 90), thread addressed\n  typo\n", text)
+}
+
+func (s *ReviewToolSuite) TestReviewOutcomeLine() {
+	cases := []struct {
+		name string
+		o    reviewOutcome
+		want string
+	}{
+		{name: "blocking", o: reviewOutcome{State: "request_changes", Blocking: []string{"a", "b"}, Nits: []string{"c"}}, want: "request_changes (blocking: a, b)"},
+		{name: "reason", o: reviewOutcome{State: "unknown", Reason: "2 comment(s) not judged yet"}, want: "unknown (2 comment(s) not judged yet)"},
+		{name: "nits", o: reviewOutcome{State: "approve_with_nits", Nits: []string{"c"}}, want: "approve_with_nits (nice to have: c)"},
+		{name: "plain", o: reviewOutcome{State: "approve"}, want: "approve"},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			require.Equal(s.T(), tc.want, reviewOutcomeLine(&tc.o))
 		})
 	}
 }
@@ -277,6 +320,27 @@ func (s *ReviewToolSuite) TestReviewCommentTools() {
 			want:     "Updated review comment c1 at a.go:3; verdict false_positive.",
 		},
 		{
+			name: "record a verdict with impact", tool: "update_review_comment", args: map[string]any{"comment_id": "c1", "verdict": "real", "impact": "nice_to_have", "reason": "Naming only."},
+			respStatus: 200, respBody: `{"id":"c1","path":"a.go","line":3,"verdict":"real","impact":"nice_to_have"}`,
+			wantMethod: "PATCH", wantURL: "http://localhost:8222/api/channels/test-channel/review/comments/c1",
+			wantBody: `{"verdict":"real","impact":"nice_to_have","verdict_reason":"Naming only."}`,
+			want:     "Updated review comment c1 at a.go:3; verdict real, impact nice_to_have.",
+		},
+		{
+			name: "assess an addressed thread", tool: "assess_review_thread", args: map[string]any{"comment_id": "gh-88", "status": "addressed", "reason": "Fixed in b2."},
+			respStatus: 200, respBody: `{"status":"addressed","reason":"Fixed in b2."}`,
+			wantMethod: "POST", wantURL: "http://localhost:8222/api/channels/test-channel/review/comments/gh-88/assess",
+			wantBody: `{"status":"addressed","reason":"Fixed in b2."}`,
+			want:     "Assessed thread gh-88: addressed.",
+		},
+		{
+			name: "assess an open thread", tool: "assess_review_thread", args: map[string]any{"comment_id": "gh-88", "status": "open", "impact": "blocking"},
+			respStatus: 200, respBody: `{"status":"open","impact":"blocking"}`,
+			wantMethod: "POST", wantURL: "http://localhost:8222/api/channels/test-channel/review/comments/gh-88/assess",
+			wantBody: `{"status":"open","impact":"blocking"}`,
+			want:     "Assessed thread gh-88: open, impact blocking.",
+		},
+		{
 			name: "push", tool: "push_review_comment", args: map[string]any{"comment_id": "c1"},
 			respStatus: 200, respBody: `{"pushed":true}`,
 			wantMethod: "POST", wantURL: "http://localhost:8222/api/channels/test-channel/review/comments/c1/push",
@@ -335,6 +399,7 @@ func (s *ReviewToolSuite) TestReviewCommentToolsNeedArgs() {
 		{"update_review_comment", map[string]any{"comment_id": "", "body": "b"}, "comment_id is required"},
 		{"update_review_comment", map[string]any{"comment_id": "c1", "body": "  "}, "body or verdict is required"},
 		{"push_review_comment", map[string]any{"comment_id": ""}, "comment_id is required"},
+		{"assess_review_thread", map[string]any{"comment_id": "", "status": "open"}, "comment_id is required"},
 	}
 	for _, tc := range cases {
 		s.Run(tc.tool+" "+tc.want, func() {
@@ -354,6 +419,7 @@ func (s *ReviewToolSuite) TestReviewCommentToolsErrors() {
 		{tool: "delete_review_comment", args: map[string]any{"comment_id": "gh-1"}, apiStatus: 403, apiBody: "agents can only delete agent comments"},
 		{tool: "update_review_comment", args: map[string]any{"comment_id": "c1", "body": "b"}, apiStatus: 409, apiBody: "only unpushed agent comments can be edited", decodeStatus: 200},
 		{tool: "push_review_comment", args: map[string]any{"comment_id": "c1"}, apiStatus: 404, apiBody: "comment not found", decodeStatus: 200},
+		{tool: "assess_review_thread", args: map[string]any{"comment_id": "c1", "status": "addressed"}, apiStatus: 409, apiBody: "give an agent comment a verdict", decodeStatus: 200},
 		{tool: "push_all_review_comments", args: map[string]any{}, apiStatus: 403, apiBody: "agents can only change review comments in their own channel", decodeStatus: 200},
 	}
 	for _, spec := range specs {
@@ -375,15 +441,15 @@ func (s *ReviewToolSuite) TestRunReview() {
 			args:     map[string]any{"pr_number": 7},
 			resp:     `{"run_id":"r1","workflow_name":"review-loop","model":"","effort":""}`,
 			wantURL:  "http://localhost:8222/api/channels/test-channel/review/start",
-			wantBody: map[string]any{"pr_number": float64(7), "model": "", "effort": "", "mode": "", "max_iterations": float64(0), "fork": ""},
+			wantBody: map[string]any{"pr_number": float64(7), "model": "", "effort": "", "mode": "", "max_iterations": float64(0), "fork": "", "scope": ""},
 			want:     "Review of PR #7 started in channel test-channel: workflow review-loop, run ID r1, model default, effort default. Use get_workflow_run to check progress.",
 		},
 		{
 			name:     "another thread, fix loop",
-			args:     map[string]any{"pr_number": 9, "channel_id": "th 2", "model": "opus", "effort": "high", "mode": "review-fix", "max_iterations": 5, "fork": "fresh"},
+			args:     map[string]any{"pr_number": 9, "channel_id": "th 2", "model": "opus", "effort": "high", "mode": "review-fix", "max_iterations": 5, "fork": "fresh", "scope": "incremental"},
 			resp:     `{"run_id":"r2","workflow_name":"review-fix-loop","model":"opus","effort":"high"}`,
 			wantURL:  "http://localhost:8222/api/channels/th%202/review/start",
-			wantBody: map[string]any{"pr_number": float64(9), "model": "opus", "effort": "high", "mode": "review-fix", "max_iterations": float64(5), "fork": "fresh"},
+			wantBody: map[string]any{"pr_number": float64(9), "model": "opus", "effort": "high", "mode": "review-fix", "max_iterations": float64(5), "fork": "fresh", "scope": "incremental"},
 			want:     "Review of PR #9 started in channel th 2: workflow review-fix-loop, run ID r2, model opus, effort high. Use get_workflow_run to check progress.",
 		},
 	}

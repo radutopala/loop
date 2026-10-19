@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -28,7 +29,7 @@ func (s *Server) registerReviewTools() {
 	}, s.handleReportReviewFindings)
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "get_review_comments",
-		Description: "Read this channel's PR review session, as shown in the Review panel: the PR, head SHA, status, and every comment with its id, file, line, side, whether it was pushed to GitHub, and its source (agent, or github with the author and GitHub comment id), its category when the review gave one, the dedup pass's verdict (real, false_positive or already_fixed) when it has one, then its body and the verdict's reason. Filter to unpushed agent comments or one file. The PR diff is not included.",
+		Description: "Read this channel's PR review session, as shown in the Review panel: the PR, head SHA, status, the PR outcome (approve, approve_with_nits, request_changes or unknown, with the comments that decide it), and every comment with its id, file, line, side, whether it was pushed to GitHub, and its source (agent, or github with the author and GitHub comment id), its category when the review gave one, its verdict (real, false_positive or already_fixed) and a real one's impact (blocking or nice_to_have), or for a GitHub thread its assessment (addressed or open), then its body, the reason and the Claude transcripts of the agent passes that reported or changed it (read one to see why a finding was made). GitHub replies are listed under the comment that starts their thread. Filter to unpushed agent comments or one file. The PR diff is not included.",
 	}, s.handleGetReviewComments)
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "dedup_review_findings",
@@ -40,8 +41,12 @@ func (s *Server) registerReviewTools() {
 	}, s.handleDeleteReviewComment)
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "update_review_comment",
-		Description: "Change an agent comment in this channel's review session: replace its body, e.g. to fold in what a duplicate you are deleting adds, and/or record your verdict on it (real, false_positive or already_fixed, with a one-sentence reason), which replaces the dedup pass's. Give body, verdict or both. Only an unpushed comment's body can change; GitHub comments can't change at all. Address all and Push all skip false_positive and already_fixed comments.",
+		Description: "Change an agent comment in this channel's review session: replace its body, e.g. to fold in what a duplicate you are deleting adds, and/or record your verdict on it (real, false_positive or already_fixed, with a one-sentence reason), which replaces the dedup pass's. With real, give its impact: blocking when merging it as is would do harm, nice_to_have when it would only make working code better. Give body, verdict or both. Only an unpushed comment's body can change; GitHub comments can't change at all. Address all and Push all skip false_positive and already_fixed comments.",
 	}, s.handleUpdateReviewComment)
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "assess_review_thread",
+		Description: "Record whether an unresolved GitHub thread a person started on this channel's PR still stands, by the id of its first comment as get_review_comments shows it: addressed when a later commit or a reply settles it, or open with its impact (blocking or nice_to_have), plus a one-sentence reason. The PR outcome counts open threads. An agent comment's thread takes a verdict with update_review_comment instead.",
+	}, s.handleAssessReviewThread)
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "push_review_comment",
 		Description: "Post one agent comment from this channel's review session to the PR on GitHub, as the configured gh user. A comment already pushed is left as is.",
@@ -60,6 +65,7 @@ type runReviewInput struct {
 	MaxIterations int    `json:"max_iterations,omitempty" jsonschema:"Number of passes, 1-10 (default 3)"`
 	ChannelID     string `json:"channel_id,omitempty" jsonschema:"Channel or thread to run the review in; defaults to this one"`
 	Fork          string `json:"fork,omitempty" jsonschema:"Session the review forks: chat (that channel's chat session), fresh (a new session) or a Claude session id; defaults to the choice set in the Review panel, chat for a newly loaded PR"`
+	Scope         string `json:"scope,omitempty" jsonschema:"What each run reviews: full (the whole PR), incremental (only the commits since the last reviewed head) or auto (incremental when those are a small part of the PR); defaults to the choice set in the Review panel, auto for a newly loaded PR"`
 }
 
 func (s *Server) handleRunReview(_ context.Context, _ *mcp.CallToolRequest, input runReviewInput) (*mcp.CallToolResult, any, error) {
@@ -73,6 +79,7 @@ func (s *Server) handleRunReview(_ context.Context, _ *mcp.CallToolRequest, inpu
 		"mode":           input.Mode,
 		"max_iterations": input.MaxIterations,
 		"fork":           input.Fork,
+		"scope":          input.Scope,
 	})
 	apiURL := fmt.Sprintf("%s/api/channels/%s/review/start", s.apiURL, url.PathEscape(channelID))
 	type startResult struct {
@@ -142,8 +149,27 @@ type reviewComment struct {
 	Outdated bool   `json:"outdated"`
 	Resolved bool   `json:"resolved"`
 
-	Verdict       string `json:"verdict"`
-	VerdictReason string `json:"verdict_reason"`
+	Verdict       string   `json:"verdict"`
+	VerdictReason string   `json:"verdict_reason"`
+	Impact        string   `json:"impact"`
+	ReplyTo       int64    `json:"reply_to"`
+	Transcripts   []string `json:"transcripts"`
+}
+
+// reviewThread is the verification step's assessment of a GitHub thread.
+type reviewThread struct {
+	Status string `json:"status"`
+	Impact string `json:"impact,omitempty"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// reviewOutcome is whether the PR can be approved.
+type reviewOutcome struct {
+	State    string   `json:"state"`
+	Blocking []string `json:"blocking"`
+	Nits     []string `json:"nits"`
+	Pending  []string `json:"pending"`
+	Reason   string   `json:"reason"`
 }
 
 type reviewSession struct {
@@ -154,11 +180,14 @@ type reviewSession struct {
 			URL    string `json:"url"`
 			Title  string `json:"title"`
 		} `json:"pr"`
-		HeadSHA  string          `json:"head_sha"`
-		Status   string          `json:"status"`
-		Error    string          `json:"error"`
-		Comments []reviewComment `json:"comments"`
+		HeadSHA     string                  `json:"head_sha"`
+		Status      string                  `json:"status"`
+		Error       string                  `json:"error"`
+		Comments    []reviewComment         `json:"comments"`
+		Threads     map[string]reviewThread `json:"threads"`
+		ApprovedSHA string                  `json:"approved_sha"`
 	} `json:"session"`
+	Outcome *reviewOutcome `json:"outcome"`
 }
 
 // reviewURL is the API URL of the agent's own review session, plus suffix.
@@ -192,9 +221,23 @@ func (s *Server) handleGetReviewComments(_ context.Context, _ *mcp.CallToolReque
 	if sess.Error != "" {
 		fmt.Fprintf(&b, "error: %s\n", sess.Error)
 	}
+	if o := resp.Outcome; o != nil {
+		fmt.Fprintf(&b, "outcome: %s\n", reviewOutcomeLine(o))
+	}
+	if sess.ApprovedSHA != "" {
+		fmt.Fprintf(&b, "approved at: %s\n", sess.ApprovedSHA)
+	}
 
+	// Replies are shown under the comment their thread starts with.
+	replies := map[int64][]reviewComment{}
 	var shown []reviewComment
+	total := 0
 	for _, c := range sess.Comments {
+		if c.ReplyTo != 0 {
+			replies[c.ReplyTo] = append(replies[c.ReplyTo], c)
+			continue
+		}
+		total++
 		if input.UnpushedOnly && (c.Pushed || c.Source == "github") {
 			continue
 		}
@@ -203,21 +246,56 @@ func (s *Server) handleGetReviewComments(_ context.Context, _ *mcp.CallToolReque
 		}
 		shown = append(shown, c)
 	}
-	fmt.Fprintf(&b, "\n%d of %d comment(s):\n", len(shown), len(sess.Comments))
+	fmt.Fprintf(&b, "\n%d of %d comment(s):\n", len(shown), total)
 	for _, c := range shown {
-		fmt.Fprintf(&b, "\n[%s] %s:%d %s, %s\n", c.ID, c.Path, c.Line, c.Side, reviewCommentState(c))
+		thread, assessed := sess.Threads[strconv.FormatInt(c.GitHubID, 10)]
+		if c.Source != "github" || c.GitHubID == 0 {
+			assessed = false
+		}
+		fmt.Fprintf(&b, "\n[%s] %s:%d %s, %s\n", c.ID, c.Path, c.Line, c.Side, reviewCommentState(c, thread, assessed))
 		for line := range strings.SplitSeq(strings.TrimSpace(c.Body), "\n") {
 			fmt.Fprintf(&b, "  %s\n", line)
 		}
 		if c.VerdictReason != "" {
 			fmt.Fprintf(&b, "  (verdict: %s)\n", c.VerdictReason)
 		}
+		if assessed && thread.Reason != "" {
+			fmt.Fprintf(&b, "  (assessment: %s)\n", thread.Reason)
+		}
+		for _, t := range c.Transcripts {
+			fmt.Fprintf(&b, "  (transcript: %s)\n", t)
+		}
+		if c.GitHubID == 0 {
+			continue
+		}
+		for _, r := range replies[c.GitHubID] {
+			fmt.Fprintf(&b, "  reply by %s (github id %d):\n", r.Author, r.GitHubID)
+			for line := range strings.SplitSeq(strings.TrimSpace(r.Body), "\n") {
+				fmt.Fprintf(&b, "    %s\n", line)
+			}
+		}
 	}
 	return textResult(b.String()), nil, nil
 }
 
-// reviewCommentState describes where a comment came from and where it is.
-func reviewCommentState(c reviewComment) string {
+// reviewOutcomeLine is o in one line: the state, then the comments that
+// decide it.
+func reviewOutcomeLine(o *reviewOutcome) string {
+	switch {
+	case len(o.Blocking) > 0:
+		return fmt.Sprintf("%s (blocking: %s)", o.State, strings.Join(o.Blocking, ", "))
+	case o.Reason != "":
+		return fmt.Sprintf("%s (%s)", o.State, o.Reason)
+	case len(o.Nits) > 0:
+		return fmt.Sprintf("%s (nice to have: %s)", o.State, strings.Join(o.Nits, ", "))
+	default:
+		return o.State
+	}
+}
+
+// reviewCommentState describes where a comment came from and where it is,
+// with thread, its assessment when assessed.
+func reviewCommentState(c reviewComment, thread reviewThread, assessed bool) string {
 	var parts []string
 	if c.Source == "github" {
 		parts = append(parts, fmt.Sprintf("github by %s (id %d)", c.Author, c.GitHubID))
@@ -234,6 +312,15 @@ func reviewCommentState(c reviewComment) string {
 	}
 	if c.Verdict != "" {
 		parts = append(parts, "verdict "+c.Verdict)
+	}
+	if c.Impact != "" {
+		parts = append(parts, "impact "+c.Impact)
+	}
+	if assessed {
+		parts = append(parts, "thread "+thread.Status)
+		if thread.Impact != "" {
+			parts = append(parts, "impact "+thread.Impact)
+		}
 	}
 	if c.Outdated {
 		parts = append(parts, "outdated")
@@ -329,6 +416,7 @@ type updateReviewCommentInput struct {
 	CommentID string `json:"comment_id" jsonschema:"required,The comment id, as get_review_comments shows it"`
 	Body      string `json:"body,omitempty" jsonschema:"The comment's new body, replacing the old one"`
 	Verdict   string `json:"verdict,omitempty" jsonschema:"Your verdict on the comment: real, false_positive or already_fixed"`
+	Impact    string `json:"impact,omitempty" jsonschema:"With verdict real: blocking or nice_to_have"`
 	Reason    string `json:"reason,omitempty" jsonschema:"One sentence on why, citing the line you read"`
 }
 
@@ -343,16 +431,43 @@ func (s *Server) handleUpdateReviewComment(_ context.Context, _ *mcp.CallToolReq
 	data, _ := json.Marshal(struct {
 		Body    string `json:"body,omitempty"`
 		Verdict string `json:"verdict,omitempty"`
+		Impact  string `json:"impact,omitempty"`
 		Reason  string `json:"verdict_reason,omitempty"`
-	}{input.Body, input.Verdict, input.Reason})
+	}{input.Body, input.Verdict, input.Impact, input.Reason})
 	c, errResult, err := doAPICall[reviewComment](s, "PATCH", s.reviewCommentURL(input.CommentID, ""), http.StatusOK, data)
 	if errResult != nil || err != nil {
 		return errResult, nil, err
+	}
+	if c.Impact != "" {
+		return textResult(fmt.Sprintf("Updated review comment %s at %s:%d; verdict %s, impact %s.", c.ID, c.Path, c.Line, c.Verdict, c.Impact)), nil, nil
 	}
 	if input.Verdict != "" {
 		return textResult(fmt.Sprintf("Updated review comment %s at %s:%d; verdict %s.", c.ID, c.Path, c.Line, c.Verdict)), nil, nil
 	}
 	return textResult(fmt.Sprintf("Updated review comment %s at %s:%d.", c.ID, c.Path, c.Line)), nil, nil
+}
+
+type assessReviewThreadInput struct {
+	CommentID string `json:"comment_id" jsonschema:"required,The id of the thread's first comment, as get_review_comments shows it"`
+	Status    string `json:"status" jsonschema:"required,addressed or open"`
+	Impact    string `json:"impact,omitempty" jsonschema:"With status open: blocking or nice_to_have"`
+	Reason    string `json:"reason,omitempty" jsonschema:"One sentence on why, citing the line or reply that decided it"`
+}
+
+func (s *Server) handleAssessReviewThread(_ context.Context, _ *mcp.CallToolRequest, input assessReviewThreadInput) (*mcp.CallToolResult, any, error) {
+	s.logger.Info("mcp tool call", "tool", "assess_review_thread", "channel_id", s.channelID, "comment_id", input.CommentID)
+	if input.CommentID == "" {
+		return errorResult("comment_id is required"), nil, nil
+	}
+	data, _ := json.Marshal(reviewThread{Status: input.Status, Impact: input.Impact, Reason: input.Reason})
+	t, errResult, err := doAPICall[reviewThread](s, "POST", s.reviewCommentURL(input.CommentID, "/assess"), http.StatusOK, data)
+	if errResult != nil || err != nil {
+		return errResult, nil, err
+	}
+	if t.Impact != "" {
+		return textResult(fmt.Sprintf("Assessed thread %s: %s, impact %s.", input.CommentID, t.Status, t.Impact)), nil, nil
+	}
+	return textResult(fmt.Sprintf("Assessed thread %s: %s.", input.CommentID, t.Status)), nil, nil
 }
 
 func (s *Server) handlePushReviewComment(_ context.Context, _ *mcp.CallToolRequest, input reviewCommentIDInput) (*mcp.CallToolResult, any, error) {

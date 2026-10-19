@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ReviewComment, ReviewVerdict } from "../../api/review";
+import type { ReviewComment, ReviewImpact, ReviewVerdict } from "../../api/review";
 import { useTheme } from "../../ThemeContext";
 import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
@@ -7,6 +7,7 @@ import type { FileLinkOpenDetail } from "../chat/FileLink";
 import { ContextMenu } from "../shared/ContextMenu";
 import { computeSegments, type HunkLine, highlightContent, type ParsedFile, parseUnifiedDiff } from "./DiffViewer";
 import { type ContentMatch, lineAddr, matchesInLine, type PathMatch, parseQuery, type SearchMode, searchParsedFiles, searchPaths } from "./diffSearch";
+import { impactLabel } from "./reviewOutcome";
 
 /** Same cap the Git panel's find bar uses — a dropdown, not a file tree. */
 const MAX_PATH_RESULTS = 12;
@@ -15,6 +16,8 @@ interface ReviewDiffViewProps {
   channelId: string;
   rawDiff: string;
   comments: ReviewComment[];
+  /** The history ids of the latest review's runs: their agent comments are the "new" ones. */
+  reviewRuns?: number[];
   worktreePath?: string;
   onPushComment: (c: ReviewComment) => void | Promise<void>;
   onDiscussComment: (c: ReviewComment) => void;
@@ -70,11 +73,11 @@ export interface CommentAnchor {
   path: string;
   /** Index into `summaries`, or -1 for an orphan. Drives the file rail. */
   fileIdx: number;
-  /** Synced from GitHub rather than found by this session's review runs. */
-  github: boolean;
+  /** An agent finding of the latest review: what the "new" scope walks. */
+  fresh: boolean;
 }
 
-/** Which comments the floating navigator walks: this session's findings, or everything incl. GitHub-synced ones. */
+/** Which comments the floating navigator walks: the latest review's agent findings, or every comment. */
 export type CommentNavScope = "new" | "all";
 
 const COMMENT_NAV_SCOPE_KEY = "loop-review-comment-nav-scope";
@@ -104,9 +107,14 @@ export function unlandedTarget(dir: 1 | -1, rects: ({ top: number; bottom: numbe
   return fallback;
 }
 
-/** The anchors the navigator steps through for scope; "new" drops GitHub-synced comments. */
+/** isFresh reports whether c is an agent finding one of the latest review's runs reported. */
+function isFresh(c: ReviewComment, reviewRuns: readonly number[]): boolean {
+  return c.source !== "github" && c.run_id !== undefined && reviewRuns.includes(c.run_id);
+}
+
+/** The anchors the navigator steps through for scope; "new" keeps the latest review's agent findings. */
 export function navigableAnchors(anchors: CommentAnchor[], scope: CommentNavScope): CommentAnchor[] {
-  return scope === "new" ? anchors.filter((a) => !a.github) : anchors;
+  return scope === "new" ? anchors.filter((a) => a.fresh) : anchors;
 }
 
 // Comments in the order they appear on screen: files top-to-bottom, within a
@@ -114,7 +122,7 @@ export function navigableAnchors(anchors: CommentAnchor[], scope: CommentNavScop
 // out-of-diff section renders below every file). Comments whose file is
 // collapsed are included — navigation expands the file rather than skipping
 // them, so the total doesn't shift under the user as sections open and close.
-export function orderedComments(summaries: FileSummary[], byFile: Map<string, ReviewComment[]>, orphans: ReviewComment[]): CommentAnchor[] {
+export function orderedComments(summaries: FileSummary[], byFile: Map<string, ReviewComment[]>, orphans: ReviewComment[], reviewRuns: readonly number[] = []): CommentAnchor[] {
   const out: CommentAnchor[] = [];
   summaries.forEach((sum, fileIdx) => {
     const cs = byFile.get(sum.path);
@@ -140,9 +148,9 @@ export function orderedComments(summaries: FileSummary[], byFile: Map<string, Re
       .map((c, i) => ({ c, i, at: pos.get(commentLineSide(c) === "LEFT" ? `L:${c.line}` : `R:${c.line}`) }))
       .filter((e): e is { c: ReviewComment; i: number; at: number } => e.at !== undefined)
       .sort((a, b) => a.at - b.at || a.i - b.i);
-    for (const { c } of sorted) out.push({ id: c.id, path: sum.path, fileIdx, github: c.source === "github" });
+    for (const { c } of sorted) out.push({ id: c.id, path: sum.path, fileIdx, fresh: isFresh(c, reviewRuns) });
   });
-  for (const c of orphans) out.push({ id: c.id, path: c.path, fileIdx: -1, github: c.source === "github" });
+  for (const c of orphans) out.push({ id: c.id, path: c.path, fileIdx: -1, fresh: isFresh(c, reviewRuns) });
   return out;
 }
 
@@ -185,7 +193,7 @@ function summarize(parsed: ParsedFile, fileComments: ReviewComment[]): FileSumma
   return { path: parsed.path, additions, deletions, parsed, agentCount, ghCount };
 }
 
-export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onPushComment, onDiscussComment, onWhyComment, onAddressComment, onDeleteComment }: ReviewDiffViewProps) {
+export function ReviewDiffView({ channelId, rawDiff, comments, reviewRuns, worktreePath, onPushComment, onDiscussComment, onWhyComment, onAddressComment, onDeleteComment }: ReviewDiffViewProps) {
   const { colors } = useTheme();
   const [fileContextMenu, setFileContextMenu] = useState<{ x: number; y: number; path: string } | null>(null);
 
@@ -196,7 +204,8 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
 
   const parsedFiles = useMemo(() => parseUnifiedDiff(rawDiff), [rawDiff]);
 
-  const { byFile, orphans } = useMemo(() => splitComments(parsedFiles, comments), [parsedFiles, comments]);
+  const threaded = useMemo(() => threadOrder(comments), [comments]);
+  const { byFile, orphans } = useMemo(() => splitComments(parsedFiles, threaded), [parsedFiles, threaded]);
 
   const summaries = useMemo(() => parsedFiles.map((p) => summarize(p, byFile.get(p.path) ?? [])), [parsedFiles, byFile]);
 
@@ -269,7 +278,7 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
   // The toolbar's prev/next steps file-to-file, which is too coarse once a
   // file carries several comments. This walks individual comments instead,
   // and floats over the scroll so it stays reachable at any depth.
-  const allAnchors = useMemo(() => orderedComments(summaries, byFile, orphans), [summaries, byFile, orphans]);
+  const allAnchors = useMemo(() => orderedComments(summaries, byFile, orphans, reviewRuns), [summaries, byFile, orphans, reviewRuns]);
   const [navScope, setNavScope] = useState<CommentNavScope>(readCommentNavScope);
   const anchors = useMemo(() => navigableAnchors(allAnchors, navScope), [allAnchors, navScope]);
   const changeNavScope = useCallback((next: CommentNavScope) => {
@@ -721,11 +730,12 @@ function firstFileWithComments(summaries: FileSummary[]): number {
 // what a reviewer actually wants once a file carries several of them — the
 // toolbar's pair only moves file-to-file. Pinned bottom-right so it clears
 // the inline comment cards, which are indented from the left gutter. The
-// new/all pair picks whether it walks only this session's findings or also
-// the comments synced from GitHub.
+// new/all pair picks whether it walks only the agent findings of the latest
+// review (every run of its loop) or every comment, the earlier reviews' and
+// those synced from GitHub included.
 const SCOPES: { value: CommentNavScope; title: string }[] = [
-  { value: "new", title: "Step through the new findings from this review session" },
-  { value: "all", title: "Step through all comments, incl. those synced from GitHub" },
+  { value: "new", title: "Step through the agent's findings from the latest review" },
+  { value: "all", title: "Step through all comments, incl. earlier reviews' and those synced from GitHub" },
 ];
 
 function CommentNavigator({
@@ -1339,6 +1349,38 @@ export function verdictColor(colors: ColorPalette, v: ReviewVerdict): string {
   return v === "false_positive" ? colors.warning : colors.textDim;
 }
 
+// impactColor marks blocking comments; nice-to-haves stay quiet.
+export function impactColor(colors: ColorPalette, impact: ReviewImpact): string {
+  return impact === "blocking" ? colors.dangerText : colors.textDim;
+}
+
+// commentImpact is the impact a comment's badge shows: an agent finding's
+// own, or the verification's on the open GitHub thread the comment starts.
+export function commentImpact(c: ReviewComment): ReviewImpact | undefined {
+  if (c.source === "github") return c.thread?.status === "open" ? c.thread.impact : undefined;
+  return c.impact;
+}
+
+// threadOrder moves each GitHub reply right after the comment that starts
+// its thread, or after the last reply before it, so a thread reads top to
+// bottom wherever its comments landed in the session. A reply whose thread
+// start isn't held keeps its place.
+export function threadOrder(comments: ReviewComment[]): ReviewComment[] {
+  const roots = new Set(comments.filter((c) => !c.reply_to && c.github_id).map((c) => c.github_id));
+  const replies = new Map<number, ReviewComment[]>();
+  for (const c of comments) {
+    if (c.reply_to && roots.has(c.reply_to)) replies.set(c.reply_to, [...(replies.get(c.reply_to) ?? []), c]);
+  }
+  if (replies.size === 0) return comments;
+  const out: ReviewComment[] = [];
+  for (const c of comments) {
+    if (c.reply_to && roots.has(c.reply_to)) continue;
+    out.push(c);
+    if (!c.reply_to && c.github_id) out.push(...(replies.get(c.github_id) ?? []));
+  }
+  return out;
+}
+
 function InlineComment({
   comment,
   colors,
@@ -1373,13 +1415,16 @@ function InlineComment({
     }
   };
   const isGitHub = comment.source === "github";
-  const headerLabel = isGitHub ? (comment.author ? `@${comment.author}` : "github") : "agent";
+  const isReply = isGitHub && !!comment.reply_to;
+  const headerLabel = `${isReply ? "↳ " : ""}${isGitHub ? (comment.author ? `@${comment.author}` : "github") : "agent"}`;
+  const impact = commentImpact(comment);
   return (
     <div
       data-testid={`review-comment-${comment.id}`}
       ref={(el) => registerRef(comment.id, el)}
       style={{
-        margin: "4px 8px 4px 88px",
+        // Replies sit indented under the comment that starts their thread.
+        margin: isReply ? "2px 8px 2px 112px" : "4px 8px 4px 88px",
         padding: "6px 10px",
         borderLeft: `3px solid ${isGitHub ? colors.textDim : colors.active}`,
         background: colors.surface,
@@ -1431,6 +1476,37 @@ function InlineComment({
             title={comment.verdict_reason ? `Dedup check: ${comment.verdict_reason}` : "Dedup check against the code"}
           >
             {verdictLabel(comment.verdict)}
+          </span>
+        )}
+        {comment.thread && (
+          <span
+            data-testid={`review-comment-thread-${comment.id}`}
+            style={{
+              fontSize: 9,
+              padding: "0 4px",
+              borderRadius: 3,
+              border: `1px solid ${colors.textDim}`,
+              color: colors.textDim,
+            }}
+            title={comment.thread.reason ? `Verification: ${comment.thread.reason}` : "The verification's check of this thread"}
+          >
+            {comment.thread.status === "addressed" ? "addressed" : "still open"}
+          </span>
+        )}
+        {impact && (
+          <span
+            data-testid={`review-comment-impact-${comment.id}`}
+            style={{
+              fontSize: 9,
+              padding: "0 4px",
+              borderRadius: 3,
+              border: `1px solid ${impactColor(colors, impact)}`,
+              color: impactColor(colors, impact),
+              fontWeight: impact === "blocking" ? 600 : undefined,
+            }}
+            title={impact === "blocking" ? "Blocks approving the PR" : "Worth doing, but doesn't block approving the PR"}
+          >
+            {impactLabel(impact)}
           </span>
         )}
         {comment.outdated && (

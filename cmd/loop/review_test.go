@@ -1245,15 +1245,21 @@ func (s *MainSuite) TestNewReviewDedupCmd() {
 }
 
 // --no-verify asks the run to skip the verification step; without it the
-// config decides.
+// config decides. --scope overrides the session's scope for the run; auto
+// is sent as "".
 func (s *MainSuite) TestNewReviewRunCmdVerifyFlag() {
 	cases := []struct {
 		name     string
 		args     []string
 		wantBody string
+		wantErr  string
 	}{
-		{"config decides", nil, `{}`},
-		{"no verify", []string{"--no-verify"}, `{"verify":false}`},
+		{name: "config decides", wantBody: `{}`},
+		{name: "no verify", args: []string{"--no-verify"}, wantBody: `{"verify":false}`},
+		{name: "incremental", args: []string{"--scope", "incremental", "--no-verify"}, wantBody: `{"scope":"incremental","verify":false}`},
+		{name: "full", args: []string{"--scope", "full"}, wantBody: `{"scope":"full"}`},
+		{name: "auto", args: []string{"--scope", "auto"}, wantBody: `{"scope":""}`},
+		{name: "unknown scope", args: []string{"--scope", "partial"}, wantErr: `invalid --scope "partial"`},
 	}
 	for _, tc := range cases {
 		s.Run(tc.name, func() {
@@ -1270,7 +1276,13 @@ func (s *MainSuite) TestNewReviewRunCmdVerifyFlag() {
 			cmd.SetArgs(append([]string{"run", "--channel-id", "ch1", "--api-url", ts.URL}, tc.args...))
 			cmd.SetOut(new(bytes.Buffer))
 			cmd.SetErr(new(bytes.Buffer))
-			require.NoError(s.T(), cmd.Execute())
+			err := cmd.Execute()
+			if tc.wantErr != "" {
+				require.ErrorContains(s.T(), err, tc.wantErr)
+				require.Empty(s.T(), body)
+				return
+			}
+			require.NoError(s.T(), err)
 			require.Equal(s.T(), tc.wantBody, body)
 		})
 	}

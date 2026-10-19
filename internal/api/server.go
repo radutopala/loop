@@ -531,11 +531,15 @@ func (s *Server) registerReviewRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/channels/{id}/review/stop", s.review.handleReviewStop)
 	mux.HandleFunc("PUT /api/channels/{id}/review/fork", s.review.handleReviewSetFork)
 	mux.HandleFunc("PUT /api/channels/{id}/review/agent", s.review.handleReviewSetAgent)
+	mux.HandleFunc("PUT /api/channels/{id}/review/scope", s.review.handleReviewSetScope)
+	mux.HandleFunc("GET /api/channels/{id}/review/stats", s.review.handleReviewStats)
 	mux.HandleFunc("POST /api/channels/{id}/review/comments/{cid}/push", s.review.handleReviewPushComment)
 	mux.HandleFunc("DELETE /api/channels/{id}/review/comments/{cid}", s.review.handleReviewDeleteComment)
 	mux.HandleFunc("PATCH /api/channels/{id}/review/comments/{cid}", s.review.handleReviewUpdateComment)
 	mux.HandleFunc("POST /api/channels/{id}/review/push-all", s.review.handleReviewPushAll)
 	mux.HandleFunc("POST /api/channels/{id}/review/comments", s.review.handleReviewIngestComments)
+	mux.HandleFunc("POST /api/channels/{id}/review/comments/{cid}/assess", s.review.handleReviewAssessThread)
+	mux.HandleFunc("POST /api/channels/{id}/review/approve", s.review.handleReviewApprove)
 }
 
 // registerFileRoutes registers the file tree, paste-image, readme, and memory routes.

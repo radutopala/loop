@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"github.com/radutopala/loop/internal/events"
 
 	"github.com/radutopala/loop/internal/agent"
+	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/githubapi"
 	"github.com/radutopala/loop/internal/osutil"
 
@@ -37,8 +39,15 @@ type reviewService struct {
 	verifyTimeout time.Duration
 	// messages posts the verification step's summary to the channel.
 	messages MessageSender
-	mu       sync.Mutex // guards active
-	active   map[string]context.CancelFunc
+	// history keeps runs and findings past the session; nil keeps none.
+	history ReviewHistoryStore
+	mu      sync.Mutex // guards active and runIDs
+	active  map[string]context.CancelFunc
+	// runIDs maps a channel to its run in flight's history id, so the
+	// findings it reports are recorded against it.
+	runIDs map[string]int64
+	// newReviewID names a review a Run starts.
+	newReviewID func() string
 }
 
 // newReviewService creates the review domain with its run registry ready.
@@ -46,7 +55,7 @@ type reviewService struct {
 // arrives later via the Server setters — the daemon builds those after the
 // server exists, and tests inject only the pieces a case needs.
 func newReviewService(deps *serverDeps) *reviewService {
-	return &reviewService{deps: deps, active: map[string]context.CancelFunc{}}
+	return &reviewService{deps: deps, active: map[string]context.CancelFunc{}, runIDs: map[string]int64{}, newReviewID: rand.Text}
 }
 
 // GitHubReview is the subset of githubapi.Client the review panel needs.
@@ -62,6 +71,7 @@ type GitHubReview interface {
 	FetchPRReviewComments(ctx context.Context, workdir, ghUser string, slug githubapi.RepoSlug, prNum int) ([]githubapi.PRReviewComment, error)
 	PostPRComment(ctx context.Context, workdir, ghUser string, slug githubapi.RepoSlug, prNum int, commitID, path, side string, line int, body string) (int64, error)
 	DeletePRReviewComment(ctx context.Context, workdir, ghUser string, slug githubapi.RepoSlug, commentID int64) error
+	ApprovePR(ctx context.Context, workdir, ghUser string, slug githubapi.RepoSlug, prNum int, commitID, body string) error
 }
 
 // ReviewRunner kicks off a single review pass. Findings arrive either
@@ -115,19 +125,43 @@ func (s *reviewService) refreshReviewSession(ctx context.Context, channelID, dir
 		// Put replaces the whole session, so the user's fork and agent
 		// choices have to be carried across — Run refreshes right before it
 		// reads them.
-		ForkMode:      sess.ForkMode,
-		ForkSessionID: sess.ForkSessionID,
-		Model:         sess.Model,
-		Effort:        sess.Effort,
-		RunSessionIDs: sess.RunSessionIDs,
-		TranscriptDir: sess.TranscriptDir,
+		ForkMode:       sess.ForkMode,
+		ForkSessionID:  sess.ForkSessionID,
+		Model:          sess.Model,
+		Effort:         sess.Effort,
+		Scope:          sess.Scope,
+		LastRunScope:   sess.LastRunScope,
+		LastRunFromSHA: sess.LastRunFromSHA,
+		ReviewedSHA:    sess.ReviewedSHA,
+		ApprovedSHA:    sess.ApprovedSHA,
+		Threads:        sess.Threads,
+		ReviewID:       sess.ReviewID,
+		ReviewRuns:     sess.ReviewRuns,
+		HistoryDir:     sess.HistoryDir,
 	})
+	s.saveOutcomes(channelID, sess.Comments, merged)
 	if raw != sess.RawDiff {
 		if hub := s.deps.eventsHub; hub != nil {
 			hub.BroadcastReviewDiff(channelID, events.ReviewDiffEventData{RawDiff: raw})
 		}
 	}
 	return s.sessions.Get(channelID), nil
+}
+
+// saveOutcomes records the pushed agent comments whose GitHub thread was
+// resolved or outdated since before.
+func (s *reviewService) saveOutcomes(channelID string, before, after []*review.Comment) {
+	was := make(map[string]string, len(before))
+	for _, c := range before {
+		if c != nil {
+			was[c.ID] = findingOutcome(c)
+		}
+	}
+	for _, c := range after {
+		if c.Source != "github" && c.GitHubID > 0 && findingOutcome(c) != was[c.ID] {
+			s.saveFinding(channelID, c)
+		}
+	}
 }
 
 // mergeReviewComments keeps the session's agent comments and replaces its
@@ -201,6 +235,7 @@ func (s *reviewService) fetchExistingReviewComments(ctx context.Context, dirPath
 			Outdated:  c.Outdated,
 			Resolved:  c.Resolved,
 			GitHubID:  c.ID,
+			ReplyTo:   c.ReplyTo,
 		})
 	}
 	return out
@@ -242,7 +277,10 @@ func (s *reviewService) pushOneComment(ctx context.Context, channelID string, se
 	if ghID == 0 {
 		return nil
 	}
-	s.sessions.MarkPushed(channelID, c.ID, ghID)
+	if s.sessions.MarkPushed(channelID, c.ID, ghID) {
+		pushed, _ := s.sessions.FindComment(channelID, c.ID)
+		s.saveFinding(channelID, pushed)
+	}
 	return nil
 }
 
@@ -280,12 +318,15 @@ func (s *reviewService) runReviewAsync(runCtx context.Context, before map[string
 	req.OnComment = func(c *review.Comment) {
 		s.ingestComment(channelID, worktreePath, parentDirPath, c)
 	}
+	states := s.findingStates(channelID, true)
 	resp, err := s.runner.Run(ctx, req)
-	// Record the session even when the run failed: a timed-out run has
+	// Attach the transcript even when the run failed: a timed-out run has
 	// usually already reported findings, and its transcript is exactly
 	// what someone asking "why was this flagged?" needs to read.
+	var sessionID, model string
 	if resp != nil {
-		s.sessions.AppendRunSession(channelID, resp.SessionID, s.transcriptDir(worktreePath))
+		s.attachTranscript(channelID, worktreePath, resp.SessionID, states)
+		sessionID, model = resp.SessionID, resp.Model
 	}
 	if err != nil {
 		msg := err.Error()
@@ -300,13 +341,18 @@ func (s *reviewService) runReviewAsync(runCtx context.Context, before map[string
 		// Stop, session-delete or shutdown fired the registered cancel
 		// func. That's no error: see settleStopped.
 		if errors.Is(err, context.Canceled) || runCtx.Err() == context.Canceled {
+			s.finishHistoryRun(channelID, db.ReviewRunCancelled, sessionID, model, "")
 			s.settleStopped(channelID)
 			return
 		}
+		s.finishHistoryRun(channelID, db.ReviewRunFailed, sessionID, model, msg)
 		s.sessions.UpdateStatus(channelID, review.StatusError, msg)
 		s.broadcastReviewStatus(channelID, review.StatusError, msg)
 		return
 	}
+	// The run reviewed the head: the next one's range starts there, so it
+	// is recorded before the dedup pass and the verification step.
+	s.finishHistoryRun(channelID, db.ReviewRunCompleted, sessionID, model, "")
 	if verify.on {
 		s.verifyAfterRun(runCtx, channelID, parentDirPath, verify.prompt)
 		return
@@ -320,6 +366,7 @@ func (s *reviewService) runReviewAsync(runCtx context.Context, before map[string
 		s.settleStopped(channelID)
 		return
 	}
+	s.sessions.MarkReviewed(channelID)
 	s.sessions.UpdateStatus(channelID, review.StatusReady, "")
 	s.broadcastReviewStatus(channelID, review.StatusReady, "")
 }
@@ -388,6 +435,59 @@ func (s *reviewService) transcriptDir(worktreePath string) string {
 	return filepath.Join(home, ".claude", "projects", osutil.EncodeClaudeProjectPath(worktreePath))
 }
 
+// findingState is what an agent pass can change of a comment.
+type findingState struct {
+	path, side, body, category, verdict, verdictReason string
+	line                                               int
+}
+
+// findingSnapshot is channelID's agent comments before an agent pass, for
+// attachTranscript to tell which of them the pass reported or changed.
+// Without reasons, a verdict reason reworded alone doesn't count as a
+// change: a dedup pass restates every candidate's verdict, and its
+// transcript belongs only on the comments it actually changed.
+type findingSnapshot struct {
+	states  map[string]findingState
+	reasons bool
+}
+
+// findingStates snapshots channelID's agent comments; see findingSnapshot.
+func (s *reviewService) findingStates(channelID string, reasons bool) findingSnapshot {
+	snap := findingSnapshot{states: map[string]findingState{}, reasons: reasons}
+	if sess := s.sessions.Get(channelID); sess != nil {
+		for _, c := range sess.Comments {
+			st := findingState{c.Path, c.Side, c.Body, c.Category, c.Verdict, "", c.Line}
+			if reasons {
+				st.verdictReason = c.VerdictReason
+			}
+			snap.states[c.ID] = st
+		}
+	}
+	return snap
+}
+
+// attachTranscript adds the transcript of the agent pass that ran in
+// sessionID under worktreePath to the agent comments it reported or
+// changed since before, and to also, records them and broadcasts them.
+func (s *reviewService) attachTranscript(channelID, worktreePath, sessionID string, before findingSnapshot, also ...string) {
+	dir := s.transcriptDir(worktreePath)
+	if sessionID == "" || dir == "" {
+		return
+	}
+	changed := map[string]bool{}
+	for _, id := range also {
+		changed[id] = true
+	}
+	for id, st := range s.findingStates(channelID, before.reasons).states {
+		if prev, ok := before.states[id]; !ok || prev != st {
+			changed[id] = true
+		}
+	}
+	for _, c := range s.sessions.AddTranscript(channelID, filepath.Join(dir, sessionID+".jsonl"), changed) {
+		s.commentUpdated(channelID, c)
+	}
+}
+
 // ingestComment persists one agent-reported finding into the channel's
 // review session and broadcasts it to the panel. Returns false when the
 // session is gone or already holds a finding with the same id, and the
@@ -395,9 +495,11 @@ func (s *reviewService) transcriptDir(worktreePath string) string {
 // parentDirPath feed the widened-context rediff, same as the in-run
 // callback used to.
 func (s *reviewService) ingestComment(channelID, worktreePath, parentDirPath string, c *review.Comment) bool {
+	c.RunID = s.historyRunID(channelID)
 	if !s.sessions.AddComment(channelID, c) {
 		return false
 	}
+	s.saveFinding(channelID, c)
 	if hub := s.deps.eventsHub; hub != nil {
 		hub.BroadcastReviewComment(channelID, reviewCommentEvent(c))
 	}
@@ -409,26 +511,29 @@ func (s *reviewService) ingestComment(channelID, worktreePath, parentDirPath str
 // result. nil when the comment is gone or isn't one the pass may edit.
 func (s *reviewService) editComment(channelID, commentID string, edit func(*review.Comment)) *review.Comment {
 	c := s.sessions.EditLocalComment(channelID, commentID, edit)
-	if c == nil {
-		return nil
-	}
-	if hub := s.deps.eventsHub; hub != nil {
-		hub.BroadcastReviewCommentUpdated(channelID, reviewCommentEvent(c))
+	if c != nil {
+		s.commentUpdated(channelID, c)
 	}
 	return c
 }
 
-// setVerdict records the dedup pass's verdict on an agent comment and
-// broadcasts the result. nil when the comment is gone or a GitHub one.
+// setVerdict records a verdict (and a real one's impact) on an agent
+// comment and broadcasts the result. nil when the comment is gone or a
+// GitHub one.
 func (s *reviewService) setVerdict(channelID string, v review.DedupVerdict) *review.Comment {
-	c := s.sessions.SetVerdict(channelID, v.ID, v.Verdict, v.Reason)
-	if c == nil {
-		return nil
+	c := s.sessions.SetVerdict(channelID, v)
+	if c != nil {
+		s.commentUpdated(channelID, c)
 	}
+	return c
+}
+
+// commentUpdated records a comment changed in place and broadcasts it.
+func (s *reviewService) commentUpdated(channelID string, c *review.Comment) {
+	s.saveFinding(channelID, c)
 	if hub := s.deps.eventsHub; hub != nil {
 		hub.BroadcastReviewCommentUpdated(channelID, reviewCommentEvent(c))
 	}
-	return c
 }
 
 // reviewCommentEvent is the panel's view of c in a review.comment or
@@ -443,6 +548,9 @@ func reviewCommentEvent(c *review.Comment) events.ReviewCommentEventData {
 		Category:      c.Category,
 		Verdict:       c.Verdict,
 		VerdictReason: c.VerdictReason,
+		Impact:        c.Impact,
+		Transcripts:   c.Transcripts,
+		RunID:         c.RunID,
 	}
 }
 
@@ -505,6 +613,7 @@ func (s *reviewService) unregisterReviewRun(channelID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.active, channelID)
+	delete(s.runIDs, channelID)
 }
 
 // cancelReviewRun cancels the agent ctx of an in-flight run for

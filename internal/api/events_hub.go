@@ -76,6 +76,7 @@ const (
 	EventReviewDiff                = "review.diff"
 	EventReviewCommentRemoved      = "review.comment_removed"
 	EventReviewCommentUpdated      = "review.comment_updated"
+	EventReviewApproved            = "review.approved"
 	EventPluginsChanged            = "plugins.changed"
 	EventPluginRunStarted          = "plugin.run_started"
 )
@@ -295,6 +296,16 @@ func (h *EventsHub) BroadcastReviewCommentUpdated(channelID string, data events.
 		Type:      EventReviewCommentUpdated,
 		ChannelID: channelID,
 		Data:      data,
+	})
+}
+
+// BroadcastReviewApproved sends a review.approved event once the PR under
+// review was approved on GitHub at commit.
+func (h *EventsHub) BroadcastReviewApproved(channelID string, pr int, commit string) {
+	h.Broadcast(Event{
+		Type:      EventReviewApproved,
+		ChannelID: channelID,
+		Data:      map[string]any{"channel_id": channelID, "pr": pr, "commit": commit},
 	})
 }
 

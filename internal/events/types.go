@@ -45,14 +45,17 @@ type Broadcaster interface {
 // review run, deduplicated by Comment.ID upstream so each id arrives at
 // the FE at most once.
 type ReviewCommentEventData struct {
-	ID            string `json:"id"`
-	Path          string `json:"path"`
-	Line          int    `json:"line"`
-	Side          string `json:"side"`
-	Body          string `json:"body"`
-	Category      string `json:"category,omitempty"`
-	Verdict       string `json:"verdict,omitempty"`
-	VerdictReason string `json:"verdict_reason,omitempty"`
+	ID            string   `json:"id"`
+	Path          string   `json:"path"`
+	Line          int      `json:"line"`
+	Side          string   `json:"side"`
+	Body          string   `json:"body"`
+	Category      string   `json:"category,omitempty"`
+	Verdict       string   `json:"verdict,omitempty"`
+	VerdictReason string   `json:"verdict_reason,omitempty"`
+	Impact        string   `json:"impact,omitempty"`
+	Transcripts   []string `json:"transcripts,omitempty"`
+	RunID         int64    `json:"run_id,omitempty"`
 }
 
 // ReviewStatusEventData is the payload for review.status events. Sent on

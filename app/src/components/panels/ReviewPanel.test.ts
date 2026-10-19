@@ -7,14 +7,20 @@ import {
   buildCheckAllPrompt,
   buildDiscussDraft,
   isActionable,
+  isBlocking,
   liveReviewRun,
+  moreMenuItems,
   reviewEffortOptions,
   reviewModelOptions,
+  reviewScopeChip,
+  runSettingsSummary,
   skippedNote,
   startedReviewRun,
   WHY_QUESTION,
   withoutComment,
+  withThreads,
   withUpdatedComment,
+  withVerdictState,
 } from "./ReviewPanel";
 
 function comment(body: string, extra: Partial<ReviewComment> = {}): ReviewComment {
@@ -43,26 +49,21 @@ describe("buildDiscussDraft", () => {
     expect(buildDiscussDraft(comment(""))).toBe("> internal/api/x.go:12\n>\n\n");
   });
 
-  it("appends one transcript path per run, oldest first", () => {
-    const sess = session({ transcript_dir: "/home/u/.claude/projects/-repo--worktrees-pr-7", run_session_ids: ["sess-1", "sess-2"] });
-    expect(buildDiscussDraft(comment("leaks the lock"), sess)).toBe(
+  it("appends the comment's transcripts, oldest first", () => {
+    const c = comment("leaks the lock", { transcripts: ["/home/u/.claude/projects/-repo--worktrees-pr-7/sess-1.jsonl", "/home/u/.claude/projects/-repo--worktrees-pr-7/sess-2.jsonl"] });
+    expect(buildDiscussDraft(c)).toBe(
       "> internal/api/x.go:12\n> leaks the lock\n>\n" +
-        "> transcripts of the review runs that produced this, oldest first:\n" +
+        "> transcripts of the review passes behind this, oldest first:\n" +
         "> /home/u/.claude/projects/-repo--worktrees-pr-7/sess-1.jsonl\n" +
         "> /home/u/.claude/projects/-repo--worktrees-pr-7/sess-2.jsonl\n\n",
     );
   });
 
-  // Half an address is worse than none: an id without its directory is not a
-  // path the agent can open, and a directory with no ids points at nothing.
-  it("omits the transcript block unless both a dir and an id are known", () => {
+  it("omits the transcript block when the comment has none", () => {
     const body = "> internal/api/x.go:12\n> leaks the lock\n\n";
-    const dir = "/home/u/.claude/projects/-repo--worktrees-pr-7";
     expect(buildDiscussDraft(comment("leaks the lock"))).toBe(body);
-    expect(buildDiscussDraft(comment("leaks the lock"), session())).toBe(body);
-    expect(buildDiscussDraft(comment("leaks the lock"), session({ run_session_ids: ["sess-1"] }))).toBe(body);
-    expect(buildDiscussDraft(comment("leaks the lock"), session({ transcript_dir: dir }))).toBe(body);
-    expect(buildDiscussDraft(comment("leaks the lock"), session({ transcript_dir: dir, run_session_ids: [""] }))).toBe(body);
+    expect(buildDiscussDraft(comment("leaks the lock", { transcripts: [] }))).toBe(body);
+    expect(buildDiscussDraft(comment("leaks the lock", { transcripts: [""] }))).toBe(body);
   });
 
   // The draft always ends with a blank line so the caret lands below the
@@ -75,20 +76,20 @@ describe("buildDiscussDraft", () => {
   // the agent on its own: it lands in the blank line Discuss leaves for the
   // user, below the quote rather than inside it.
   it("types the question into the blank line when one is given", () => {
-    expect(buildDiscussDraft(comment("leaks the lock"), null, WHY_QUESTION)).toBe(`> internal/api/x.go:12\n> leaks the lock\n\n${WHY_QUESTION}`);
+    expect(buildDiscussDraft(comment("leaks the lock"), WHY_QUESTION)).toBe(`> internal/api/x.go:12\n> leaks the lock\n\n${WHY_QUESTION}`);
   });
 
   it("keeps the question below the transcript block", () => {
-    const sess = session({ transcript_dir: "/home/u/.claude/projects/-repo--worktrees-pr-7", run_session_ids: ["sess-1"] });
-    expect(buildDiscussDraft(comment("leaks the lock"), sess, WHY_QUESTION)).toBe(
+    const c = comment("leaks the lock", { transcripts: ["/home/u/.claude/projects/-repo--worktrees-pr-7/sess-1.jsonl"] });
+    expect(buildDiscussDraft(c, WHY_QUESTION)).toBe(
       "> internal/api/x.go:12\n> leaks the lock\n>\n" +
-        "> transcripts of the review runs that produced this, oldest first:\n" +
+        "> transcripts of the review passes behind this, oldest first:\n" +
         `> /home/u/.claude/projects/-repo--worktrees-pr-7/sess-1.jsonl\n\n${WHY_QUESTION}`,
     );
   });
 
   it("falls back to the plain draft for an empty ask", () => {
-    expect(buildDiscussDraft(comment("leaks the lock"), null, "")).toBe("> internal/api/x.go:12\n> leaks the lock\n\n");
+    expect(buildDiscussDraft(comment("leaks the lock"), "")).toBe("> internal/api/x.go:12\n> leaks the lock\n\n");
   });
 
   // The question is sent verbatim, so its wording is part of the contract.
@@ -127,28 +128,25 @@ describe("buildAddressPrompt", () => {
   // Address replaced "Push to chat", which sent this metadata without the
   // transcripts. Carrying both is the whole reason the two buttons collapsed
   // into one: the agent gets the location and the reasoning behind the finding.
-  it("appends one transcript path per run, oldest first", () => {
-    const sess = session({ transcript_dir: dir, run_session_ids: ["sess-1", "sess-2"] });
-    expect(buildAddressPrompt(comment("leaks the lock"), sess)).toBe(
+  it("appends the comment's transcripts, oldest first", () => {
+    const c = comment("leaks the lock", { transcripts: [`${dir}/sess-1.jsonl`, `${dir}/sess-2.jsonl`] });
+    expect(buildAddressPrompt(c, session())).toBe(
       "Please address this review comment from the PR:\n\n" +
         "- File: `internal/api/x.go`\n" +
         "- Line: 12 (RIGHT \u2014 added/new)\n\n" +
         "Comment:\n\n" +
         "> leaks the lock\n\n" +
-        "Transcripts of the review runs that produced this, oldest first:\n" +
+        "Transcripts of the review passes behind this, oldest first:\n" +
         `- ${dir}/sess-1.jsonl\n` +
         `- ${dir}/sess-2.jsonl`,
     );
   });
 
-  // Same rule as the Discuss draft: half an address is worse than none.
-  it("omits the transcript block unless both a dir and an id are known", () => {
+  it("omits the transcript block when the comment has none", () => {
     const tail = "> leaks the lock";
     expect(buildAddressPrompt(comment("leaks the lock")).endsWith(tail)).toBe(true);
     expect(buildAddressPrompt(comment("leaks the lock"), session()).endsWith(tail)).toBe(true);
-    expect(buildAddressPrompt(comment("leaks the lock"), session({ run_session_ids: ["sess-1"] })).endsWith(tail)).toBe(true);
-    expect(buildAddressPrompt(comment("leaks the lock"), session({ transcript_dir: dir })).endsWith(tail)).toBe(true);
-    expect(buildAddressPrompt(comment("leaks the lock"), session({ transcript_dir: dir, run_session_ids: [""] })).endsWith(tail)).toBe(true);
+    expect(buildAddressPrompt(comment("leaks the lock", { transcripts: [""] })).endsWith(tail)).toBe(true);
   });
 
   it("quotes every line of a multi-paragraph finding", () => {
@@ -181,30 +179,39 @@ describe("buildAddressAllPrompt", () => {
     expect(buildAddressAllPrompt([comment("leaks the lock")])).toContain("the following 1 review comment from the PR:");
   });
 
-  // Session-level, not finding-level: the runs produced the whole batch, so
-  // the paths are listed once at the end rather than repeated under each block.
-  it("lists the run transcripts once, after the last finding", () => {
-    const sess = session({ transcript_dir: dir, run_session_ids: ["sess-1", "sess-2"] });
-    expect(buildAddressAllPrompt([comment("leaks the lock"), comment("drops the error", { id: "c2" })], sess)).toBe(
-      "Please address the following 2 review comments from the PR:\n\n" +
+  // Each finding carries its own transcripts under its block, as Address
+  // does, so the agent knows which pass explains which finding; one run's
+  // transcript shared by two findings shows under both.
+  it("lists each finding's transcripts under its block", () => {
+    const cs = [
+      comment("leaks the lock", { transcripts: [`${dir}/sess-1.jsonl`, `${dir}/dedup.jsonl`] }),
+      comment("drops the error", { id: "c2", transcripts: [`${dir}/sess-1.jsonl`, `${dir}/sess-2.jsonl`] }),
+      comment("off by one", { id: "c3" }),
+    ];
+    expect(buildAddressAllPrompt(cs, session())).toBe(
+      "Please address the following 3 review comments from the PR:\n\n" +
         "---\n" +
         "### 1. `internal/api/x.go`:12 (RIGHT — added/new)\n\n" +
         "> leaks the lock\n\n" +
+        "Transcripts of the review passes behind this, oldest first:\n" +
+        `- ${dir}/sess-1.jsonl\n` +
+        `- ${dir}/dedup.jsonl\n\n` +
         "---\n" +
         "### 2. `internal/api/x.go`:12 (RIGHT — added/new)\n\n" +
         "> drops the error\n\n" +
-        "---\n\n" +
-        "Transcripts of the review runs that produced these, oldest first:\n" +
+        "Transcripts of the review passes behind this, oldest first:\n" +
         `- ${dir}/sess-1.jsonl\n` +
-        `- ${dir}/sess-2.jsonl`,
+        `- ${dir}/sess-2.jsonl\n\n` +
+        "---\n" +
+        "### 3. `internal/api/x.go`:12 (RIGHT — added/new)\n\n" +
+        "> off by one",
     );
   });
 
-  it("omits the transcript block unless both a dir and an id are known", () => {
+  it("omits the transcript block when no finding has one", () => {
     const tail = "> leaks the lock";
     expect(buildAddressAllPrompt([comment("leaks the lock")]).endsWith(tail)).toBe(true);
-    expect(buildAddressAllPrompt([comment("leaks the lock")], session({ transcript_dir: dir })).endsWith(tail)).toBe(true);
-    expect(buildAddressAllPrompt([comment("leaks the lock")], session({ run_session_ids: ["sess-1"] })).endsWith(tail)).toBe(true);
+    expect(buildAddressAllPrompt([comment("leaks the lock", { transcripts: [] })], session()).endsWith(tail)).toBe(true);
   });
 
   it("carries the author when the finding has one", () => {
@@ -259,6 +266,17 @@ describe("isActionable", () => {
   });
 });
 
+describe("isBlocking", () => {
+  it.each([
+    ["blocking", { verdict: "real", impact: "blocking" }, true],
+    ["nice to have", { verdict: "real", impact: "nice_to_have" }, false],
+    ["unjudged", {}, false],
+    ["pushed blocking", { pushed: true, verdict: "real", impact: "blocking" }, false],
+  ] as [string, Partial<ReviewComment>, boolean][])("%s", (_name, extra, want) => {
+    expect(isBlocking(comment("b", extra))).toBe(want);
+  });
+});
+
 describe("skippedNote", () => {
   it("names the unpushed dismissed comments by verdict", () => {
     const cs = [
@@ -308,6 +326,28 @@ describe("allActionItems", () => {
   it("says what Address all and Push all skip", () => {
     const list = allActionItems({ newCount: 12, pendingCount: 11, skipped: " · skips 1 false positive", busy: false, onCheckAll: () => {}, onAddressAll: () => {}, onPushAll: () => {} });
     expect(list.map((it) => it.label)).toEqual(["Check all (12)", "Address all (11) · skips 1 false positive", "Push all to GitHub (11) · skips 1 false positive"]);
+  });
+
+  it("adds the blocking variants when only some are blocking", () => {
+    const calls: string[] = [];
+    const base = {
+      newCount: 0,
+      pendingCount: 3,
+      busy: false,
+      onCheckAll: () => {},
+      onAddressAll: () => {},
+      onPushAll: () => {},
+      onAddressBlocking: () => calls.push("address"),
+      onPushBlocking: () => calls.push("push"),
+    };
+    const list = allActionItems({ ...base, blockingCount: 2 });
+    expect(list.map((it) => it.label)).toEqual(["Address all (3)", "Address blocking only (2)", "Push all to GitHub (3)", "Push blocking to GitHub (2)"]);
+    list[1]!.onClick();
+    list[3]!.onClick();
+    expect(calls).toEqual(["address", "push"]);
+    // None blocking, or all of them: the All items already say it.
+    expect(allActionItems({ ...base, blockingCount: 0 })).toHaveLength(2);
+    expect(allActionItems({ ...base, blockingCount: 3 })).toHaveLength(2);
   });
 
   it("does nothing while another action is busy", () => {
@@ -379,6 +419,118 @@ describe("withUpdatedComment", () => {
   it("keeps a missing session missing", () => {
     expect(withUpdatedComment(null, { id: "a", body: "x" })).toBeNull();
   });
+
+  // The event leaves out empty fields: a body edit clears the verdict and
+  // impact, and the event then carries neither.
+  it("clears a verdict, its reason and impact the event leaves out", () => {
+    const sess = session({ comments: [comment("old", { id: "a", verdict: "real", verdict_reason: "line 3", impact: "blocking" })] });
+    const got = withUpdatedComment(sess, { id: "a", body: "new" })?.comments[0];
+    expect(got?.verdict).toBeUndefined();
+    expect(got?.verdict_reason).toBeUndefined();
+    expect(got?.impact).toBeUndefined();
+  });
+
+  it("takes a new verdict and impact", () => {
+    const sess = session({ comments: [comment("b", { id: "a" })] });
+    const got = withUpdatedComment(sess, { id: "a", body: "b", verdict: "real", verdict_reason: "r", impact: "nice_to_have" })?.comments[0];
+    expect(got).toMatchObject({ verdict: "real", verdict_reason: "r", impact: "nice_to_have" });
+  });
+});
+
+describe("withVerdictState", () => {
+  it("takes the threads, the reviewed and approved heads and the review's runs, and keeps the rest", () => {
+    const held = session({
+      status: "reviewing",
+      raw_diff: "diff",
+      comments: [comment("a")],
+      reviewed_sha: "old",
+      approved_sha: "old",
+      threads: { "1": { status: "open" } },
+      review_id: "r0",
+      review_runs: [3],
+    });
+    const fresh = session({ status: "ready", comments: [], reviewed_sha: "abc", threads: { "1": { status: "addressed" } }, review_id: "r1", review_runs: [4, 5] });
+    expect(withVerdictState(held, fresh)).toEqual({
+      ...held,
+      reviewed_sha: "abc",
+      approved_sha: undefined,
+      threads: { "1": { status: "addressed" } },
+      review_id: "r1",
+      review_runs: [4, 5],
+    });
+  });
+
+  it("keeps a missing session missing", () => {
+    expect(withVerdictState(null, session())).toBeNull();
+  });
+});
+
+describe("withThreads", () => {
+  const root = comment("root", { id: "r", source: "github", github_id: 1 });
+  const reply = comment("reply", { id: "re", source: "github", github_id: 2, reply_to: 1 });
+  const agent = comment("agent", { id: "ag", github_id: 1 });
+
+  it("hands each GitHub thread start its assessment", () => {
+    const got = withThreads([root, reply, agent], { "1": { status: "open", impact: "blocking", reason: "r" }, "2": { status: "addressed" } });
+    expect(got[0]).toEqual({ ...root, thread: { status: "open", impact: "blocking", reason: "r" } });
+    expect(got[1]).toBe(reply);
+    expect(got[2]).toBe(agent);
+  });
+
+  it("leaves the comments as they are without assessments", () => {
+    const cs = [root, reply];
+    expect(withThreads(cs)).toBe(cs);
+    expect(withThreads(cs, {})[0]).toBe(root);
+  });
+});
+
+describe("moreMenuItems", () => {
+  function items(extra: Partial<Parameters<typeof moreMenuItems>[0]> = {}) {
+    const calls: string[] = [];
+    const list = moreMenuItems({
+      syncDisabled: false,
+      all: [{ label: "Check all (1)", onClick: () => calls.push("check") }],
+      approveAnyway: false,
+      showStats: false,
+      closeDisabled: false,
+      onSync: () => calls.push("sync"),
+      onApproveAnyway: () => calls.push("approve"),
+      onToggleStats: () => calls.push("stats"),
+      onClose: () => calls.push("close"),
+      ...extra,
+    });
+    return { list, calls };
+  }
+
+  it("lists Sync, the All actions, Stats and Close", () => {
+    const { list, calls } = items();
+    expect(list.map((it) => (it.separator ? "---" : it.label))).toEqual(["Sync with GitHub", "Check all (1)", "---", "Stats", "Close review"]);
+    expect(list[4]?.danger).toBe(true);
+    for (const it of list) it.onClick();
+    expect(calls).toEqual(["sync", "check", "stats", "close"]);
+  });
+
+  it("offers Approve anyway when asked", () => {
+    const { list, calls } = items({ approveAnyway: true });
+    const it = list.find((x) => x.label === "Approve anyway…");
+    it?.onClick();
+    expect(calls).toEqual(["approve"]);
+  });
+
+  it("leaves out what can't run, and the separator with nothing above it", () => {
+    const { list } = items({ syncDisabled: true, all: [], closeDisabled: true, showStats: true });
+    expect(list.map((it) => it.label)).toEqual(["Back to the review"]);
+  });
+});
+
+describe("runSettingsSummary", () => {
+  it.each([
+    [{ maxIter: 1, model: "", effort: "", forkMode: "", scope: "" }, "1 iteration, default model, default effort, fresh session, Auto scope"],
+    [{ maxIter: 3, model: "claude-opus-5-5", effort: "high", forkMode: "current", scope: "full" }, "3 iterations, opus-5-5, high, fork chat session, Whole PR"],
+    [{ maxIter: 2, model: "", effort: "", forkMode: "custom", scope: "incremental" }, "2 iterations, default model, default effort, fork session id, Changes since last review"],
+  ] as const)("%o", (a, want) => {
+    expect(runSettingsSummary(a)).toBe(want);
+  });
 });
 
 describe("liveReviewRun", () => {
@@ -413,5 +565,21 @@ describe("startedReviewRun", () => {
     expect(startedReviewRun(started({ run_id: "r1", workflow_name: "deploy", channel_id: "ch1" }), "ch1")).toBeNull();
     expect(startedReviewRun(started({ workflow_name: "review-loop", channel_id: "ch1" }), "ch1")).toBeNull();
     expect(startedReviewRun(started(undefined), "ch1")).toBeNull();
+  });
+});
+
+describe("reviewScopeChip", () => {
+  it("names the commit an incremental run started at", () => {
+    expect(reviewScopeChip(session({ last_run_scope: "incremental", last_run_from_sha: "abc1234def5678" }))).toBe("since abc1234");
+  });
+
+  it("says a full run reviewed the whole PR", () => {
+    expect(reviewScopeChip(session({ last_run_scope: "full" }))).toBe("whole PR");
+  });
+
+  it("is empty before any run", () => {
+    expect(reviewScopeChip(null)).toBe("");
+    expect(reviewScopeChip(session())).toBe("");
+    expect(reviewScopeChip(session({ last_run_scope: "incremental" }))).toBe("");
   });
 });

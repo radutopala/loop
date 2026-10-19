@@ -433,6 +433,57 @@ func (s *ReviewAPISuite) TestDeletePRReviewCommentTokenFailure() {
 	require.Error(s.T(), c.DeletePRReviewComment(context.Background(), "/tmp", "u", RepoSlug{Owner: "o", Name: "n"}, 1))
 }
 
+// ── ApprovePR ───────────────────────────────────────────────────────────
+
+func (s *ReviewAPISuite) TestApprovePRInvalidArgs() {
+	c := NewClientWithRunner(&dispatchRunner{})
+	slug := RepoSlug{Owner: "o", Name: "n"}
+	tests := []struct {
+		name     string
+		workdir  string
+		slug     RepoSlug
+		prNum    int
+		commitID string
+	}{
+		{"empty workdir", "", slug, 1, "abc"},
+		{"zero pr", "/tmp", slug, 0, "abc"},
+		{"empty commit", "/tmp", slug, 1, ""},
+		{"empty owner", "/tmp", RepoSlug{Name: "n"}, 1, "abc"},
+		{"empty name", "/tmp", RepoSlug{Owner: "o"}, 1, "abc"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			require.Error(s.T(), c.ApprovePR(context.Background(), tt.workdir, "", tt.slug, tt.prNum, tt.commitID, ""))
+		})
+	}
+}
+
+func (s *ReviewAPISuite) TestApprovePR() {
+	tests := []struct {
+		name    string
+		ghUser  string
+		runner  *dispatchRunner
+		wantErr string
+	}{
+		{"approved", "", &dispatchRunner{apiOut: []byte(`{"id":1}`)}, ""},
+		{"github refuses", "", &dispatchRunner{apiErr: errors.New("HTTP 422: Can not approve your own pull request")}, "own pull request"},
+		{"no token", "u", &dispatchRunner{tokenErr: errors.New("no token")}, "no token"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			c := NewClientWithRunner(tt.runner)
+			err := c.ApprovePR(context.Background(), "/tmp", tt.ghUser, RepoSlug{Owner: "acme", Name: "widgets"}, 7, "abc", "Nits only.")
+			if tt.wantErr != "" {
+				require.ErrorContains(s.T(), err, tt.wantErr)
+				return
+			}
+			require.NoError(s.T(), err)
+			args := tt.runner.calls[len(tt.runner.calls)-1].args
+			require.Equal(s.T(), []string{"api", "repos/acme/widgets/pulls/7/reviews", "--method", "POST", "-f", "event=APPROVE", "-f", "commit_id=abc", "-f", "body=Nits only."}, args)
+		})
+	}
+}
+
 // ── ListOpenPRs ──────────────────────────────────────────────────────────
 
 func (s *ReviewAPISuite) TestListOpenPRsRequiresWorkdir() {
@@ -608,6 +659,9 @@ func (s *ReviewAPISuite) TestFetchPRReviewCommentsResolvedThreadFlagsAllComments
 	require.Len(s.T(), comments, 2)
 	require.True(s.T(), comments[0].Resolved)
 	require.True(s.T(), comments[1].Resolved)
+	// A reply points at the comment that starts its thread.
+	require.Zero(s.T(), comments[0].ReplyTo)
+	require.Equal(s.T(), int64(11), comments[1].ReplyTo)
 }
 
 func (s *ReviewAPISuite) TestFetchPRReviewCommentsEmpty() {

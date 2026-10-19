@@ -141,18 +141,28 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
    - It runs the dedup pass over the whole session. If the pass fails, the
      failure is logged and the step goes on.
    - A read-only agent then reads, in the PR worktree at the reviewed
-     commit, the code each agent comment points at (GitHub comments are
-     skipped). It records a verdict (`real`, `false_positive` or
-     `already_fixed`) with a one-sentence reason through
-     `update_review_comment`, which replaces the dedup pass's verdict.
-     That tool is the only change the agent can make: it can't edit code,
-     or edit, delete or push comments.
+     commit, the code each agent comment points at. It records a verdict
+     (`real`, `false_positive` or `already_fixed`) with a one-sentence
+     reason through `update_review_comment`, which replaces the dedup
+     pass's verdict, and gives a `real` one its
+     [impact](#outcome). It also reads each unresolved GitHub thread a
+     person started, with the replies under it, and records through
+     `assess_review_thread` whether it is `addressed` or still `open`, and
+     an open one's impact. It doesn't judge whether the person is right:
+     a thread it disagrees with is still open. Those two tools are the
+     only changes the agent can make: it can't edit code, or edit, delete
+     or push comments.
    - Loop posts the agent's reply to the channel: one entry per comment
-     (id, `path:line`, category, verdict, reason, and a link to a pushed
-     comment's GitHub thread), then what the dedup pass removed, trimmed,
-     moved and marked related, and the count per verdict.
+     and thread (id, `path:line`, category, verdict or status, impact,
+     reason, and a link to a pushed comment's GitHub thread), then what
+     the dedup pass removed, trimmed, moved and marked related, and the
+     count per verdict and impact. Loop ends it with the
+     [outcome](#outcome): `Outcome: request changes: 1 blocking (a)`.
 
-   A session with no agent comments skips the step. If the agent fails
+   The step drops the previous thread assessments when it starts, and
+   records the head commit as reviewed when it ends. A session with
+   nothing to check (no agent comment and no unresolved thread a person
+   started) runs no agent and is marked reviewed. If the agent fails
    or times out (15 minutes), the session goes to `error`. Stop cancels
    the step. Turn the step off with `review.verify: false` (see
    [Configuration](#configuration)), or for one run with
@@ -171,22 +181,109 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
    `report_review_findings` MCP tool — see
    [Required output format](#required-output-format).
 3. **Push** — each comment ships with **Push** (single), and the header's
-   **All ▾** menu carries **Push all to GitHub (N)** (when at least one
+   **⋯** menu carries **Push all to GitHub (N)** (when at least one
    comment is unpushed). Push all, like **Address all**, leaves out the
    comments the dedup pass marked `false_positive` or `already_fixed`;
-   their own **Push** still sends them. The backend uses `gh api ... /pulls/N/comments` against the
+   their own **Push** still sends them. When some, but not all, of
+   those are judged blocking, **Push blocking to GitHub (N)** sends only
+   the blocking ones (`push-all?impact=blocking`). The backend uses `gh api ... /pulls/N/comments` against the
    captured head SHA so comments anchor to the right commit even if the PR
    is force-pushed later. A pushed comment stays one comment: when Sync or
    a run reads the PR's comments back, GitHub's copy of it is folded into
    the finding, which takes its link and outdated/resolved state. GitHub
    is not the only exit — see
    [Handing a finding to the agent](#handing-a-finding-to-the-agent).
-4. **Close** — closing the session deletes the in-memory session record
-   and removes the worktree on disk. Pushed comments remain on GitHub.
+4. **Approve** — once the [outcome](#outcome) allows it, **Approve on
+   GitHub** approves the PR. See [Approve](#approve).
+5. **Close** — closing the session deletes the session record and removes
+   the worktree on disk. Pushed comments remain on GitHub, and the agent's
+   findings remain in the [review history](#review-history).
+
+## Header
+
+The header's first row holds the [outcome](#outcome) chip, **Approve on
+GitHub**, the run button (its **▾** picks the run mode), **Stop** while a
+review or a loop runs, **⚙** and **⋯**:
+
+- **⚙** shows or hides the settings row: the iterations, the
+  [model and effort](#model-and-effort), the
+  [session to fork](#forking-the-chat-session) and the
+  [scope](#incremental-re-review). Its tooltip sums up what the next run
+  goes with while the row is hidden.
+- **⋯** holds what doesn't need to sit in the header: **Sync with
+  GitHub**, **Check all (N)**, **Address all (N)**, **Address blocking
+  only (N)**, **Push all to GitHub (N)** and **Push blocking to GitHub
+  (N)** (see [Handing a finding to the agent](#handing-a-finding-to-the-agent)),
+  **Approve anyway…** when the outcome doesn't allow a plain approval,
+  **Stats** and **Close review**. An item that can't run now is left out.
+
+The second row shows the base and head branches with the head commit, the
+status, the scope chip and the loop chip.
+
+## Outcome
+
+The outcome says whether the PR can be approved, from the session's
+comments as they stand:
+
+| State | When |
+|-------|------|
+| `request_changes` | Something blocking is left |
+| `unknown` | The head commit isn't reviewed yet, or something is left to judge |
+| `approve_with_nits` | Only nice-to-haves are left |
+| `approve` | Nothing is left open |
+
+Each comment counts as follows; resolved ones don't count at all:
+
+- An **agent comment** counts when its verdict is `real`, with its
+  **impact**: `blocking` when merging it as is would do harm (wrong
+  behaviour in production, data loss, a security hole, a broken build,
+  tests, API, contract or migration), `nice_to_have` when the code works
+  and the finding would make it better (style, naming, docs, test gaps).
+  The dedup pass and the verification step record it with the verdict;
+  `false_positive` and `already_fixed` carry none. A comment without a
+  verdict, or a `real` one without an impact, is left to judge.
+- An **unresolved GitHub thread** a person started counts by the
+  verification step's assessment: an `addressed` one doesn't count, an
+  `open` one counts with its impact, and one not assessed yet is left to
+  judge. Replies don't count on their own; the step weighs them when it
+  assesses the thread.
+
+Blocking wins: anything blocking makes it `request_changes`. Otherwise
+the outcome is `unknown` until the verification step has reviewed the
+session's current head commit, and while anything is left to judge. A verification step that finds
+nothing to check still marks the head reviewed.
+
+The chip in the header shows it (**Approve**, **Approve with nits**,
+**Request changes** or **Outcome unknown**), with the comments that decide
+it on hover. In the diff, a `real` comment carries a red **blocking** or a
+dim **nice to have** badge, and an assessed GitHub thread an
+**addressed** or **still open** badge with the reason on hover. Replies
+sit under the first comment of their thread, marked `↳`.
+`get_review_comments` lists the outcome first, and
+[`GET /review`](api.md#get-apichannelsidreview) returns it as `outcome`.
+
+## Approve
+
+**Approve on GitHub** approves the PR at the commit the session reviewed,
+as the `gh` user. It is enabled when the outcome is `approve` or
+`approve_with_nits`; otherwise its tooltip says why. It opens a dialog
+with the approval's comment, prefilled with the nice-to-haves left (one
+line each, with their `path:line` and link) and editable;
+<kbd>Cmd/Ctrl</kbd>+<kbd>Enter</kbd> approves, <kbd>Esc</kbd> cancels.
+
+When the outcome blocks, **Approve anyway…** in the **⋯** menu opens the
+same dialog with a warning naming why, and approves regardless.
+
+Before approving, Loop reads the PR's head from GitHub: if it moved since
+the reviewed commit, it refuses, so Sync and let the verification step
+run again. Once approved, the button turns into **✓ Approved at
+`abc1234`** until the head moves, and the `review.approved` event tells
+the other clients. An agent can't approve a PR; only the owner can,
+through [`POST /review/approve`](api.md#post-apichannelsidreviewapprove).
 
 ## Model and effort
 
-Two dropdowns next to the Run button pick the **model** and the
+Two dropdowns in the settings row (**⚙**) pick the **model** and the
 **reasoning effort** the review agent runs with. **Default** follows the
 config's `claude_model` / `claude_effort` for the channel and names the
 value it resolves to. A reviewer that thinks longer finds more, so
@@ -222,16 +319,18 @@ about twice as many at about 2.5 times the cost of `high`. `max` was
 stopped after 30 minutes still reading code with 10 subagents, before it
 reported anything.
 
-The review isn't told which comments the session already holds. A list of
-them in its system prompt didn't stop it reporting some of them again,
+A full review isn't told which comments the session already holds. A list
+of them in its system prompt didn't stop it reporting some of them again,
 even on a fresh session, and it grew with every comment. The
-[dedup pass](#lifecycle) after every run folds the repeats instead.
+[dedup pass](#lifecycle) after every run folds the repeats instead. An
+[incremental](#incremental-re-review) run does get the list, capped, since
+it reviews only part of the PR.
 
 The choice applies to review runs only; the chat's own model/effort
 override (the composer pill) is separate. Like the fork choice below, it is
-stored on the in-memory review session, survives the refresh every run
-starts with, and resets when the daemon restarts. See
-[`PUT /review/agent`](api.md).
+stored on the review session, survives the refresh every run starts with
+and a daemon restart (see [Review history](#review-history)), and resets
+when a PR is loaded. See [`PUT /review/agent`](api.md).
 
 ## Forking the chat session
 
@@ -262,27 +361,114 @@ If the fork can't be resolved or staged — an id with no transcript on
 disk, say — the Run fails up front with a `400` rather than leaving the
 session stuck in `reviewing`.
 
-The choice is stored on the in-memory review session (loading a PR resets
-it to the default, and so does a daemon restart) rather than on the run
-request, because the Run button dispatches a workflow whose
+The choice is stored on the review session (loading a PR resets it to the
+default; a daemon restart keeps it, see [Review history](#review-history))
+rather than on the run request, because the Run button dispatches a workflow whose
 `loop review:run` step has nowhere to carry per-run options. See [`PUT /review/fork`](api.md).
 `run_review` and `POST /review/start` take a `fork` option (`chat`, `fresh`
 or a session id) and store it the same way, so the panel shows it.
+
+## Review history
+
+The daemon records every review run and every agent finding in its
+database, keyed by the repo's main dir (the parent channel's dir for a
+worktree thread, so all worktrees of a repo share it) and the PR number:
+
+- A **run** records its head commit, [scope](#incremental-re-review), model,
+  effort and fork choice when it starts, then how it ended (`completed`,
+  `failed` or `cancelled`) and its Claude session. A run counts as
+  completed once its agent finishes, before the dedup pass and the
+  verification step.
+- A **finding** records the agent comment as it changes: its body,
+  category, verdict, when it was pushed, whether GitHub marked it
+  resolved or outdated, and the [transcripts](#every-form-carries-the-transcripts)
+  of the agent passes that reported or changed it. Deleting it records why (by the user, or folded by
+  the dedup pass and into which comment) instead of dropping the row.
+  GitHub comments aren't recorded; they are fetched again from the PR.
+
+Loading a PR brings back its findings that weren't deleted, merged with
+their GitHub copies the way Sync merges, so closing a session, a daemon
+restart or loading the PR in another thread of the repo doesn't lose them,
+or their transcripts. It also brings back the scope of the channel's last
+run of the PR.
+
+The daemon also keeps which PR each channel's session is on, with its fork,
+model, effort and scope choices, until the session is closed. When the
+daemon starts it loads those PRs again in the background, with the choices
+applied. A session whose channel or PR is gone is dropped; one that fails
+to load for another reason (GitHub unreachable, say) is tried again at the
+next start. The rest of the session (the worktree, the diff, the status) is
+rebuilt by the load.
+
+A PR's history is deleted 180 days after its last run or finding change,
+checked once a day. Writing the history never fails a run; errors are
+logged.
+
+## Incremental re-review
+
+A dropdown next to the fork choice picks what a run reviews:
+
+- **Auto scope** (the default) reviews only the commits since the last
+  completed run of the PR, when that is worth it, else the whole PR.
+- **Changes since last review** does the same, but doesn't fall back for
+  a range that is most of the PR.
+- **Whole PR** always reviews the whole PR.
+
+An incremental run is told the commit the last run reviewed, to review only
+`git diff <that commit> HEAD` limited to the PR's files (so commits merged
+in from the base don't count), and the agent findings already reported
+(the first 50 of them), so it doesn't report them again. The dedup pass
+still runs after it. Either choice reviews the whole PR instead when there
+is no earlier completed run, no new commit since it, the reviewed commit is
+gone from the repo, or no file of the PR changed since. Auto also does when
+the changes since are more than half the PR's changed lines. If the branch
+was rebased since, the range can carry changes from the base, and the
+agent is told to skip those.
+
+The header shows what the latest run reviewed: `last run: since abc1234`
+or `last run: whole PR`. `loop review:run --scope`, `run_review` and
+`POST /review/start` take a `scope` too; the choice is stored on the
+session like the [fork choice](#forking-the-chat-session).
+
+A review + fix loop only gains from this when its fixes are pushed: the
+last reviewed head is the PR's head as the run saw it, and fixes that stay
+local don't move it.
+
+## Stats
+
+**Stats** in the header's **⋯** menu swaps the diff for the review stats of
+the channel's repo, for the loaded PR or the whole repo, over the last 7,
+30, 90 or 365 days:
+
+- **Runs**: how many, how they ended, over how many PRs, how many were
+  incremental, and the median and p90 duration of the completed ones.
+- **Findings**: added, folded by the dedup pass, deleted by the user,
+  pushed; the verdicts (real, false positive, already fixed, unjudged) and
+  the false-positive rate (false positives over the findings with a
+  verdict); how many real ones are [blocking or nice to have](#outcome),
+  with a **Blocking** card; and how many pushed ones GitHub marked
+  resolved or outdated.
+- The same per **model**, **effort**, **scope** and finding **category**.
+
+`loop review:stats` prints them in a terminal, and
+[`GET /review/stats`](api.md#get-apichannelsidreviewstats) returns them as
+JSON.
 
 ## Handing a finding to the agent
 
 A finding can also go to the channel's chat instead of (or before) GitHub.
 Five affordances do that, and they differ in **who writes the message** and
 **whether it is sent**. Address all and Check all sit in the header's
-**All ▾** menu, next to Push all to GitHub; each shows only when it has
+**⋯** menu, next to Push all to GitHub; each shows only when it has
 comments to act on:
 
 | Button | Message | Sent? |
 |--------|---------|-------|
 | **Discuss** | The finding quoted under its `path:line`, with a blank line below it | No — it lands in the composer for you to finish |
 | **Why?** | The same quote, with `Please explain why we need this.` filled into that blank line | Yes, straight away |
-| **Address** | `Please address this review comment from the PR:` plus file, line, side, PR number, head SHA and author, then the quoted body and the run transcripts | Yes, straight away |
-| **Address all (N)** | The same request over every unpushed finding not marked `false_positive` or `already_fixed`: the metadata header once, then a numbered block per finding, then the run transcripts | Yes, straight away |
+| **Address** | `Please address this review comment from the PR:` plus file, line, side, PR number, head SHA and author, then the quoted body and its transcripts | Yes, straight away |
+| **Address all (N)** | The same request over every unpushed finding not marked `false_positive` or `already_fixed`: the metadata header once, then a numbered block per finding, each with its own transcripts | Yes, straight away |
+| **Address blocking only (N)** | Address all over just the findings judged `blocking`; shown when some, but not all, of Address all's are | Yes, straight away |
 | **Check all (N)** | A request to clean up, then verify, every finding this session's runs reported (not the GitHub comments): PR number, head SHA and the PR checkout, then steps — run `dedup_review_findings`, read what is left with `get_review_comments`, check each against the code (real / false positive / already fixed) and record that verdict with a reason through `update_review_comment`, reply with an entry per comment (its category when it has one, its verdict and why, and a link to a pushed comment's GitHub thread; no severity unless the comment states one), ending with what the dedup pass removed and the count per verdict; change nothing else | Yes, straight away |
 
 Discuss and Why? are one builder and one send path differing by a single
@@ -306,7 +492,7 @@ what is left itself with `get_review_comments`, which acts on the same channel's
 session, so the request stays short however many findings there are and each
 body arrives whole. The message carries no count, since the dedup pass changes
 it. The agent records the verdict it reaches on each comment, replacing the
-dedup pass's, so the badges and the **All ▾** menu's skip note match its
+dedup pass's, so the badges and the **⋯** menu's skip note match its
 reply. It names the PR checkout because the review runs in the PR worktree, which need not
 be the chat's working directory.
 
@@ -314,20 +500,28 @@ All five first dispatch `loop:open-panel`, so a Chat panel is mounted in the
 current layout — anchored to the right of the Review panel when one has to be
 created, so the answer arrives beside the diff it is about.
 
-### Every form carries the run transcripts
+### Every form carries the transcripts
 
 The panel keeps a finding's verdict; the reasoning behind it lives only in the
-transcript of the run that produced it. So the four forms that quote findings append every run
-transcript the session knows, oldest first — inside the quote for Discuss and
-Why?, as a trailing list for Address and Address all. The transcripts
-belong to the session rather than to any one finding, which is why the batch
-lists them once at the end rather than under every block:
+transcripts of the agent passes that reported or changed it: the review run
+that reported it, the dedup pass that edited it, moved it, folded duplicates
+into it or changed its verdict, and the verification that checked it. A dedup
+pass restates the verdict of every finding it looks at, so one that keeps the
+verdict and only rewords the reason doesn't add its transcript; otherwise each
+pass would land on every finding. Each agent finding
+lists those transcripts, oldest first (`transcripts` on the comment), and keeps
+them in the [history](#review-history), so they come back when the PR is
+loaded again, in any thread of the repo. The four forms that quote findings
+append them: inside the quote for Discuss and Why?, as a list after the
+quote for Address, and under each finding's block for Address all, so the
+agent knows which transcript explains which finding even when one run
+reported several of them:
 
 ```
 > internal/api/x.go:12
 > leaks the lock on the error path
 >
-> transcripts of the review runs that produced this, oldest first:
+> transcripts of the review passes behind this, oldest first:
 > /home/u/.claude/projects/-repo--worktrees-pr-7/<session-id>.jsonl
 
 Please explain why we need this.
@@ -339,11 +533,11 @@ derive from its own channel. They resolve as-is inside an agent container,
 which runs with `HOME` set to the host home and `~/.claude` bind-mounted at
 its host path.
 
-Each run records its id as it completes, and the first one records the
-directory (`run_session_ids` and `transcript_dir` on `GET /review`). Until a
-run has completed under the current daemon the session has neither, and the
-block is omitted rather than half-written — an id with no directory is not a
-path anyone can open, and a directory with no ids points at nothing.
+A pass adds its transcript once it ends, a failed or timed-out run included,
+since it usually reported findings first. A pass whose session id or
+transcript directory is unknown adds nothing, and a finding without
+transcripts (a GitHub comment, or one reported before this was recorded) gets
+no block.
 
 ## Searching the diff
 
@@ -375,15 +569,20 @@ twenty comments spread over four files is painful to scroll by hand:
   within a file by the diff line each comment anchors to, then out-of-diff
   comments last. A comment on a line no hunk shows, such as one anchored
   past the end of its file, counts as out of diff and renders in that
-  section too, so the navigator's **new** count matches **Check all**'s.
+  section too, so the navigator still reaches it.
   Jumping to a comment in a collapsed file expands that file first and
   moves the file rail's highlight with it. The widget only appears once
   the session has at least one anchored comment.
 - **new | all** (the pair at the left of the floating widget) picks what
-  the floating prev/next walks. **new**, the default, is only the findings
-  this review session's runs reported, so a PR with a long GitHub thread
-  history doesn't bury them. **all** adds the comments synced from GitHub
-  on Load and Sync. The choice is remembered across sessions. It only
+  the floating prev/next walks. **new**, the default, is only the agent's
+  findings from the latest review: the runs of the last Run, every
+  iteration of its loop included, so neither earlier reviews' findings nor
+  a long GitHub thread history buries them. Each run is recorded in the
+  history with the review it belongs to, and each finding with the run that
+  reported it, so **new** still holds after a daemon restart. A
+  `loop review:run` outside a Run joins the latest review, or starts one
+  when there's none. **all** adds the earlier reviews' findings and the
+  comments synced from GitHub on Load and Sync. The choice is remembered across sessions. It only
   narrows the navigator; every comment stays rendered in the diff.
 
 The floating counter re-measures on scroll and reports whichever comment sits
@@ -459,6 +658,7 @@ load. Any session-lookup failure falls back to loading.
 | `--pr` | (none) | PR number (`567`) or URL (`.../pull/567`) to **load** into the channel's review session (fetch PR + create its worktree) before running. Omitted → review whatever the channel already has loaded. |
 | `--wait` | `false` | Block until the session reaches a terminal status (`ready` or `error`) and emit the JSON envelope to stdout. Without `--wait`, the command exits 0 immediately after the `202`. |
 | `--no-verify` | `false` | Skip the [verification step](#lifecycle) after this run, even when `review.verify` is on. The dedup pass after the run still runs. |
+| `--scope` | the session's choice | What this run reviews: `auto`, `full` or `incremental` (see [Incremental re-review](#incremental-re-review)). Omitted → the scope picked in the panel. |
 | `--timeout` | `90m` | Bound on the total `--wait` time. Enforced inside the HTTP client, not just between polls, so a hung response can't outlive the deadline. Transient transport errors (TCP reset, momentary daemon restart, proxy 502) back off and retry instead of failing the whole loop. Sits above the daemon-side ceilings of the run and the verification step after it (50m, plus 15m for the step's dedup pass and 15m for its agent) so the daemon flips first with a meaningful error rather than the CLI's generic timeout. |
 
 The emitted JSON shape is `{"status":"ready","no_comments":bool,"comments":[...]}`, plus `"superseded":{"<deleted id>":"<kept id>"}` when the dedup pass after the run deleted any — the same payload used by the workflow body parser to populate `{{.Review.*}}` templates inside the seeded loops. Each comment carries the dedup pass's `verdict` and `verdict_reason` once it has one. The workflow parser leaves out the comments marked `false_positive` or `already_fixed`: the fix step doesn't get them, the same-as-previous check doesn't count them, and a round that leaves only those sets `NoComments`, so the loop stops.
@@ -495,12 +695,18 @@ failed stays in the panel and is listed under `errors`. Neither case fails
 the command. A run already in flight on the channel makes it fail with a
 `409`.
 
+`loop review:stats` prints the [review stats](#stats) of the channel's
+repo: a summary, then one table per model, effort, scope and category.
+`--pr` (a number or URL) limits them to one PR, `--days` sets the window
+(default `90`), and `--json` prints the daemon's JSON instead. It takes
+`--channel-id` and `--api-url` like the others.
+
 An agent starts a review with the `run_review` MCP tool, which does what
 the Run button does through
 [`POST /api/channels/{id}/review/start`](api.md#post-apichannelsidreviewstart):
 it loads the PR unless the session is already on it, records the model and
 effort (the channel's own by default) and the [fork choice](#forking-the-chat-session)
-when given, and starts `review-loop`, or `review-fix-loop` with
+when given, the [scope](#incremental-re-review) when given, and starts `review-loop`, or `review-fix-loop` with
 `mode: "review-fix"`. It takes another channel or
 thread's id too, so an agent can run reviews in several threads at once. A
 Review panel open on that channel, or opened later while the run is live,

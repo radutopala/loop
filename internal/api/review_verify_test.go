@@ -150,14 +150,22 @@ func (s *ReviewHandlerSuite) TestVerifyDisabled() {
 
 // The step dedups the whole session, then has a read-only agent that may
 // only record verdicts check the rest, with the review's context, and posts
-// its reply to the channel. The session shows verifying throughout.
+// its reply to the channel with the PR outcome. The session shows verifying
+// throughout, and ends reviewed at its head.
 func (s *ReviewHandlerSuite) TestVerifyDedupsThenChecks() {
 	s.wireDedupSession()
 	s.verifyOn("Judge each comment.")
 	msgs := new(MockMessageSender)
-	msgs.On("PostMessage", mock.Anything, "ch1", "a: real\nd: false_positive").Return(nil).Once()
+	msgs.On("PostMessage", mock.Anything, "ch1", "a: real\nd: false_positive\n\nOutcome: request changes: 1 blocking (a)").Return(nil).Once()
 	s.srv.review.messages = msgs
-	runner := newVerifyRunner(s, reply(`{"clusters":[{"keep":"a","drop":["b"]}]}`), reply("  a: real\nd: false_positive\n"))
+	s.withHome()
+	// The verification agent records the verdicts, as its MCP tool would.
+	verify := func(ctx context.Context) (*agent.AgentResponse, error) {
+		s.rs.SetVerdict("ch1", review.DedupVerdict{ID: "a", Verdict: review.VerdictReal, Impact: review.ImpactBlocking})
+		s.rs.SetVerdict("ch1", review.DedupVerdict{ID: "d", Verdict: review.VerdictFalsePositive})
+		return reply("  a: real\nd: false_positive\n")(ctx)
+	}
+	runner := newVerifyRunner(s, reply(`{"clusters":[{"keep":"a","drop":["b"]}]}`), verify)
 	s.srv.review.setAgent(runner, "", "")
 
 	s.postVerifyAndWait()
@@ -185,7 +193,13 @@ func (s *ReviewHandlerSuite) TestVerifyDedupsThenChecks() {
 	sess := s.rs.Get("ch1")
 	require.Equal(s.T(), review.StatusReady, sess.Status)
 	require.Equal(s.T(), map[string]string{"b": "a"}, sess.Superseded)
-	require.Equal(s.T(), []string{"sess"}, sess.RunSessionIDs)
+	require.Equal(s.T(), "abc", sess.ReviewedSHA)
+	// Each pass's transcript goes onto the comments it changed.
+	transcript := []string{runTranscript("sess")}
+	keptA, _ := s.rs.FindComment("ch1", "a")
+	require.Equal(s.T(), transcript, keptA.Transcripts)
+	judged, _ := s.rs.FindComment("ch1", "d")
+	require.Equal(s.T(), transcript, judged.Transcripts)
 	msgs.AssertExpectations(s.T())
 }
 
@@ -238,19 +252,22 @@ func (s *ReviewHandlerSuite) TestVerifyUnanchoredComment() {
 	require.Equal(s.T(), review.StatusReady, s.rs.Get("ch1").Status)
 }
 
-// A session holding only GitHub comments has nothing to check, and one whose
-// agent comments the dedup pass folded into GitHub ones is left with none.
+// A session holding only resolved GitHub threads has nothing to check, and
+// one whose agent comments the dedup pass folded into those is left with
+// none; either is reviewed as it is. An unresolved thread a person started
+// is checked on its own.
 func (s *ReviewHandlerSuite) TestVerifyNothingToCheck() {
 	cases := []struct {
 		name      string
 		comments  []*review.Comment
 		wantCalls int
 	}{
-		{"only github comments", []*review.Comment{{ID: "g", Path: "x.go", Line: 1, Body: "Theirs.", Source: "github"}}, 0},
+		{"only resolved github threads", []*review.Comment{{ID: "g", Path: "x.go", Line: 1, Body: "Theirs.", Source: "github", GitHubID: 9, Resolved: true}}, 0},
 		{"all folded by the dedup pass", []*review.Comment{
-			{ID: "g", Path: "x.go", Line: 1, Body: "Theirs.", Source: "github", GitHubID: 9},
+			{ID: "g", Path: "x.go", Line: 1, Body: "Theirs.", Source: "github", GitHubID: 9, Resolved: true},
 			{ID: "a", Path: "x.go", Line: 1, Body: "Same.", Source: "agent"},
 		}, 1},
+		{"an unresolved github thread", []*review.Comment{{ID: "g", Path: "x.go", Line: 1, Body: "Theirs.", Source: "github", GitHubID: 9}}, 1},
 	}
 	for _, tc := range cases {
 		s.Run(tc.name, func() {
@@ -267,6 +284,7 @@ func (s *ReviewHandlerSuite) TestVerifyNothingToCheck() {
 
 			require.Equal(s.T(), tc.wantCalls, runner.calls)
 			require.Equal(s.T(), review.StatusReady, s.rs.Get("ch1").Status)
+			require.Equal(s.T(), s.rs.Get("ch1").HeadSHA, s.rs.Get("ch1").ReviewedSHA)
 		})
 	}
 }
@@ -344,7 +362,7 @@ func (s *ReviewHandlerSuite) TestVerifySummaryPostFails() {
 	s.wireDedupSession()
 	s.verifyOn("")
 	msgs := new(MockMessageSender)
-	msgs.On("PostMessage", mock.Anything, "ch1", "summary").Return(errors.New("chat down")).Once()
+	msgs.On("PostMessage", mock.Anything, "ch1", "summary\n\nOutcome: unknown: 4 comment(s) not judged yet").Return(errors.New("chat down")).Once()
 	s.srv.review.messages = msgs
 	runner := newVerifyRunner(s, reply(`{"clusters":[]}`), reply("summary"))
 	s.srv.review.setAgent(runner, "", "")

@@ -1039,6 +1039,9 @@ Emitted once per finding the review agent reports during a run, via either the b
 | `category` | string | Finding type slug the review gave, e.g. `correctness`; omitted when none |
 | `verdict` | string | The dedup pass's check against the code: `real`, `false_positive` or `already_fixed`; omitted until a pass has checked it |
 | `verdict_reason` | string | One sentence on what in the code decided the verdict; omitted when none |
+| `impact` | string | With verdict `real`: `blocking` or `nice_to_have`; omitted otherwise |
+| `transcripts` | string[] | Full paths of the Claude transcripts of the agent passes that reported or changed the comment, oldest first; omitted when none |
+| `run_id` | int | History id of the review run that reported the comment; omitted when none was recorded |
 
 **Scope:** Channel (the channel that started the review).
 
@@ -1064,7 +1067,7 @@ Emitted when a comment leaves the review session, either because it was deleted 
 
 ### `review.comment_updated`
 
-Emitted when a comment changes in place: the dedup pass (`POST /review/dedup`) appends what a kept comment's dropped duplicates added, trims a comment that bundles several issues to the ones no other comment covers, moves a finding to the line it is about, or records its verdict on an agent comment. Same payload as `review.comment`; the FE swaps in the new comment.
+Emitted when a comment changes in place: the dedup pass (`POST /review/dedup`) appends what a kept comment's dropped duplicates added, trims a comment that bundles several issues to the ones no other comment covers, moves a finding to the line it is about, or records its verdict (and the impact of a real one) on an agent comment, and when an agent pass (a review run, the dedup pass, the verification) ends, for each comment it reported or changed, which now lists its transcript. Same payload as `review.comment`; the FE swaps in the new comment.
 
 **Scope:** Channel.
 
@@ -1086,6 +1089,26 @@ Emitted on every review session status transition (`idle → loading → ready �
 | `error`  | string | Populated only when `status == "error"`; omitted otherwise |
 
 **Scope:** Global, so every window's sidebar hears it.
+
+---
+
+### `review.approved`
+
+Emitted when the PR under review was approved on GitHub from the Review panel ([`POST /review/approve`](api.md#post-apichannelsidreviewapprove)). The panel shows the approved chip from it.
+
+**Payload schema:**
+
+```json
+{ "channel_id": "ch-1", "pr": 104, "commit": "abc123..." }
+```
+
+| Field        | Type   | Description |
+|--------------|--------|-------------|
+| `channel_id` | string | The channel whose review session it is |
+| `pr`         | int    | The PR number |
+| `commit`     | string | The head commit the approval covers, stored as the session's `approved_sha` |
+
+**Scope:** Channel.
 
 ---
 

@@ -2,7 +2,19 @@ import { describe, expect, it } from "vitest";
 import type { ReviewComment } from "../../api/review";
 import type { ColorPalette } from "../../theme";
 import { parseUnifiedDiff } from "./DiffViewer";
-import { type CommentAnchor, type FileSummary, navigableAnchors, orderedComments, splitComments, unlandedTarget, verdictColor, verdictLabel } from "./ReviewDiffView";
+import {
+  type CommentAnchor,
+  commentImpact,
+  type FileSummary,
+  impactColor,
+  navigableAnchors,
+  orderedComments,
+  splitComments,
+  threadOrder,
+  unlandedTarget,
+  verdictColor,
+  verdictLabel,
+} from "./ReviewDiffView";
 
 const DIFF = `diff --git a/a.go b/a.go
 index 111..222 100644
@@ -87,9 +99,9 @@ describe("orderedComments", () => {
   it("carries the file index so navigation can expand the right section", () => {
     const { summaries, byFile, orphans } = summarize(DIFF, [comment("a1", "a.go", 2), comment("b1", "b.go", 2), comment("orphan", "gone.go", 1)]);
     expect(orderedComments(summaries, byFile, orphans)).toEqual([
-      { id: "a1", path: "a.go", fileIdx: 0, github: false },
-      { id: "b1", path: "b.go", fileIdx: 1, github: false },
-      { id: "orphan", path: "gone.go", fileIdx: -1, github: false },
+      { id: "a1", path: "a.go", fileIdx: 0, fresh: false },
+      { id: "b1", path: "b.go", fileIdx: 1, fresh: false },
+      { id: "orphan", path: "gone.go", fileIdx: -1, fresh: false },
     ]);
   });
 
@@ -99,19 +111,34 @@ describe("orderedComments", () => {
 });
 
 describe("navigableAnchors", () => {
-  it("flags GitHub-synced comments on the anchor", () => {
-    const { summaries, byFile, orphans } = summarize(DIFF, [comment("mine", "a.go", 2), comment("gh", "b.go", 2, { source: "github" }), comment("gh-orphan", "gone.go", 1, { source: "github" })]);
-    expect(orderedComments(summaries, byFile, orphans).map((a) => a.github)).toEqual([false, true, true]);
+  it("flags only the agent findings of the latest review's runs as fresh", () => {
+    const { summaries, byFile, orphans } = summarize(DIFF, [
+      comment("latest", "a.go", 2, { run_id: 8 }),
+      comment("latest-pushed", "a.go", 3, { run_id: 9, pushed: true }),
+      comment("earlier", "a.go", 3, { run_id: 7 }),
+      comment("no-run", "a.go", 3),
+      comment("gh", "b.go", 2, { source: "github", pushed: true }),
+      comment("orphan", "gone.go", 1, { run_id: 9 }),
+    ]);
+    expect(orderedComments(summaries, byFile, orphans, [8, 9]).map((a) => [a.id, a.fresh])).toEqual([
+      ["latest", true],
+      ["latest-pushed", true],
+      ["earlier", false],
+      ["no-run", false],
+      ["gh", false],
+      ["orphan", true],
+    ]);
   });
 
   const anchors: CommentAnchor[] = [
-    { id: "mine", path: "a.go", fileIdx: 0, github: false },
-    { id: "gh", path: "b.go", fileIdx: 1, github: true },
+    { id: "latest", path: "a.go", fileIdx: 0, fresh: true },
+    { id: "earlier", path: "a.go", fileIdx: 0, fresh: false },
+    { id: "gh", path: "b.go", fileIdx: 1, fresh: false },
   ];
 
   it.each([
-    ["all", ["mine", "gh"]],
-    ["new", ["mine"]],
+    ["all", ["latest", "earlier", "gh"]],
+    ["new", ["latest"]],
   ] as const)("scope %s", (scope, want) => {
     expect(navigableAnchors(anchors, scope).map((a) => a.id)).toEqual(want);
   });
@@ -145,5 +172,45 @@ describe("verdict badge", () => {
   ] as const)("%s", (v, label, color) => {
     expect(verdictLabel(v)).toBe(label);
     expect(verdictColor(colors, v)).toBe(color);
+  });
+});
+
+describe("impact badge", () => {
+  const colors = { dangerText: "#danger", textDim: "#dim" } as ColorPalette;
+  it.each([
+    ["blocking", "#danger"],
+    ["nice_to_have", "#dim"],
+  ] as const)("%s", (impact, color) => {
+    expect(impactColor(colors, impact)).toBe(color);
+  });
+});
+
+describe("commentImpact", () => {
+  it.each<[string, Partial<ReviewComment>, string | undefined]>([
+    ["an agent finding's own", { source: "agent", verdict: "real", impact: "blocking" }, "blocking"],
+    ["an agent finding without one", { source: "agent" }, undefined],
+    ["an open thread's", { source: "github", github_id: 1, thread: { status: "open", impact: "nice_to_have" } }, "nice_to_have"],
+    ["none for an addressed thread", { source: "github", github_id: 1, thread: { status: "addressed" } }, undefined],
+    ["none for an unassessed thread", { source: "github", github_id: 1 }, undefined],
+  ])("%s", (_name, extra, want) => {
+    expect(commentImpact(comment("c", "a.go", 1, extra))).toBe(want);
+  });
+});
+
+describe("threadOrder", () => {
+  const gh = (id: string, githubId: number, replyTo?: number) => comment(id, "a.go", 2, { source: "github", github_id: githubId, reply_to: replyTo });
+
+  it("moves replies right after their thread start, in order", () => {
+    const cs = [gh("r1", 1), comment("agent", "a.go", 2), gh("r2", 2), gh("r1-a", 3, 1), gh("r2-a", 4, 2), gh("r1-b", 5, 1)];
+    expect(threadOrder(cs).map((c) => c.id)).toEqual(["r1", "r1-a", "r1-b", "agent", "r2", "r2-a"]);
+  });
+
+  it("keeps a reply whose thread start isn't held in place", () => {
+    const cs = [gh("lone", 9, 7), gh("r1", 1)];
+    expect(threadOrder(cs)).toBe(cs);
+  });
+
+  it("orders the navigator by thread too", () => {
+    expect(ids(DIFF, threadOrder([gh("r1", 1), gh("other", 2), gh("r1-a", 3, 1)]))).toEqual(["r1", "r1-a", "other"]);
   });
 });

@@ -22,7 +22,8 @@ const (
 // Model and effort default to the channel's own overrides; empty after that
 // means the config's default, as on the panel. Fork picks the session the
 // run forks: "chat" (the channel's chat session), "fresh", or a session id;
-// empty keeps the review session's own choice.
+// empty keeps the review session's own choice. Scope picks what the runs
+// review: "auto", "full" or "incremental"; empty keeps the session's choice.
 type reviewStartRequest struct {
 	PRNumber      int    `json:"pr_number"`
 	Model         string `json:"model"`
@@ -30,7 +31,11 @@ type reviewStartRequest struct {
 	Mode          string `json:"mode"`
 	MaxIterations int    `json:"max_iterations"`
 	Fork          string `json:"fork"`
+	Scope         string `json:"scope"`
 }
+
+// reviewStartScopes maps the request's scope values to the session's.
+var reviewStartScopes = map[string]review.Scope{"auto": review.ScopeAuto, "full": review.ScopeFull, "incremental": review.ScopeIncremental}
 
 // reviewStartFork maps the request's fork value to the review session's
 // fork mode and session id. ok is false when fork is empty: the session's
@@ -98,6 +103,11 @@ func (s *Server) handleReviewStart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid effort: must be one of low, medium, high, xhigh, max (or empty)", http.StatusBadRequest)
 		return
 	}
+	scope, setScope := reviewStartScopes[req.Scope]
+	if !setScope && req.Scope != "" {
+		http.Error(w, "scope must be auto, full or incremental", http.StatusBadRequest)
+		return
+	}
 
 	ch, err := s.store.GetChannel(r.Context(), channelID)
 	if err != nil {
@@ -125,7 +135,7 @@ func (s *Server) handleReviewStart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if sess := rs.sessions.Get(channelID); sess == nil || sess.PR == nil || sess.PR.Number != req.PRNumber || sess.Status != review.StatusReady {
-		if _, err := rs.loadPR(r.Context(), channelID, req.PRNumber); err != nil {
+		if _, err := rs.loadPR(r.Context(), channelID, req.PRNumber, nil); err != nil {
 			respondReviewError(w, err)
 			return
 		}
@@ -134,6 +144,12 @@ func (s *Server) handleReviewStart(w http.ResponseWriter, r *http.Request) {
 	if mode, sessionID, ok := reviewStartFork(req.Fork); ok {
 		rs.sessions.UpdateFork(channelID, mode, sessionID)
 	}
+	if setScope {
+		rs.sessions.UpdateScope(channelID, scope)
+	}
+	// Every run of the loop belongs to this review: its findings are the
+	// panel's new ones.
+	rs.sessions.StartReview(channelID, rs.newReviewID())
 
 	dirPath, parentDirPath, err := s.resolveWorkflowConfigPaths(r.Context(), channelID)
 	if err != nil {
