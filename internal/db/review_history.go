@@ -1,6 +1,7 @@
 package db
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
@@ -472,16 +473,7 @@ func (g statsGroups) list() []ReviewStatsGroup {
 		out = append(out, *x)
 	}
 	slices.SortFunc(out, func(a, b ReviewStatsGroup) int {
-		if a.Runs != b.Runs {
-			return b.Runs - a.Runs
-		}
-		if a.Added != b.Added {
-			return b.Added - a.Added
-		}
-		if a.Key < b.Key {
-			return -1
-		}
-		return 1
+		return cmp.Or(cmp.Compare(b.Runs, a.Runs), cmp.Compare(b.Added, a.Added), cmp.Compare(a.Key, b.Key))
 	})
 	return out
 }
