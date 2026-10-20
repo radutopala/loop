@@ -44,11 +44,12 @@ func WithReviewHistory(store ReviewHistoryStore) Option {
 func (s *Server) RunReviewHistoryPrune(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	for {
+	// The loop checks ctx itself: when both are ready, select may pick the
+	// tick after ctx is done.
+	for ctx.Err() == nil {
 		s.review.pruneHistory(ctx)
 		select {
 		case <-ctx.Done():
-			return
 		case <-ticker.C:
 		}
 	}
