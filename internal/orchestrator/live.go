@@ -403,6 +403,7 @@ func (o *Orchestrator) runLiveTurn(channelID string, run func(context.Context, *
 				Status:  finish.status,
 				RunID:   runID,
 				Error:   finish.errMsg,
+				Stopped: finish.stopped,
 				Trigger: "live",
 			})
 		}

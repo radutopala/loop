@@ -153,6 +153,9 @@ type AgentStatusEventData struct {
 	// Parked is set on a "completed" scheduled run that stopped at an ask
 	// or plan card, waiting on the owner's answer.
 	Parked bool `json:"parked,omitempty"`
+	// Stopped is set on an "error" run the user stopped, with Stop or by
+	// sending a message that interrupted it.
+	Stopped bool `json:"stopped,omitempty"`
 }
 
 // ToolUseEventData is the payload for tool.use events.

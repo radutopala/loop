@@ -358,6 +358,7 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 				Status:  finish.status,
 				RunID:   runID,
 				Error:   finish.errMsg,
+				Stopped: finish.stopped,
 				Trigger: trigger,
 				MsgID:   msg.MessageID,
 			})
@@ -409,6 +410,8 @@ type runFinishStatus struct {
 	// sessionID is the session the failed run was in, when known, so a
 	// hidden thread's fork that was never stored can be deleted.
 	sessionID string
+	// stopped is set when the user stopped the run.
+	stopped bool
 }
 
 // reviewedTurn returns the bot message id of the turn an explain run (e) or
@@ -732,7 +735,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 				Content:          "Run stopped.",
 				ReplyToMessageID: msg.MessageID,
 			})
-			return nil, "", runID, &runFinishStatus{status: "error", errMsg: err.Error(), sessionID: ranSession}, err
+			return nil, "", runID, &runFinishStatus{status: "error", errMsg: err.Error(), sessionID: ranSession, stopped: true}, err
 		}
 		o.logger.Error("running agent", "error", err, "channel_id", msg.ChannelID)
 		if notice, scheduled := o.maybeScheduleSessionLimitRetry(ctx, msg, err.Error()); scheduled {

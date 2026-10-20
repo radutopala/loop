@@ -245,8 +245,8 @@ func loopNotification(evt Event) *db.Notification {
 }
 
 // runNotification is the notification of an agent run that failed in
-// channelID, except a scheduled one and the hidden ones, a plugin's agent's,
-// learn's and explain's. A thread's run is told to its parent too, with the
+// channelID, except one the user stopped, a scheduled one and the hidden
+// ones, a plugin's agent's, learn's and explain's. A thread's run is told to its parent too, with the
 // thread's id; that copy makes none.
 func runNotification(channelID string, d events.AgentStatusEventData) *db.Notification {
 	if d.ThreadID != "" && d.ThreadID != channelID {
@@ -256,7 +256,7 @@ func runNotification(channelID string, d events.AgentStatusEventData) *db.Notifi
 	case "scheduled", "learn", "learn-reply", "explain", "plugin":
 		return nil
 	}
-	if d.Status != "error" {
+	if d.Status != "error" || d.Stopped {
 		return nil
 	}
 	return &db.Notification{Kind: db.NotificationRun, ChannelID: channelID, Title: "Run failed", Body: d.Error}

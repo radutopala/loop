@@ -184,6 +184,8 @@ func (s *ServerSuite) TestLoopNotification() {
 		{name: "run failed in its thread",
 			evt:  Event{ChannelID: "th-1", Data: events.AgentStatusEventData{Status: "error", ThreadID: "th-1", Error: "boom"}},
 			want: &db.Notification{Kind: db.NotificationRun, ChannelID: "th-1", Title: "Run failed", Body: "boom"}},
+		{name: "run the user stopped",
+			evt: Event{ChannelID: "ch-1", Data: events.AgentStatusEventData{Status: "error", Error: "context canceled", Stopped: true}}},
 		{name: "the parent's copy",
 			evt: Event{ChannelID: "ch-1", Data: events.AgentStatusEventData{Status: "error", ThreadID: "th-1"}}},
 		{name: "the owner's run finished",
