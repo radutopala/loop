@@ -30,7 +30,8 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
    - Creates a worktree off the PR head under the channel's `dir_path`, at
      `.worktrees/pr-<n>-<channel id>`. Each channel gets its own, so threads
      of one project can review the same PR at once without one's close
-     removing the other's checkout.
+     removing the other's checkout. Loading a PR again moves an existing
+     worktree to the latest head, as Sync does.
    - Fetches the base ref into the parent repo (`git fetch origin <base>`) so
      `origin/<base>` resolves locally for the Run step.
 2. **Run** — the user clicks the primary **Run** button. The button is a
@@ -49,6 +50,12 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
      [Required output format](#required-output-format)) doesn't change the
      set either. The mode and max-iter value persist in
      `localStorage` so they survive reloads.
+
+   A review-only loop is pinned to the PR's head when it starts: every
+   iteration (and a Sync or dedup while the loop runs or is paused)
+   checks out that commit, so commits pushed meanwhile wait for the next
+   review. The review + fix loop follows the head, its own fix commits
+   included.
 
    Both modes are backed by seeded workflows (`review-loop`,
    `review-fix-loop`) shipped via `fsmigrate`; the fix-loop body runs

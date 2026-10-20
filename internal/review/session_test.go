@@ -178,23 +178,25 @@ func (s *SessionSuite) TestUpdateScopeAndLastRun() {
 
 func (s *SessionSuite) TestReviewRuns() {
 	store := NewStore()
-	require.False(s.T(), store.StartReview("nope", "r1"))
+	require.False(s.T(), store.StartReview("nope", "r1", ""))
 	require.False(s.T(), store.AddReviewRun("nope", 1))
 
 	store.Put("ch1", &Session{})
-	require.True(s.T(), store.StartReview("ch1", "r1"))
+	require.True(s.T(), store.StartReview("ch1", "r1", "abc"))
 	require.True(s.T(), store.AddReviewRun("ch1", 4))
 	before := store.Get("ch1")
 	require.True(s.T(), store.AddReviewRun("ch1", 5))
 	got := store.Get("ch1")
 	require.Equal(s.T(), "r1", got.ReviewID)
+	require.Equal(s.T(), "abc", got.ReviewHead)
 	require.Equal(s.T(), []int64{4, 5}, got.ReviewRuns)
 	require.Equal(s.T(), []int64{4}, before.ReviewRuns, "a copy taken before keeps its runs")
 
-	require.True(s.T(), store.StartReview("ch1", "r2"))
+	require.True(s.T(), store.StartReview("ch1", "r2", ""))
 	got = store.Get("ch1")
 	require.Equal(s.T(), "r2", got.ReviewID)
 	require.Empty(s.T(), got.ReviewRuns)
+	require.Empty(s.T(), got.ReviewHead, "a new review drops the old one's pin")
 }
 
 func (s *SessionSuite) TestAddTranscriptNoSession() {

@@ -2581,6 +2581,10 @@ The session also carries:
   the history ids of its runs, one per iteration of its loop. An agent
   comment's `run_id` is the run that reported it, so the comments whose
   `run_id` is in `review_runs` are the latest review's.
+- `review_head`: the commit a `review` mode start pinned its loop to.
+  While that `review-loop` run is running or paused, the review's runs,
+  Sync and dedup check out this commit instead of the PR's newer head.
+  Absent for `review-fix` starts, which follow the head.
 
 Next to `session`, the response carries the PR
 [`outcome`](review.md#outcome), worked out on each GET:

@@ -72,6 +72,11 @@ func (s *ReviewStartSuite) readySession(pr int) {
 	s.rs.Put("ch1", &review.Session{PR: &githubapi.PRInfo{Number: pr}, WorktreePath: "/repo/.worktrees/pr-7-ch1", Status: review.StatusReady})
 }
 
+// head answers the PR head a review-only start pins its loop to.
+func (s *ReviewStartSuite) head() {
+	s.gh.On("FetchPRHeadSHA", mock.Anything, mock.Anything, "", 7).Return("abc", nil)
+}
+
 func (s *ReviewStartSuite) loadMocks() {
 	s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 7).Return(&githubapi.PRInfo{Number: 7, BaseRef: "main"}, nil)
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("abc", nil)
@@ -174,6 +179,7 @@ func (s *ReviewStartSuite) TestLoadsAndStartsWithTheChannelsAgent() {
 	require.Equal(s.T(), review.StatusReady, sess.Status)
 	require.Equal(s.T(), "opus", sess.Model)
 	require.Equal(s.T(), "high", sess.Effort)
+	require.Equal(s.T(), "abc", sess.ReviewHead, "a review-only loop is pinned to the head it starts at")
 	_, starting := s.srv.reviewStarting.Load("ch1")
 	require.False(s.T(), starting)
 }
@@ -182,7 +188,7 @@ func (s *ReviewStartSuite) TestKeepsTheLoadedPR() {
 	s.channel("opus", "high")
 	s.eng.On("ListRuns", mock.Anything, "ch1", 50, 0).Return(nil, errors.New("db down"))
 	s.readySession(7)
-	s.rs.StartReview("ch1", "rev-0")
+	s.rs.StartReview("ch1", "rev-0", "old")
 	s.rs.AddReviewRun("ch1", 3)
 	s.srv.review.newReviewID = func() string { return "rev-1" }
 	s.eng.On("StartRun", mock.Anything, workflow.StartRunOptions{
@@ -195,12 +201,14 @@ func (s *ReviewStartSuite) TestKeepsTheLoadedPR() {
 	w := s.start(map[string]any{"pr_number": 7, "mode": "review-fix", "max_iterations": 5, "model": "sonnet", "effort": "low"})
 	require.Equal(s.T(), http.StatusCreated, w.Code, w.Body.String())
 	s.gh.AssertNotCalled(s.T(), "FetchPRByNumber", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	s.gh.AssertNotCalled(s.T(), "FetchPRHeadSHA", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	sess := s.rs.Get("ch1")
 	require.Equal(s.T(), "sonnet", sess.Model)
 	require.Equal(s.T(), "low", sess.Effort)
 	// The loop's runs start a new review, with none of the last one's runs.
 	require.Equal(s.T(), "rev-1", sess.ReviewID)
 	require.Empty(s.T(), sess.ReviewRuns)
+	require.Empty(s.T(), sess.ReviewHead, "a review-fix loop follows the head")
 }
 
 func (s *ReviewStartSuite) TestReloadsAnotherPR() {
@@ -231,10 +239,23 @@ func (s *ReviewStartSuite) TestLoadFails() {
 	s.eng.AssertNotCalled(s.T(), "StartRun", mock.Anything, mock.Anything)
 }
 
+func (s *ReviewStartSuite) TestHeadFetchFails() {
+	s.channel("", "")
+	s.noRuns()
+	s.readySession(7)
+	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("", errors.New("gh down"))
+
+	w := s.start(map[string]any{"pr_number": 7})
+	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
+	require.Contains(s.T(), w.Body.String(), "gh down")
+	s.eng.AssertNotCalled(s.T(), "StartRun", mock.Anything, mock.Anything)
+}
+
 func (s *ReviewStartSuite) TestResolveDirFails() {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1"}, nil)
 	s.noRuns()
 	s.readySession(7)
+	s.head()
 
 	w := s.start(map[string]any{"pr_number": 7})
 	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
@@ -245,6 +266,7 @@ func (s *ReviewStartSuite) TestStartRunFails() {
 	s.channel("", "")
 	s.noRuns()
 	s.readySession(7)
+	s.head()
 	s.eng.On("StartRun", mock.Anything, mock.Anything).Return("", errors.New("no such workflow"))
 
 	w := s.start(map[string]any{"pr_number": 7})
@@ -271,6 +293,7 @@ func (s *ReviewStartSuite) TestFork() {
 			s.SetupTest()
 			s.channel("", "")
 			s.noRuns()
+			s.head()
 			s.rs.Put("ch1", &review.Session{PR: &githubapi.PRInfo{Number: 7}, WorktreePath: "/repo/.worktrees/pr-7-ch1", Status: review.StatusReady, ForkMode: tt.startMode, ForkSessionID: tt.startSID})
 			s.eng.On("StartRun", mock.Anything, mock.Anything).Return("run-1", nil)
 
@@ -299,6 +322,7 @@ func (s *ReviewStartSuite) TestScope() {
 			s.SetupTest()
 			s.channel("", "")
 			s.noRuns()
+			s.head()
 			s.rs.Put("ch1", &review.Session{PR: &githubapi.PRInfo{Number: 7}, WorktreePath: "/repo/.worktrees/pr-7-ch1", Status: review.StatusReady, Scope: review.ScopeFull})
 			s.eng.On("StartRun", mock.Anything, mock.Anything).Return("run-1", nil)
 

@@ -2,6 +2,7 @@ package api
 
 import (
 	"cmp"
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
@@ -148,8 +149,18 @@ func (s *Server) handleReviewStart(w http.ResponseWriter, r *http.Request) {
 		rs.sessions.UpdateScope(channelID, scope)
 	}
 	// Every run of the loop belongs to this review: its findings are the
-	// panel's new ones.
-	rs.sessions.StartReview(channelID, rs.newReviewID())
+	// panel's new ones. A review-only loop stays on the head it starts at;
+	// a review-fix loop follows its own fixes.
+	head := ""
+	if workflowName == reviewLoopWorkflow {
+		channelDir, parentDir := rs.reviewRunDirs(r.Context(), channelID)
+		head, err = rs.client.FetchPRHeadSHA(r.Context(), channelDir, rs.deps.configs.ghUser(channelDir, parentDir), req.PRNumber)
+		if err != nil {
+			respondReviewError(w, err)
+			return
+		}
+	}
+	rs.sessions.StartReview(channelID, rs.newReviewID(), head)
 
 	dirPath, parentDirPath, err := s.resolveWorkflowConfigPaths(r.Context(), channelID)
 	if err != nil {
@@ -191,17 +202,26 @@ func (s *Server) reviewBusy(r *http.Request, channelID string) string {
 			return "review session is " + string(sess.Status)
 		}
 	}
-	runs, err := s.workflowEngine.ListRuns(r.Context(), channelID, 50, 0)
+	if run := s.activeReviewLoop(r.Context(), channelID); run != nil {
+		return "review workflow run " + run.ID + " is " + string(run.Status)
+	}
+	return ""
+}
+
+// activeReviewLoop returns channelID's review workflow run that is running
+// or paused, nil when none is or the runs can't be listed.
+func (s *Server) activeReviewLoop(ctx context.Context, channelID string) *db.WorkflowRun {
+	runs, err := s.workflowEngine.ListRuns(ctx, channelID, 50, 0)
 	if err != nil {
-		return ""
+		return nil
 	}
 	for _, run := range runs {
 		if run.WorkflowName != reviewLoopWorkflow && run.WorkflowName != reviewFixLoopWorkflow {
 			continue
 		}
 		if run.Status == db.WorkflowRunStatusRunning || run.Status == db.WorkflowRunStatusPaused {
-			return "review workflow run " + run.ID + " is " + string(run.Status)
+			return run
 		}
 	}
-	return ""
+	return nil
 }

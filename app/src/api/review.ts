@@ -113,6 +113,8 @@ export interface ReviewSession {
   // history ids of its runs: the agent comments those reported are new.
   review_id?: string;
   review_runs?: number[];
+  // The commit a review-only loop is pinned to; absent when it follows the head.
+  review_head?: string;
   updated_at: string;
 }
 

@@ -178,7 +178,7 @@ func (s *reviewService) startHistoryRun(ctx context.Context, channelID string, s
 	reviewID := sess.ReviewID
 	if reviewID == "" {
 		reviewID = s.newReviewID()
-		s.sessions.StartReview(channelID, reviewID)
+		s.sessions.StartReview(channelID, reviewID, "")
 	}
 	id, err := s.history.CreateReviewRun(ctx, &db.ReviewRun{
 		ReviewID:  reviewID,

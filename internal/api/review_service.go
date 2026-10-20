@@ -48,6 +48,10 @@ type reviewService struct {
 	runIDs map[string]int64
 	// newReviewID names a review a Run starts.
 	newReviewID func() string
+	// pinned reports whether channelID's review-only loop is running or
+	// paused, so its runs stay on the session's ReviewHead. Nil without a
+	// workflow engine.
+	pinned func(ctx context.Context, channelID string) bool
 }
 
 // newReviewService creates the review domain with its run registry ready.
@@ -99,11 +103,18 @@ type ReviewRunner interface {
 // still picks up the new diff over WS.
 func (s *reviewService) refreshReviewSession(ctx context.Context, channelID, dirPath, ghUser string, sess *review.Session) (*review.Session, error) {
 	prNum := sess.PR.Number
-	headSHA, err := s.client.FetchPRHeadSHA(ctx, dirPath, ghUser, prNum)
-	if err != nil {
-		return nil, err
+	// A review-only loop reviews the commit it started at: the PR's newer
+	// commits wait for the next review.
+	headSHA, pin := sess.ReviewHead, ""
+	if headSHA != "" && s.pinned != nil && s.pinned(ctx, channelID) {
+		pin = headSHA
+	} else {
+		var err error
+		if headSHA, err = s.client.FetchPRHeadSHA(ctx, dirPath, ghUser, prNum); err != nil {
+			return nil, err
+		}
 	}
-	if err := s.worktree.Refresh(ctx, dirPath, sess.WorktreePath, prNum); err != nil {
+	if err := s.worktree.Refresh(ctx, dirPath, sess.WorktreePath, prNum, pin); err != nil {
 		return nil, err
 	}
 	ghComments := s.fetchExistingReviewComments(ctx, dirPath, ghUser, prNum)
@@ -137,6 +148,7 @@ func (s *reviewService) refreshReviewSession(ctx context.Context, channelID, dir
 		Threads:        sess.Threads,
 		ReviewID:       sess.ReviewID,
 		ReviewRuns:     sess.ReviewRuns,
+		ReviewHead:     sess.ReviewHead,
 		HistoryDir:     sess.HistoryDir,
 	})
 	s.saveOutcomes(channelID, sess.Comments, merged)

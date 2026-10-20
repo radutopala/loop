@@ -112,6 +112,29 @@ func (s *PRSuite) TestAddWorktreeAlreadyExistsIsOK() {
 	path, err := g.Add(context.Background(), "/repo", 9, "ch1")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), target, path)
+	// The existing worktree is moved to the head just fetched.
+	require.Len(s.T(), rr.calls, 4)
+	require.Equal(s.T(), call{dir: target, name: "git", args: []string{"fetch", "origin", "refs/pull/9/head"}}, rr.calls[2])
+	require.Equal(s.T(), call{dir: target, name: "git", args: []string{"checkout", "--detach", "FETCH_HEAD"}}, rr.calls[3])
+}
+
+func (s *PRSuite) TestAddWorktreeAlreadyExistsRefreshFails() {
+	target := filepath.Join("/repo", ".worktrees", "pr-9-ch1")
+	rr := &recordingRunner{
+		response: map[string]callResponse{
+			fmt.Sprintf("git worktree add --detach %s FETCH_HEAD", target): {
+				out: []byte("fatal: '" + target + "' already exists"),
+				err: errors.New("exit 128"),
+			},
+			"git checkout --detach FETCH_HEAD": {
+				out: []byte("error: local changes would be overwritten"),
+				err: errors.New("exit 1"),
+			},
+		},
+	}
+	g := &GitPR{Run: rr.run}
+	_, err := g.Add(context.Background(), "/repo", 9, "ch1")
+	require.ErrorContains(s.T(), err, "git checkout: error: local changes would be overwritten")
 }
 
 func (s *PRSuite) TestAddWorktreeOtherErrorPropagates() {
@@ -131,20 +154,29 @@ func (s *PRSuite) TestAddWorktreeOtherErrorPropagates() {
 
 func (s *PRSuite) TestRefreshRequiresInputs() {
 	g := &GitPR{Run: (&recordingRunner{}).run}
-	require.Error(s.T(), g.Refresh(context.Background(), "", "/wt", 1))
-	require.Error(s.T(), g.Refresh(context.Background(), "/repo", "", 1))
-	require.Error(s.T(), g.Refresh(context.Background(), "/repo", "/wt", 0))
+	require.Error(s.T(), g.Refresh(context.Background(), "", "/wt", 1, ""))
+	require.Error(s.T(), g.Refresh(context.Background(), "/repo", "", 1, ""))
+	require.Error(s.T(), g.Refresh(context.Background(), "/repo", "/wt", 0, ""))
 }
 
 func (s *PRSuite) TestRefreshHappyPath() {
 	rr := &recordingRunner{}
 	g := &GitPR{Run: rr.run}
-	require.NoError(s.T(), g.Refresh(context.Background(), "/repo", "/wt", 7))
+	require.NoError(s.T(), g.Refresh(context.Background(), "/repo", "/wt", 7, ""))
 	require.Len(s.T(), rr.calls, 2)
 	require.Equal(s.T(), "/wt", rr.calls[0].dir)
 	require.Equal(s.T(), []string{"fetch", "origin", "refs/pull/7/head"}, rr.calls[0].args)
 	require.Equal(s.T(), "/wt", rr.calls[1].dir)
 	require.Equal(s.T(), []string{"checkout", "--detach", "FETCH_HEAD"}, rr.calls[1].args)
+}
+
+func (s *PRSuite) TestRefreshPinned() {
+	rr := &recordingRunner{}
+	g := &GitPR{Run: rr.run}
+	require.NoError(s.T(), g.Refresh(context.Background(), "/repo", "/wt", 7, "abc123"))
+	require.Len(s.T(), rr.calls, 2)
+	require.Equal(s.T(), []string{"fetch", "origin", "refs/pull/7/head"}, rr.calls[0].args)
+	require.Equal(s.T(), []string{"checkout", "--detach", "abc123"}, rr.calls[1].args)
 }
 
 func (s *PRSuite) TestRefreshFetchError() {
@@ -154,7 +186,7 @@ func (s *PRSuite) TestRefreshFetchError() {
 		},
 	}
 	g := &GitPR{Run: rr.run}
-	require.ErrorContains(s.T(), g.Refresh(context.Background(), "/repo", "/wt", 7), "net down")
+	require.ErrorContains(s.T(), g.Refresh(context.Background(), "/repo", "/wt", 7, ""), "net down")
 }
 
 func (s *PRSuite) TestRefreshCheckoutError() {
@@ -164,7 +196,7 @@ func (s *PRSuite) TestRefreshCheckoutError() {
 		},
 	}
 	g := &GitPR{Run: rr.run}
-	require.ErrorContains(s.T(), g.Refresh(context.Background(), "/repo", "/wt", 7), "conflict")
+	require.ErrorContains(s.T(), g.Refresh(context.Background(), "/repo", "/wt", 7, ""), "conflict")
 }
 
 func (s *PRSuite) TestDiffRequiresInputs() {

@@ -99,8 +99,8 @@ func (m *mockPR) Add(ctx context.Context, parentDir string, prNum int, channelID
 	return args.String(0), args.Error(1)
 }
 
-func (m *mockPR) Refresh(ctx context.Context, parentDir, worktreePath string, prNum int) error {
-	args := m.Called(ctx, parentDir, worktreePath, prNum)
+func (m *mockPR) Refresh(ctx context.Context, parentDir, worktreePath string, prNum int, sha string) error {
+	args := m.Called(ctx, parentDir, worktreePath, prNum, sha)
 	return args.Error(0)
 }
 
@@ -677,13 +677,59 @@ func (s *ReviewHandlerSuite) TestSyncLoopDirFallback() {
 	})
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1"}, nil)
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/loop/ch1/work", "", 7).Return("new", nil)
-	s.wt.On("Refresh", mock.Anything, "/loop/ch1/work", "/loop/ch1/work/.worktrees/pr-7", 7).Return(nil)
+	s.wt.On("Refresh", mock.Anything, "/loop/ch1/work", "/loop/ch1/work/.worktrees/pr-7", 7, "").Return(nil)
 	s.wt.On("Diff", mock.Anything, "/loop/ch1/work", "/loop/ch1/work/.worktrees/pr-7", "main", mock.Anything).Return([]byte("d"), nil)
 	s.gh.On("FetchRepoSlug", mock.Anything, "/loop/ch1/work", "").Return((*githubapi.RepoSlug)(nil), errors.New("no slug"))
 
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/sync", nil))
 	require.Equal(s.T(), http.StatusOK, w.Code)
+}
+
+// A review-only loop's session stays on the commit the loop started at
+// while the loop runs; otherwise it follows the PR's head.
+func (s *ReviewHandlerSuite) TestSyncPinned() {
+	tests := []struct {
+		name     string
+		runs     []*db.WorkflowRun
+		noEngine bool
+		wantHead string
+	}{
+		{"review loop running", []*db.WorkflowRun{{ID: "w1", WorkflowName: reviewLoopWorkflow, Status: db.WorkflowRunStatusRunning}}, false, "pinned"},
+		{"review loop paused", []*db.WorkflowRun{{ID: "w1", WorkflowName: reviewLoopWorkflow, Status: db.WorkflowRunStatusPaused}}, false, "pinned"},
+		{"review-fix loop running", []*db.WorkflowRun{{ID: "w1", WorkflowName: reviewFixLoopWorkflow, Status: db.WorkflowRunStatusRunning}}, false, "new"},
+		{"loop over", []*db.WorkflowRun{{ID: "w1", WorkflowName: reviewLoopWorkflow, Status: db.WorkflowRunStatusCompleted}}, false, "new"},
+		{"no workflow engine", nil, true, "new"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			s.wireSyncSession()
+			s.rs.StartReview("ch1", "rev-1", "pinned")
+			if !tt.noEngine {
+				eng := new(MockWorkflowEngine)
+				eng.On("ListRuns", mock.Anything, "ch1", 50, 0).Return(tt.runs, nil)
+				s.srv.SetWorkflowEngine(eng)
+			}
+			pin := ""
+			if tt.wantHead == "pinned" {
+				pin = "pinned"
+			} else {
+				s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("new", nil)
+			}
+			s.wt.On("Refresh", mock.Anything, "/repo", "/repo/.worktrees/pr-7", 7, pin).Return(nil)
+			s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("d"), nil)
+			s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return((*githubapi.RepoSlug)(nil), errors.New("no slug"))
+
+			w := httptest.NewRecorder()
+			s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/sync", nil))
+			require.Equal(s.T(), http.StatusOK, w.Code, w.Body.String())
+			sess := s.rs.Get("ch1")
+			require.Equal(s.T(), tt.wantHead, sess.HeadSHA)
+			require.Equal(s.T(), "pinned", sess.ReviewHead, "the pin is kept for the loop's next runs")
+			s.wt.AssertExpectations(s.T())
+		})
+	}
 }
 
 func (s *ReviewHandlerSuite) TestSyncHeadFetchError() {
@@ -697,7 +743,7 @@ func (s *ReviewHandlerSuite) TestSyncHeadFetchError() {
 func (s *ReviewHandlerSuite) TestSyncRefreshError() {
 	s.wireSyncSession()
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("new", nil)
-	s.wt.On("Refresh", mock.Anything, "/repo", "/repo/.worktrees/pr-7", 7).Return(errors.New("checkout failed"))
+	s.wt.On("Refresh", mock.Anything, "/repo", "/repo/.worktrees/pr-7", 7, "").Return(errors.New("checkout failed"))
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/sync", nil))
 	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
@@ -706,7 +752,7 @@ func (s *ReviewHandlerSuite) TestSyncRefreshError() {
 func (s *ReviewHandlerSuite) TestSyncDiffError() {
 	s.wireSyncSession()
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("new", nil)
-	s.wt.On("Refresh", mock.Anything, "/repo", "/repo/.worktrees/pr-7", 7).Return(nil)
+	s.wt.On("Refresh", mock.Anything, "/repo", "/repo/.worktrees/pr-7", 7, "").Return(nil)
 	// Comment fetch runs before Diff during Sync — short-circuit it via
 	// slug failure so the diff-error branch is the one we exercise.
 	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return((*githubapi.RepoSlug)(nil), errors.New("no slug"))
@@ -721,7 +767,7 @@ func (s *ReviewHandlerSuite) TestSyncDiffError() {
 func (s *ReviewHandlerSuite) TestSyncHappyPath() {
 	s.wireSyncSession()
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("new-sha", nil)
-	s.wt.On("Refresh", mock.Anything, "/repo", "/repo/.worktrees/pr-7", 7).Return(nil)
+	s.wt.On("Refresh", mock.Anything, "/repo", "/repo/.worktrees/pr-7", 7, "").Return(nil)
 	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("new-diff"), nil)
 	slug := &githubapi.RepoSlug{Owner: "o", Name: "n"}
 	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return(slug, nil)
@@ -1716,7 +1762,7 @@ func (s *ReviewHandlerSuite) wireReadySession() {
 // explicit expectations before the handler invocation.
 func (s *ReviewHandlerSuite) wireRefreshMocks(dirPath, worktreePath string, prNum int, baseRef string, diff []byte) {
 	s.gh.On("FetchPRHeadSHA", mock.Anything, dirPath, mock.Anything, prNum).Return("abc", nil).Maybe()
-	s.wt.On("Refresh", mock.Anything, dirPath, worktreePath, prNum).Return(nil).Maybe()
+	s.wt.On("Refresh", mock.Anything, dirPath, worktreePath, prNum, "").Return(nil).Maybe()
 	// FetchRepoSlug returning an error short-circuits the GH comment fetch
 	// inside fetchExistingReviewComments, so no FetchPRReviewComments mock
 	// is needed. Best-effort behavior matches production.
@@ -2332,7 +2378,7 @@ func (s *ReviewHandlerSuite) TestRunPromptLeavesOutExistingComments() {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil).Maybe()
 	// Refresh re-fetches GH comments before kicking off the agent.
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", mock.Anything, 7).Return("abc", nil).Maybe()
-	s.wt.On("Refresh", mock.Anything, "/repo", "/repo/.worktrees/pr-7", 7).Return(nil).Maybe()
+	s.wt.On("Refresh", mock.Anything, "/repo", "/repo/.worktrees/pr-7", 7, "").Return(nil).Maybe()
 	slug := &githubapi.RepoSlug{Owner: "o", Name: "r"}
 	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", mock.Anything).Return(slug, nil).Maybe()
 	s.gh.On("FetchPRReviewComments", mock.Anything, "/repo", mock.Anything, *slug, 7).Return([]githubapi.PRReviewComment{
@@ -2495,7 +2541,7 @@ func (s *ReviewHandlerSuite) TestRunRediffsOnCommentOutsideHunk() {
 	})
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil).Maybe()
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", mock.Anything, 7).Return("abc", nil).Maybe()
-	s.wt.On("Refresh", mock.Anything, "/repo", "/repo/.worktrees/pr-7", 7).Return(nil).Maybe()
+	s.wt.On("Refresh", mock.Anything, "/repo", "/repo/.worktrees/pr-7", 7, "").Return(nil).Maybe()
 	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", mock.Anything).Return((*githubapi.RepoSlug)(nil), errors.New("slug skipped")).Maybe()
 
 	hub := NewEventsHub(slog.Default())
@@ -2740,7 +2786,7 @@ func (s *ReviewHandlerSuite) TestRunRefreshBroadcastsWhenDiffChanges() {
 	})
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil).Maybe()
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", mock.Anything, 7).Return("new", nil).Maybe()
-	s.wt.On("Refresh", mock.Anything, "/repo", "/repo/.worktrees/pr-7", 7).Return(nil).Maybe()
+	s.wt.On("Refresh", mock.Anything, "/repo", "/repo/.worktrees/pr-7", 7, "").Return(nil).Maybe()
 	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", mock.Anything).Return((*githubapi.RepoSlug)(nil), errors.New("slug skipped")).Maybe()
 	// Refresh's Diff returns bytes different from sess.RawDiff → broadcast.
 	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("NEW"), nil).Maybe()
