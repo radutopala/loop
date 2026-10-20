@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -22,6 +23,10 @@ type WorkflowEngine interface {
 // SetWorkflowEngine configures the workflow engine.
 func (s *Server) SetWorkflowEngine(e WorkflowEngine) {
 	s.workflowEngine = e
+	s.review.pinned = func(ctx context.Context, channelID string) bool {
+		run := s.activeReviewLoop(ctx, channelID)
+		return run != nil && run.WorkflowName == reviewLoopWorkflow
+	}
 }
 
 type startWorkflowRunRequest struct {

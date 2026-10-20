@@ -851,8 +851,14 @@ func (s *OrchestratorSuite) TestKeepLiveSession() {
 			} else {
 				require.Empty(s.T(), rec.all())
 			}
-			require.True(s.T(), lock.TryLock())
-			lock.Unlock()
+			// The start lets go of the channel right after it publishes.
+			require.Eventually(s.T(), func() bool {
+				if !lock.TryLock() {
+					return false
+				}
+				lock.Unlock()
+				return true
+			}, time.Second, time.Millisecond)
 		})
 	}
 }

@@ -44,11 +44,12 @@ func WithReviewHistory(store ReviewHistoryStore) Option {
 func (s *Server) RunReviewHistoryPrune(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	for {
+	// The loop checks ctx itself: when both are ready, select may pick the
+	// tick after ctx is done.
+	for ctx.Err() == nil {
 		s.review.pruneHistory(ctx)
 		select {
 		case <-ctx.Done():
-			return
 		case <-ticker.C:
 		}
 	}
@@ -178,7 +179,7 @@ func (s *reviewService) startHistoryRun(ctx context.Context, channelID string, s
 	reviewID := sess.ReviewID
 	if reviewID == "" {
 		reviewID = s.newReviewID()
-		s.sessions.StartReview(channelID, reviewID)
+		s.sessions.StartReview(channelID, reviewID, "")
 	}
 	id, err := s.history.CreateReviewRun(ctx, &db.ReviewRun{
 		ReviewID:  reviewID,

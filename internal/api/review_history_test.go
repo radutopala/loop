@@ -135,7 +135,7 @@ func (s *ReviewHandlerSuite) TestRunRecordsFindingTranscript() {
 	ms.On("LastReviewedHead", mock.Anything, "/repo", 7).Return("", nil)
 	s.wt.onScope("/repo/.worktrees/pr-7", "main", review.ScopeAuto, "").Return(review.ScopeResult{Scope: review.ScopeFull}, nil)
 	// The run joins the review a Run started.
-	s.rs.StartReview("ch1", "rev-0")
+	s.rs.StartReview("ch1", "rev-0", "")
 	s.rs.AddReviewRun("ch1", 4)
 	ms.On("CreateReviewRun", mock.Anything, mock.MatchedBy(func(r *db.ReviewRun) bool {
 		return r.ReviewID == "rev-0" && r.Scope == string(review.ScopeFull)

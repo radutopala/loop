@@ -2,6 +2,7 @@ package review
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"fmt"
 	"path/filepath"
@@ -23,7 +24,7 @@ type CommandRunner func(ctx context.Context, dir, name string, args ...string) (
 // HEAD — the same view GitHub shows on the PR.
 type PR interface {
 	Add(ctx context.Context, parentDir string, prNum int, channelID string) (worktreePath string, err error)
-	Refresh(ctx context.Context, parentDir, worktreePath string, prNum int) error
+	Refresh(ctx context.Context, parentDir, worktreePath string, prNum int, sha string) error
 	Diff(ctx context.Context, parentDir, worktreePath, baseRef string, comments []*Comment) ([]byte, error)
 	Remove(ctx context.Context, parentDir, worktreePath string) error
 	ResolveScope(ctx context.Context, worktreePath, baseRef string, want Scope, lastHead string) (ScopeResult, error)
@@ -43,8 +44,8 @@ type GitPR struct {
 // detached worktree at <parentDir>/.worktrees/pr-<n>-<channel>. Each channel
 // gets its own, so threads of one repo can review the same PR side by side
 // without one's close removing the other's checkout or one's fix commits
-// landing in the other's. Idempotent: if the worktree already exists, the
-// existing path is returned.
+// landing in the other's. Idempotent: if the worktree already exists, it is
+// moved to the fetched head (see Refresh) and its path returned.
 func (g *GitPR) Add(ctx context.Context, parentDir string, prNum int, channelID string) (string, error) {
 	if parentDir == "" || prNum <= 0 || channelID == "" {
 		return "", fmt.Errorf("parentDir, prNum and channelID are required")
@@ -61,8 +62,12 @@ func (g *GitPR) Add(ctx context.Context, parentDir string, prNum int, channelID 
 	out, err := g.Run(ctx, parentDir, "git", "worktree", "add", "--detach", worktreePath, "FETCH_HEAD")
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
-		// "already exists" is fine — caller may be re-loading the same PR.
+		// "already exists" is fine — caller may be re-loading the same PR,
+		// whose head may have moved since the worktree was made.
 		if strings.Contains(msg, "already exists") {
+			if err := g.Refresh(ctx, parentDir, worktreePath, prNum, ""); err != nil {
+				return "", err
+			}
 			return worktreePath, nil
 		}
 		return "", fmt.Errorf("git worktree add: %s", msg)
@@ -80,7 +85,10 @@ func (g *GitPR) Add(ctx context.Context, parentDir string, prNum int, channelID 
 // the worktree's FETCH_HEAD stale and the checkout would treat the
 // literal string "FETCH_HEAD" as a pathspec ("--detach does not take
 // a path argument 'FETCH_HEAD'").
-func (g *GitPR) Refresh(ctx context.Context, parentDir, worktreePath string, prNum int) error {
+//
+// A non-empty sha checks out that commit of the PR instead of its head,
+// so a pinned review stays where it started.
+func (g *GitPR) Refresh(ctx context.Context, parentDir, worktreePath string, prNum int, sha string) error {
 	if parentDir == "" || worktreePath == "" || prNum <= 0 {
 		return fmt.Errorf("parentDir, worktreePath, and prNum are required")
 	}
@@ -88,7 +96,7 @@ func (g *GitPR) Refresh(ctx context.Context, parentDir, worktreePath string, prN
 	if out, err := g.Run(ctx, worktreePath, "git", "fetch", "origin", fetchSpec); err != nil {
 		return fmt.Errorf("git fetch %s: %s", fetchSpec, strings.TrimSpace(string(out)))
 	}
-	if out, err := g.Run(ctx, worktreePath, "git", "checkout", "--detach", "FETCH_HEAD"); err != nil {
+	if out, err := g.Run(ctx, worktreePath, "git", "checkout", "--detach", cmp.Or(sha, "FETCH_HEAD")); err != nil {
 		return fmt.Errorf("git checkout: %s", strings.TrimSpace(string(out)))
 	}
 	return nil

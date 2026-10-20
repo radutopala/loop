@@ -156,6 +156,9 @@ type Session struct {
 	// review's new ones.
 	ReviewID   string  `json:"review_id,omitempty"`
 	ReviewRuns []int64 `json:"review_runs,omitempty"`
+	// ReviewHead is the commit a review-only loop started at: its runs
+	// review that commit, not the PR's newer head. Empty follows the head.
+	ReviewHead string `json:"review_head,omitempty"`
 	// HistoryDir keys the session's review history: the repo's main dir,
 	// so every worktree of the repo shares it. Empty keeps no history.
 	HistoryDir string `json:"-"`
@@ -436,16 +439,17 @@ func (s *Store) SetLastRunScope(channelID string, scope Scope, fromSHA string) b
 	return true
 }
 
-// StartReview makes reviewID the latest review, with no runs yet.
-// Returns false if no session exists for channelID.
-func (s *Store) StartReview(channelID, reviewID string) bool {
+// StartReview makes reviewID the latest review, with no runs yet, pinned
+// to head ("" follows the PR's head). Returns false if no session exists
+// for channelID.
+func (s *Store) StartReview(channelID, reviewID, head string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sess, ok := s.sessions[channelID]
 	if !ok {
 		return false
 	}
-	sess.ReviewID, sess.ReviewRuns = reviewID, nil
+	sess.ReviewID, sess.ReviewRuns, sess.ReviewHead = reviewID, nil, head
 	return true
 }
 
