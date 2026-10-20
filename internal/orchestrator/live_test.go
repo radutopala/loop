@@ -649,7 +649,7 @@ func (s *OrchestratorSuite) TestBeginLiveTurnFails() {
 					return d.Status == "running" && d.Trigger == "live"
 				})).Once()
 				ev.On("BroadcastAgentStatus", "ch-1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
-					return d.Status == "error" && d.Trigger == "live" && d.Error == "boom"
+					return d.Status == "error" && d.Trigger == "live" && d.Error == "boom" && !d.Stopped
 				})).Once()
 			}
 			s.bot.On("SendMessage", mock.Anything, mock.MatchedBy(func(m *bot.OutgoingMessage) bool {
@@ -687,6 +687,14 @@ func (s *OrchestratorSuite) TestBeginLiveTurnStopped() {
 			s.SetupTest()
 			lr, _ := s.withLive()
 			hooks := s.startedHooks(lr)
+			ev := new(MockEventBroadcaster)
+			s.orch.SetEventBroadcaster(ev)
+			ev.On("BroadcastAgentStatus", "ch-1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+				return d.Status == "running" && d.Trigger == "live"
+			})).Once()
+			ev.On("BroadcastAgentStatus", "ch-1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+				return d.Status == "error" && d.Trigger == "live" && d.Stopped
+			})).Once()
 			interrupted := make(chan struct{})
 			lr.On("InterruptLive", "ch-1").Run(func(mock.Arguments) { close(interrupted) }).Return(tt.interruptErr).Once()
 			s.bot.On("SendMessage", mock.Anything, mock.MatchedBy(func(m *bot.OutgoingMessage) bool {
@@ -703,6 +711,7 @@ func (s *OrchestratorSuite) TestBeginLiveTurnStopped() {
 
 			lr.AssertExpectations(s.T())
 			s.bot.AssertExpectations(s.T())
+			ev.AssertExpectations(s.T())
 			require.True(s.T(), threadLockFree(&s.orch.channelLocks, "ch-1"))
 		})
 	}
