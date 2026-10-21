@@ -249,6 +249,22 @@ func (s *ManifestSuite) TestValidate() {
 			m.Events = slices.Clone(Events)
 			m.ThreadEvents = ThreadEventsBoth
 		}},
+		{name: "events start", edit: func(m *Manifest) {
+			m.Capabilities = []Capability{CapEventsSub, CapUISwitch}
+			m.Events = []string{"live.status"}
+			m.Settings = map[string]*config.SchemaProperty{"on": {Type: "boolean"}}
+			m.UI = &UI{ComposerSwitches: []ComposerSwitch{{ID: "mode", Label: "Mode", Icon: "ui/mode.svg"}}}
+			m.EventsStart = &EventsStart{Settings: []string{"on"}, Switches: []string{"mode"}}
+		}},
+		{name: "events start that names nothing it declares", edit: func(m *Manifest) {
+			m.Settings = map[string]*config.SchemaProperty{"count": {Type: "integer"}}
+			m.EventsStart = &EventsStart{Settings: []string{"count", "missing"}, Switches: []string{"mode"}}
+		}, wantErr: []string{
+			"events_start needs events",
+			`events_start.settings[0]: "count" is not a boolean setting the manifest declares`,
+			`events_start.settings[1]: "missing" is not a boolean setting the manifest declares`,
+			`events_start.switches[0]: "mode" is not a composer switch the manifest declares`,
+		}},
 		{name: "thread events", edit: func(m *Manifest) { m.ThreadEvents = "parent" }, wantErr: []string{
 			`thread_events: "parent" is not one of thread, channel, both`,
 		}},

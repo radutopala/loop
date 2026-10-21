@@ -1103,6 +1103,90 @@ func (s *ServiceSuite) TestDeliverThreadEvent() {
 	}
 }
 
+// startManifest is echo subscribed to message.created in its threads'
+// containers and the channel's, which an event starts only as eventsStart
+// says.
+const startManifest = `{
+	"id": "echo", "name": "Echo", "version": "1.0.0", "api": "1",
+	"capabilities": ["events.subscribe", "ui.composer_switch"],
+	"events": ["message.created"],
+	"thread_events": "both",
+	"events_start": %s,
+	"settings": {"on": {"type": "boolean", "default": false}},
+	"ui": {"composer_switches": [{"id": "mode", "label": "Mode", "icon": "ui/mode.svg"}]},
+}`
+
+func (s *ServiceSuite) TestDeliverEventsStart() {
+	ch := runtime.Channel{ID: "ch1", DirPath: "/src"}
+	thread := runtime.Channel{ID: "th1", DirPath: "/src/.worktrees/th1"}
+	ep := runtime.Endpoint{URL: "http://127.0.0.1:1234", Secret: "s"}
+	evt := proxy.Event{Type: "message.created", ChannelID: "ch1", ThreadID: "th1"}
+	both := `{"settings": ["on"], "switches": ["mode"]}`
+	on := func(pluginID, channelID, switchID string) *db.PluginSwitch {
+		return &db.PluginSwitch{PluginID: pluginID, ChannelID: channelID, SwitchID: switchID, On: true}
+	}
+	tests := []struct {
+		name        string
+		eventsStart string
+		running     []string
+		settings    map[string]any
+		projectErr  error
+		switches    []*db.PluginSwitch
+		switchesErr error
+		// lists is whether the switches are looked up.
+		lists   bool
+		want    []runtime.Channel
+		wantErr string
+	}{
+		{name: "running", eventsStart: both, running: []string{"th1", "ch1"}, want: []runtime.Channel{thread, ch}},
+		{name: "setting on", eventsStart: both, settings: map[string]any{"on": true}, want: []runtime.Channel{thread, ch}},
+		{name: "switch on in the chat", eventsStart: both, lists: true, switches: []*db.PluginSwitch{on("echo", "th1", "mode")}, want: []runtime.Channel{thread, ch}},
+		{name: "nothing on", eventsStart: both, lists: true, switches: []*db.PluginSwitch{
+			on("echo", "ch1", "mode"), on("other", "th1", "mode"), on("echo", "th1", "other"), {PluginID: "echo", ChannelID: "th1", SwitchID: "mode"},
+		}},
+		{name: "only the running one", eventsStart: both, running: []string{"ch1", "elsewhere"}, lists: true, want: []runtime.Channel{ch}},
+		{name: "another plugin's container", eventsStart: `{"switches": ["mode"]}`, lists: true},
+		{name: "settings only", eventsStart: `{"settings": ["on"]}`},
+		{name: "never", eventsStart: `{}`},
+		{name: "project fails", eventsStart: both, projectErr: errors.New("bad config"), wantErr: "echo: bad config"},
+		{name: "switches fail", eventsStart: both, lists: true, switchesErr: errors.New("boom"), wantErr: "echo: boom"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			defer s.TearDownTest()
+			st := s.installed(db.PluginStatusInstalled)
+			require.NoError(s.T(), os.WriteFile(filepath.Join(s.in.Dir(st), "plugin.json"), []byte(fmt.Sprintf(startManifest, tt.eventsStart)), 0o644))
+			st.ApprovedCaps = []string{string(plugin.CapEventsSub)}
+			s.svc.project = func(_ context.Context, pluginID string, _ runtime.Channel) (config.PluginConfig, error) {
+				s.Require().Equal("echo", pluginID)
+				return config.PluginConfig{Enabled: &s.enabled, Settings: tt.settings}, tt.projectErr
+			}
+			s.store.On("ListPluginStates", s.ctx).Return([]*db.PluginState{st}, nil).Once()
+			running := []runtime.Running{{PluginID: "other", Channel: thread}}
+			for _, id := range tt.running {
+				running = append(running, runtime.Running{PluginID: "echo", Channel: runtime.Channel{ID: id}})
+			}
+			s.runtime.On("Running").Return(running).Once()
+			if tt.lists {
+				s.store.On("ListPluginSwitches", s.ctx).Return(tt.switches, tt.switchesErr).Once()
+			}
+			for _, target := range tt.want {
+				s.runtime.On("Ensure", s.ctx, mock.Anything, target).Return(ep, nil).Once()
+			}
+			if len(tt.want) > 0 {
+				s.caller.On("Event", s.ctx, ep, evt).Return(nil).Times(len(tt.want))
+			}
+			err := s.svc.Deliver(s.ctx, ch, &thread, evt)
+			if tt.wantErr != "" {
+				require.EqualError(s.T(), err, tt.wantErr)
+				return
+			}
+			require.NoError(s.T(), err)
+		})
+	}
+}
+
 const switchManifest = `{
 	"id": "echo", "name": "Echo", "version": "1.0.0", "api": "1",
 	"capabilities": ["ui.composer_switch", "live.control", "events.subscribe"],

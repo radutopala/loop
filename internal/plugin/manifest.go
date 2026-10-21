@@ -141,10 +141,25 @@ type Manifest struct {
 	// ThreadEvents is which container gets an event in a channel's thread:
 	// the thread's own (ThreadEventsThread, the default), the channel's
 	// (ThreadEventsChannel), or both.
-	ThreadEvents string     `json:"thread_events,omitempty"`
-	Live         *Live      `json:"live,omitempty"`
-	UI           *UI        `json:"ui,omitempty"`
-	Resources    *Resources `json:"resources,omitempty"`
+	ThreadEvents string `json:"thread_events,omitempty"`
+	// EventsStart, when set, limits when an event starts the plugin's
+	// container: only while one of its settings is on in the chat's
+	// project, or one of its switches is on in the chat. Otherwise the
+	// event goes only to a container already running.
+	EventsStart *EventsStart `json:"events_start,omitempty"`
+	Live        *Live        `json:"live,omitempty"`
+	UI          *UI          `json:"ui,omitempty"`
+	Resources   *Resources   `json:"resources,omitempty"`
+}
+
+// EventsStart is what an event needs to start the plugin's container.
+type EventsStart struct {
+	// Settings are boolean settings, any of which on in the chat's project
+	// lets an event start the container.
+	Settings []string `json:"settings,omitempty"`
+	// Switches are composer switches, any of which on in the event's chat
+	// lets an event start the container.
+	Switches []string `json:"switches,omitempty"`
 }
 
 // Live is what the plugin does with a chat's live session, the claude
@@ -569,6 +584,27 @@ func (m *Manifest) validateEvents(add func(string, ...any)) {
 			add("events[%d]: %q is listed twice", i, e)
 		}
 		seen[e] = true
+	}
+	m.validateEventsStart(add)
+}
+
+func (m *Manifest) validateEventsStart(add func(string, ...any)) {
+	es := m.EventsStart
+	if es == nil {
+		return
+	}
+	if len(m.Events) == 0 {
+		add("events_start needs events")
+	}
+	for i, name := range es.Settings {
+		if p := m.Settings[name]; p == nil || p.Type != "boolean" {
+			add("events_start.settings[%d]: %q is not a boolean setting the manifest declares", i, name)
+		}
+	}
+	for i, id := range es.Switches {
+		if _, ok := m.ComposerSwitch(id); !ok {
+			add("events_start.switches[%d]: %q is not a composer switch the manifest declares", i, id)
+		}
 	}
 }
 

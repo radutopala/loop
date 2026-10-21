@@ -81,6 +81,7 @@ type ServiceStore interface {
 	ApplyPluginSchedule(ctx context.Context, task *db.ScheduledTask, applied string) error
 	DeletePluginSchedule(ctx context.Context, pluginID, channelID, action string) error
 	SetPluginTasksPaused(ctx context.Context, pluginID, channelID string, paused bool) error
+	ListPluginSwitches(ctx context.Context) ([]*db.PluginSwitch, error)
 }
 
 // Caller calls into a running plugin.
@@ -568,7 +569,7 @@ func (s *Service) Switch(ctx context.Context, pluginID, id string, ch runtime.Ch
 // thread of ch, to each plugin that subscribes to its type, has
 // events.subscribe approved and is enabled by the project (and for a
 // live.system event, asks for its subtype and has live.control approved), starting its
-// container if it isn't running. A thread's event goes to the thread's
+// container if it isn't running and the manifest's events_start lets it. A thread's event goes to the thread's
 // container, the channel's or both, as the plugin's thread_events says. It
 // returns each plugin's failure.
 func (s *Service) Deliver(ctx context.Context, ch runtime.Channel, thread *runtime.Channel, evt proxy.Event) error {
@@ -600,6 +601,15 @@ func (s *Service) Deliver(ctx context.Context, ch runtime.Channel, thread *runti
 				targets = append(targets, ch)
 			}
 		}
+		chat := ch
+		if thread != nil {
+			chat = *thread
+		}
+		targets, err = s.startable(ctx, st.PluginID, m, chat, targets)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", st.PluginID, err))
+			continue
+		}
 		for _, target := range targets {
 			if err := s.deliver(ctx, st, m, target, evt); err != nil {
 				errs = append(errs, fmt.Errorf("%s: %w", st.PluginID, err))
@@ -607,6 +617,58 @@ func (s *Service) Deliver(ctx context.Context, ch runtime.Channel, thread *runti
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// startable returns the targets an event in chat goes to: those whose
+// container runs, and the rest too when the manifest's events_start lets
+// the event start them.
+func (s *Service) startable(ctx context.Context, pluginID string, m *plugin.Manifest, chat runtime.Channel, targets []runtime.Channel) ([]runtime.Channel, error) {
+	if m.EventsStart == nil {
+		return targets, nil
+	}
+	running := map[string]bool{}
+	for _, r := range s.runtime.Running() {
+		if r.PluginID == pluginID {
+			running[r.Channel.ID] = true
+		}
+	}
+	stopped := slices.ContainsFunc(targets, func(t runtime.Channel) bool { return !running[t.ID] })
+	if !stopped {
+		return targets, nil
+	}
+	starts, err := s.eventStarts(ctx, pluginID, m, chat)
+	if err != nil || starts {
+		return targets, err
+	}
+	return slices.DeleteFunc(targets, func(t runtime.Channel) bool { return !running[t.ID] }), nil
+}
+
+// eventStarts reports whether an event in chat may start the plugin's
+// containers: one of the manifest's events_start settings is on in chat's
+// project, or one of its switches is on in chat.
+func (s *Service) eventStarts(ctx context.Context, pluginID string, m *plugin.Manifest, chat runtime.Channel) (bool, error) {
+	if len(m.EventsStart.Settings) > 0 {
+		c, err := s.project(ctx, pluginID, chat)
+		if err != nil {
+			return false, err
+		}
+		settings, _ := m.ResolveSettings(c.Settings) // a bad value is left out, so off
+		for _, name := range m.EventsStart.Settings {
+			if on, _ := settings[name].(bool); on {
+				return true, nil
+			}
+		}
+	}
+	if len(m.EventsStart.Switches) == 0 {
+		return false, nil
+	}
+	saved, err := s.store.ListPluginSwitches(ctx)
+	if err != nil {
+		return false, err
+	}
+	return slices.ContainsFunc(saved, func(sw *db.PluginSwitch) bool {
+		return sw.On && sw.PluginID == pluginID && sw.ChannelID == chat.ID && slices.Contains(m.EventsStart.Switches, sw.SwitchID)
+	}), nil
 }
 
 // Settings returns the settings of the plugin pluginID, with manifest m,

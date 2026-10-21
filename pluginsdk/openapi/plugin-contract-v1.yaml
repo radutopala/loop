@@ -154,7 +154,10 @@ paths:
       description: |
         Sent for each Loop event of a type in the manifest's `events`, when
         the owner approved events.subscribe and the channel's project
-        enables the plugin. Loop starts the container to deliver it. An
+        enables the plugin. Loop starts the container to deliver it, or,
+        when the manifest has events_start, only while one of the settings
+        or switches it names is on; otherwise only a running container gets
+        it. An
         event in one of the channel's threads carries thread_id and goes to
         the thread's container, or as the manifest's thread_events says to
         the channel's or both; events in hidden threads, such as the
