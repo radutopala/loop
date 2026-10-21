@@ -390,7 +390,7 @@ app-icons: ## Regenerate app icons from SVG sources (requires rsvg-convert, icon
 # the extractor export data it cannot read. The scan targets refuse a cached
 # bundle that differs from CODEQL_VERSION, so a bump takes effect only after
 # `make codeql-download`, which replaces the volume's contents.
-CODEQL_VERSION ?= v2.27.2
+CODEQL_VERSION ?= v2.27.3
 CODEQL_GO_VERSION ?= 1.27
 
 codeql-download: ## Download CodeQL bundle into Docker volume (rerun after bumping CODEQL_VERSION)
