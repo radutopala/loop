@@ -408,10 +408,9 @@ func (s *ApprovalSuite) TestGitCommitThenPushPromptsTwice() {
 			require.Equal(s.T(), types.DecisionAllow, (<-outCh).Decision)
 
 			outCh = exec(push)
-			reqID := s.waitForPending(m, 1)
-			require.Equal(s.T(), 2, bot.sendCount, "the push gets a card of its own")
-			require.NoError(s.T(), m.Resolve(reqID, DecisionDeny, "u"))
+			require.NoError(s.T(), m.Resolve(s.waitForPending(m, 1), DecisionDeny, "u"))
 			require.Equal(s.T(), types.DecisionDeny, (<-outCh).Decision)
+			require.Equal(s.T(), 2, bot.sendCount, "the push got a card of its own")
 		})
 	}
 }
