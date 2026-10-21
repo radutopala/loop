@@ -287,6 +287,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^the chat's tile moved by (-?\d+)px, (-?\d+)px$`, tc.assertChatTileMoved)
 	ctx.Step(`^the composer in "([^"]*)" is the one I tagged$`, tc.assertTaggedComposer)
 	ctx.Step(`^I scroll the chat messages to top$`, tc.scrollChatMessagesToTop)
+	ctx.Step(`^the chat is scrolled to its bottom$`, tc.assertChatAtBottom)
 	ctx.Step(`^I serve a chat history of (\d+) messages from the timeline$`, tc.serveChatHistory)
 	ctx.Step(`^I scroll the chat to the top and note the first message$`, tc.scrollChatToTopNotingFirst)
 	ctx.Step(`^an older page loads above the noted message without moving it$`, tc.assertOlderPageKeepsNoted)
@@ -3571,6 +3572,21 @@ func (tc *TestContext) scrollChatToTopNotingFirst() error {
 	}
 	if result != "ok" {
 		return fmt.Errorf("scrollChatToTopNotingFirst: %s", result)
+	}
+	return nil
+}
+
+// assertChatAtBottom waits for the chat's messages to be scrolled to their
+// bottom, where the latest message is.
+func (tc *TestContext) assertChatAtBottom() error {
+	atBottom := `(() => {
+		const bubble = document.querySelector('[data-msg-uuid]');
+		let el = bubble && bubble.parentElement;
+		while (el && getComputedStyle(el).overflowY !== 'auto') el = el.parentElement;
+		return !!el && el.scrollHeight - el.scrollTop - el.clientHeight < 2;
+	})()`
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Poll(atBottom, nil, chromedp.WithPollingTimeout(5*time.Second))); err != nil {
+		return fmt.Errorf("the chat isn't scrolled to its bottom: %w", err)
 	}
 	return nil
 }

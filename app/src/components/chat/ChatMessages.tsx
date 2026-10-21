@@ -139,6 +139,8 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
+  // Scrolled up from the latest message, which shows the jump-to-latest button.
+  const [scrolledUp, setScrolledUp] = useState(false);
   const [highlightedMsgId, setHighlightedMsgId] = useState<number | null>(null);
 
   const scrollToBottom = useCallback(() => {
@@ -147,6 +149,16 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
   }, []);
 
   useImperativeHandle(ref, () => ({ scrollToBottom }), [scrollToBottom]);
+
+  // Straight to the latest message, however far up the view is: a smooth
+  // scroll through a long chat is slow, and its scroll events would turn
+  // following the latest message off again on the way.
+  const jumpToLatest = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    autoScrollRef.current = true;
+    el.scrollTop = el.scrollHeight;
+  }, []);
 
   // An older page goes in above what's being read, and the view should stay
   // on it. The browser only keeps the view in place when it's scrolled away
@@ -263,6 +275,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
     if (!el) return;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
     autoScrollRef.current = atBottom;
+    setScrolledUp(!atBottom);
 
     // Load more when nearing the top, so the next page is usually in before
     // the top is reached.
@@ -483,18 +496,63 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
           {completionInfo && !isRunning && <CompletionSummary info={completionInfo} />}
           <div ref={bottomRef} />
         </div>
-        {quoteAnchor?.position === "bottom" && (
-          <div style={{ position: "sticky", bottom: 0, zIndex: 2, paddingTop: 4 }}>
-            <div style={{ maxWidth: 768, margin: "0 auto" }}>
-              <TriggerQuote
-                content={quoteAnchor.content}
-                time={quoteAnchor.time}
-                onClick={() => {
-                  const target = containerRef.current?.querySelector(`[data-msg-uuid="${quoteAnchor.msgId}"]`);
-                  target?.scrollIntoView({ behavior: "smooth", block: "center" });
+        {(quoteAnchor?.position === "bottom" || scrolledUp) && (
+          <div style={{ position: "sticky", bottom: 0, zIndex: 2, paddingTop: quoteAnchor?.position === "bottom" ? 4 : 0 }}>
+            {/* Floats above the banner, or above the bottom edge without one. */}
+            {scrolledUp && (
+              <button
+                type="button"
+                data-testid="chat-jump-latest"
+                onClick={jumpToLatest}
+                style={{
+                  position: "absolute",
+                  left: "50%",
+                  transform: "translateX(-50%)",
+                  bottom: "calc(100% + 8px)",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 6,
+                  padding: "5px 12px",
+                  borderRadius: 16,
+                  border: `1px solid ${colors.border}`,
+                  background: colors.surface,
+                  color: colors.text,
+                  boxShadow: `0 2px 6px ${colors.shadow}`,
+                  cursor: "pointer",
+                  fontSize: 12,
+                  whiteSpace: "nowrap",
                 }}
-              />
-            </div>
+              >
+                <svg
+                  aria-hidden
+                  width="12"
+                  height="12"
+                  viewBox="0 0 12 12"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  style={{ display: "block" }}
+                >
+                  <path d="M6 2V10M2.5 6.5L6 10L9.5 6.5" />
+                </svg>
+                <span style={{ lineHeight: 1 }}>Jump to latest</span>
+              </button>
+            )}
+            {quoteAnchor?.position === "bottom" && (
+              <div style={{ maxWidth: 768, margin: "0 auto" }}>
+                <TriggerQuote
+                  content={quoteAnchor.content}
+                  time={quoteAnchor.time}
+                  onClick={() => {
+                    const target = containerRef.current?.querySelector(`[data-msg-uuid="${quoteAnchor.msgId}"]`);
+                    target?.scrollIntoView({ behavior: "smooth", block: "center" });
+                  }}
+                />
+              </div>
+            )}
           </div>
         )}
       </div>

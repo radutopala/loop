@@ -680,9 +680,10 @@ The chat view tracks whether the user is scrolled to the bottom.
 
 ### Behavior
 
-- **Auto-scroll active:** New messages, streaming updates, tool activity, and agent activity automatically scroll the view to the bottom (smooth scroll).
+- **Auto-scroll active:** New messages, streaming updates, tool activity, and agent activity automatically pin the view to the bottom.
 - **Auto-scroll disabled:** If the user scrolls up (more than 40px from the bottom), auto-scroll is paused.
 - **Re-enabling:** Scrolling back to the bottom re-enables auto-scroll. Sending a message calls `scrollToBottom()` which re-enables auto-scroll.
+- **Jump to latest:** While scrolled up, a `↓ Jump to latest` pill floats centered above the bottom edge (above the [trigger quote](#trigger-quote) when it shows). A click goes straight to the latest message, without a smooth scroll, and re-enables auto-scroll; the pill goes once the view is at the bottom.
 
 ### Scroll Detection
 
