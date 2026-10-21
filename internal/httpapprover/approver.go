@@ -54,6 +54,7 @@ type RequestBody struct {
 	Source   string            `json:"source,omitempty"`
 	Message  string            `json:"message"`
 	CacheKey string            `json:"cache_key"`
+	BurstKey string            `json:"burst_key,omitempty"`
 	Details  map[string]string `json:"details,omitempty"`
 }
 
@@ -101,6 +102,7 @@ func (a *Approver) Request(ctx context.Context, channelID string, req agentgate.
 		Source:   req.Source,
 		Message:  req.Message,
 		CacheKey: req.CacheKey,
+		BurstKey: req.BurstKey,
 		Details:  req.Details,
 	})
 

@@ -40,7 +40,7 @@ func (s *ApproverSuite) TestPostsBearerAndJSONBody() {
 	a := New(srv.URL, "tok-abc", srv.Client(), nil)
 	out := a.Request(context.Background(), "ch-42", agentgate.ApprovalRequest{
 		Kind: "docker-http", Target: "GET /containers/json",
-		Message: "list?", CacheKey: "docker:GET:/containers/json",
+		Message: "list?", CacheKey: "docker:GET:/containers/json", BurstKey: "argv",
 		Details: map[string]string{"image": "alpine", "privileged": "true"},
 	})
 
@@ -51,6 +51,7 @@ func (s *ApproverSuite) TestPostsBearerAndJSONBody() {
 	s.Equal("GET /containers/json", gotBody.Target)
 	s.Equal("list?", gotBody.Message)
 	s.Equal("docker:GET:/containers/json", gotBody.CacheKey)
+	s.Equal("argv", gotBody.BurstKey)
 	s.Equal(map[string]string{"image": "alpine", "privileged": "true"}, gotBody.Details)
 
 	s.Equal(types.DecisionAllow, out.Decision)

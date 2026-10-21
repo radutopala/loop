@@ -135,6 +135,7 @@ type containerApprovalRequest struct {
 	Source   string            `json:"source,omitempty"`
 	Message  string            `json:"message"`
 	CacheKey string            `json:"cache_key"`
+	BurstKey string            `json:"burst_key,omitempty"`
 	Details  map[string]string `json:"details,omitempty"`
 }
 
@@ -177,6 +178,7 @@ func (s *Server) handleContainerApproval(w http.ResponseWriter, r *http.Request)
 		Source:   body.Source,
 		Message:  body.Message,
 		CacheKey: body.CacheKey,
+		BurstKey: body.BurstKey,
 		Details:  body.Details,
 	})
 

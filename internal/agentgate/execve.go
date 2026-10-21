@@ -2,6 +2,9 @@ package agentgate
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
@@ -120,7 +123,8 @@ func (h *ExecveHandler) Handle(ctx context.Context, req ExecveRequest) Outcome {
 				Target:   target,
 				Source:   sourceForPID(req.PID, h.PeerSource),
 				Message:  match.Message,
-				CacheKey: execveCacheKey(effective),
+				CacheKey: execveCacheKey(effective, match),
+				BurstKey: execveBurstKey(effective),
 				OnPrompt: func() {
 					h.Auditor.Write(AuditEntry{
 						Ts:      h.Now(),
@@ -159,13 +163,19 @@ func isMemfdPath(p string) bool {
 }
 
 // execveCacheKey produces a stable key so "Allow for session" can cover a
-// repeated command. We include argv[0]'s basename + up to 2 extra tokens so
+// repeated command. A rule with args patterns keys on its identity and the
+// text they matched, never on option values: "git -c a=b commit" and
+// "git -c a=b push" under `(commit|push)` get "commit" and "push". Without
+// args patterns, argv[0]'s basename + up to 2 extra tokens key it, so
 // "git push" doesn't also authorise "git config --global".
-func execveCacheKey(argv []string) string {
+func execveCacheKey(argv []string, match MatchResult) string {
 	if len(argv) == 0 {
 		return ""
 	}
 	base := filepath.Base(argv[0])
+	if match.Matched != nil {
+		return fmt.Sprintf("execve:%s:%s:%q", base, match.RuleID, match.Matched)
+	}
 	rest := argv[1:]
 	if len(rest) > 2 {
 		rest = rest[:2]
@@ -174,6 +184,14 @@ func execveCacheKey(argv []string) string {
 		return "execve:" + base
 	}
 	return "execve:" + base + ":" + strings.Join(rest, " ")
+}
+
+// execveBurstKey keys the burst memo by the whole argv, so a once-scoped
+// decision only covers the byte-identical probes of one PATH search, never
+// the next command that shares its session key.
+func execveBurstKey(argv []string) string {
+	sum := sha256.Sum256([]byte(strings.Join(argv, "\x00")))
+	return "execve-argv:" + hex.EncodeToString(sum[:])
 }
 
 // transparentWrappers are argv[0] basenames that we look through to find the
