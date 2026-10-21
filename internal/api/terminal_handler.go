@@ -91,7 +91,7 @@ type wsControlMessage struct {
 	Data       string   `json:"data,omitempty"` // base64-encoded input
 	Rows       uint     `json:"rows,omitempty"`
 	Cols       uint     `json:"cols,omitempty"`
-	Target     string   `json:"target,omitempty"` // "host" or "agent" (default)
+	Target     string   `json:"target,omitempty"` // "host", "chat" or "agent" (default)
 	NewSession bool     `json:"new_session,omitempty"`
 	// OpenMode explicitly selects how an agent terminal boots Claude relative
 	// to the channel's stored session:
@@ -197,6 +197,10 @@ type terminalWSConn struct {
 // maxClaudeRelaunches is the maximum number of times a terminal pane's Claude
 // process is auto-relaunched after an abnormal exit, per session creation.
 const maxClaudeRelaunches = 2
+
+// targetChat names a shell in the container the channel's chat runs in,
+// beside its agent, rather than in the shell container terminal panes share.
+const targetChat = "chat"
 
 // activeManager returns the correct manager based on the current session target.
 func (t *terminalWSConn) activeManager() TerminalManager {
@@ -562,8 +566,12 @@ func (t *terminalWSConn) handleCreateHost(ctx context.Context, msg wsControlMess
 }
 
 func (t *terminalWSConn) handleCreate(ctx context.Context, msg wsControlMessage) {
-	if msg.Target == "host" {
+	switch msg.Target {
+	case "host":
 		t.handleCreateHost(ctx, msg)
+		return
+	case targetChat:
+		t.handleCreateChat(ctx, msg)
 		return
 	}
 
@@ -631,15 +639,8 @@ func (t *terminalWSConn) handleCreate(ctx context.Context, msg wsControlMessage)
 		t.sendError("container_id or channel_id required", wsErrCodeMissingField)
 		return
 	}
-	if len(msg.Cmd) > maxCmdArgs {
-		t.sendError("cmd exceeds maximum arguments", wsErrCodeInvalidInput)
+	if !t.validCmd(msg.Cmd) {
 		return
-	}
-	for _, arg := range msg.Cmd {
-		if arg == "" {
-			t.sendError("cmd contains empty argument", wsErrCodeInvalidInput)
-			return
-		}
 	}
 
 	t.detachCurrent()
@@ -726,6 +727,73 @@ func (t *terminalWSConn) handleCreate(ctx context.Context, msg wsControlMessage)
 	}
 }
 
+// validCmd reports whether cmd may be run, telling the client why not.
+func (t *terminalWSConn) validCmd(cmd []string) bool {
+	if len(cmd) > maxCmdArgs {
+		t.sendError("cmd exceeds maximum arguments", wsErrCodeInvalidInput)
+		return false
+	}
+	for _, arg := range cmd {
+		if arg == "" {
+			t.sendError("cmd contains empty argument", wsErrCodeInvalidInput)
+			return false
+		}
+	}
+	return true
+}
+
+// handleCreateChat opens a shell in the channel's running chat container, to
+// look at what its agent sees. It runs cmd, a shell by default, and never
+// boots Claude: the chat's agent is already running there.
+func (t *terminalWSConn) handleCreateChat(ctx context.Context, msg wsControlMessage) {
+	if msg.ChannelID == "" {
+		t.sendError("channel_id required", wsErrCodeMissingField)
+		return
+	}
+	cmd := msg.Cmd
+	if len(cmd) == 0 {
+		cmd = []string{"/bin/bash"}
+	}
+	if !t.validCmd(cmd) {
+		return
+	}
+	containerID := t.chatContainer(msg.ChannelID)
+	if containerID == "" {
+		t.sendError("the chat's container isn't running", wsErrCodeSessionFailed)
+		return
+	}
+
+	t.detachCurrent()
+
+	sid, output, history, done, err := t.manager.CreateSession(ctx, containerID, cmd)
+	if err != nil {
+		t.sendError(err.Error(), wsErrCodeSessionFailed)
+		return
+	}
+	t.sessionTarget = targetChat
+	t.startSession(sid, output, history, done, wsStatusCreated)
+
+	if msg.Rows > 0 && msg.Cols > 0 {
+		if err := t.manager.Resize(ctx, sid, msg.Rows, msg.Cols); err != nil {
+			t.logger.Warn("terminal ws: initial resize failed", "session_id", sid, "error", err)
+		}
+	}
+}
+
+// chatContainer returns the channel's running chat (agent) container, or ""
+// when its chat has none.
+func (t *terminalWSConn) chatContainer(channelID string) string {
+	if t.containerRegistry == nil {
+		return ""
+	}
+	for _, info := range t.containerRegistry.ListByChannel(channelID) {
+		if info.Type == container.ContainerTypeAgent && info.Status == container.ContainerStatusRunning {
+			return info.ContainerID
+		}
+	}
+	return ""
+}
+
 func (t *terminalWSConn) handleAttach(msg wsControlMessage) {
 	if msg.SessionID == "" {
 		t.sendError("session_id required", wsErrCodeMissingField)
@@ -742,7 +810,7 @@ func (t *terminalWSConn) handleAttach(msg wsControlMessage) {
 	}
 	mgr := t.manager
 	switch target {
-	case "agent":
+	case "agent", targetChat:
 	case "host":
 		mgr = t.hostManager
 	default:
@@ -812,6 +880,12 @@ func (t *terminalWSConn) handleStop(ctx context.Context, msg wsControlMessage) {
 		return
 	}
 	isHost := t.sessionTarget == "host"
+	// Nothing removes the chat's container, so its shell is ended here.
+	if t.sessionTarget == targetChat {
+		if err := t.manager.KillProcessGroup(ctx, sid); err != nil {
+			t.logger.Warn("terminal ws: kill process group failed", "session_id", sid, "error", err)
+		}
+	}
 	containerID, err := t.activeManager().StopSession(sid)
 	if err != nil {
 		t.sendError(err.Error(), wsErrCodeSessionFailed)
@@ -826,13 +900,20 @@ func (t *terminalWSConn) handleStop(ctx context.Context, msg wsControlMessage) {
 
 	// Remove the container before notifying the client, so the channel list
 	// API reflects the updated running state when the client refreshes.
-	// Skip container removal for host sessions (no container involved).
-	if !isHost && containerID != "" && t.containerRegistry != nil {
+	// Skip container removal for host sessions (no container involved), and
+	// for a shell in the chat's container: the chat still runs there.
+	if !isHost && containerID != "" && t.containerRegistry != nil && !t.isChatContainer(containerID) {
 		if err := t.containerRegistry.RemoveContainer(ctx, containerID); err != nil {
 			t.logger.Warn("terminal ws: container remove failed", "container_id", containerID, "error", err)
 		}
 	}
 	t.writeJSON(wsStatusMessage{Type: wsStatusStopped})
+}
+
+// isChatContainer reports whether containerID is a chat's own container.
+func (t *terminalWSConn) isChatContainer(containerID string) bool {
+	info := t.containerRegistry.Get(containerID)
+	return info != nil && info.Type == container.ContainerTypeAgent
 }
 
 // handleClose stops the exec session but does NOT remove the container.

@@ -1,4 +1,4 @@
-import type { ChatPaneInput, TerminalInput, WorkspaceController } from "./types";
+import type { ChatPaneInput, SideReader, TerminalInput, WorkspaceController } from "./types";
 
 // Where the mounted workspace, its agent terminals and its chats make themselves
 // reachable to UI commands, and say when what a window reports changed.
@@ -6,6 +6,7 @@ import type { ChatPaneInput, TerminalInput, WorkspaceController } from "./types"
 const workspaces = new Map<string, WorkspaceController>();
 const terminals = new Map<string, TerminalInput>();
 const chats = new Map<string, ChatPaneInput>();
+const sides = new Map<string, SideReader>();
 const listeners = new Set<() => void>();
 
 /** Registers the workspace of channelId; the returned function unregisters
@@ -52,6 +53,19 @@ export function registerChatInput(channelId: string, paneId: string, input: Chat
 
 export function getChatInput(channelId: string, paneId: string): ChatPaneInput | undefined {
   return chats.get(terminalKey(channelId, paneId));
+}
+
+/** Registers what channelId's Learn and Explain views show; the returned
+ *  function unregisters it, unless another has registered since. */
+export function registerSideReader(channelId: string, reader: SideReader): () => void {
+  sides.set(channelId, reader);
+  return () => {
+    if (sides.get(channelId) === reader) sides.delete(channelId);
+  };
+}
+
+export function getSideReader(channelId: string): SideReader | undefined {
+  return sides.get(channelId);
 }
 
 /** Says the open channel, its tabs or its panes changed. */

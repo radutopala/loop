@@ -3094,14 +3094,15 @@ The connected windows and what each shows.
           {"id": "docker-agent-0", "panel": "docker-agent", "open_mode": "fresh", "status": "running", "busy": true},
           {"id": "plugin-1", "panel": "plugin", "plugin": "cogtest/quiz"}
         ],
-        "maximized": "docker-agent-0"
+        "maximized": "docker-agent-0",
+        "side": "learn"
       }
     }
   ]
 }
 ```
 
-`plugin` is the panel a `plugin` pane shows, as `plugin/panel`. `busy` is an agent terminal that printed in the last 1.5s, e.g. the Claude TUI at work. `status` is `connecting`, `running`, `completed` or `failed`.
+`plugin` is the panel a `plugin` pane shows, as `plugin/panel`. `busy` is an agent terminal that printed in the last 1.5s, e.g. the Claude TUI at work. `status` is `connecting`, `running`, `completed` or `failed`. `side` is the side view open beside the chat (`learn`, `explain` or `shell`), absent when none is.
 
 **Errors:** `400` invalid `after`.
 
@@ -3141,17 +3142,19 @@ Runs steps in a window, in order, until one fails.
 | `remove_pane` | `pane` | Closes the pane |
 | `maximize_pane` | `pane` | Makes the pane fill the tab |
 | `restore_pane` | | Puts a maximized pane back |
+| `open_side` | `view` | Opens the side view beside the chat: `learn`, `explain` or `shell`. The result's `pane` is `side` |
+| `close_side` | | Closes the side view |
 | `open_file` | `path`, `line?` | Opens a file of the channel's roots in the editor |
 | `show_message` | `message_id` | Scrolls the channel's chat to the message (its `#id`) and highlights it, paging back through older messages and switching to a tab with a chat pane when needed. Fails when the chat has no such message. A message link, `loop://channel/<channel-id>/<message-id>`, is `select_channel` to the channel, then `show_message` |
-| `send_input` | `pane`, `text`, `submit?` | Types into an agent terminal, or queues the text as a chat pane's next message |
-| `read_output` | `pane`, `lines?` | The terminal's last `lines` (default 50, at most 2000), or a chat pane's, its messages as `author: text` |
-| `wait_for` | `pane`, `match?`, `quiet_ms?`, `lines?` | Waits until the last `lines` match the regular expression `match` (multiline, [RE2 syntax](https://github.com/google/re2/wiki/Syntax), so no lookarounds or backreferences), or, without it, until the terminal is quiet for `quiet_ms` (default 2000). After a `send_input` to that pane in the same command, only output since counts. A session that ended counts as done. On a chat pane: after a `send_input` to it, until it replied and has nothing left to run (or, with `match`, until its replies since match); without one, until it's idle for `quiet_ms` |
+| `send_input` | `pane`, `text`, `submit?` | Types into an agent terminal or the Shell view, or queues the text as a chat pane's or the Learn view's learn thread's next message |
+| `read_output` | `pane`, `lines?` | The terminal's last `lines` (default 50, at most 2000), or a chat pane's, its messages as `author: text`. On the side view: the Shell view's terminal, the Learn view's proposals and learn thread, or the Explain view's explanations |
+| `wait_for` | `pane`, `match?`, `quiet_ms?`, `lines?` | Waits until the last `lines` match the regular expression `match` (multiline, [RE2 syntax](https://github.com/google/re2/wiki/Syntax), so no lookarounds or backreferences), or, without it, until the terminal is quiet for `quiet_ms` (default 2000). After a `send_input` to that pane in the same command, only output since counts. A session that ended counts as done. On a chat pane: after a `send_input` to it, until it replied and has nothing left to run (or, with `match`, until its replies since match); without one, until it's idle for `quiet_ms`. On the Explain view: until it matches, or no explanation is pending for `quiet_ms` |
 
 On a canvas tab the panes are its tiles, and `canvas` in the state is `true`. `add_pane` puts the tile beside `next_to`'s tile, or beside all the tiles, on the side `direction` and `side` give, nudged off the others; `replace_pane` keeps the tile's place and size; `maximize_pane` makes the tile fill the canvas's view.
 
 `open_mode` is for `docker-agent` (Chat Terminal) panes: `resume`, `fork` (the default) or `fresh`; and for `chat-side` panes, Chat (Resume with fork) and Chat (Fresh session): `fork` (the default) or `fresh`, `resume` being the Chat pane's. A `chat` pane asked for with `fork` or `fresh` opens as a `chat-side` pane. `item` names the playground of a `playground` pane, and `scope` (`global` or `project`) picks it when both scopes have one by that name. For a `plugin` pane, `item` names the plugin panel as `plugin/panel`, or as the plugin's id when it has one panel; it must be a panel of an installed plugin the project enables.
 
-Terminal steps (`send_input`, `read_output`, `wait_for`) work only on `docker-agent` and `docker-shell` panes, which run in containers, and on `chat` and `chat-side` panes. A host shell is refused, by the daemon and again by the window. A `pane` or `next_to` of `$n` is the pane step `n` (from 1) of the same command made, so a command can add a pane and type into it: `[{"op":"add_pane","panel":"chat-side","open_mode":"fresh"},{"op":"send_input","pane":"$1","text":"hi"}]`. For a terminal step, step `n` must be an `add_pane` or `replace_pane` of one of those panels. On a chat pane, `send_input` refuses `submit: false`, empty text, and a chat waiting on an answer to a question, plan or approval card.
+Terminal steps (`send_input`, `read_output`, `wait_for`) work only on `docker-agent` and `docker-shell` panes, which run in containers, and on `chat` and `chat-side` panes, and on the side view (`pane: "side"`, after an `open_side`). A host shell is refused, by the daemon and again by the window. The Shell view is a shell in the chat's own container, not the host's. The Explain view takes no input. A `pane` or `next_to` of `$n` is the pane step `n` (from 1) of the same command made, so a command can add a pane and type into it: `[{"op":"add_pane","panel":"chat-side","open_mode":"fresh"},{"op":"send_input","pane":"$1","text":"hi"}]`. For a terminal step, step `n` must be an `add_pane` or `replace_pane` of one of those panels, or an `open_side`. On a chat pane, `send_input` refuses `submit: false`, empty text, and a chat waiting on an answer to a question, plan or approval card.
 
 **Response:**
 ```json

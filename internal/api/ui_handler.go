@@ -37,6 +37,11 @@ const (
 // run commands there, and reading one could show what the host has.
 var uiInputPanels = []string{"docker-agent", "docker-shell", "chat", "chat-side"}
 
+// uiSidePane is the side view open beside the chat, which the terminal steps
+// may use too: a shell in the chat's own container, the Learn view's learn
+// thread, or the Explain view's write-ups. None of them runs on the host.
+const uiSidePane = "side"
+
 // uiTerminalOps are the steps that use a terminal pane: they type into it,
 // read it or wait on its output.
 var uiTerminalOps = []string{"send_input", "read_output", "wait_for"}
@@ -247,18 +252,18 @@ func checkUIInput(steps []uiStep, c uibridge.Client) error {
 	}
 	_ = json.Unmarshal(c.State, &state) // a window with no state has no panes
 	for at, step := range steps {
-		if !slices.Contains(uiTerminalOps, step.Op) || slices.Contains(uiInputPanels, step.Pane) {
+		if !slices.Contains(uiTerminalOps, step.Op) || slices.Contains(uiInputPanels, step.Pane) || step.Pane == uiSidePane {
 			continue
 		}
 		if n, ok := paneRef(step.Pane); ok {
-			if n > at || !slices.Contains(uiPaneOps, steps[n-1].Op) || !slices.Contains(uiInputPanels, steps[n-1].Panel) {
-				return fmt.Errorf("%w: %s's pane %s isn't a docker-agent, docker-shell, chat or chat-side pane a step before it adds", errUIStep, step.Op, step.Pane)
+			if n > at || !uiMakesInputPane(steps[n-1]) {
+				return fmt.Errorf("%w: %s's pane %s isn't a docker-agent, docker-shell, chat or chat-side pane or the side view a step before it opens", errUIStep, step.Op, step.Pane)
 			}
 			continue
 		}
 		i := slices.IndexFunc(state.Panes, func(p uiPane) bool { return p.ID == step.Pane })
 		if i < 0 || !slices.Contains(uiInputPanels, state.Panes[i].Panel) {
-			return fmt.Errorf("%w: %s only works on docker-agent, docker-shell, chat and chat-side panes, not %q", errUIStep, step.Op, step.Pane)
+			return fmt.Errorf("%w: %s only works on docker-agent, docker-shell, chat and chat-side panes and the side view, not %q", errUIStep, step.Op, step.Pane)
 		}
 	}
 	return nil
@@ -267,6 +272,12 @@ func checkUIInput(steps []uiStep, c uibridge.Client) error {
 // uiPaneOps are the steps that make a pane, which a later step can name as
 // "$n".
 var uiPaneOps = []string{"add_pane", "replace_pane"}
+
+// uiMakesInputPane reports whether step makes a pane the terminal steps may
+// use: an agent terminal or a chat, or the side view open_side opens.
+func uiMakesInputPane(step uiStep) bool {
+	return step.Op == "open_side" || (slices.Contains(uiPaneOps, step.Op) && slices.Contains(uiInputPanels, step.Panel))
+}
 
 // paneRef returns n of a pane named "$n", the pane step n (from 1) made.
 func paneRef(pane string) (int, bool) {

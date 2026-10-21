@@ -282,7 +282,7 @@ func (s *UIHandlerSuite) TestTerminalStepsOnlyOnAgentPanes() {
 		}
 	}()
 	for _, op := range ops {
-		for _, pane := range []string{"docker-agent", "docker-shell", "docker-agent-1", "docker-shell-2", "chat", "chat-side"} {
+		for _, pane := range []string{"docker-agent", "docker-shell", "docker-agent-1", "docker-shell-2", "chat", "chat-side", "side"} {
 			s.Run(op+" allows "+pane, func() {
 				resp := s.post(`{"steps":[{"op":"` + op + `","pane":"` + pane + `","text":"hi"}]}`)
 				require.Equal(s.T(), http.StatusOK, resp.StatusCode)
@@ -295,6 +295,10 @@ func (s *UIHandlerSuite) TestTerminalStepsOnlyOnAgentPanes() {
 			require.Equal(s.T(), http.StatusOK, resp.StatusCode)
 		})
 	}
+	s.Run("allows the side view a step before opens", func() {
+		resp := s.post(`{"steps":[{"op":"open_side","view":"shell"},{"op":"send_input","pane":"$1","text":"ls"}]}`)
+		require.Equal(s.T(), http.StatusOK, resp.StatusCode)
+	})
 }
 
 // asAgent serves the daemon's routes as the agent of channel ch-1.

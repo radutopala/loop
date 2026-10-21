@@ -46,7 +46,7 @@ loop ui:run '[
 
 ## Steps
 
-There are steps for channels (`select_channel`), tabs (`set_tab`, `create_tab`, `rename_tab`, `remove_tab`), panes (`add_pane`, `replace_pane`, `remove_pane`, `maximize_pane`, `restore_pane`), the editor (`open_file`), the chat (`show_message`, which scrolls to a message) and terminals and chats (`send_input`, `read_output`, `wait_for`). Pane steps work on canvas tabs too, where the panes are the tiles. The [API reference](api.md#post-apiuicommands) lists every field.
+There are steps for channels (`select_channel`), tabs (`set_tab`, `create_tab`, `rename_tab`, `remove_tab`), panes (`add_pane`, `replace_pane`, `remove_pane`, `maximize_pane`, `restore_pane`), the editor (`open_file`), the chat (`show_message`, which scrolls to a message), the side view beside the chat (`open_side`, `close_side`) and terminals and chats (`send_input`, `read_output`, `wait_for`). Pane steps work on canvas tabs too, where the panes are the tiles. The [API reference](api.md#post-apiuicommands) lists every field.
 
 A `pane` is a pane id from the state, such as `docker-agent-1`, or a panel type, which means the first pane of that type.
 
@@ -57,11 +57,12 @@ A `pane` is a pane id from the state, such as `docker-agent-1`, or a panel type,
 - **`wait_for` waits for new output.** It waits until the terminal's last `lines` match `match`, or, without `match`, until the terminal has been quiet for `quiet_ms`. After a `send_input` to the same pane in the same command, only output printed since then counts. A session that ended counts as done, and a pane that closes fails the step instead of waiting out the timeout.
 - **`match` uses RE2.** It's a multiline regular expression in [RE2 syntax](https://github.com/google/re2/wiki/Syntax), which matches in linear time, so a pattern can't stall the window. It has no lookarounds or backreferences.
 - **In a chat pane, `send_input` queues a message.** On a `chat` pane (the channel's chat) or a `chat-side` pane (a fork or fresh side chat), the text is queued as the chat's next message, as its composer sends it; `submit: false` is refused. It's refused, too, while the chat waits on an answer to a question, plan or approval card. `read_output` returns the chat's last `lines` of messages, each as `author: text`. `wait_for` after a `send_input` to that pane waits until a reply came and the chat has nothing left to run, or, with `match`, until its replies since match. Without a `send_input`, it waits until the chat has been idle for `quiet_ms`.
+- **The side view is the pane `side`.** `open_side` with `view` `learn`, `explain` or `shell` opens it, and `ui_state` shows the open one as `side`. `read_output` on it returns the Learn view's proposals and learn thread, the Explain view's explanations, or the Shell view's terminal. `send_input` types into the Shell view, a shell in the chat's own container, or queues a message in the Learn view's learn thread; the Explain view takes no input. `wait_for` on the Explain view waits until no explanation is pending.
 - **Input to a `docker-agent` pane goes in as one paste**, so a multi-line prompt stays one message. Text containing a bracketed-paste marker (`ESC [200~` or `ESC [201~`) is refused, because it would end the paste early.
 
 ## Security
 
-- **No host shells.** The terminal steps work only on `docker-agent` and `docker-shell` panes, which run in containers, and on `chat` and `chat-side` panes. Typing into a host shell would run commands on the host, and reading one could show what the host has. This applies to everyone, including the owner: the daemon refuses such a step, and the window refuses it again.
+- **No host shells.** The terminal steps work only on `docker-agent` and `docker-shell` panes, which run in containers, and on `chat` and `chat-side` panes and the side view, whose Shell view runs in the chat's container. Typing into a host shell would run commands on the host, and reading one could show what the host has. This applies to everyone, including the owner: the daemon refuses such a step, and the window refuses it again.
 - **Agents stay in their project.**
   - An agent's command must start with a `select_channel`, and every `select_channel` must name a channel, thread or worktree thread of the agent's project. Otherwise the daemon answers `403`.
   - `ui_state` shows an agent nothing for windows on other projects.

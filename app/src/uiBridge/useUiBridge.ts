@@ -4,7 +4,7 @@ import { checkFilesExist } from "../api/files";
 import { fetchPlaygroundItems } from "../api/playground";
 import type { FileLinkOpenDetail } from "../components/chat/FileLink";
 import { DEFAULT_TIMEOUT_MS, runSteps } from "./executor";
-import { getChatInput, getTerminalInput, getWorkspace, subscribeUiChanged } from "./registry";
+import { getChatInput, getSideReader, getTerminalInput, getWorkspace, subscribeUiChanged } from "./registry";
 import type { UiHost, UiStep } from "./types";
 
 const CLIENT_ID_KEY = "loop-ui-client-id";
@@ -56,6 +56,7 @@ export function useUiBridge(selectedId: string | null, selectChannel: (id: strin
       workspace: getWorkspace,
       terminal: getTerminalInput,
       chat: getChatInput,
+      side: getSideReader,
       openFile: async (channelId, path, line) => {
         const [found] = await checkFilesExist(channelId, [path]);
         if (!found?.exists || found.root_index === undefined || found.rel_path === undefined) throw new Error(`no file "${path}" in the channel's roots`);

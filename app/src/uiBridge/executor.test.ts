@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import type { SideView } from "../components/layout/LearnSplit";
 import type { PluginPaneOption } from "../plugins/PluginPanelsContext";
 import type { SessionStatus } from "../types";
 import type { PanelType } from "../types/panels";
 import { INPUT_QUIET_MS, MAX_LINES, runSteps, WAIT_QUIET_MS } from "./executor";
-import type { ChatLine, ChatPaneInput, PaneInfo, PaneOptions, PlaygroundPick, TerminalInput, UiHost, UiStep, WorkspaceController } from "./types";
+import type { ChatLine, ChatPaneInput, PaneInfo, PaneOptions, PlaygroundPick, SideReader, TerminalInput, UiHost, UiStep, WorkspaceController } from "./types";
 
 /** A workspace that keeps its panes in a list. */
 class FakeWorkspace implements WorkspaceController {
@@ -22,8 +23,21 @@ class FakeWorkspace implements WorkspaceController {
     { key: "stats/b", ref: { id: "stats", panel: "b", label: "B" }, description: "Stats plugin", disabled: true },
   ];
 
+  side: SideView | undefined;
+  /** Opening or closing a side view shows once the window renders: the
+   *  next sleep. */
+  sideAfter: SideView | null | undefined;
+
   view() {
-    return { tab: this.tab, tabs: this.tabs, canvas: this.canvas, panes: this.panes };
+    return { tab: this.tab, tabs: this.tabs, canvas: this.canvas, panes: this.panes, ...(this.side ? { side: this.side } : {}) };
+  }
+  openSide(view: SideView) {
+    this.calls.push(`openSide ${view}`);
+    this.sideAfter = view;
+  }
+  closeSide() {
+    this.calls.push("closeSide");
+    this.sideAfter = null;
   }
   maximize(id: string | null) {
     if (this.fail) throw new Error(this.fail);
@@ -110,6 +124,19 @@ class FakeTerminal implements TerminalInput {
   }
 }
 
+class FakeSide implements SideReader {
+  reads: string[] = [];
+  text = "write-up";
+  running = false;
+  read(view: "learn" | "explain", lines: number) {
+    this.reads.push(`${view} ${lines}`);
+    return this.text;
+  }
+  explaining() {
+    return this.running;
+  }
+}
+
 class FakeChat implements ChatPaneInput {
   sent: string[] = [];
   lines: ChatLine[] = [{ id: 1, author: "Ann", bot: false, content: "hi" }];
@@ -141,6 +168,7 @@ class FakeHost implements UiHost {
   workspaces = new Map<string, FakeWorkspace>();
   terminals = new Map<string, FakeTerminal>();
   chats = new Map<string, FakeChat>();
+  sides = new Map<string, FakeSide>();
   channels = new Set(["c1", "c2"]);
   onSleep: (() => void) | null = null;
   selected_: string[] = [];
@@ -172,6 +200,9 @@ class FakeHost implements UiHost {
   chat(channelId: string, paneId: string) {
     return this.chats.get(`${channelId}:${paneId}`);
   }
+  side(channelId: string) {
+    return this.sides.get(channelId);
+  }
   async openFile(channelId: string, path: string, line?: number) {
     if (!this.files.has(path)) throw new Error(`no file "${path}" in the channel's roots`);
     this.opened.push(`${channelId} ${path}${line ? `:${line}` : ""}`);
@@ -191,6 +222,11 @@ class FakeHost implements UiHost {
   }
   async sleep(ms: number) {
     this.clock += ms;
+    for (const w of this.workspaces.values()) {
+      if (w.sideAfter === undefined) continue;
+      w.side = w.sideAfter ?? undefined;
+      w.sideAfter = undefined;
+    }
     this.onSleep?.();
   }
 }
@@ -537,7 +573,7 @@ describe("send_input", () => {
     const t = new FakeTerminal("shell");
     host.terminals.set(`c1:${pane}`, t);
     expect(await run([{ op: "send_input", pane, text: "ls" }])).toEqual([
-      { op: "send_input", ok: false, error: `send_input only types into docker-agent, docker-shell, chat and chat-side panes, not ${panel}` },
+      { op: "send_input", ok: false, error: `send_input only types into docker-agent, docker-shell, chat and chat-side panes and the side view, not ${panel}` },
     ]);
     expect(t.sent).toEqual([]);
   });
@@ -744,8 +780,12 @@ describe("read_output and wait_for", () => {
   });
 
   it.each<{ name: string; step: UiStep; error: string }>([
-    { name: "a host shell", step: { op: "read_output", pane: "host-shell" }, error: "read_output only reads docker-agent, docker-shell, chat and chat-side panes, not host-shell" },
-    { name: "wait_for on a host shell", step: { op: "wait_for", pane: "host-shell" }, error: "wait_for only reads docker-agent, docker-shell, chat and chat-side panes, not host-shell" },
+    { name: "a host shell", step: { op: "read_output", pane: "host-shell" }, error: "read_output only reads docker-agent, docker-shell, chat and chat-side panes and the side view, not host-shell" },
+    {
+      name: "wait_for on a host shell",
+      step: { op: "wait_for", pane: "host-shell" },
+      error: "wait_for only reads docker-agent, docker-shell, chat and chat-side panes and the side view, not host-shell",
+    },
     { name: "0 lines", step: { op: "read_output", pane: "docker-agent", lines: 0 }, error: `lines must be a whole number from 1 to ${MAX_LINES}` },
     { name: "too many lines", step: { op: "wait_for", pane: "docker-agent", lines: MAX_LINES + 1 }, error: `lines must be a whole number from 1 to ${MAX_LINES}` },
     { name: "a bad match", step: { op: "wait_for", pane: "docker-agent", match: "(" }, error: "match: error parsing regexp: missing closing ): `(?m)(`" },
@@ -1039,5 +1079,142 @@ describe("chat panes", () => {
       { op: "wait_for", ok: false, error: "timed out waiting for pane chat-0's chat to reply" },
     ]);
     expect(await run([{ op: "wait_for", pane: "chat", match: "never" }], 300)).toEqual([{ op: "wait_for", ok: false, error: "timed out waiting for pane chat-0's chat to reply /never/" }]);
+  });
+});
+
+describe("the side view", () => {
+  let side: FakeSide;
+  beforeEach(() => {
+    side = new FakeSide();
+    host.sides.set("c1", side);
+  });
+
+  it("opens a side view, as the pane side", async () => {
+    expect(await run([{ op: "open_side", view: "shell" }])).toEqual([{ op: "open_side", ok: true, pane: "side" }]);
+    expect(ws.side).toBe("shell");
+    // Open already, it stays as it is.
+    expect(await run([{ op: "open_side", view: "shell" }])).toEqual([{ op: "open_side", ok: true, pane: "side" }]);
+    expect(ws.calls).toEqual(["openSide shell"]);
+  });
+
+  it("swaps the open side view for another", async () => {
+    ws.side = "learn";
+    expect(await run([{ op: "open_side", view: "explain" }])).toEqual([{ op: "open_side", ok: true, pane: "side" }]);
+    expect(ws.side).toBe("explain");
+  });
+
+  it.each([
+    { name: "no view", view: undefined, error: "view is required: learn, explain, shell" },
+    { name: "an unknown view", view: "git", error: 'unknown view "git"; use learn, explain, shell' },
+  ])("refuses to open $name", async ({ view, error }) => {
+    expect(await run([{ op: "open_side", view }])).toEqual([{ op: "open_side", ok: false, error }]);
+  });
+
+  it("closes the side view", async () => {
+    ws.side = "learn";
+    expect(await run([{ op: "close_side" }])).toEqual([{ op: "close_side", ok: true }]);
+    expect(ws.side).toBeUndefined();
+    // Closed already, it stays as it is.
+    expect(await run([{ op: "close_side" }])).toEqual([{ op: "close_side", ok: true }]);
+    expect(ws.calls).toEqual(["closeSide"]);
+  });
+
+  it.each(["read_output", "send_input", "wait_for"])("refuses %s with no side view open", async (op) => {
+    expect(await run([{ op, pane: "side", text: "ls" }])).toEqual([{ op, ok: false, error: "no side view is open; open_side {view} first" }]);
+  });
+
+  it.each(["learn", "explain"] as const)("reads the %s view's text", async (view) => {
+    ws.side = view;
+    expect(await run([{ op: "read_output", pane: "side", lines: 7 }])).toEqual([{ op: "read_output", ok: true, pane: "side", output: "write-up" }]);
+    expect(side.reads).toEqual([`${view} 7`]);
+  });
+
+  it("refuses to read a side view that isn't shown yet", async () => {
+    ws.side = "explain";
+    host.sides.delete("c1");
+    expect(await run([{ op: "read_output", pane: "side" }])).toEqual([{ op: "read_output", ok: false, error: "the side view isn't shown yet" }]);
+  });
+
+  it("opens the Shell view, types into its shell and reads it", async () => {
+    const t = new FakeTerminal("shell");
+    t.text = "/work";
+    host.terminals.set("c1:side", t);
+    expect(
+      await run([
+        { op: "open_side", view: "shell" },
+        { op: "send_input", pane: "$1", text: "pwd" },
+        { op: "wait_for", pane: "side", match: "work" },
+        { op: "read_output", pane: "side", lines: 3 },
+      ]),
+    ).toEqual([
+      { op: "open_side", ok: true, pane: "side" },
+      { op: "send_input", ok: true, pane: "side" },
+      { op: "wait_for", ok: false, error: "timed out waiting for pane side to print /work/" },
+    ]);
+    expect(t.sent).toEqual(["pwd\n"]);
+    t.outputAt = host.clock + 1;
+    expect(
+      await run([
+        { op: "wait_for", pane: "side", match: "work" },
+        { op: "read_output", pane: "side", lines: 3 },
+      ]),
+    ).toEqual([
+      { op: "wait_for", ok: true, pane: "side", output: "/work" },
+      { op: "read_output", ok: true, pane: "side", output: "/work" },
+    ]);
+  });
+
+  it("asks the Learn view's learn thread and waits for its reply", async () => {
+    ws.side = "learn";
+    const chat = new FakeChat();
+    host.chats.set("c1:side", chat);
+    host.onSleep = () => chat.reply(2, "done");
+    expect(
+      await run([
+        { op: "send_input", pane: "side", text: "drop the gate rule" },
+        { op: "wait_for", pane: "side" },
+      ]),
+    ).toEqual([
+      { op: "send_input", ok: true, pane: "side" },
+      { op: "wait_for", ok: true, pane: "side", output: "Ann: hi\n\nLoop: done" },
+    ]);
+    expect(chat.sent).toEqual(["drop the gate rule"]);
+  });
+
+  it("refuses input to the Explain view", async () => {
+    ws.side = "explain";
+    expect(await run([{ op: "send_input", pane: "side", text: "hi" }])).toEqual([
+      { op: "send_input", ok: false, error: "send_input on the side view types into the Shell view or asks the Learn view's learn thread; the Explain view takes no input" },
+    ]);
+  });
+
+  it("waits for the Explain view to be idle", async () => {
+    ws.side = "explain";
+    side.running = true;
+    let sleeps = 0;
+    host.onSleep = () => {
+      sleeps++;
+      if (sleeps === 3) side.running = false;
+    };
+    expect(await run([{ op: "wait_for", pane: "side", quiet_ms: 100 }])).toEqual([{ op: "wait_for", ok: true, pane: "side", output: "write-up" }]);
+    expect(sleeps).toBeGreaterThan(3);
+  });
+
+  it("waits for the Explain view to show a match", async () => {
+    ws.side = "explain";
+    side.text = "pending";
+    host.onSleep = () => {
+      side.text = "## turn #4 (done)";
+    };
+    expect(await run([{ op: "wait_for", pane: "side", match: "done" }])).toEqual([{ op: "wait_for", ok: true, pane: "side", output: "## turn #4 (done)" }]);
+    expect(side.reads).toEqual(["explain 50", "explain 50", "explain 50"]);
+  });
+
+  it("fails when the Explain view closes while it waits", async () => {
+    ws.side = "explain";
+    host.onSleep = () => {
+      ws.side = "learn";
+    };
+    expect(await run([{ op: "wait_for", pane: "side", match: "never" }])).toEqual([{ op: "wait_for", ok: false, error: "the Explain view is no longer open" }]);
   });
 });

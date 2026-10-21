@@ -51,6 +51,9 @@ interface TerminalProps {
   /** Reports session status changes to the parent (e.g. for aggregate Kill/Restart). */
   onPaneStatus?: (status: SessionStatus) => void;
   onSessionEnd?: () => void;
+  /** The pane UI commands reach a shell in the chat's container by (target
+   *  "chat"); agent terminals register as their instanceId. */
+  uiPane?: string;
   /** When set, overlays the chat's ApprovalCard on top of the terminal content. */
   gateApproval?: GateApprovalRequestedData | null;
   /** Called after the user clicks Allow/Deny so the parent can clear gateApproval. */
@@ -70,6 +73,7 @@ export function Terminal({
   onStatusChange,
   onPaneStatus,
   onSessionEnd,
+  uiPane,
   gateApproval,
   onGateApprovalResolved,
 }: TerminalProps) {
@@ -79,8 +83,10 @@ export function Terminal({
   const { elapsed, start, stop, reset } = useElapsedTimer();
 
   // Shell panes (host shell or docker shell) can open in any workspace root.
-  // The agent (Claude) pane — target "agent" with no explicit cmd — is excluded.
-  const isShell = target === "host" || (!!cmd && cmd.length > 0);
+  // The agent (Claude) pane — target "agent" with no explicit cmd — is
+  // excluded, and so is a shell in the chat's container, which opens where
+  // its agent works.
+  const isShell = target === "host" || (target === "agent" && !!cmd && cmd.length > 0);
   const [roots, setRoots] = useState<RootEntry[]>([]);
   const [rootIndex, setRootIndex] = useState(0);
 
@@ -228,14 +234,16 @@ export function Terminal({
   }, [registryKey]);
 
   // UI commands (send_input) type into the agent's terminals, the Claude TUI
-  // and shells in its container. A host shell runs on the host: it never
-  // registers, so nothing types into it.
+  // and shells in its container, and into the Shell view's shell in the
+  // chat's. A host shell runs on the host: it never registers, so nothing
+  // types into it.
   const statusRef = useRef(status);
   statusRef.current = status;
   const isAgentTUI = !cmd || cmd.length === 0;
+  const inputPane = target === "agent" ? instanceId : target === "chat" ? uiPane : undefined;
   useEffect(() => {
-    if (target !== "agent" || !channelId || !instanceId) return;
-    return registerTerminalInput(channelId, instanceId, {
+    if (!channelId || !inputPane) return;
+    return registerTerminalInput(channelId, inputPane, {
       kind: isAgentTUI ? "agent" : "shell",
       status: () => statusRef.current,
       lastOutputAt: () => lastOutputAtRef.current,
@@ -246,7 +254,7 @@ export function Terminal({
       },
       send: (data) => sendInputRef.current?.(data),
     });
-  }, [target, channelId, instanceId, isAgentTUI]);
+  }, [channelId, inputPane, isAgentTUI]);
 
   // Kill when killSignal increments from parent.
   const killSignalRef = useRef(killSignal ?? 0);
@@ -354,7 +362,7 @@ export function Terminal({
           onKill={sendKill}
           onRestart={handleRestart}
           killLabel={target === "host" ? "Close" : "Stop"}
-          killTitle={target === "host" ? "Close shell session" : "Stop container and end session"}
+          killTitle={target === "host" ? "Close shell session" : target === "chat" ? "End the shell (the chat's container keeps running)" : "Stop container and end session"}
         />
       )}
       {isShell && roots.length > 1 && instanceId && (

@@ -14,7 +14,9 @@ import { ChatView } from "../chat/ChatView";
 import { ExplainBadge } from "../chat/ExplainBadge";
 import { explanationPending } from "../chat/explainState";
 import { LearnBadge, usePaneHeaderSlot } from "../chat/LearnBadge";
+import { ShellBadge } from "../chat/ShellBadge";
 import { ContainerStatsLabel } from "../panels/ContainerStatsLabel";
+import { ChatShellPane } from "./ChatShellPane";
 import { ChatSlot, createChatHost } from "./ChatSlot";
 import { ExplainPane } from "./ExplainPane";
 import { LearnPane } from "./LearnPane";
@@ -30,7 +32,7 @@ interface SideChatPaneProps {
   getChatState?: (channelId: string) => ActiveChatState | undefined;
   onChatStateUnmount?: (channelId: string, state: ActiveChatState) => void;
   wsOpens?: number;
-  /** Reports the side chat's Explain or Learn view as it changes, and null
+  /** Reports the side chat's Explain, Learn or Shell view as it changes, and null
    *  once the pane goes, for the layout to show it. */
   onSideView?: (leafId: string, view: SideChatView | null) => void;
   /** Where the layout shows the view now (over the layout, or docked to the
@@ -39,7 +41,7 @@ interface SideChatPaneProps {
 }
 
 /**
- * A side chat's Explain or Learn view, shown by the layout like the chat's:
+ * A side chat's Explain, Learn or Shell view, shown by the layout like the chat's:
  * split with the side chat over the layout, or docked to its tile on a
  * canvas. The side chat's chat and the pane beside it are mounted into
  * chatHost and paneHost, for the view to hold.
@@ -128,7 +130,8 @@ function SideChat({
   // The side chat's own explanations and learn passes: its turns' Explain
   // and Learn actions, and the badges in its pane's header, open them in the
   // view the layout shows for the chat's (see SideChatView), with the side
-  // chat in it. The view (Explain or Learn) is kept while it closes.
+  // chat in it. The Shell badge opens a shell in the side chat's container
+  // there. The view (Explain, Learn or Shell) is kept while it closes.
   const [sideOpen, setSideOpen] = useState(false);
   const [sideView, setSideView] = useState<SideView>("explain");
   const show = useCallback((view: SideView) => {
@@ -137,6 +140,7 @@ function SideChat({
   }, []);
   const showExplain = useCallback(() => show("explain"), [show]);
   const showLearn = useCallback(() => show("learn"), [show]);
+  const showShell = useCallback(() => show("shell"), [show]);
   // The chat and the pane beside it are each mounted once, into a host the
   // pane or the view holds (see ChatSlot).
   const [chatHost] = useState(createChatHost);
@@ -161,7 +165,7 @@ function SideChat({
   }, [chatHost, paneHost]);
   const explain = useExplain(sideChannelId, subscribeChannelEvents ? subscribe : undefined, wsOpens, showExplain);
   const learn = useLearn(sideChannelId, subscribeChannelEvents ? subscribe : undefined, subscribeChannelEvents, wsOpens, showLearn);
-  const running = sideView === "explain" ? explain.explanations.some(explanationPending) : learn.running;
+  const running = sideView === "explain" ? explain.explanations.some(explanationPending) : sideView === "learn" && learn.running;
   useEffect(() => {
     onSideView?.(leafId, { open: sideOpen, view: sideView, running, openMode: mode, chatHost, paneHost, close });
   }, [onSideView, leafId, sideOpen, sideView, running, mode, chatHost, paneHost, close]);
@@ -170,9 +174,11 @@ function SideChat({
   const viewOpen = sideOpen && sideViewPlace != null;
   const toggleExplain = viewOpen && sideView === "explain" ? close : showExplain;
   const toggleLearn = viewOpen && sideView === "learn" ? close : showLearn;
+  const toggleShell = viewOpen && sideView === "shell" ? close : showShell;
   // The side chat runs in a container of its own channel's, not the
   // channel's the pane header polls.
   const stats = useContainerStats(sideChannelId);
+  const chatRunning = !!stats.agent;
   const slot = usePaneHeaderSlot(leafId);
   const viewSlotId = sideChatViewSlotId(leafId);
   const viewSlot = usePaneHeaderSlot(viewSlotId);
@@ -183,10 +189,12 @@ function SideChat({
         {overlaid && viewSlot && createPortal(<ContainerStatsLabel entry={stats.agent} />, viewSlot)}
         <ExplainBadge leafId={leafId} explain={explain} open={viewOpen && sideView === "explain"} onToggle={toggleExplain} />
         <LearnBadge leafId={leafId} learn={learn} open={viewOpen && sideView === "learn"} onToggle={toggleLearn} />
+        <ShellBadge leafId={leafId} running={chatRunning} open={viewOpen && sideView === "shell"} onToggle={toggleShell} />
         {overlaid && (
           <>
             <ExplainBadge leafId={viewSlotId} explain={explain} open={sideView === "explain"} onToggle={toggleExplain} />
             <LearnBadge leafId={viewSlotId} learn={learn} open={sideView === "learn"} onToggle={toggleLearn} />
+            <ShellBadge leafId={viewSlotId} running={chatRunning} open={sideView === "shell"} onToggle={toggleShell} />
           </>
         )}
         {/* While the view is up over the layout it holds the chat, and this
@@ -211,6 +219,8 @@ function SideChat({
           createPortal(
             sideView === "explain" ? (
               <ExplainPane channelId={sideChannelId} explain={explain} onClose={close} />
+            ) : sideView === "shell" ? (
+              <ChatShellPane channelId={sideChannelId} onClose={close} />
             ) : (
               <LearnPane
                 learn={learn}

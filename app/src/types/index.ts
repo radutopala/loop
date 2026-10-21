@@ -320,8 +320,9 @@ export interface GateApprovalResolvedData {
 // UI-level session status (mapped from server message types).
 export type SessionStatus = "connecting" | "running" | "completed" | "failed";
 
-// Terminal target: Docker agent or host shell.
-export type TerminalTarget = "agent" | "host";
+// Terminal target: Docker agent, host shell, or a shell in the chat's own
+// container.
+export type TerminalTarget = "agent" | "host" | "chat";
 
 // --- Client → Server messages ---
 
@@ -329,14 +330,14 @@ export interface CreateMessage {
   type: "create";
   channel_id: string;
   cmd?: string[];
-  target?: "host" | "agent";
+  target?: TerminalTarget;
 }
 
 export interface AttachMessage {
   type: "attach";
   session_id: string;
   /** The manager the session lives in; the server attaches only there. */
-  target?: "agent" | "host";
+  target?: TerminalTarget;
 }
 
 export interface InputMessage {

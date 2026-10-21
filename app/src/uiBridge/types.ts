@@ -1,3 +1,4 @@
+import type { SideView } from "../components/layout/LearnSplit";
 import type { PluginPaneOption } from "../plugins/PluginPanelsContext";
 import type { SessionStatus } from "../types";
 import type { AgentOpenMode, PanelType, PluginPaneRef } from "../types/panels";
@@ -36,6 +37,8 @@ export interface UiStep {
    *  the panel a plugin pane shows, as plugin/panel or the plugin's id. */
   item?: string;
   scope?: string;
+  /** open_side: the side view to open beside the chat. */
+  view?: string;
 }
 
 /** What a step did: the pane it made or typed into, or why it failed. */
@@ -71,6 +74,9 @@ export interface WorkspaceView {
   panes: PaneInfo[];
   /** The pane that fills the tab, if one does. */
   maximized?: string;
+  /** The side view open beside the chat, if one is: steps reach it as the
+   *  pane "side". */
+  side?: SideView;
 }
 
 /** The playground a playground pane shows. */
@@ -109,6 +115,9 @@ export interface WorkspaceController {
   /** Makes the pane fill the tab (a tile, the canvas's view), or, with
    *  null, puts it back. */
   maximize(id: string | null): void;
+  /** Opens a side view beside the chat, or swaps the open one for it. */
+  openSide(view: SideView): void;
+  closeSide(): void;
   /** The plugin panels a pane can show, as the add-pane menus offer them,
    *  with the pane replacing taken out; null until the plugins are listed. */
   pluginPanes(replacing?: string): PluginPaneOption[] | null;
@@ -150,6 +159,15 @@ export interface ChatPaneInput {
   send(text: string): Promise<void>;
 }
 
+/** What the Learn and Explain views show, as text, for steps on the side
+ *  pane. */
+export interface SideReader {
+  /** The view's last lines. */
+  read(view: "learn" | "explain", lines: number): string;
+  /** Whether an explanation is being written. */
+  explaining(): boolean;
+}
+
 /** What the executor needs from the app. */
 export interface UiHost {
   selectedChannelId(): string | null;
@@ -159,6 +177,7 @@ export interface UiHost {
   workspace(channelId: string): WorkspaceController | undefined;
   terminal(channelId: string, paneId: string): TerminalInput | undefined;
   chat(channelId: string, paneId: string): ChatPaneInput | undefined;
+  side(channelId: string): SideReader | undefined;
   /** Opens a file of the channel's roots in its editor; rejects if there's
    *  no such file. */
   openFile(channelId: string, path: string, line?: number): Promise<void>;
