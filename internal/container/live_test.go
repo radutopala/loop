@@ -1250,14 +1250,17 @@ func (s *RunnerSuite) TestStartLiveWaitsForImageBuildAlone() {
 }
 
 // Stopping a turn the process started by itself gives the process
-// liveInterruptGrace to end it, then ends the session.
+// liveInterruptGrace to end it, then ends the session. The turn can be
+// stopped as soon as BeginTurn is told of it, before BeginTurn returns.
 func (s *RunnerSuite) TestLiveInterruptOwnTurn() {
 	tests := []struct {
 		name      string
 		answer    bool
+		inBegin   bool
 		wantEnded string
 	}{
 		{name: "the process ends the turn", answer: true},
+		{name: "stopped while BeginTurn runs", answer: true, inBegin: true},
 		{name: "the process is stuck", wantEnded: "interrupt timed out"},
 	}
 	for _, tc := range tests {
@@ -1267,14 +1270,29 @@ func (s *RunnerSuite) TestLiveInterruptOwnTurn() {
 			log := newLiveHookLog()
 			turns := make(chan string, 4)
 			proc := newFakeLiveProc()
-			s.startLive(liveReq(nil), log.hooks(turns), "live-1", proc)
+			hooks := log.hooks(turns)
+			begun := make(chan struct{})
+			release := make(chan struct{})
+			if begin := hooks.BeginTurn; tc.inBegin {
+				hooks.BeginTurn = func() (*agent.AgentRequest, func(*agent.AgentResponse, error)) {
+					close(begun)
+					<-release
+					return begin()
+				}
+			}
+			s.startLive(liveReq(nil), hooks, "live-1", proc)
 
 			proc.emit(s.T(), `{"type":"system","subtype":"init"}`)
-			waitFor(s.T(), log.begun)
+			if tc.inBegin {
+				waitFor(s.T(), begun)
+			} else {
+				waitFor(s.T(), log.begun)
+			}
 			require.NoError(s.T(), s.runner.InterruptLive("ch-1"))
 			require.Equal(s.T(), string(interruptLine), waitFor(s.T(), proc.stdin))
 			grace := waitFor(s.T(), clock.armed)
 			require.Equal(s.T(), liveInterruptGrace, grace.d)
+			close(release)
 
 			if tc.answer {
 				proc.emit(s.T(), `{"type":"result","subtype":"error_during_execution","is_error":true,"num_turns":1}`)
