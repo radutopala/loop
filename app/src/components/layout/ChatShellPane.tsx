@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import { ShellIcon } from "../chat/ShellIcon";
@@ -12,9 +13,15 @@ const CHAT_SHELL_CMD = ["/bin/bash"];
  * agent sees, its files and processes, from beside it. Closing the view
  * leaves the shell running to come back to; Stop ends it, never the
  * container. uiPane names it to the UI bridge (see Terminal).
+ *
+ * While the container isn't running there's nothing to exec into: the pane
+ * says so, and the shell starts once it runs. Started, it stays, so a missed
+ * stats poll doesn't end it; a container that stops ends the shell.
  */
-export function ChatShellPane({ channelId, uiPane, onClose }: { channelId: string; uiPane?: string; onClose: () => void }) {
+export function ChatShellPane({ channelId, running, uiPane, onClose }: { channelId: string; running: boolean; uiPane?: string; onClose: () => void }) {
   const { colors } = useTheme();
+  const [started, setStarted] = useState(running);
+  if (running && !started) setStarted(true);
   return (
     <div data-testid="chat-shell-pane" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden", fontFamily: fonts.sans }}>
       {/* Header, like the Learn pane's; docked on a canvas, it drags the pair. */}
@@ -61,7 +68,13 @@ export function ChatShellPane({ channelId, uiPane, onClose }: { channelId: strin
           </svg>
         </button>
       </div>
-      <Terminal channelId={channelId} target="chat" cmd={CHAT_SHELL_CMD} uiPane={uiPane} />
+      {started ? (
+        <Terminal channelId={channelId} target="chat" cmd={CHAT_SHELL_CMD} uiPane={uiPane} />
+      ) : (
+        <div data-testid="chat-shell-idle" style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, textAlign: "center", fontSize: 12, color: colors.textDim }}>
+          The chat's container isn't running. The shell opens here once it starts, with the chat's next turn.
+        </div>
+      )}
     </div>
   );
 }

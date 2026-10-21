@@ -3142,7 +3142,7 @@ Runs steps in a window, in order, until one fails.
 | `remove_pane` | `pane` | Closes the pane |
 | `maximize_pane` | `pane` | Makes the pane fill the tab |
 | `restore_pane` | | Puts a maximized pane back |
-| `open_side` | `view` | Opens the side view beside the chat: `learn`, `explain` or `shell`. The result's `pane` is `side` |
+| `open_side` | `view` | Opens the side view beside the chat: `learn`, `explain` or `shell`. The result's `pane` is `side`. `shell` fails while the chat's container isn't running |
 | `close_side` | | Closes the side view |
 | `open_file` | `path`, `line?` | Opens a file of the channel's roots in the editor |
 | `show_message` | `message_id` | Scrolls the channel's chat to the message (its `#id`) and highlights it, paging back through older messages and switching to a tab with a chat pane when needed. Fails when the chat has no such message. A message link, `loop://channel/<channel-id>/<message-id>`, is `select_channel` to the channel, then `show_message` |

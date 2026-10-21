@@ -424,6 +424,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   // (the Learn view's, with the Explain pane) and at the end of the turns.
   // Showing one opens the view (openSide, defined below with the layout's).
   const openSideRef = useRef<(view: SideView) => void>(() => {});
+  const chatRunningRef = useRef(false);
   const showExplain = useCallback(() => openSideRef.current("explain"), []);
   const explain = useExplain(channelId, subscribeChatEvents, wsOpens, showExplain);
   // The composer switches plugins put in the chat, beside Learn and Explain.
@@ -964,7 +965,10 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
           ...(side ? { side } : {}),
         };
       },
-      openSide: (view) => openSideRef.current(view),
+      openSide: (view) => {
+        if (view === "shell" && !chatRunningRef.current) throw new Error("the chat's container isn't running; the Shell view needs it");
+        openSideRef.current(view);
+      },
       closeSide: () => closeSideRef.current(),
       maximize: (id) => {
         if (onCanvas()) {
@@ -1334,6 +1338,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   const shellShown = learnOpen && sideView === "shell";
   // The chat's container runs, so the Shell badge has one to open a shell in.
   const chatRunning = !!containerStats.agent;
+  chatRunningRef.current = chatRunning;
   // Closing the Learn view with focus in its Learn pane would leave focus
   // nowhere once the pane goes: it goes back to the chat's composer, which
   // stays. Escape closes it too, unless something took the key first (a
@@ -1675,7 +1680,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
 
   const learnPane =
     sideView === "shell" ? (
-      <ChatShellPane channelId={channelId} uiPane={SIDE_PANE} onClose={closeLearn} />
+      <ChatShellPane channelId={channelId} running={chatRunning} uiPane={SIDE_PANE} onClose={closeLearn} />
     ) : sideView === "explain" ? (
       <ExplainPane channelId={channelId} explain={explain} onClose={closeLearn} />
     ) : (

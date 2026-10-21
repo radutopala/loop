@@ -220,7 +220,7 @@ function SideChat({
             sideView === "explain" ? (
               <ExplainPane channelId={sideChannelId} explain={explain} onClose={close} />
             ) : sideView === "shell" ? (
-              <ChatShellPane channelId={sideChannelId} onClose={close} />
+              <ChatShellPane channelId={sideChannelId} running={chatRunning} onClose={close} />
             ) : (
               <LearnPane
                 learn={learn}

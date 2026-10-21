@@ -93,7 +93,7 @@ Create a new terminal session. Detaches any currently attached session first.
 - Always the user's shell: a `cmd` is rejected with `invalid_input`.
 
 **Chat target behavior:**
-- A shell in the container the channel's chat runs in, beside its agent, rather than in the shell container agent panes share. The UI opens it from the chat header's `shell` badge, as the Shell view; a fork or fresh side chat's header has one too, for a shell in the side chat's own container.
+- A shell in the container the channel's chat runs in, beside its agent, rather than in the shell container agent panes share. The UI opens it from the chat header's `shell` badge, as the Shell view; a fork or fresh side chat's header has one too, for a shell in the side chat's own container. The badge shows only while that container is running; a Shell view that opens while it isn't running says so, and starts its shell once the container does.
 - Needs `channel_id`; the container is the channel's running chat (`loop-type=agent`) container. With none running, it's a `session_failed` error.
 - Runs `cmd`, `/bin/bash` by default, and never boots Claude: the chat's agent already runs there.
 
