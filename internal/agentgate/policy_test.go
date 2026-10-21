@@ -1,6 +1,7 @@
 package agentgate
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -160,6 +161,33 @@ func (s *PolicySuite) TestMatchCommandBasenameMismatchSkipsRule() {
 	r := p.MatchCommand("/usr/bin/ls", nil)
 	require.Equal(s.T(), types.DecisionAllow, r.Decision)
 	require.Equal(s.T(), "default", r.RuleID)
+}
+
+func (s *PolicySuite) TestMatchCommandMatched() {
+	tests := []struct {
+		name     string
+		patterns []string
+		args     []string
+		want     []string
+	}{
+		{name: "no args patterns", args: []string{"push"}, want: nil},
+		{name: "trimmed match", patterns: []string{`(^|\s)(commit|push)(\s|$)`}, args: []string{"-c", "a=b", "push", "origin"}, want: []string{"push"}},
+		{name: "overlapping matches", patterns: []string{`(^|\s)(commit|push)(\s|$)`}, args: []string{"-C", "commit", "push"}, want: []string{"commit", "push"}},
+		{name: "repeats once", patterns: []string{`push`}, args: []string{"push", "push"}, want: []string{"push"}},
+		{name: "every pattern", patterns: []string{`^-f`, `push`}, args: []string{"-f", "push"}, want: []string{"-f", "push"}},
+		{name: "only empty matches", patterns: []string{`x*`}, args: []string{"a", "b"}, want: []string{"a b"}},
+		{name: "too many matches", patterns: []string{`.`}, args: []string{strings.Repeat("ab", maxArgsMatches)}, want: []string{strings.Repeat("ab", maxArgsMatches)}},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			p, err := CompilePolicy(types.DecisionAllow, nil,
+				[]types.CommandRule{{Commands: []string{"git"}, ArgsPatterns: tt.patterns, Decision: types.DecisionApprove}}, nil)
+			require.NoError(s.T(), err)
+			r := p.MatchCommand("/usr/bin/git", tt.args)
+			require.Equal(s.T(), types.DecisionApprove, r.Decision)
+			require.Equal(s.T(), tt.want, r.Matched)
+		})
+	}
 }
 
 // --- File matching ---

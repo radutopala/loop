@@ -106,7 +106,7 @@ Both layers feed into the same `agentgate.Manager` for `approve` decisions, so a
 | `internal/agentgate/multi_resolver.go` | `MultiManagerResolver`: click routing by `reqID`, plus per-container bearer-token routing (`AddWithToken` / `ByToken`) for the in-container HTTP approval hop. `ByToken` compares in constant time via `crypto/subtle`. `Remove(containerID)` invokes the Manager's `Shutdown()` before unregistering so stale containers can't leave the FE card/dock-bouncer stuck. `ListPending()` aggregates across all live Managers and is what backs [`GET /api/gate/approvals`](api.md#get-apigateapprovals) |
 | `internal/syscallwrap/app.go`, `parent.go`, `child.go` | In-container gate wrapper — the body of the `loop syscallwrap` subcommand. `app.go` dispatches parent vs child on `LOOP_SYSCALLWRAP_MODE`. Parent: load policy JSON → socketpair → re-exec `/proc/self/exe` with `ExtraFiles=[child-end]`, `Credential={agent uid,gid}`, `Pdeathsig=SIGKILL` → receive SCM_RIGHTS handshake → build `agentgate.Server` → run until child exits. Child (agent user): `LockOSThread` → install filter via `SECCOMP_SET_MODE_FILTER \| NEW_LISTENER \| TSYNC` → send notify fd over fd 3 → read ack → `syscall.Exec` target |
 | `internal/dockerproxy/app.go` | In-container docker-proxy binary — the body of the `loop dockerproxy` subcommand. Loads the policy JSON, builds an `httpapprover.Approver`, listens on `/var/run/docker.sock` (tmpfs), runs `dockerproxy.Server` until SIGTERM |
-| `internal/httpapprover/approver.go` | Shared HTTP-backed `Approver` used by both the in-container docker proxy and the seccomp-gate parent. POSTs `{kind, target, message, cache_key}` to `{LOOP_API_URL}/api/gate/container-approval` with `Authorization: Bearer <gate token>` (read from `/run/loop/gate-token`); fail-closed on any transport or non-200 error |
+| `internal/httpapprover/approver.go` | Shared HTTP-backed `Approver` used by both the in-container docker proxy and the seccomp-gate parent. POSTs `{kind, target, message, cache_key, burst_key}` to `{LOOP_API_URL}/api/gate/container-approval` with `Authorization: Bearer <gate token>` (read from `/run/loop/gate-token`); fail-closed on any transport or non-200 error |
 | `internal/container/image/entrypoint.sh` | Branches on `$LOOP_DOCKERPROXY_ENABLED=1` (starts `loop dockerproxy` as root before dropping privileges) and `$LOOP_GATE_ENABLED=1` (execs `loop syscallwrap -- "$@"` as root, which drops its child to `$AGENT_USER`). When neither is set, falls back to plain `gosu "$AGENT_USER" "$@"` |
 | `internal/dockerproxy/fold.go` | Case-insensitive key lookup and the ambiguous-key check shared by body rules, approval details and the socket rewrite |
 | `internal/dockerproxy/nested.go` | Rewrites docker socket mounts in container creates to the nested proxy socket; looks up the nested volume's name |
@@ -422,7 +422,7 @@ The nested socket lives as long as the agent container: a nested container that 
 
 Approve decisions cross three platforms through the same `orchestrator.Bot.ApprovalPrompt` interface. Each prompt shows three buttons:
 
-- **Allow once** — default action; allows this single call, nothing cached.
+- **Allow once** — default action; allows this single call. The decision is remembered for a few seconds only for the exact same call (same full argv for exec), so the repeat probes of one command (a `PATH` search) don't prompt again; a different command run in the same shell line still gets its own card.
 - **Allow for session** — caches on `CacheKey` so the same operation skips future prompts for the life of the container.
 - **Deny** — blocks this call (subsequent identical calls prompt again).
 
@@ -431,7 +431,8 @@ Discord renders an `ActionsRow` with three buttons; Slack renders a `NewActionBl
 **Cache key scheme:**
 
 - `connect:<absolute-socket-path>` — one allow-for-session covers every `docker ps` / `docker logs` / `docker exec` round.
-- `execve:<basename>:<first-2-argv-tokens>` — "Allow git push for session" doesn't also cover `git config --global`.
+- `execve:<basename>:<rule>:<matched args>` — for a command rule with `args_patterns`: the rule and the argument text its patterns matched, never option values. Under `(^|\s)(commit|push)(\s|$)`, `git -c x=y commit` keys on `commit` and `git -c x=y push` on `push`, so "Allow for session" on the commit doesn't cover the push. Every match counts: `git -C commit push` keys on both.
+- `execve:<basename>:<first-2-argv-tokens>` — for a rule without `args_patterns`, or an approve default: "Allow git push for session" doesn't also cover `git config --global`.
 - `docker:<METHOD>:<normalized-path>` — container IDs and hex hashes collapse to `*` so repeat `docker rm <id>` doesn't re-prompt after session approval.
 
 **Scope:** cache lives inside the per-container `Manager`. Container dies → cache dies. No cross-session persistence in v1.

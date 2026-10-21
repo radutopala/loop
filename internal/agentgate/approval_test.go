@@ -337,6 +337,85 @@ func (s *ApprovalSuite) TestOnceDecisionCollapsesRepeatBurst() {
 	require.False(s.T(), cached)
 }
 
+// A once-scoped decision covers only requests with its burst key, not
+// another command that shares the session key; a session decision covers
+// every burst key under its session key.
+func (s *ApprovalSuite) TestBurstMemoKeyedByBurstKey() {
+	tests := []struct {
+		name      string
+		decision  string
+		nextBurst string
+		wantSends int
+		wantOut   types.Decision
+		wantWhy   string
+	}{
+		{name: "once, same argv", decision: DecisionOnce, nextBurst: "argv-a", wantSends: 1, wantOut: types.DecisionAllow, wantWhy: "burst-hit"},
+		{name: "once, other argv", decision: DecisionOnce, nextBurst: "argv-b", wantSends: 2},
+		{name: "deny, other argv", decision: DecisionDeny, nextBurst: "argv-b", wantSends: 2},
+		{name: "session, other argv", decision: DecisionSession, nextBurst: "argv-b", wantSends: 1, wantOut: types.DecisionAllow, wantWhy: "cache-hit"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			bot := &fakeBot{}
+			m := s.newManager(bot, types.RateLimits{})
+			outCh := s.request(m, ApprovalRequest{Kind: "execve", CacheKey: "execve:git:-c x", BurstKey: "argv-a"})
+			reqID := s.waitForPending(m, 1)
+			require.NoError(s.T(), m.Resolve(reqID, tt.decision, "u"))
+			<-outCh
+
+			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			defer cancel()
+			out := m.Request(ctx, "chan1", ApprovalRequest{Kind: "execve", CacheKey: "execve:git:-c x", BurstKey: tt.nextBurst})
+			require.Equal(s.T(), tt.wantSends, bot.sendCount)
+			if tt.wantWhy == "" {
+				require.Equal(s.T(), "timeout", out.Reason, "it prompted again")
+				return
+			}
+			require.Equal(s.T(), tt.wantOut, out.Decision)
+			require.Equal(s.T(), tt.wantWhy, out.Reason)
+		})
+	}
+}
+
+// The reported repro, through the execve handler: a commit and a push run
+// with the same leading -c under one approve rule. Neither "Allow once" nor
+// "Allow for session" on the commit covers the push.
+func (s *ApprovalSuite) TestGitCommitThenPushPromptsTwice() {
+	policy, err := CompilePolicy(types.DecisionAllow, nil, []types.CommandRule{{
+		Commands:     []string{"git"},
+		ArgsPatterns: []string{`(^|\s)(commit|push|update-ref)(\s|$)`},
+		Decision:     types.DecisionApprove,
+	}}, nil)
+	require.NoError(s.T(), err)
+	commit := []string{"git", "-c", "maintenance.auto=false", "-c", "core.fsync=none", "commit", "-q", "--allow-empty", "-m", "x"}
+	push := []string{"git", "-c", "maintenance.auto=false", "push", "-q", "origin", "main"}
+
+	for _, decision := range []string{DecisionOnce, DecisionSession} {
+		s.Run(decision, func() {
+			bot := &fakeBot{}
+			h := NewExecveHandler(policy, s.newManager(bot, types.RateLimits{}))
+			exec := func(argv []string) <-chan Outcome {
+				ch := make(chan Outcome, 1)
+				go func() {
+					ch <- h.Handle(context.Background(), ExecveRequest{ChannelID: "chan1", Filename: "/usr/bin/git", Argv: argv})
+				}()
+				return ch
+			}
+			m := h.Approver.(*Manager)
+
+			outCh := exec(commit)
+			require.NoError(s.T(), m.Resolve(s.waitForPending(m, 1), decision, "u"))
+			require.Equal(s.T(), types.DecisionAllow, (<-outCh).Decision)
+
+			outCh = exec(push)
+			reqID := s.waitForPending(m, 1)
+			require.Equal(s.T(), 2, bot.sendCount, "the push gets a card of its own")
+			require.NoError(s.T(), m.Resolve(reqID, DecisionDeny, "u"))
+			require.Equal(s.T(), types.DecisionDeny, (<-outCh).Decision)
+		})
+	}
+}
+
 func (s *ApprovalSuite) TestDenyOnceCollapsesRepeatBurst() {
 	bot := &fakeBot{}
 	m := s.newManager(bot, types.RateLimits{})

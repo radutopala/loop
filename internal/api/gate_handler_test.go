@@ -226,7 +226,7 @@ func (s *ServerSuite) TestContainerApprovalHappyAllow() {
 	}
 	s.srv.SetContainerApprovalRouter(r)
 
-	body := `{"kind":"docker-http","target":"GET /containers/json","message":"list?","cache_key":"docker:GET:/containers/json","details":{"image":"alpine","privileged":"true"}}`
+	body := `{"kind":"docker-http","target":"GET /containers/json","message":"list?","cache_key":"docker:GET:/containers/json","burst_key":"argv","details":{"image":"alpine","privileged":"true"}}`
 	req := httptest.NewRequest(http.MethodPost, "/api/gate/container-approval", bytesReader(body))
 	req.Header.Set("Authorization", "Bearer tok-1")
 	rec := httptest.NewRecorder()
@@ -243,6 +243,8 @@ func (s *ServerSuite) TestContainerApprovalHappyAllow() {
 	require.Equal(s.T(), "ch-42", calls[0].channelID)
 	require.Equal(s.T(), "docker-http", calls[0].req.Kind)
 	require.Equal(s.T(), "GET /containers/json", calls[0].req.Target)
+	require.Equal(s.T(), "docker:GET:/containers/json", calls[0].req.CacheKey)
+	require.Equal(s.T(), "argv", calls[0].req.BurstKey)
 	require.Equal(s.T(), map[string]string{"image": "alpine", "privileged": "true"}, calls[0].req.Details)
 }
 

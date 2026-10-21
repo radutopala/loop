@@ -1,6 +1,7 @@
 package agentgate
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -26,7 +27,9 @@ type BotRouter interface {
 
 // ApprovalRequest is handed to Manager.Request. ID is assigned by the manager
 // when empty; the bot echoes it so the click-handler can correlate.
-// CacheKey of "" disables caching for this request.
+// CacheKey of "" disables caching for this request. It keys "Allow for
+// session" and "Deny for session". BurstKey keys the few-second memo of a
+// once-scoped decision (see burstCacheTTL); empty, CacheKey keys it too.
 //
 // Details carries optional structured key/value fields the renderer can show
 // alongside Target — e.g. {"image": "alpine", "binds": "/etc:/host-etc:ro"}
@@ -56,6 +59,7 @@ type ApprovalRequest struct {
 	Source   string
 	Message  string
 	CacheKey string
+	BurstKey string
 	Details  map[string]string
 	OnPrompt func()
 
@@ -187,9 +191,9 @@ func NewManager(bots BotRouter, limits types.RateLimits) *Manager {
 // Request prompts the user (or returns a cached / rate-limited result).
 // Outcome.Decision is always Allow or Deny — never Approve.
 func (m *Manager) Request(ctx context.Context, channelID string, req ApprovalRequest) Outcome {
-	cacheKey := scopedCacheKey(req.Kind, req.CacheKey)
+	cacheKey, burstKey := requestCacheKeys(req)
 	if cacheKey != "" {
-		if out, ok := m.lookupCached(cacheKey); ok {
+		if out, ok := m.lookupCached(cacheKey, burstKey); ok {
 			return out
 		}
 	}
@@ -240,7 +244,7 @@ func (m *Manager) Request(ctx context.Context, channelID string, req ApprovalReq
 	select {
 	case r := <-entry.ch:
 		_ = bot.RemoveApproval(ctx, channelID, msgID)
-		return m.applyResolution(cacheKey, r)
+		return m.applyResolution(cacheKey, burstKey, r)
 	case <-ctx.Done():
 		// RemoveApproval broadcasts gate.approval_resolved so the FE
 		// retracts the card; use a fresh context since ours is done.
@@ -357,30 +361,35 @@ func (m *Manager) checkLimits() (Outcome, bool) {
 
 // scopedCacheKey namespaces a request's CacheKey by its Kind, so a decision
 // remembered for one kind of trap (a file path, say) never answers another
-// (a docker request whose key happens to spell the same string). An empty
-// key stays empty: the request isn't cacheable.
+// (a docker request whose key happens to spell the same string).
 func scopedCacheKey(kind, key string) string {
-	if key == "" {
-		return ""
-	}
 	return kind + "\x00" + key
 }
 
-// lookupCached resolves a CacheKey against the session cache first, then the
-// short-lived burst memo. An expired burst entry is dropped on read so the
-// caller prompts again.
-func (m *Manager) lookupCached(key string) (Outcome, bool) {
+// requestCacheKeys returns req's scoped session and burst keys. Both are
+// empty when req isn't cacheable.
+func requestCacheKeys(req ApprovalRequest) (cacheKey, burstKey string) {
+	if req.CacheKey == "" {
+		return "", ""
+	}
+	return scopedCacheKey(req.Kind, req.CacheKey), scopedCacheKey(req.Kind, cmp.Or(req.BurstKey, req.CacheKey))
+}
+
+// lookupCached resolves key against the session cache first, then burstKey
+// against the short-lived burst memo. An expired burst entry is dropped on
+// read so the caller prompts again.
+func (m *Manager) lookupCached(key, burstKey string) (Outcome, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if d, ok := m.cache[key]; ok {
 		return Outcome{Decision: d, FromCache: true, Reason: "cache-hit"}, true
 	}
-	e, ok := m.burst[key]
+	e, ok := m.burst[burstKey]
 	if !ok {
 		return Outcome{}, false
 	}
 	if !m.now().Before(e.expires) {
-		delete(m.burst, key)
+		delete(m.burst, burstKey)
 		return Outcome{}, false
 	}
 	return Outcome{Decision: e.decision, FromCache: true, Reason: "burst-hit"}, true
@@ -398,7 +407,7 @@ func (m *Manager) rememberBurstLocked(key string, d types.Decision) {
 	m.burst[key] = burstEntry{decision: d, expires: now.Add(m.burstTTL)}
 }
 
-func (m *Manager) applyResolution(cacheKey string, r resolution) Outcome {
+func (m *Manager) applyResolution(cacheKey, burstKey string, r resolution) Outcome {
 	var d types.Decision
 	persist := false
 	switch r.decision {
@@ -419,9 +428,9 @@ func (m *Manager) applyResolution(cacheKey string, r resolution) Outcome {
 		case persist:
 			// Session scope supersedes any burst memo for the same key.
 			m.cache[cacheKey] = d
-			delete(m.burst, cacheKey)
+			delete(m.burst, burstKey)
 		case m.burstTTL > 0:
-			m.rememberBurstLocked(cacheKey, d)
+			m.rememberBurstLocked(burstKey, d)
 		}
 		m.mu.Unlock()
 	}

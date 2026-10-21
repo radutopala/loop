@@ -2,6 +2,7 @@ package agentgate
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -51,22 +52,63 @@ func (s *ExecveSuite) TestIsMemfdPath() {
 
 // --- execveCacheKey ---
 
-func (s *ExecveSuite) TestExecveCacheKeyEmpty() {
-	s.Require().Equal("", execveCacheKey(nil))
+func (s *ExecveSuite) TestExecveCacheKey() {
+	commitOrPush := MatchResult{RuleID: "cmd[0]", Matched: []string{"commit"}}
+	tests := []struct {
+		name  string
+		argv  []string
+		match MatchResult
+		want  string
+	}{
+		{name: "empty argv", want: ""},
+		{name: "no args", argv: []string{"/bin/ls"}, want: "execve:ls"},
+		{name: "caps rest to two", argv: []string{"/usr/bin/git", "push", "origin", "main", "--force"}, want: "execve:git:push origin"},
+		{name: "short rest", argv: []string{"/bin/rm", "-rf"}, want: "execve:rm:-rf"},
+		{name: "rule without args patterns keeps argv tokens", argv: []string{"git", "-c", "a=b", "push"}, match: MatchResult{RuleID: "cmd[0]"}, want: "execve:git:-c a=b"},
+		{name: "rule match ignores option values", argv: []string{"git", "-c", "a=b", "commit", "-m", "x"}, match: commitOrPush, want: `execve:git:cmd[0]:["commit"]`},
+		{name: "several matches", argv: []string{"git", "-C", "commit", "push"}, match: MatchResult{RuleID: "cmd[1]", Matched: []string{"commit", "push"}}, want: `execve:git:cmd[1]:["commit" "push"]`},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.Require().Equal(tt.want, execveCacheKey(tt.argv, tt.match))
+		})
+	}
 }
 
-func (s *ExecveSuite) TestExecveCacheKeyNoRest() {
-	s.Require().Equal("execve:ls", execveCacheKey([]string{"/bin/ls"}))
+// Through the policy: leading git options never widen the key, and a
+// commit and a push under one rule get different keys.
+func (s *ExecveSuite) TestExecveCacheKeyFromRuleMatch() {
+	policy := s.mustPolicy(types.DecisionAllow, types.CommandRule{
+		Commands:     []string{"git"},
+		ArgsPatterns: []string{`(^|\s)(commit|push|update-ref)(\s|$)`},
+		Decision:     types.DecisionApprove,
+	})
+	tests := []struct {
+		name string
+		argv []string
+		want string
+	}{
+		{name: "config values before commit", argv: []string{"git", "-c", "maintenance.auto=false", "-c", "core.fsync=none", "commit", "-q", "-m", "x"}, want: `execve:git:cmd[0]:["commit"]`},
+		{name: "config value before push", argv: []string{"git", "-c", "maintenance.auto=false", "push", "-q", "origin", "main"}, want: `execve:git:cmd[0]:["push"]`},
+		{name: "dir", argv: []string{"/usr/bin/git", "-C", "/work", "push", "origin", "main"}, want: `execve:git:cmd[0]:["push"]`},
+		{name: "git dir as next arg", argv: []string{"git", "--git-dir", "/work/.git", "--work-tree", "/work", "update-ref", "refs/heads/main"}, want: `execve:git:cmd[0]:["update-ref"]`},
+		{name: "git dir with =", argv: []string{"git", "--git-dir=/work/.git", "--no-pager", "-P", "commit", "-m"}, want: `execve:git:cmd[0]:["commit"]`},
+		{name: "option value named like a subcommand", argv: []string{"git", "-C", "commit", "push"}, want: `execve:git:cmd[0]:["commit" "push"]`},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			match := policy.MatchCommand(tt.argv[0], tt.argv[1:])
+			s.Require().Equal(types.DecisionApprove, match.Decision)
+			s.Require().Equal(tt.want, execveCacheKey(tt.argv, match))
+		})
+	}
 }
 
-func (s *ExecveSuite) TestExecveCacheKeyCapsRestToTwo() {
-	got := execveCacheKey([]string{"/usr/bin/git", "push", "origin", "main", "--force"})
-	s.Require().Equal("execve:git:push origin", got)
-}
-
-func (s *ExecveSuite) TestExecveCacheKeyShortRest() {
-	got := execveCacheKey([]string{"/bin/rm", "-rf"})
-	s.Require().Equal("execve:rm:-rf", got)
+func (s *ExecveSuite) TestExecveBurstKey() {
+	commit := []string{"git", "-c", "maintenance.auto=false", "commit", "-q", "-m", "x"}
+	s.Require().Equal(execveBurstKey(commit), execveBurstKey(slices.Clone(commit)), "identical probes share it")
+	s.Require().NotEqual(execveBurstKey(commit), execveBurstKey([]string{"git", "-c", "maintenance.auto=false", "push", "-q", "origin", "main"}))
+	s.Require().NotEqual(execveBurstKey([]string{"git", "push origin"}), execveBurstKey([]string{"git", "push", "origin"}), "argument boundaries count")
 }
 
 // --- isWrapper ---
@@ -250,7 +292,8 @@ func (s *ExecveSuite) TestHandleRuleApproveDispatchesToApprover() {
 	s.Require().Equal("execve", ap.captured.Kind)
 	s.Require().Equal("/usr/bin/git push origin", ap.captured.Target)
 	s.Require().Equal("git write-side op", ap.captured.Message)
-	s.Require().Equal("execve:git:push origin", ap.captured.CacheKey)
+	s.Require().Equal("execve:git:push origin", ap.captured.CacheKey, "a rule without args patterns keys on argv")
+	s.Require().Equal(execveBurstKey([]string{"/usr/bin/git", "push", "origin"}), ap.captured.BurstKey)
 }
 
 // TestHandleRuleApproveBlocksUntilApproverReturns pins the blocking contract:

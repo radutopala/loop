@@ -64,6 +64,10 @@ type MatchResult struct {
 	Decision types.Decision
 	Message  string
 	RuleID   string // "default" | "path[0]" | "cmd[2]" | "file[7]"
+	// Matched is the argument text a command rule's args patterns matched,
+	// trimmed and in order: "push" for `(^|\s)(commit|push)(\s|$)` on
+	// "-c a=b push origin". Nil when the rule has no args patterns.
+	Matched []string
 }
 
 // CompilePolicy validates the rule set and returns a Policy ready to match.
@@ -160,7 +164,7 @@ func (p *Policy) MatchCommand(argv0 string, argvRest []string) MatchResult {
 		if !matchAnyRegex(joined, r.args) {
 			continue
 		}
-		return MatchResult{Decision: r.decision, Message: r.message, RuleID: fmt.Sprintf("cmd[%d]", i)}
+		return MatchResult{Decision: r.decision, Message: r.message, RuleID: fmt.Sprintf("cmd[%d]", i), Matched: argsMatches(joined, r.args)}
 	}
 	return p.defaultResult()
 }
@@ -206,6 +210,44 @@ func (p *Policy) HasExecFileRules() bool {
 		}
 	}
 	return false
+}
+
+// maxArgsMatches caps the matches argsMatches collects per pattern; past it
+// the whole argument string stands in, the narrowest key there is.
+const maxArgsMatches = 64
+
+// argsMatches collects every text the patterns match in s, overlapping
+// ones included: the search resumes one byte past each match's start, so
+// in "-C commit push" a boundary pattern finds both "commit" and "push",
+// where a non-overlapping scan would lose "push" to the space "commit"
+// consumed. Empty matches are dropped; when nothing else remains, s is
+// returned whole.
+func argsMatches(s string, res []*regexp.Regexp) []string {
+	if len(res) == 0 {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, re := range res {
+		for start, n := 0, 0; start <= len(s); n++ {
+			if n == maxArgsMatches {
+				return []string{s}
+			}
+			loc := re.FindStringIndex(s[start:])
+			if loc == nil {
+				break
+			}
+			if t := strings.TrimSpace(s[start+loc[0] : start+loc[1]]); t != "" && !seen[t] {
+				seen[t] = true
+				out = append(out, t)
+			}
+			start += loc[0] + 1
+		}
+	}
+	if len(out) == 0 {
+		return []string{s}
+	}
+	return out
 }
 
 func (p *Policy) defaultResult() MatchResult {
