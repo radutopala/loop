@@ -234,11 +234,13 @@ func (o *Orchestrator) warmLive(ctx context.Context, channelID, authorID string,
 	done := make(chan error, 1)
 	locked = false
 	go func() {
-		defer lock.Unlock()
 		err := o.live.StartLive(startCtx, req, o.liveHooks(channelID))
 		if err == nil {
 			o.publishLive(channelID, o.LiveSession(startCtx, channelID))
 		}
+		// Unlocked before the answer, so the channel is free once warming
+		// returns.
+		lock.Unlock()
 		done <- err
 	}()
 	select {
