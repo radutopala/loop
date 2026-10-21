@@ -69,7 +69,7 @@ Create a new terminal session. Detaches any currently attached session first.
 | `container_id` | string   | no       | Docker container ID (for agent target) |
 | `channel_id`   | string   | no       | Channel ID; used to resolve container via `ContainerFinder` |
 | `cmd`          | string[] | no       | Command to execute; defaults to `/bin/sh`. Agent target only: a host session with a `cmd` is rejected |
-| `target`       | string   | no       | `"host"` or `"agent"` (default) |
+| `target`       | string   | no       | `"host"`, `"chat"` or `"agent"` (default) |
 | `rows`         | uint     | no       | Initial terminal rows; applied via resize after creation |
 | `cols`         | uint     | no       | Initial terminal columns |
 | `open_mode`    | string   | no       | Agent session boot mode: `"resume"`, `"fork"`, `"fresh"`. Empty preserves legacy auto-fork heuristic. |
@@ -92,6 +92,11 @@ Create a new terminal session. Detaches any currently attached session first.
 - Default shell arguments: `-l` (login shell) on Unix; none on Windows.
 - Always the user's shell: a `cmd` is rejected with `invalid_input`.
 
+**Chat target behavior:**
+- A shell in the container the channel's chat runs in, beside its agent, rather than in the shell container agent panes share. The UI opens it from the chat header's `shell` badge, as the Shell view; a fork or fresh side chat's header has one too, for a shell in the side chat's own container. The badge shows only while that container is running; a Shell view that opens while it isn't running says so, and starts its shell once the container does.
+- Needs `channel_id`; the container is the channel's running chat (`loop-type=agent`) container. With none running, it's a `session_failed` error.
+- Runs `cmd`, `/bin/bash` by default, and never boots Claude: the chat's agent already runs there.
+
 ---
 
 ### `attach`
@@ -109,7 +114,7 @@ Re-attach to an existing session. Provides ring buffer history replay.
 |--------------|--------|----------|-------------|
 | `type`       | string | yes      | Must be `"attach"` |
 | `session_id` | string | yes      | Session ID to attach to |
-| `target`     | string | no       | `"agent"` (default) or `"host"`: the manager that owns the session |
+| `target`     | string | no       | `"agent"` (default), `"chat"` or `"host"`: the manager that owns the session |
 
 **Behavior:**
 - Detaches any currently attached session first.
@@ -184,6 +189,7 @@ Stop the active session and remove its container (agent sessions only). Used whe
 - Calls `StopSession` on the appropriate manager to close the exec connection.
 - For agent sessions, removes the container via `ContainerStopper.ContainerRemove` so the channel list API reflects the updated state.
 - For host sessions, skips container removal.
+- A chat's own container is never removed: the chat still runs there. A `chat` session's process group is killed instead, which ends the shell.
 
 ---
 

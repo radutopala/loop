@@ -1,7 +1,9 @@
 import { RE2JS } from "re2js";
+import { SIDE_VIEW_LABEL, type SideView } from "../components/layout/LearnSplit";
 import type { PluginPaneOption } from "../plugins/PluginPanelsContext";
 import { AGENT_OPEN_MODE_OPTIONS, type AgentOpenMode, openModesFor, PANEL_OPTIONS, type PanelType } from "../types/panels";
-import type { ChatLine, ChatPaneInput, PaneInfo, PaneOptions, StepResult, TerminalInput, UiHost, UiStep, WorkspaceController } from "./types";
+import { SIDE_PANE } from "./sideText";
+import type { ChatLine, ChatPaneInput, PaneInfo, PaneOptions, SideReader, StepResult, TerminalInput, UiHost, UiStep, WorkspaceController } from "./types";
 
 /** The terminal panes send_input types into, and read_output and wait_for
  *  read: the agent's terminals, in its container. Never a host shell, which
@@ -125,6 +127,42 @@ function findPane(panes: PaneInfo[], pane: string | undefined): PaneInfo {
   const found = panes.find((p) => p.id === pane) ?? panes.find((p) => p.panel === pane);
   if (!found) throw new StepError(`no pane "${pane}" in the open tab; panes: ${panes.map((p) => p.id).join(", ") || "none"}`);
   return found;
+}
+
+/** The side views open_side opens. */
+const SIDE_VIEWS = Object.keys(SIDE_VIEW_LABEL) as SideView[];
+
+function sideViewOf(view: string | undefined): SideView {
+  if (!view) throw new StepError(`view is required: ${SIDE_VIEWS.join(", ")}`);
+  if (!SIDE_VIEWS.includes(view as SideView)) throw new StepError(`unknown view "${view}"; use ${SIDE_VIEWS.join(", ")}`);
+  return view as SideView;
+}
+
+const onSide = (step: UiStep) => step.pane === SIDE_PANE;
+
+/** The side view open beside the chat, which the side pane is. */
+function sideOf(run: Run): { channelId: string; view: SideView } {
+  const { channelId, ws } = workspaceOf(run);
+  const view = ws.view().side;
+  if (!view) throw new StepError(`no side view is open; open_side {view} first`);
+  return { channelId, view };
+}
+
+function readerOf(run: Run, channelId: string): SideReader {
+  const reader = run.host.side(channelId);
+  if (!reader) throw new StepError("the side view isn't shown yet");
+  return reader;
+}
+
+/** How a step reaches its pane: a terminal, a chat (a chat pane, or the
+ *  Learn view's learn thread), or the Explain view's text. */
+function targetOf(step: UiStep, run: Run): "terminal" | "chat" | "explain" {
+  if (onSide(step)) {
+    const { view } = sideOf(run);
+    return view === "shell" ? "terminal" : view === "learn" ? "chat" : "explain";
+  }
+  const { ws } = workspaceOf(run);
+  return CHAT_PANELS.includes(findPane(ws.view().panes, step.pane).panel) ? "chat" : "terminal";
 }
 
 function panelOf(panel: string | undefined): PanelType {
@@ -328,11 +366,32 @@ async function runStep(step: UiStep, run: Run): Promise<StepOutput> {
       if (!found) throw new StepError(`no message ${id} in channel ${channelId}'s chat`);
       return {};
     }
+    case "open_side": {
+      const { ws } = workspaceOf(run);
+      const view = sideViewOf(step.view);
+      if (ws.view().side !== view) {
+        ws.openSide(view);
+        await waitFor(run, `the ${SIDE_VIEW_LABEL[view]} to open`, () => ws.view().side === view);
+      }
+      return { pane: SIDE_PANE };
+    }
+    case "close_side": {
+      const { ws } = workspaceOf(run);
+      if (ws.view().side) {
+        ws.closeSide();
+        await waitFor(run, "the side view to close", () => !ws.view().side);
+      }
+      return {};
+    }
     case "send_input":
       return sendInput(step, run);
     case "read_output": {
       const lines = linesOf(step);
-      if (isChatPane(step, run)) {
+      if (onSide(step)) {
+        // The Learn view reads as its proposals and its learn thread.
+        const { channelId, view } = sideOf(run);
+        if (view !== "shell") return { pane: SIDE_PANE, output: readerOf(run, channelId).read(view, lines) };
+      } else if (isChatPane(step, run)) {
         const { pane, chat } = await chatOf(step, run);
         return { pane, output: chatText(chat.messages(), lines) };
       }
@@ -351,33 +410,37 @@ async function runStep(step: UiStep, run: Run): Promise<StepOutput> {
 async function terminalOf(step: UiStep, run: Run, verb: string, ready?: (t: TerminalInput) => boolean): Promise<{ channelId: string; pane: string; t: TerminalInput }> {
   const { host } = run;
   const { channelId, ws } = workspaceOf(run);
-  const pane = findPane(ws.view().panes, step.pane);
-  if (!INPUT_PANELS.includes(pane.panel)) throw new StepError(`${step.op} only ${verb} docker-agent, docker-shell, chat and chat-side panes, not ${pane.panel}`);
+  let pane = SIDE_PANE;
+  if (!onSide(step)) {
+    const info = findPane(ws.view().panes, step.pane);
+    if (!INPUT_PANELS.includes(info.panel)) throw new StepError(`${step.op} only ${verb} docker-agent, docker-shell, chat and chat-side panes and the side view, not ${info.panel}`);
+    pane = info.id;
+  }
   // A pane added a step before mounts and starts its session first.
   let found: TerminalInput | undefined;
-  await waitFor(run, `pane ${pane.id} to be ${ready ? "ready for input" : "started"}`, () => {
-    found = host.terminal(channelId, pane.id);
+  await waitFor(run, `pane ${pane} to be ${ready ? "ready for input" : "started"}`, () => {
+    found = host.terminal(channelId, pane);
     if (!found) return false;
     const status = found.status();
-    if (ready && (status === "completed" || status === "failed")) throw new StepError(`pane ${pane.id}'s session has ${status === "failed" ? "failed" : "ended"}`);
+    if (ready && (status === "completed" || status === "failed")) throw new StepError(`pane ${pane}'s session has ${status === "failed" ? "failed" : "ended"}`);
     return ready ? ready(found) : status !== "connecting";
   });
-  return { channelId, pane: pane.id, t: found as TerminalInput };
+  return { channelId, pane, t: found as TerminalInput };
 }
 
 /** Whether the step's pane is a chat pane. */
 function isChatPane(step: UiStep, run: Run): boolean {
-  const { ws } = workspaceOf(run);
-  return CHAT_PANELS.includes(findPane(ws.view().panes, step.pane).panel);
+  return targetOf(step, run) === "chat";
 }
 
 /** The chat of the step's chat pane, once it's there: a chat-side pane
- *  registers its chat once its side chat has started. */
+ *  registers its chat once its side chat has started, the Learn view once
+ *  its learn thread is shown. */
 async function chatOf(step: UiStep, run: Run): Promise<{ channelId: string; pane: string; chat: ChatPaneInput }> {
   const { channelId, ws } = workspaceOf(run);
-  const pane = findPane(ws.view().panes, step.pane);
-  const chat = await waitForValue(run, `pane ${pane.id}'s chat to start`, () => run.host.chat(channelId, pane.id) ?? null);
-  return { channelId, pane: pane.id, chat };
+  const pane = onSide(step) ? SIDE_PANE : findPane(ws.view().panes, step.pane).id;
+  const chat = await waitForValue(run, `pane ${pane}'s chat to start`, () => run.host.chat(channelId, pane) ?? null);
+  return { channelId, pane, chat };
 }
 
 /** The last lines of a chat's messages, each as "author: text", with a
@@ -444,7 +507,9 @@ async function waitForChat(step: UiStep, run: Run, match: RE2JS | undefined, qui
 
 async function sendInput(step: UiStep, run: Run): Promise<StepOutput> {
   if (typeof step.text !== "string") throw new StepError("text is required");
-  if (isChatPane(step, run)) return sendChat(step, run, step.text);
+  const target = targetOf(step, run);
+  if (target === "explain") throw new StepError("send_input on the side view types into the Shell view or asks the Learn view's learn thread; the Explain view takes no input");
+  if (target === "chat") return sendChat(step, run, step.text);
   const { host } = run;
   const { pane, t } = await terminalOf(step, run, "types into", (t) => t.status() === "running" && t.lastOutputAt() > 0 && host.now() - t.lastOutputAt() >= INPUT_QUIET_MS);
   const submit = step.submit ?? true;
@@ -478,7 +543,9 @@ async function waitForOutput(step: UiStep, run: Run): Promise<StepOutput> {
   }
   const quietMs = step.quiet_ms ?? WAIT_QUIET_MS;
   if (!Number.isInteger(quietMs) || quietMs < 0) throw new StepError("quiet_ms must be a whole number from 0");
-  if (isChatPane(step, run)) return waitForChat(step, run, match, quietMs, lines);
+  const target = targetOf(step, run);
+  if (target === "explain") return waitForExplain(step, run, match, quietMs, lines);
+  if (target === "chat") return waitForChat(step, run, match, quietMs, lines);
   const { host } = run;
   const found = await terminalOf(step, run, "reads");
   const { channelId, pane } = found;
@@ -497,4 +564,24 @@ async function waitForOutput(step: UiStep, run: Run): Promise<StepOutput> {
     return host.now() - last >= quietMs;
   });
   return { pane, output: t.read(lines) };
+}
+
+/** Waits until the Explain view's text matches, or, without match, until no
+ *  explanation has been running for quietMs. */
+async function waitForExplain(step: UiStep, run: Run, match: RE2JS | undefined, quietMs: number, lines: number): Promise<StepOutput> {
+  const { host } = run;
+  const { channelId } = sideOf(run);
+  const reader = readerOf(run, channelId);
+  let idleSince: number | null = null;
+  await waitFor(run, match ? `the Explain view to show /${step.match}/` : "the Explain view to be idle", () => {
+    if (sideOf(run).view !== "explain") throw new StepError("the Explain view is no longer open");
+    if (match) return match.test(reader.read("explain", lines));
+    if (reader.explaining()) {
+      idleSince = null;
+      return false;
+    }
+    idleSince ??= host.now();
+    return host.now() - idleSince >= quietMs;
+  });
+  return { pane: SIDE_PANE, output: reader.read("explain", lines) };
 }

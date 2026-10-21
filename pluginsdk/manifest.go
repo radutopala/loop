@@ -93,9 +93,23 @@ type Manifest struct {
 	// ThreadEvents is where an event in a channel's thread goes: "thread"
 	// (the thread's container, the default), "channel" or "both".
 	ThreadEvents string `json:"thread_events,omitempty"`
+	// EventsStart, when set, lets an event start the plugin's container
+	// only while one of its settings or switches is on; otherwise the
+	// event goes only to a container already running.
+	EventsStart *EventsStart `json:"events_start,omitempty"`
 	// Live is what the plugin does with its chats' live sessions; it needs
 	// CapLiveControl.
 	Live *Live `json:"live,omitempty"`
+}
+
+// EventsStart is what an event needs to start the plugin's container.
+type EventsStart struct {
+	// Settings are boolean settings, any of which on in the chat's project
+	// lets an event start the container.
+	Settings []string `json:"settings,omitempty"`
+	// Switches are composer switches, any of which on in the event's chat
+	// lets an event start the container.
+	Switches []string `json:"switches,omitempty"`
 }
 
 // Live lists the live session messages a plugin sends and hears.

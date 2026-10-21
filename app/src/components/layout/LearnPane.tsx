@@ -6,12 +6,17 @@ import type { ActiveChatState, ChatEventListener } from "../../hooks/useChatStat
 import type { LearnView } from "../../hooks/useLearn";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
+import { SIDE_PANE } from "../../uiBridge/sideText";
+import { useChatPaneInput } from "../../uiBridge/useChatPaneInput";
 import { logErr } from "../../utils/log";
 import { ChatView } from "../chat/ChatView";
 import { configPreviewRevision, editsProjectConfig, isSettledProposal, learnKindLabel, proposalCaveat, proposalDetail } from "../chat/learnState";
 import { UnifiedDiff } from "../shared/UnifiedDiff";
 
 interface LearnPaneProps {
+  /** The workspace whose side view this is: UI commands reach its learn
+   *  thread's chat as the pane "side". A side chat's Learn view has none. */
+  uiChannelId?: string;
   learn: LearnView;
   /** The learning channel is a worktree thread (renames leave its branch). */
   worktree: boolean;
@@ -30,7 +35,7 @@ interface LearnPaneProps {
  * proposals to apply or dismiss on top, the hidden learn thread's chat below
  * (to watch the pass, or ask it for changes).
  */
-export function LearnPane({ learn, worktree, roots, subscribeChannelEvents, getChatState, onChatStateUnmount, onClose }: LearnPaneProps) {
+export function LearnPane({ uiChannelId, learn, worktree, roots, subscribeChannelEvents, getChatState, onChatStateUnmount, onClose }: LearnPaneProps) {
   const { colors } = useTheme();
   const { open, busy, errors, bulk } = learn;
   const paneRef = useRef<HTMLDivElement>(null);
@@ -126,6 +131,7 @@ export function LearnPane({ learn, worktree, roots, subscribeChannelEvents, getC
         {learn.learnChannelId ? (
           <LearnThread
             key={learn.learnChannelId}
+            uiChannelId={uiChannelId}
             learnChannelId={learn.learnChannelId}
             running={learn.running}
             roots={roots}
@@ -216,6 +222,7 @@ function useFocusedTurn(paneRef: React.RefObject<HTMLDivElement | null>, learn: 
 }
 
 function LearnThread({
+  uiChannelId,
   learnChannelId,
   running,
   roots,
@@ -223,6 +230,7 @@ function LearnThread({
   getChatState,
   onChatStateUnmount,
 }: {
+  uiChannelId?: string;
   learnChannelId: string;
   running: boolean;
   roots?: RootEntry[];
@@ -236,6 +244,7 @@ function LearnThread({
   // to date meanwhile, the learn thread staying subscribed (see useLearn).
   const onUnmount = useCallback((state: ActiveChatState) => onChatStateUnmount?.(learnChannelId, state), [learnChannelId, onChatStateUnmount]);
   const chatState = useChatState(learnChannelId, running, { initialState: getChatState?.(learnChannelId), onUnmount, subscribeChatEvents: subscribe });
+  useChatPaneInput(uiChannelId ?? null, SIDE_PANE, learnChannelId, chatState);
   return <ChatView channelId={learnChannelId} chatState={chatState} roots={roots} noAutoFocus />;
 }
 

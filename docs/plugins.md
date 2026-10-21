@@ -126,6 +126,17 @@ whole project, and `"both"` to both. Events in hidden threads, such as the plugi
 runs, aren't sent. Delivery is best effort: each event is sent once, in no set order, and
 dropped when the plugin doesn't take it.
 
+A plugin that only acts on events while the owner turned it on can keep its container from
+starting otherwise with `events_start`: an event then starts the container only while one of the
+boolean `settings` it names is on in the chat's project, or one of the composer `switches` it names
+is on in the chat the event is in. A container already running gets every event. With
+`"events_start": {}`, events never start it.
+
+```jsonc
+"events": ["live.status"],
+"events_start": { "settings": ["sync_all"], "switches": ["sync"] },
+```
+
 `live.status` follows the chat's [live session](chat.md#live-sessions), with the data of the app's
 [`live.status`](events.md#livestatus) event. `live.system` needs `live.control` too: it brings the
 live session's `system` messages whose subtype the manifest lists in `live.messages`, as

@@ -269,12 +269,12 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "ui_state",
-		Description: "Read the Loop desktop app's windows: which is focused, the channel each shows, its layout tabs and the panes of the open tab (id, panel, session status, busy). A window showing a channel outside this project shows no state. Call it before ui_run to learn the pane ids.",
+		Description: "Read the Loop desktop app's windows: which is focused, the channel each shows, its layout tabs, the panes of the open tab (id, panel, session status, busy) and the side view open beside the chat (side: learn, explain or shell). A window showing a channel outside this project shows no state. Call it before ui_run to learn the pane ids.",
 	}, s.handleUIState)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "ui_run",
-		Description: "Drive the Loop desktop app window the user last focused: open a channel of this project, switch layout tabs, add, replace, remove or maximize panes, open a file in the editor, scroll the chat to a message (show_message; for a loop://channel/<channel-id>/<message-id> link, select_channel then show_message), show a playground in a pane, and type into, read or wait on an agent terminal (docker-agent or docker-shell panes, never host shells), or queue a message in a chat pane (chat or chat-side) and read or wait for its reply. The steps run in order until one fails; without a select_channel first, they run in this channel. Desktop app only. Moving the user's window is visible to them: do it when they asked to see something.",
+		Description: "Drive the Loop desktop app window the user last focused: open a channel of this project, switch layout tabs, add, replace, remove or maximize panes, open a file in the editor, scroll the chat to a message (show_message; for a loop://channel/<channel-id>/<message-id> link, select_channel then show_message), show a playground in a pane, and type into, read or wait on an agent terminal (docker-agent or docker-shell panes, never host shells), or queue a message in a chat pane (chat or chat-side) and read or wait for its reply, or open the side view beside the chat (open_side: learn, explain or shell, a shell in the chat's own container) and read it as the pane side. The steps run in order until one fails; without a select_channel first, they run in this channel. Desktop app only. Moving the user's window is visible to them: do it when they asked to see something.",
 		InputSchema: uiRunSchema(),
 	}, s.handleUIRun)
 

@@ -532,3 +532,9 @@ func (s *InstallerSuite) TestManifest() {
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "1.0.0", m.Version)
 }
+
+func (m *mockStore) ListPluginSwitches(ctx context.Context) ([]*db.PluginSwitch, error) {
+	args := m.Called(ctx)
+	v, _ := args.Get(0).([]*db.PluginSwitch)
+	return v, args.Error(1)
+}

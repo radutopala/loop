@@ -3,10 +3,11 @@ import { paneBoxStyle, SplitDivider } from "../../splitPane/SplitPaneLayout";
 import { useTheme } from "../../ThemeContext";
 import { LoopInfinityIcon } from "../LoopInfinityIcon";
 
-/** Which side view the chat is split with: the Learn pane or the Explain one. */
-export type SideView = "learn" | "explain";
+/** Which side view the chat is split with: the Learn pane, the Explain one,
+ *  or a shell in the chat's container. */
+export type SideView = "learn" | "explain" | "shell";
 
-export const SIDE_VIEW_LABEL: Record<SideView, string> = { learn: "Learn view", explain: "Explain view" };
+export const SIDE_VIEW_LABEL: Record<SideView, string> = { learn: "Learn view", explain: "Explain view", shell: "Shell view" };
 
 // How long opening or closing the Learn view takes.
 export const LEARN_SPLIT_MS = 150;
