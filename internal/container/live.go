@@ -822,23 +822,25 @@ func (r *DockerRunner) liveTurnStarted(s *liveSession) {
 // beginOwnTurn makes a turn the process started by itself the running one.
 func (r *DockerRunner) beginOwnTurn(s *liveSession, started bool) *liveTurn {
 	turn := &liveTurn{started: started}
+	// The turn runs before BeginTurn is told: once told, the run can be
+	// stopped, and InterruptLive has to find the turn to time it.
 	s.mu.Lock()
 	s.used = true
+	s.turn = turn
+	s.idle = make(chan struct{})
+	s.idleGen++
 	s.mu.Unlock()
 	if s.hooks.BeginTurn != nil {
 		// Without a request (the channel is busy) the turn goes unstreamed,
 		// and done still gets its answer.
 		req, done := s.hooks.BeginTurn()
+		s.mu.Lock()
 		if req != nil {
 			turn.cb = requestCallbacks(req)
 		}
 		turn.done = done
+		s.mu.Unlock()
 	}
-	s.mu.Lock()
-	s.turn = turn
-	s.idle = make(chan struct{})
-	s.idleGen++
-	s.mu.Unlock()
 	return turn
 }
 
