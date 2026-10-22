@@ -322,7 +322,11 @@ func (o *Orchestrator) liveHooks(channelID string) agent.LiveHooks {
 			}
 		},
 		Prompt: func(text string) {
-			storeUserPrompt(context.Background(), o.store, o.events, channelID, liveAuthorID, "remote", text)
+			msgID := storeUserPrompt(context.Background(), o.store, o.events, channelID, liveAuthorID, "remote", text)
+			// The turn it starts answers it.
+			if _, ok := o.liveTriggers.Load(channelID); ok {
+				o.liveTriggers.Store(channelID, msgID)
+			}
 		},
 	}
 }
@@ -372,11 +376,15 @@ func (o *Orchestrator) beginLiveTurn(channelID string) (*agent.AgentRequest, fun
 		}
 		return out.resp, out.err
 	}
+	// Set before the turn can store anything, and dropped before the
+	// channel is free for the next one.
+	o.liveTriggers.Store(channelID, o.lastTurnTrigger(context.Background(), channelID))
 	// Not drainSpawn: tests run that inline, and this has to return first.
 	o.drainWG.Add(1)
 	go func() {
 		defer o.drainWG.Done()
 		defer lock.Unlock()
+		defer o.liveTriggers.Delete(channelID)
 		o.runLiveTurn(channelID, run)
 	}()
 	return <-ready, func(resp *agent.AgentResponse, err error) {
@@ -412,6 +420,44 @@ func (o *Orchestrator) runLiveTurn(channelID string, run func(context.Context, *
 		return
 	}
 	o.deliverResponse(ctx, msg, resp, nil, lastStreamedText, runID, "live")
+}
+
+// lastTurnSearch is how many of a channel's latest messages lastTurnTrigger
+// looks through.
+const lastTurnSearch = 50
+
+// lastTurnTrigger is the message that asked for the channel's latest turn:
+// the trigger of its latest reply, or its latest prompt that ran without
+// one. Queued prompts haven't run, and replies of no turn (notices, answers
+// posted unstreamed) say nothing. It is "" when there is none.
+func (o *Orchestrator) lastTurnTrigger(ctx context.Context, channelID string) string {
+	msgs, err := o.store.GetRecentMessages(ctx, channelID, lastTurnSearch)
+	if err != nil {
+		o.logger.Warn("finding the latest turn", "error", err, "channel_id", channelID)
+		return ""
+	}
+	for _, m := range msgs {
+		switch {
+		case m.IsBot && m.TriggerMsgID != "":
+			return m.TriggerMsgID
+		case !m.IsBot && m.IsProcessed:
+			return m.MsgID
+		}
+	}
+	return ""
+}
+
+// turnTrigger is the message the rows of msg's turn link to: msg itself,
+// or, for a turn a live session started by itself, the remote prompt it
+// answers or else the turn before it, which it carries on. Explain and Learn
+// find a turn by that link, and the chat ends a turn at its last reply.
+func (o *Orchestrator) turnTrigger(msg *bot.IncomingMessage) string {
+	if msg.MessageID != "" {
+		return msg.MessageID
+	}
+	v, _ := o.liveTriggers.Load(msg.ChannelID)
+	id, _ := v.(string)
+	return id
 }
 
 // postLiveAnswer posts the answer of a turn a live session ran unstreamed.
