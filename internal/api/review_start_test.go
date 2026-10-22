@@ -211,6 +211,20 @@ func (s *ReviewStartSuite) TestKeepsTheLoadedPR() {
 	require.Empty(s.T(), sess.ReviewHead, "a review-fix loop follows the head")
 }
 
+func (s *ReviewStartSuite) TestConfigDefaultsSkipTheChannelsAgent() {
+	s.channel("opus", "high")
+	s.noRuns()
+	s.readySession(7)
+	s.head()
+	s.eng.On("StartRun", mock.Anything, mock.Anything).Return("run-3", nil)
+
+	w := s.start(map[string]any{"pr_number": 7, "config_defaults": true})
+	require.Equal(s.T(), http.StatusCreated, w.Code, w.Body.String())
+	sess := s.rs.Get("ch1")
+	require.Empty(s.T(), sess.Model, "empty is the config's default, not the channel's override")
+	require.Empty(s.T(), sess.Effort)
+}
+
 func (s *ReviewStartSuite) TestReloadsAnotherPR() {
 	s.channel("", "")
 	s.noRuns()

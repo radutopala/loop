@@ -219,6 +219,9 @@ type ReviewConfig struct {
 	Verify        bool   `json:"verify"`
 	VerifyPrompt  string `json:"verify_prompt"`
 	MaxIterations int    `json:"max_iterations"`
+	// UpdateBase lets a review fast-forward the local base branch where it
+	// is checked out (in a clean worktree), not only where it isn't.
+	UpdateBase bool `json:"update_base"`
 }
 
 // DefaultReviewMaxIterations is review.max_iterations when not set, and
@@ -247,6 +250,7 @@ type jsonReviewConfig struct {
 	Verify        *bool  `json:"verify"`
 	VerifyPrompt  string `json:"verify_prompt"`
 	MaxIterations int    `json:"max_iterations"`
+	UpdateBase    *bool  `json:"update_base"`
 }
 
 // ResolvePrompt returns the configured prompt text. When neither field

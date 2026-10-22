@@ -34,6 +34,17 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
      worktree to the latest head, as Sync does.
    - Fetches the base ref into the parent repo (`git fetch origin <base>`) so
      `origin/<base>` resolves locally for the Run step.
+   - Before every review pass (and on Sync), fast-forwards the local `<base>`
+     branch to `origin/<base>`. The agent is told to diff against
+     `origin/<base>`, but the default `/code-review` picks its own base and
+     can take the local branch; a stale one shows the base's newer commits
+     as the PR's own once the PR has merged them. The branch is only ever
+     fast-forwarded, never rewritten: one with commits of its own is left
+     alone. Worktrees share their branches, so where no worktree has it
+     checked out it is moved in place; where one does, it is moved only
+     when that checkout is clean and `review.update_base` isn't turned off, by a
+     `git merge --ff-only` there, as a pull would. Whatever is left is
+     logged, and the pass runs anyway.
 2. **Run** — the user clicks the primary **Run** button. The button is a
    **split button** with a caret dropdown that picks one of two modes:
 
@@ -336,8 +347,9 @@ it reviews only part of the PR.
 The choice applies to review runs only; the chat's own model/effort
 override (the composer pill) is separate. Like the fork choice below, it is
 stored on the review session, survives the refresh every run starts with
-and a daemon restart (see [Review history](#review-history)), and resets
-when a PR is loaded. See [`PUT /review/agent`](api.md).
+and a daemon restart (see [Review history](#review-history)), and is kept
+when the same PR is loaded again; loading another PR, or closing the
+session, resets it. See [`PUT /review/agent`](api.md).
 
 ## Forking the chat session
 
@@ -368,8 +380,9 @@ If the fork can't be resolved or staged — an id with no transcript on
 disk, say — the Run fails up front with a `400` rather than leaving the
 session stuck in `reviewing`.
 
-The choice is stored on the review session (loading a PR resets it to the
-default; a daemon restart keeps it, see [Review history](#review-history))
+The choice is stored on the review session (loading the same PR again or a
+daemon restart keeps it, see [Review history](#review-history); loading
+another PR resets it to the default)
 rather than on the run request, because the Run button dispatches a workflow whose
 `loop review:run` step has nowhere to carry per-run options. See [`PUT /review/fork`](api.md).
 `run_review` and `POST /review/start` take a `fork` option (`chat`, `fresh`
@@ -402,7 +415,8 @@ run of the PR.
 The daemon also keeps which PR each channel's session is on, with its fork,
 model, effort and scope choices, until the session is closed. When the
 daemon starts it loads those PRs again in the background, with the choices
-applied. A session whose channel or PR is gone is dropped; one that fails
+applied; one loaded by hand before the restore reaches it gets them too, and
+a choice made while a PR loads is kept. A session whose channel or PR is gone is dropped; one that fails
 to load for another reason (GitHub unreachable, say) is tried again at the
 next start. The rest of the session (the worktree, the diff, the status) is
 rebuilt by the load.
@@ -590,7 +604,17 @@ twenty comments spread over four files is painful to scroll by hand:
   `loop review:run` outside a Run joins the latest review, or starts one
   when there's none. **all** adds the earlier reviews' findings and the
   comments synced from GitHub on Load and Sync. The choice is remembered across sessions. It only
-  narrows the navigator; every comment stays rendered in the diff.
+  narrows the navigator; every comment stays rendered in the diff. The
+  latest review's findings are outlined in the diff, and the comment
+  prev/next stepped to gets a heavier outline on a tinted background until
+  you scroll it away or step to another.
+- **Kind** (the select beside new | all) narrows the walk further to the
+  comments judged one way: **blocking**, **nice to have**, **not judged**
+  (no verdict or impact yet), **false positive** or **fixed** (already
+  fixed findings, and GitHub threads the verification found addressed).
+  An agent finding's kind comes from its verdict and impact, a GitHub
+  thread's from the verification's assessment; replies only show under
+  **any kind**, the default. It's remembered across sessions like the scope.
 
 The floating counter re-measures on scroll and reports whichever comment sits
 nearest the viewport's midpoint, so it stays honest when the user scrolls by

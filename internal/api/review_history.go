@@ -85,31 +85,41 @@ func (s *Server) RestoreReviewSessions(ctx context.Context) {
 		rs.deps.logger.Warn("review: listing the kept sessions failed", "error", err)
 		return
 	}
+	kept := make([]*review.Saved, 0, len(saved))
 	for _, row := range saved {
+		kept = append(kept, reviewSaved(row))
+	}
+	rs.sessions.Keep(kept)
+	for _, sv := range kept {
 		// Loaded since the daemon started: the user's newer choice wins.
-		if rs.sessions.Get(row.ChannelID) != nil {
+		if rs.sessions.Get(sv.ChannelID) != nil {
 			continue
 		}
-		_, err := rs.loadPR(ctx, row.ChannelID, row.PRNumber, &review.Saved{
-			ChannelID:     row.ChannelID,
-			PRNumber:      row.PRNumber,
-			ForkMode:      review.ForkMode(row.ForkMode),
-			ForkSessionID: row.ForkSessionID,
-			Model:         row.Model,
-			Effort:        row.Effort,
-			Scope:         review.Scope(row.Scope),
-			ReviewedSHA:   row.ReviewedSHA,
-			ApprovedSHA:   row.ApprovedSHA,
-			Threads:       row.Threads,
-		})
+		_, err := rs.loadPR(ctx, sv.ChannelID, sv.PRNumber, sv)
 		if err == nil {
 			continue
 		}
 		if he, ok := errors.AsType[*reviewHTTPError](err); ok && he.status == http.StatusNotFound {
-			rs.sessions.Delete(row.ChannelID)
+			rs.sessions.Delete(sv.ChannelID)
 			continue
 		}
-		rs.deps.logger.Warn("review: restoring a session failed", "channel_id", row.ChannelID, "pr", row.PRNumber, "error", err)
+		rs.deps.logger.Warn("review: restoring a session failed", "channel_id", sv.ChannelID, "pr", sv.PRNumber, "error", err)
+	}
+}
+
+// reviewSaved is the session row kept in the history.
+func reviewSaved(row *db.ReviewSession) *review.Saved {
+	return &review.Saved{
+		ChannelID:     row.ChannelID,
+		PRNumber:      row.PRNumber,
+		ForkMode:      review.ForkMode(row.ForkMode),
+		ForkSessionID: row.ForkSessionID,
+		Model:         row.Model,
+		Effort:        row.Effort,
+		Scope:         review.Scope(row.Scope),
+		ReviewedSHA:   row.ReviewedSHA,
+		ApprovedSHA:   row.ApprovedSHA,
+		Threads:       row.Threads,
 	}
 }
 

@@ -115,16 +115,23 @@ func (m *mockPR) Remove(ctx context.Context, parentDir, worktreePath string) err
 	return args.Error(0)
 }
 
+func (m *mockPR) UpdateBase(ctx context.Context, dir, baseRef string, checkedOut bool) (review.BaseUpdate, error) {
+	args := m.Called(ctx, dir, baseRef, checkedOut)
+	return args.Get(0).(review.BaseUpdate), args.Error(1)
+}
+
 func (m *mockPR) ResolveScope(ctx context.Context, worktreePath, baseRef string, want review.Scope, lastHead string) (review.ScopeResult, error) {
 	args := m.Called(ctx, worktreePath, baseRef, want, lastHead)
 	return args.Get(0).(review.ScopeResult), args.Error(1)
 }
 
 // newMockPR returns a mockPR whose runs review the whole PR, as they did
-// before a run had a scope. onScope replaces that.
+// before a run had a scope, and find the base branch up to date. onScope
+// replaces the first.
 func newMockPR() *mockPR {
 	m := new(mockPR)
 	m.On("ResolveScope", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(review.ScopeResult{Scope: review.ScopeFull}, nil).Maybe()
+	m.On("UpdateBase", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(review.BaseUpdate{}, nil).Maybe()
 	return m
 }
 
@@ -380,6 +387,48 @@ func (s *ReviewHandlerSuite) TestLoadHappyPath() {
 	require.Equal(s.T(), 7, resp.Session.PR.Number)
 	require.Empty(s.T(), resp.Session.Comments)
 	require.Equal(s.T(), review.ForkCurrent, resp.Session.ForkMode)
+}
+
+// Loading the PR the session was on again keeps its choices; another PR
+// starts from the defaults. A choice made while the PR loads wins over
+// both.
+func (s *ReviewHandlerSuite) TestLoadKeepsChoices() {
+	cases := []struct {
+		name       string
+		prev       int
+		midLoad    bool
+		wantFork   review.ForkMode
+		wantEffort string
+	}{
+		{"same PR", 7, false, "", "high"},
+		{"other PR", 6, false, review.ForkCurrent, ""},
+		{"chosen while loading", 7, true, "", "xhigh"},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
+			s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 7).Return(&githubapi.PRInfo{Number: 7, BaseRef: "main"}, nil)
+			s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("deadbeef", nil)
+			s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return((*githubapi.RepoSlug)(nil), errors.New("no slug"))
+			s.wt.On("Add", mock.Anything, "/repo", 7, mock.Anything).Return("/repo/.worktrees/pr-7", nil)
+			diff := s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("diff"), nil)
+			if tc.midLoad {
+				diff.Run(func(mock.Arguments) {
+					require.Equal(s.T(), "high", s.rs.Get("ch1").Effort)
+					s.rs.UpdateAgent("ch1", "", "xhigh")
+				})
+			}
+			s.rs.Put("ch1", &review.Session{PR: &githubapi.PRInfo{Number: tc.prev}, Status: review.StatusReady, Effort: "high"})
+
+			w := s.postJSON("/api/channels/ch1/review/load", map[string]any{"pr_number": 7})
+			require.Equal(s.T(), http.StatusOK, w.Code)
+			sess := s.rs.Get("ch1")
+			require.Equal(s.T(), review.StatusReady, sess.Status)
+			require.Equal(s.T(), tc.wantFork, sess.ForkMode)
+			require.Equal(s.T(), tc.wantEffort, sess.Effort)
+		})
+	}
 }
 
 func (s *ReviewHandlerSuite) TestLoadSeedsGitHubComments() {

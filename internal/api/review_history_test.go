@@ -517,9 +517,10 @@ func (s *ReviewHandlerSuite) TestRestoreReviewSessionsListFails() {
 	ms.AssertExpectations(s.T())
 }
 
-// Each kept session loads its PR again with its choices. One loaded since
-// the start is left alone, one whose channel is gone is dropped, and one
-// that fails otherwise is kept for the next start.
+// Each kept session loads its PR again with its choices, which aren't
+// saved again unchanged. One loaded since the start is left alone, one
+// whose channel is gone is dropped, and one that fails otherwise is kept
+// for the next start.
 func (s *ReviewHandlerSuite) TestRestoreReviewSessions() {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
 	s.store.On("GetChannel", mock.Anything, "gone").Return((*db.Channel)(nil), nil)
@@ -540,7 +541,6 @@ func (s *ReviewHandlerSuite) TestRestoreReviewSessions() {
 	ms.On("ListReviewFindings", mock.Anything, "/repo", 7).Return(nil, nil)
 	ms.On("ListReviewRuns", mock.Anything, "/repo", 7).Return(nil, nil)
 	ms.On("DeleteReviewSession", mock.Anything, "gone").Return(errors.New("db down"))
-	ms.On("SaveReviewSession", mock.Anything, &db.ReviewSession{ChannelID: "ch1", PRNumber: 7, ForkMode: "custom", ForkSessionID: "s0", Model: "opus", Effort: "high", Scope: "full"}).Return(nil)
 	s.rs.Put("busy", &review.Session{Status: review.StatusLoading})
 
 	s.srv.RestoreReviewSessions(context.Background())

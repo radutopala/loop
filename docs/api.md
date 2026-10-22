@@ -2531,11 +2531,14 @@ Response: `{"present": true, "session": { ... }}` — the full session, mirrorin
 
 Do what the Review panel's Run button does, in one call: load the PR unless
 the session is already ready on it, record the model and effort on the
-session, and start the review workflow. Used by the `run_review` MCP tool.
+session, and start the review workflow. The Review panel's Run button and
+the `run_review` MCP tool use it.
 
 Body: `{"pr_number": 42, "model": "opus", "effort": "high", "mode": "review", "max_iterations": 1, "fork": "chat", "scope": "auto"}`.
 Only `pr_number` is required. `model` and `effort` default to the
 channel's own overrides, and empty after that means the config default.
+With `"config_defaults": true` (the panel) the channel's overrides are
+skipped, so an empty `model` or `effort` is the config default right away.
 `mode` is `review` (default, the `review-loop` workflow) or `review-fix`
 (`review-fix-loop`). `max_iterations` is 1–10, default the project's `review.max_iterations` (`3` unless set).
 `fork` picks the session the run forks, as [`PUT .../review/fork`](#put-apichannelsidreviewfork)

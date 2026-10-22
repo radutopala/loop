@@ -203,6 +203,31 @@ export async function runReview(channelId: string): Promise<{ status: string }> 
   return res.json();
 }
 
+export interface ReviewStartRequest {
+  pr_number: number;
+  mode: "review" | "review-fix";
+  max_iterations: number;
+  model: string;
+  effort: string;
+}
+
+/**
+ * Start a review loop: the run starts a new review, so only its findings are
+ * the panel's new ones, and a review-only loop stays on the head it starts at.
+ * An empty model or effort is the config's default, as in the panel. Returns
+ * the workflow run id and the session the review starts from.
+ */
+export async function startReview(channelId: string, req: ReviewStartRequest): Promise<{ run_id: string; session?: ReviewSession }> {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/review/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...req, config_defaults: true }),
+  });
+  if (!res.ok) throw new Error((await res.text()) || `Failed to start review: ${res.statusText}`);
+  const resp = (await res.json()) as { run_id: string; session?: ReviewSession | null };
+  return { run_id: resp.run_id, session: normalizeSession({ present: true, session: resp.session ?? undefined }).session };
+}
+
 /**
  * Stop the review run in flight (or a dedup pass). The daemon stops the agent
  * and sets the session back to ready, keeping the findings reported so far,

@@ -33,9 +33,9 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
   // compute clamping themselves.
   const [pos, setPos] = useState({ x, y });
 
-  // Indices of the "real" (non-separator) menu items — arrow nav skips
-  // separators so the user never lands on a non-actionable row.
-  const itemIndices = items.map((it, i) => (it.separator ? -1 : i)).filter((i) => i >= 0);
+  // Arrow nav walks every item: a separator only draws a line above its
+  // own item, which stays actionable.
+  const itemIndices = items.map((_, i) => i);
 
   useLayoutEffect(() => {
     const el = menuRef.current;

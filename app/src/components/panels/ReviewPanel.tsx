@@ -19,10 +19,11 @@ import {
   setReviewAgent,
   setReviewFork,
   setReviewScope,
+  startReview,
   stopReview,
   syncReviewSession,
 } from "../../api/review";
-import { cancelWorkflowRun, FetchWorkflowRunError, fetchWorkflowRun, fetchWorkflowRuns, startWorkflowRun, type WorkflowRun } from "../../api/workflows";
+import { cancelWorkflowRun, FetchWorkflowRunError, fetchWorkflowRun, fetchWorkflowRuns, type WorkflowRun } from "../../api/workflows";
 import type { ChatEventListener } from "../../hooks/useChatStateStore";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
@@ -438,8 +439,8 @@ export function moreMenuItems(a: {
   if (!a.syncDisabled) items.push({ label: "Sync with GitHub", onClick: a.onSync });
   items.push(...a.all);
   if (a.approveAnyway) items.push({ label: "Approve anyway…", onClick: a.onApproveAnyway });
-  if (items.length > 0) items.push({ label: "", onClick: () => {}, separator: true });
-  items.push({ label: a.showStats ? "Back to the review" : "Stats", onClick: a.onToggleStats });
+  // A separator draws its line above its own item, so Stats carries it.
+  items.push({ label: a.showStats ? "Back to the review" : "Stats", onClick: a.onToggleStats, separator: items.length > 0 });
   if (!a.closeDisabled) items.push({ label: "Close review", onClick: a.onClose, danger: true });
   return items;
 }
@@ -997,19 +998,21 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
         // brief window after setBusy(false) where status is still "ready" and
         // the button re-enables itself.
         setSession((prev) => (prev ? { ...prev, status: "reviewing" } : prev));
-        const workflowName = m === "review-fix" ? REVIEW_FIX_LOOP_WORKFLOW : REVIEW_LOOP_WORKFLOW;
-        // Carry the loaded PR number into the run so it's explicit in the
-        // workflow's inputs (and the review CLI's `--pr`). The CLI skips the
-        // redundant load when the session is already on this PR.
-        const prNumber = session?.pr?.number;
-        const resp = await startWorkflowRun({
-          workflow_name: workflowName,
-          channel_id: channelId,
-          inputs: {
-            max_iterations: String(maxIter),
-            ...(prNumber ? { pr: String(prNumber) } : {}),
-          },
+        const prNumber = server.session.pr?.number;
+        if (!prNumber) throw new Error("No review session loaded — pick a PR first, then run the loop.");
+        // review/start, not a bare workflow run: it starts a new review, so
+        // the "new" comments are this loop's, and pins a review-only loop to
+        // the head it starts at. The model and effort are the session's,
+        // which the settings row keeps.
+        const resp = await startReview(channelId, {
+          pr_number: prNumber,
+          mode: m === "review-fix" ? "review-fix" : "review",
+          max_iterations: maxIter,
+          model: server.session.model ?? "",
+          effort: server.session.effort ?? "",
         });
+        const started = resp.session;
+        if (started) setSession({ ...started, status: "reviewing" });
         // Persist the run id before setLoopRunId so the resync effect (which
         // fires on loopRunId changes) sees the storage entry. Without this the
         // initial mount-and-set would land at the same wall-clock tick as the

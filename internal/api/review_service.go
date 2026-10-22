@@ -125,6 +125,7 @@ func (s *reviewService) refreshReviewSession(ctx context.Context, channelID, dir
 	if err != nil {
 		return nil, err
 	}
+	s.updateBase(ctx, channelID, dirPath, sess.PR.BaseRef)
 	raw := string(diff)
 	s.sessions.Put(channelID, &review.Session{
 		PR:           sess.PR,
@@ -787,4 +788,22 @@ func WithReviewDedupTimeout(d time.Duration) Option {
 // WithReviewVerifyTimeout caps the daemon-side verification agent.
 func WithReviewVerifyTimeout(d time.Duration) Option {
 	return func(s *Server) { s.review.setVerifyTimeout(d) }
+}
+
+// updateBase brings the local base branch level with the origin/<base>
+// Diff just fetched. The review agent is told to diff against origin/<base>
+// but may pick the local branch itself, and a stale one shows the base's
+// newer commits as the PR's own once the PR has merged them. Best effort:
+// a branch left where it was is logged, and the run goes on.
+func (s *reviewService) updateBase(ctx context.Context, channelID, dirPath, baseRef string) {
+	channelDir, parentDir := s.reviewRunDirs(ctx, channelID)
+	res, err := s.worktree.UpdateBase(ctx, dirPath, baseRef, s.deps.configs.reviewUpdateBase(channelDir, parentDir))
+	switch {
+	case err != nil:
+		s.deps.logger.Warn("review: updating the base branch failed", "channel_id", channelID, "base", baseRef, "error", err)
+	case res.Updated:
+		s.deps.logger.Info("review: fast-forwarded the base branch to origin's", "channel_id", channelID, "base", baseRef)
+	case res.Skipped != "":
+		s.deps.logger.Info("review: left the base branch as it is", "channel_id", channelID, "base", baseRef, "reason", res.Skipped)
+	}
 }

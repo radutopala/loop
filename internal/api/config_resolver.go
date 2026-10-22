@@ -100,6 +100,14 @@ func (c *configResolver) reviewMaxIterations(workdir, parentDirPath string) int 
 	return cfg.Review.ReviewIterations()
 }
 
+// reviewUpdateBase mirrors ghUser for review.update_base: whether a review
+// may fast-forward the base branch where it is checked out. False on a
+// config-load error.
+func (c *configResolver) reviewUpdateBase(workdir, parentDirPath string) bool {
+	cfg := c.merged(workdir, parentDirPath)
+	return cfg != nil && cfg.Review.UpdateBase
+}
+
 // claudeEffort mirrors ghUser for claude_effort, the reasoning effort a
 // container runs at when the request sets none.
 func (c *configResolver) claudeEffort(workdir, parentDirPath string) string {

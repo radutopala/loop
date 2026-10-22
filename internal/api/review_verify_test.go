@@ -1,8 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/config"
+	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/review"
 )
 
@@ -467,6 +470,65 @@ func (s *ReviewHandlerSuite) TestConfigReviewMaxIterations() {
 		s.Run(tc.name, func() {
 			r := &configResolver{load: tc.load}
 			require.Equal(s.T(), tc.want, r.reviewMaxIterations("", ""))
+		})
+	}
+}
+
+func (s *ReviewHandlerSuite) TestConfigReviewUpdateBase() {
+	cases := []struct {
+		name string
+		load func() (*config.Config, error)
+		want bool
+	}{
+		{"load error keeps it off", func() (*config.Config, error) { return nil, errors.New("bad") }, false},
+		{"unset", func() (*config.Config, error) { return &config.Config{}, nil }, false},
+		{"set", func() (*config.Config, error) {
+			return &config.Config{Review: config.ReviewConfig{UpdateBase: true}}, nil
+		}, true},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			r := &configResolver{load: tc.load}
+			require.Equal(s.T(), tc.want, r.reviewUpdateBase("", ""))
+		})
+	}
+}
+
+// TestUpdateBase checks the refresh hands review.update_base to the base
+// update, and that every outcome only logs: the run goes on regardless.
+func (s *ReviewHandlerSuite) TestUpdateBase() {
+	cases := []struct {
+		name       string
+		updateBase bool
+		res        review.BaseUpdate
+		err        error
+		want       string
+	}{
+		{"up to date", false, review.BaseUpdate{}, nil, ""},
+		{"fast-forwarded", true, review.BaseUpdate{Updated: true}, nil, "fast-forwarded the base branch"},
+		{"left as it is", false, review.BaseUpdate{Skipped: "main is checked out"}, nil, `reason="main is checked out"`},
+		{"failed", true, review.BaseUpdate{}, errors.New("boom"), "updating the base branch failed"},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			var logs bytes.Buffer
+			s.srv.review.deps.logger = slog.New(slog.NewTextHandler(&logs, nil))
+			s.srv.configs.load = func() (*config.Config, error) {
+				return &config.Config{Review: config.ReviewConfig{UpdateBase: tc.updateBase}}, nil
+			}
+			s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
+			wt := new(mockPR)
+			wt.On("UpdateBase", mock.Anything, "/repo", "main", tc.updateBase).Return(tc.res, tc.err).Once()
+			s.srv.review.worktree = wt
+
+			s.srv.review.updateBase(context.Background(), "ch1", "/repo", "main")
+
+			wt.AssertExpectations(s.T())
+			if tc.want == "" {
+				require.Empty(s.T(), logs.String())
+			} else {
+				require.Contains(s.T(), logs.String(), tc.want)
+			}
 		})
 	}
 }

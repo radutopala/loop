@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { approveReview, getReviewSession, getReviewStats, pushAllReviewComments, setReviewScope } from "./review";
+import { approveReview, getReviewSession, getReviewStats, pushAllReviewComments, setReviewScope, startReview } from "./review";
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -35,6 +35,34 @@ describe("setReviewScope", () => {
   it("falls back to the status text", async () => {
     fetchMock.mockResolvedValue(new Response("", { status: 400, statusText: "Bad Request" }));
     await expect(setReviewScope("ch1", "full")).rejects.toThrow("Failed to set review scope: Bad Request");
+  });
+});
+
+describe("startReview", () => {
+  const req = { pr_number: 7, mode: "review" as const, max_iterations: 3, model: "", effort: "high" };
+
+  it("POSTs the start with the config's defaults and returns the run and session", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ run_id: "run-1", session: { channel_id: "ch1", comments: null, status: "ready", review_id: "rev-2" } }), { status: 201 }));
+    const resp = await startReview("ch1", req);
+    expect(resp.run_id).toBe("run-1");
+    expect(resp.session?.review_id).toBe("rev-2");
+    expect(resp.session?.comments).toEqual([]);
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("http://localhost:8222/api/channels/ch1/review/start");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({ ...req, config_defaults: true });
+  });
+
+  it("returns no session when the daemon sends none", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ run_id: "run-1", session: null }), { status: 201 }));
+    expect(await startReview("ch1", req)).toEqual({ run_id: "run-1", session: undefined });
+  });
+
+  it("throws the daemon's message, or the status text", async () => {
+    fetchMock.mockResolvedValueOnce(new Response("a review is starting for this channel", { status: 409 }));
+    await expect(startReview("ch1", req)).rejects.toThrow("a review is starting for this channel");
+    fetchMock.mockResolvedValueOnce(new Response("", { status: 500, statusText: "Internal Server Error" }));
+    await expect(startReview("ch1", req)).rejects.toThrow("Failed to start review: Internal Server Error");
   });
 });
 

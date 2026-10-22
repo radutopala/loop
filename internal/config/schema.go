@@ -1,6 +1,9 @@
 package config
 
-import "sync"
+import (
+	"strconv"
+	"sync"
+)
 
 // SchemaProperty describes a single configuration field for UI rendering.
 type SchemaProperty struct {
@@ -486,10 +489,17 @@ func buildSchema() *ConfigSchema {
 						XWidget:     "textarea",
 					},
 					"max_iterations": {
-						Type:        "integer",
-						Title:       "Max Iterations",
-						Description: "Passes a review runs, 1-10: the Review panel's starting value, and the default of run_review and the review/start API. 3 by default.",
-						Default:     DefaultReviewMaxIterations,
+						Type:         "integer",
+						Title:        "Max Iterations",
+						Description:  "Passes a review runs, 1-10: the Review panel's starting value, and the default of run_review and the review/start API. 3 by default.",
+						Default:      DefaultReviewMaxIterations,
+						XPlaceholder: strconv.Itoa(DefaultReviewMaxIterations),
+					},
+					"update_base": {
+						Type:        "boolean",
+						Title:       "Update Base",
+						Description: "Before each review pass the local base branch is fast-forwarded to origin's when no worktree has it checked out, since the review agent may diff against it. It's also fast-forwarded where it is checked out, when that worktree is clean, as a pull would; off leaves a checked-out base alone. On by default.",
+						Default:     true,
 					},
 				},
 			},
