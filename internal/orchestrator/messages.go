@@ -593,7 +593,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 		}); err != nil {
 			o.logger.Error("streaming send failed", "error", err, "channel_id", msg.ChannelID)
 		}
-		storeBotTurn(ctx, o.store, o.events, msg.ChannelID, text, msg.MessageID, ref)
+		storeBotTurn(ctx, o.store, o.events, msg.ChannelID, text, o.turnTrigger(msg), ref)
 	})
 	req.OnTurn = tracker.OnTurn
 	req.OnSession = func(sessionID string) { ranSession = sessionID }
@@ -604,7 +604,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 				ToolUseID:    toolUseID,
 				ToolName:     name,
 				Content:      input,
-				TriggerMsgID: msg.MessageID,
+				TriggerMsgID: o.turnTrigger(msg),
 			}, o.logger.Warn)
 			o.events.BroadcastToolUse(msg.ChannelID, events.ToolUseEventData{
 				ToolUseID: toolUseID,
@@ -667,7 +667,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 			storeAgentEvent(ctx, o.store, chatID, msg.ChannelID, &db.Message{
 				Kind:         db.MessageKindThinking,
 				Content:      text,
-				TriggerMsgID: msg.MessageID,
+				TriggerMsgID: o.turnTrigger(msg),
 			}, o.logger.Warn)
 			o.events.BroadcastAgentThinking(msg.ChannelID, events.AgentThinkingEventData{Text: text})
 		}
@@ -677,7 +677,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 				ToolUseID:    toolUseID,
 				Content:      output,
 				IsError:      isError,
-				TriggerMsgID: msg.MessageID,
+				TriggerMsgID: o.turnTrigger(msg),
 			}, o.logger.Warn)
 			if inputRaw, ok := pendingTaskCreates.LoadAndDelete(toolUseID); ok && !isError {
 				if list, ok := o.tasks.applyCreate(msg.ChannelID, inputRaw.(string), output); ok {
@@ -700,7 +700,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 			if activity == "compacting" {
 				storeAgentEvent(ctx, o.store, chatID, msg.ChannelID, &db.Message{
 					Kind:         db.MessageKindCompacting,
-					TriggerMsgID: msg.MessageID,
+					TriggerMsgID: o.turnTrigger(msg),
 				}, o.logger.Warn)
 			}
 			o.events.BroadcastAgentActivity(msg.ChannelID, data)
@@ -711,7 +711,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 	}
 
 	if o.events != nil {
-		o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{Status: "running", RunID: runID, TriggerContent: msg.Content, Trigger: trigger, MsgID: msg.MessageID})
+		o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{Status: "running", RunID: runID, TriggerContent: msg.Content, Trigger: trigger, MsgID: o.turnTrigger(msg)})
 	}
 
 	resp, err := run(runCtx, req)
@@ -822,7 +822,7 @@ func (o *Orchestrator) deliverResponse(ctx context.Context, msg *bot.IncomingMes
 		}); err != nil {
 			o.logger.Error("sending response", "error", err, "channel_id", msg.ChannelID)
 		}
-		storeBotMessage(ctx, o.store, o.events, msg.ChannelID, resp.Response, msg.MessageID)
+		storeBotMessage(ctx, o.store, o.events, msg.ChannelID, resp.Response, o.turnTrigger(msg))
 	}
 
 	// Mark the trigger and any older non-queued history as processed. Skip

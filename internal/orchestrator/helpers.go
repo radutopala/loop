@@ -77,8 +77,9 @@ func storeUserTaskPrompt(ctx context.Context, store db.Store, broadcaster events
 	storeUserPrompt(ctx, store, broadcaster, channelID, "scheduled-task", "scheduled task", content)
 }
 
-// storeUserPrompt is storeUserTaskPrompt for any author.
-func storeUserPrompt(ctx context.Context, store db.Store, broadcaster events.Broadcaster, channelID, authorID, authorName, content string) {
+// storeUserPrompt is storeUserTaskPrompt for any author. It returns the
+// message's msg_id.
+func storeUserPrompt(ctx context.Context, store db.Store, broadcaster events.Broadcaster, channelID, authorID, authorName, content string) string {
 	msgID := generateMessageID()
 	var rowID int64
 	if store != nil {
@@ -109,6 +110,7 @@ func storeUserPrompt(ctx context.Context, store db.Store, broadcaster events.Bro
 			IsBot:      false,
 		})
 	}
+	return msgID
 }
 
 // storeAgentEvent inserts an agent-event row (thinking, tool_use, tool_result)

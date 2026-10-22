@@ -85,6 +85,7 @@ type Orchestrator struct {
 	channelLocks      sync.Map       // map[channelID]*sync.Mutex — serialises per-channel drain loops
 	activeRuns        sync.Map       // map[channelID]context.CancelFunc
 	activeRunMsgIDs   sync.Map       // map[channelID]string — msg_id of the row currently running
+	liveTriggers      sync.Map       // map[channelID]string — the message the rows of a turn a live session started by itself link to (see turnTrigger)
 	plannedChannels   sync.Map       // map[channelID]events.ExitPlanModeEventData — channels parked on an ExitPlanMode card, value is the plan payload (for FE rehydration after a renderer reload / WS reconnect)
 	askedChannels     sync.Map       // map[channelID]events.AskUserQuestionEventData — channels parked on an AskUserQuestion card, value is the question payload (for FE rehydration after a renderer reload / WS reconnect)
 	askedModes        sync.Map       // map[channelID]string — composer mode of the run that raised the pending ask, so the answer continuation resumes in the same mode (e.g. plan)

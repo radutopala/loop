@@ -490,8 +490,46 @@ func (s *OrchestratorSuite) TestLiveHooksPrompt() {
 		return d.AuthorID == liveAuthorID && d.Content == "hello from outside" && !d.IsBot
 	})).Once()
 	hooks.Prompt("hello from outside")
+	_, linked := s.orch.liveTriggers.Load("ch-1")
+	require.False(s.T(), linked, "no turn of the session's own to answer it")
+
+	// The turn the session started by itself answers it.
+	s.orch.liveTriggers.Store("ch-1", "u-1")
+	s.store.On("InsertMessage", mock.Anything, mock.MatchedBy(func(m *db.Message) bool {
+		return m.Content == "and again"
+	})).Return(nil).Once()
+	ev.On("BroadcastMessageCreated", "ch-1", mock.Anything).Once()
+	hooks.Prompt("and again")
+	last := s.store.Calls[len(s.store.Calls)-1].Arguments.Get(1).(*db.Message)
+	require.Equal(s.T(), last.MsgID, s.orch.turnTrigger(&bot.IncomingMessage{ChannelID: "ch-1"}))
+	require.Equal(s.T(), "u-0", s.orch.turnTrigger(&bot.IncomingMessage{ChannelID: "ch-1", MessageID: "u-0"}))
 	s.store.AssertExpectations(s.T())
 	ev.AssertExpectations(s.T())
+}
+
+// lastTurnTrigger finds the message that asked for the channel's latest
+// turn.
+func (s *OrchestratorSuite) TestLastTurnTrigger() {
+	tests := []struct {
+		name string
+		msgs []*db.Message
+		err  error
+		want string
+	}{
+		{name: "latest reply's trigger", msgs: []*db.Message{{MsgID: "b-2", IsBot: true, TriggerMsgID: "u-2"}, {MsgID: "u-2", IsProcessed: true}}, want: "u-2"},
+		{name: "prompt without a reply", msgs: []*db.Message{{MsgID: "u-3", IsProcessed: true}, {MsgID: "b-2", IsBot: true, TriggerMsgID: "u-2"}}, want: "u-3"},
+		{name: "skips queued prompts and untriggered replies", msgs: []*db.Message{{MsgID: "u-4", IsTriggered: true}, {MsgID: "n", IsBot: true}, {MsgID: "b-2", IsBot: true, TriggerMsgID: "u-2"}}, want: "u-2"},
+		{name: "no turn", msgs: []*db.Message{{MsgID: "n", IsBot: true}}},
+		{name: "store error", err: errors.New("db error")},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.store.ExpectedCalls = nil
+			s.store.On("GetRecentMessages", mock.Anything, "ch-1", lastTurnSearch).Return(tt.msgs, tt.err).Once()
+			require.Equal(s.T(), tt.want, s.orch.lastTurnTrigger(s.ctx, "ch-1"))
+			s.store.AssertExpectations(s.T())
+		})
+	}
 }
 
 func (s *OrchestratorSuite) TestLiveControlAndHolds() {
@@ -555,15 +593,20 @@ func (s *OrchestratorSuite) TestBeginLiveTurnChannelBusy() {
 
 // A turn the session starts by itself while the channel is free runs as a
 // run of its own: streamed, holding the channel until it ends, its answer
-// delivered like a message's.
+// delivered like a message's. Its replies link to the turn it carries on.
 func (s *OrchestratorSuite) TestBeginLiveTurnRuns() {
 	lr, _ := s.withLive()
 	hooks := s.startedHooks(lr)
 	ev := new(MockEventBroadcaster)
 	s.orch.SetEventBroadcaster(ev)
+	s.store.On("GetRecentMessages", mock.Anything, "ch-1", lastTurnSearch).Return([]*db.Message{
+		{MsgID: "notice", IsBot: true},
+		{MsgID: "u-2", IsTriggered: true},
+		{MsgID: "b-1", IsBot: true, TriggerMsgID: "u-1"},
+	}, nil).Once()
 	ev.On("BroadcastMessageCreated", "ch-1", mock.Anything).Maybe()
 	ev.On("BroadcastAgentStatus", "ch-1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
-		return d.Status == "running" && d.Trigger == "live"
+		return d.Status == "running" && d.Trigger == "live" && d.MsgID == "u-1"
 	})).Once()
 	ev.On("BroadcastAgentStatus", "ch-1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
 		return d.Status == "completed" && d.Trigger == "live"
@@ -592,6 +635,16 @@ func (s *OrchestratorSuite) TestBeginLiveTurnRuns() {
 	require.True(s.T(), threadLockFree(&s.orch.channelLocks, "ch-1"), "released once the turn ends")
 	_, registered = s.orch.activeRuns.Load("ch-1")
 	require.False(s.T(), registered)
+	_, linked := s.orch.liveTriggers.Load("ch-1")
+	require.False(s.T(), linked, "dropped once the turn ends")
+	var replies []string
+	for _, c := range s.store.Calls {
+		if m, ok := c.Arguments.Get(1).(*db.Message); ok && c.Method == "InsertMessage" && m.IsBot {
+			require.Equal(s.T(), "u-1", m.TriggerMsgID, m.Content)
+			replies = append(replies, m.Content)
+		}
+	}
+	require.Equal(s.T(), []string{"working on it", "all done"}, replies)
 	ev.AssertExpectations(s.T())
 	s.bot.AssertExpectations(s.T())
 	s.store.AssertExpectations(s.T())
@@ -612,6 +665,7 @@ func (s *OrchestratorSuite) TestBeginLiveTurnAnswersNothing() {
 	})).Once()
 	s.store.On("UpdateSessionID", mock.Anything, "ch-1", "sess-1").Return(nil).Once()
 	s.store.On("MarkMessagesProcessed", mock.Anything, mock.Anything).Return(nil).Once()
+	s.store.On("GetRecentMessages", mock.Anything, "ch-1", lastTurnSearch).Return(nil, nil).Once()
 
 	req, done := hooks.BeginTurn()
 	require.NotNil(s.T(), req)
@@ -640,6 +694,7 @@ func (s *OrchestratorSuite) TestBeginLiveTurnFails() {
 			hooks := s.orch.liveHooks("ch-1")
 			// The channel can't be read when the turn starts.
 			s.store.On("GetChannel", mock.Anything, "ch-1").Return(nil, errors.New("db error"))
+			s.store.On("GetRecentMessages", mock.Anything, "ch-1", lastTurnSearch).Return(nil, errors.New("db error")).Once()
 			var ev *MockEventBroadcaster
 			if tt.events {
 				ev = new(MockEventBroadcaster)
@@ -695,6 +750,7 @@ func (s *OrchestratorSuite) TestBeginLiveTurnStopped() {
 			ev.On("BroadcastAgentStatus", "ch-1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
 				return d.Status == "error" && d.Trigger == "live" && d.Stopped
 			})).Once()
+			s.store.On("GetRecentMessages", mock.Anything, "ch-1", lastTurnSearch).Return(nil, nil).Once()
 			interrupted := make(chan struct{})
 			lr.On("InterruptLive", "ch-1").Run(func(mock.Arguments) { close(interrupted) }).Return(tt.interruptErr).Once()
 			s.bot.On("SendMessage", mock.Anything, mock.MatchedBy(func(m *bot.OutgoingMessage) bool {
