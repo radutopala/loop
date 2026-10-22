@@ -549,3 +549,67 @@ func (s *SessionSuite) TestSavedApply() {
 		ReviewedSHA: "abc", ApprovedSHA: "abd", Threads: map[int64]ThreadAssessment{9: {Status: ThreadOpen, Impact: ImpactBlocking}},
 	}, sess)
 }
+
+// Kept is the last kept copy of a channel's session, on the PR asked for,
+// whether or not a saver keeps it too.
+func (s *SessionSuite) TestKept() {
+	store := NewStore()
+	require.Nil(s.T(), store.Kept("ch1", 7))
+	store.Put("ch1", &Session{PR: &githubapi.PRInfo{Number: 7}, Model: "opus", Effort: "xhigh"})
+	store.Put("ch1", &Session{Status: StatusLoading})
+	want := &Saved{ChannelID: "ch1", PRNumber: 7, Model: "opus", Effort: "xhigh"}
+	got := store.Kept("ch1", 7)
+	require.Equal(s.T(), want, got)
+	got.Effort = "low"
+	require.Equal(s.T(), want, store.Kept("ch1", 7))
+	require.Nil(s.T(), store.Kept("ch1", 8))
+	store.Delete("ch1")
+	require.Nil(s.T(), store.Kept("ch1", 7))
+}
+
+// Keep records the sessions a start restores as kept, so they aren't
+// saved again unchanged; a channel kept since is left as it is.
+func (s *SessionSuite) TestKeep() {
+	store := NewStore()
+	store.Put("ch2", &Session{PR: &githubapi.PRInfo{Number: 3}, Effort: "max"})
+	sv := new(mockSaver)
+	store.SetSaver(sv)
+	store.Keep([]*Saved{{ChannelID: "ch1", PRNumber: 7, Effort: "high"}, {ChannelID: "ch2", PRNumber: 4}})
+	require.Equal(s.T(), &Saved{ChannelID: "ch1", PRNumber: 7, Effort: "high"}, store.Kept("ch1", 7))
+	require.Equal(s.T(), &Saved{ChannelID: "ch2", PRNumber: 3, Effort: "max"}, store.Kept("ch2", 3))
+	store.Put("ch1", &Session{PR: &githubapi.PRInfo{Number: 7}, Effort: "high"})
+	sv.AssertExpectations(s.T())
+}
+
+// Settle carries the choices made on the loading session over to the
+// loaded one; with no loading session there, the loaded one's own stand.
+func (s *SessionSuite) TestSettle() {
+	cases := []struct {
+		name string
+		prev *Session
+		want Session
+	}{
+		{"none", nil, Session{ForkMode: ForkCurrent, Model: "sonnet"}},
+		{"ready", &Session{Status: StatusReady, Effort: "low"}, Session{ForkMode: ForkCurrent, Model: "sonnet"}},
+		{"loading", &Session{Status: StatusLoading, ForkMode: ForkCustom, ForkSessionID: "s0", Model: "opus", Effort: "xhigh", Scope: ScopeFull}, Session{ForkMode: ForkCustom, ForkSessionID: "s0", Model: "opus", Effort: "xhigh", Scope: ScopeFull}},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			store := NewStore()
+			if tc.prev != nil {
+				store.Put("ch1", tc.prev)
+			}
+			store.Settle("ch1", &Session{PR: &githubapi.PRInfo{Number: 7}, Status: StatusReady, ForkMode: ForkCurrent, Model: "sonnet"})
+			got := store.Get("ch1")
+			require.Equal(s.T(), StatusReady, got.Status)
+			require.Equal(s.T(), "ch1", got.ChannelID)
+			require.False(s.T(), got.UpdatedAt.IsZero())
+			require.Equal(s.T(), tc.want.ForkMode, got.ForkMode)
+			require.Equal(s.T(), tc.want.ForkSessionID, got.ForkSessionID)
+			require.Equal(s.T(), tc.want.Model, got.Model)
+			require.Equal(s.T(), tc.want.Effort, got.Effort)
+			require.Equal(s.T(), tc.want.Scope, got.Scope)
+			require.Equal(s.T(), tc.want.Effort, store.Kept("ch1", 7).Effort)
+		})
+	}
+}

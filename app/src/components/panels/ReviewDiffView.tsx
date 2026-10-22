@@ -75,6 +75,8 @@ export interface CommentAnchor {
   fileIdx: number;
   /** An agent finding of the latest review: what the "new" scope walks. */
   fresh: boolean;
+  /** What the comment was judged, for the kind filter; undefined for a GitHub reply. */
+  kind?: CommentKind;
 }
 
 /** Which comments the floating navigator walks: the latest review's agent findings, or every comment. */
@@ -85,6 +87,44 @@ const COMMENT_NAV_SCOPE_KEY = "loop-review-comment-nav-scope";
 function readCommentNavScope(): CommentNavScope {
   if (typeof window === "undefined") return "new";
   return window.localStorage.getItem(COMMENT_NAV_SCOPE_KEY) === "all" ? "all" : "new";
+}
+
+/** How a comment was judged: its impact when it stands, why it doesn't, or not yet. */
+export type CommentKind = "blocking" | "nice_to_have" | "false_positive" | "already_fixed" | "unjudged";
+
+/** Which kind of comment the floating navigator walks, on top of its scope; "any" doesn't narrow. */
+export type CommentNavKind = "any" | CommentKind;
+
+const COMMENT_NAV_KINDS: { value: CommentNavKind; label: string }[] = [
+  { value: "any", label: "any kind" },
+  { value: "blocking", label: "blocking" },
+  { value: "nice_to_have", label: "nice to have" },
+  { value: "unjudged", label: "not judged" },
+  { value: "false_positive", label: "false positive" },
+  { value: "already_fixed", label: "fixed" },
+];
+
+const COMMENT_NAV_KIND_KEY = "loop-review-comment-nav-kind";
+
+function readCommentNavKind(): CommentNavKind {
+  if (typeof window === "undefined") return "any";
+  const v = window.localStorage.getItem(COMMENT_NAV_KIND_KEY);
+  return COMMENT_NAV_KINDS.find((k) => k.value === v)?.value ?? "any";
+}
+
+/**
+ * commentKind is how c was judged: an agent finding by its verdict and
+ * impact, a GitHub thread by the verification's assessment of it (an
+ * addressed thread counts as fixed). A GitHub reply has no kind of its own.
+ */
+export function commentKind(c: ReviewComment): CommentKind | undefined {
+  if (c.source === "github") {
+    if (c.reply_to) return undefined;
+    if (c.thread?.status === "addressed") return "already_fixed";
+  } else if (c.verdict === "false_positive" || c.verdict === "already_fixed") {
+    return c.verdict;
+  }
+  return commentImpact(c) ?? "unjudged";
 }
 
 /**
@@ -112,9 +152,22 @@ function isFresh(c: ReviewComment, reviewRuns: readonly number[]): boolean {
   return c.source !== "github" && c.run_id !== undefined && reviewRuns.includes(c.run_id);
 }
 
-/** The anchors the navigator steps through for scope; "new" keeps the latest review's agent findings. */
-export function navigableAnchors(anchors: CommentAnchor[], scope: CommentNavScope): CommentAnchor[] {
-  return scope === "new" ? anchors.filter((a) => a.fresh) : anchors;
+/**
+ * The anchors the navigator steps through for scope and kind; "new" keeps
+ * the latest review's agent findings, and a kind other than "any" keeps
+ * the comments judged that way.
+ */
+export function navigableAnchors(anchors: CommentAnchor[], scope: CommentNavScope, kind: CommentNavKind = "any"): CommentAnchor[] {
+  return anchors.filter((a) => (scope === "all" || a.fresh) && (kind === "any" || a.kind === kind));
+}
+
+/** How a comment box stands out: the one the navigator stepped to, or a new one. */
+export type CommentEmphasis = "current" | "fresh" | undefined;
+
+/** commentEmphasis is the emphasis of comment id given the landed comment and the new ones. */
+export function commentEmphasis(id: string, landedId: string | null, freshIds: ReadonlySet<string>): CommentEmphasis {
+  if (id === landedId) return "current";
+  return freshIds.has(id) ? "fresh" : undefined;
 }
 
 // Comments in the order they appear on screen: files top-to-bottom, within a
@@ -148,9 +201,9 @@ export function orderedComments(summaries: FileSummary[], byFile: Map<string, Re
       .map((c, i) => ({ c, i, at: pos.get(commentLineSide(c) === "LEFT" ? `L:${c.line}` : `R:${c.line}`) }))
       .filter((e): e is { c: ReviewComment; i: number; at: number } => e.at !== undefined)
       .sort((a, b) => a.at - b.at || a.i - b.i);
-    for (const { c } of sorted) out.push({ id: c.id, path: sum.path, fileIdx, fresh: isFresh(c, reviewRuns) });
+    for (const { c } of sorted) out.push({ id: c.id, path: sum.path, fileIdx, fresh: isFresh(c, reviewRuns), kind: commentKind(c) });
   });
-  for (const c of orphans) out.push({ id: c.id, path: c.path, fileIdx: -1, fresh: isFresh(c, reviewRuns) });
+  for (const c of orphans) out.push({ id: c.id, path: c.path, fileIdx: -1, fresh: isFresh(c, reviewRuns), kind: commentKind(c) });
   return out;
 }
 
@@ -280,10 +333,15 @@ export function ReviewDiffView({ channelId, rawDiff, comments, reviewRuns, workt
   // and floats over the scroll so it stays reachable at any depth.
   const allAnchors = useMemo(() => orderedComments(summaries, byFile, orphans, reviewRuns), [summaries, byFile, orphans, reviewRuns]);
   const [navScope, setNavScope] = useState<CommentNavScope>(readCommentNavScope);
-  const anchors = useMemo(() => navigableAnchors(allAnchors, navScope), [allAnchors, navScope]);
+  const [navKind, setNavKind] = useState<CommentNavKind>(readCommentNavKind);
+  const anchors = useMemo(() => navigableAnchors(allAnchors, navScope, navKind), [allAnchors, navScope, navKind]);
   const changeNavScope = useCallback((next: CommentNavScope) => {
     window.localStorage.setItem(COMMENT_NAV_SCOPE_KEY, next);
     setNavScope(next);
+  }, []);
+  const changeNavKind = useCallback((next: CommentNavKind) => {
+    window.localStorage.setItem(COMMENT_NAV_KIND_KEY, next);
+    setNavKind(next);
   }, []);
   const commentRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -293,7 +351,7 @@ export function ReviewDiffView({ channelId, rawDiff, comments, reviewRuns, workt
   // has, the counter only reports the nearest comment, and stepping from it
   // would skip the one the user never saw. navigatingRef mutes that handler while a jump's smooth scroll
   // is in flight, so the comments it passes don't steal the index.
-  const [landed, setLanded] = useState(false);
+  const [landedId, setLandedId] = useState<string | null>(null);
   // Held by id, so a scope toggle or a finding streaming in above it can't
   // shift the landing onto a different comment.
   const landedRef = useRef<string | null>(null);
@@ -304,6 +362,9 @@ export function ReviewDiffView({ channelId, rawDiff, comments, reviewRuns, workt
     if (el) commentRefs.current.set(id, el);
     else commentRefs.current.delete(id);
   }, []);
+
+  const freshIds = useMemo(() => new Set(allAnchors.filter((a) => a.fresh).map((a) => a.id)), [allAnchors]);
+  const emphasisOf = useCallback((id: string) => commentEmphasis(id, landedId, freshIds), [landedId, freshIds]);
 
   // Which comment the counter reports: the one whose midpoint sits nearest
   // the viewport's midpoint. Measured on scroll rather than tracked with an
@@ -324,7 +385,7 @@ export function ReviewDiffView({ channelId, rawDiff, comments, reviewRuns, workt
         return;
       }
       landedRef.current = null;
-      setLanded(false);
+      setLandedId(null);
     }
     const mid = r.top + r.height / 2;
     let best = -1;
@@ -375,7 +436,7 @@ export function ReviewDiffView({ channelId, rawDiff, comments, reviewRuns, workt
       activeRef.current = idx;
       setActiveComment(idx);
       landedRef.current = a.id;
-      setLanded(true);
+      setLandedId(a.id);
       // Released on scrollend; the timeout covers a target already in place,
       // where no scroll (and so no scrollend) happens.
       clearTimeout(navigatingRef.current);
@@ -665,6 +726,7 @@ export function ReviewDiffView({ channelId, rawDiff, comments, reviewRuns, workt
               onAddressComment={onAddressComment}
               onDeleteComment={onDeleteComment}
               registerCommentRef={registerCommentRef}
+              emphasisOf={emphasisOf}
             />
           </div>
         ))}
@@ -679,6 +741,7 @@ export function ReviewDiffView({ channelId, rawDiff, comments, reviewRuns, workt
             onAddressComment={onAddressComment}
             onDeleteComment={onDeleteComment}
             registerCommentRef={registerCommentRef}
+            emphasisOf={emphasisOf}
           />
         )}
       </div>
@@ -687,9 +750,11 @@ export function ReviewDiffView({ channelId, rawDiff, comments, reviewRuns, workt
           colors={colors}
           index={commentIdx}
           total={anchors.length}
-          landed={landed}
+          landed={landedId !== null}
           scope={navScope}
           onScopeChange={changeNavScope}
+          kind={navKind}
+          onKindChange={changeNavKind}
           onPrev={() => stepComment(-1)}
           onNext={() => stepComment(1)}
         />
@@ -732,7 +797,8 @@ function firstFileWithComments(summaries: FileSummary[]): number {
 // the inline comment cards, which are indented from the left gutter. The
 // new/all pair picks whether it walks only the agent findings of the latest
 // review (every run of its loop) or every comment, the earlier reviews' and
-// those synced from GitHub included.
+// those synced from GitHub included; the kind select beside it narrows that
+// to the comments judged one way, e.g. only the blocking ones.
 const SCOPES: { value: CommentNavScope; title: string }[] = [
   { value: "new", title: "Step through the agent's findings from the latest review" },
   { value: "all", title: "Step through all comments, incl. earlier reviews' and those synced from GitHub" },
@@ -745,6 +811,8 @@ function CommentNavigator({
   landed,
   scope,
   onScopeChange,
+  kind,
+  onKindChange,
   onPrev,
   onNext,
 }: {
@@ -754,6 +822,8 @@ function CommentNavigator({
   landed: boolean;
   scope: CommentNavScope;
   onScopeChange: (scope: CommentNavScope) => void;
+  kind: CommentNavKind;
+  onKindChange: (kind: CommentNavKind) => void;
   onPrev: () => void;
   onNext: () => void;
 }) {
@@ -816,6 +886,30 @@ function CommentNavigator({
           </button>
         ))}
       </div>
+      <select
+        data-testid="review-comment-nav-kind"
+        aria-label="Kind of comments to step through"
+        title="Step through only the comments judged this way"
+        value={kind}
+        onChange={(e) => onKindChange(e.target.value as CommentNavKind)}
+        style={{
+          border: "none",
+          borderRadius: 9,
+          padding: "2px 4px",
+          fontSize: 10,
+          fontFamily: fonts.sans,
+          cursor: "pointer",
+          color: kind === "any" ? colors.textDim : colors.active,
+          background: kind === "any" ? "transparent" : colors.hoverBg,
+          outline: "none",
+        }}
+      >
+        {COMMENT_NAV_KINDS.map(({ value, label }) => (
+          <option key={value} value={value}>
+            {label}
+          </option>
+        ))}
+      </select>
       <button data-testid="review-comment-nav-prev" style={btn(canPrev)} disabled={!canPrev} onClick={onPrev} title="Previous comment" aria-label="Previous comment">
         <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
           <path d="M2.5 6.5L5 3.5L7.5 6.5" />
@@ -1110,6 +1204,7 @@ function FileSection({
   onAddressComment,
   onDeleteComment,
   registerCommentRef,
+  emphasisOf,
 }: {
   summary: FileSummary;
   fileIndex: number;
@@ -1126,6 +1221,7 @@ function FileSection({
   onAddressComment: (c: ReviewComment) => void | Promise<void>;
   onDeleteComment: (c: ReviewComment) => void | Promise<void>;
   registerCommentRef: (id: string, el: HTMLDivElement | null) => void;
+  emphasisOf: (id: string) => CommentEmphasis;
 }) {
   // Group comments by (line, side) so multiple comments on the same line
   // render as a stack underneath that line. A comment on no hunk line
@@ -1251,6 +1347,7 @@ function FileSection({
                             onAddress={onAddressComment}
                             onDelete={onDeleteComment}
                             registerRef={registerCommentRef}
+                            emphasis={emphasisOf(c.id)}
                           />
                         ))}
                     </div>
@@ -1390,6 +1487,7 @@ function InlineComment({
   onAddress,
   onDelete,
   registerRef,
+  emphasis,
 }: {
   comment: ReviewComment;
   colors: ColorPalette;
@@ -1400,6 +1498,7 @@ function InlineComment({
   onDelete: (c: ReviewComment) => void | Promise<void>;
   /** Hands the card's node to the floating navigator so it can scroll to it. */
   registerRef: (id: string, el: HTMLDivElement | null) => void;
+  emphasis?: CommentEmphasis;
 }) {
   // Local in-flight flag for the "Address" button. Sending doesn't flip the
   // comment to `pushed`, so without this guard rapid double-clicks during the
@@ -1427,7 +1526,10 @@ function InlineComment({
         margin: isReply ? "2px 8px 2px 112px" : "4px 8px 4px 88px",
         padding: "6px 10px",
         borderLeft: `3px solid ${isGitHub ? colors.textDim : colors.active}`,
-        background: colors.surface,
+        background: emphasis === "current" ? colors.selectedBg : colors.surface,
+        // Outlined so new findings stand out from older ones, and the one
+        // the navigator stepped to stands out from those.
+        outline: emphasis ? `${emphasis === "current" ? 2 : 1}px solid ${colors.active}` : undefined,
         borderRadius: 3,
         display: "flex",
         flexDirection: "column",
@@ -1667,6 +1769,7 @@ function OrphanCommentsSection({
   onAddressComment,
   onDeleteComment,
   registerCommentRef,
+  emphasisOf,
 }: {
   comments: ReviewComment[];
   colors: ColorPalette;
@@ -1677,6 +1780,7 @@ function OrphanCommentsSection({
   onAddressComment: (c: ReviewComment) => void | Promise<void>;
   onDeleteComment: (c: ReviewComment) => void | Promise<void>;
   registerCommentRef: (id: string, el: HTMLDivElement | null) => void;
+  emphasisOf: (id: string) => CommentEmphasis;
 }) {
   return (
     <div data-testid="review-diff-orphans">
@@ -1714,6 +1818,7 @@ function OrphanCommentsSection({
             onAddress={onAddressComment}
             onDelete={onDeleteComment}
             registerRef={registerCommentRef}
+            emphasis={emphasisOf(c.id)}
           />
         </div>
       ))}

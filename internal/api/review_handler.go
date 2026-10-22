@@ -103,7 +103,8 @@ func (s *reviewService) handleReviewLoad(w http.ResponseWriter, r *http.Request)
 
 // loadPR checks PR prNumber out for channelID's review and replaces the
 // channel's session with a ready one, with seed's choices when it is set
-// (a session restored after a daemon restart). Errors that call for a
+// (a session restored after a daemon restart), else with those kept of
+// the channel's session on the same PR. Errors that call for a
 // status other than 500 are *reviewHTTPError; respondReviewError answers
 // either kind.
 func (s *reviewService) loadPR(ctx context.Context, channelID string, prNumber int, seed *review.Saved) (*review.Session, error) {
@@ -147,9 +148,19 @@ func (s *reviewService) loadPR(ctx context.Context, channelID string, prNumber i
 		}
 	}
 
+	// Loading the PR the channel's session was on again keeps its choices.
+	if seed == nil {
+		seed = s.sessions.Kept(channelID, prNumber)
+	}
+
 	// Mark loading early so the GET endpoint can show a spinner while the
-	// gh + git work runs.
-	s.sessions.Put(channelID, &review.Session{Status: review.StatusLoading})
+	// gh + git work runs. It holds the choices the loaded session starts
+	// with, and takes any made meanwhile, which Settle carries over.
+	loading := &review.Session{Status: review.StatusLoading, ForkMode: review.ForkCurrent}
+	if seed != nil {
+		seed.Apply(loading)
+	}
+	s.sessions.Put(channelID, loading)
 
 	fail := func(err error) (*review.Session, error) {
 		s.sessions.UpdateStatus(channelID, review.StatusError, errorMessage(err))
@@ -219,7 +230,7 @@ func (s *reviewService) loadPR(ctx context.Context, channelID string, prNumber i
 		seed.Apply(sess)
 	}
 	s.restoreRuns(ctx, channelID, sess)
-	s.sessions.Put(channelID, sess)
+	s.sessions.Settle(channelID, sess)
 	s.saveOutcomes(channelID, restored, comments)
 	return sess, nil
 }

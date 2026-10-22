@@ -899,10 +899,20 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 			},
 		},
 		{
+			name:        "Review/UpdateBaseOverridesGlobal",
+			projectJSON: `{"review": {"update_base": false}}`,
+			mainCfg:     &Config{Review: ReviewConfig{UpdateBase: true}},
+			assert: func(merged, main *Config) {
+				require.False(s.T(), merged.Review.UpdateBase)
+				require.True(s.T(), main.Review.UpdateBase)
+			},
+		},
+		{
 			name:        "Review/VerifyUnsetKeepsGlobal",
 			projectJSON: `{"review": {}}`,
-			mainCfg:     &Config{Review: ReviewConfig{Verify: true, VerifyPrompt: "global verify", MaxIterations: 4}},
+			mainCfg:     &Config{Review: ReviewConfig{Verify: true, VerifyPrompt: "global verify", MaxIterations: 4, UpdateBase: true}},
 			assert: func(merged, _ *Config) {
+				require.True(s.T(), merged.Review.UpdateBase)
 				require.True(s.T(), merged.Review.Verify)
 				require.Equal(s.T(), "global verify", merged.Review.VerifyPrompt)
 				require.Equal(s.T(), 4, merged.Review.MaxIterations)

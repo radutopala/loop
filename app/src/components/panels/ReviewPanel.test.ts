@@ -504,8 +504,8 @@ describe("moreMenuItems", () => {
 
   it("lists Sync, the All actions, Stats and Close", () => {
     const { list, calls } = items();
-    expect(list.map((it) => (it.separator ? "---" : it.label))).toEqual(["Sync with GitHub", "Check all (1)", "---", "Stats", "Close review"]);
-    expect(list[4]?.danger).toBe(true);
+    expect(list.map((it) => (it.separator ? `--- ${it.label}` : it.label))).toEqual(["Sync with GitHub", "Check all (1)", "--- Stats", "Close review"]);
+    expect(list[3]?.danger).toBe(true);
     for (const it of list) it.onClick();
     expect(calls).toEqual(["sync", "check", "stats", "close"]);
   });
@@ -520,6 +520,7 @@ describe("moreMenuItems", () => {
   it("leaves out what can't run, and the separator with nothing above it", () => {
     const { list } = items({ syncDisabled: true, all: [], closeDisabled: true, showStats: true });
     expect(list.map((it) => it.label)).toEqual(["Back to the review"]);
+    expect(list[0]?.separator).toBe(false);
   });
 });
 

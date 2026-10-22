@@ -571,11 +571,11 @@ func (s *ConfigSuite) TestReviewConfigLoad() {
 		json string
 		want ReviewConfig
 	}{
-		{name: "absent verifies", json: ``, want: ReviewConfig{Verify: true}},
-		{name: "empty verifies", json: `, "review": {}`, want: ReviewConfig{Verify: true}},
+		{name: "absent verifies and updates the base", json: ``, want: ReviewConfig{Verify: true, UpdateBase: true}},
+		{name: "empty verifies and updates the base", json: `, "review": {}`, want: ReviewConfig{Verify: true, UpdateBase: true}},
 		{
 			name: "all fields",
-			json: `, "review": {"enabled": true, "prompt": "p", "prompt_path": "r.md", "verify": false, "verify_prompt": "v", "max_iterations": 5}`,
+			json: `, "review": {"enabled": true, "prompt": "p", "prompt_path": "r.md", "verify": false, "verify_prompt": "v", "max_iterations": 5, "update_base": false}`,
 			want: ReviewConfig{Enabled: true, Prompt: "p", PromptPath: "r.md", VerifyPrompt: "v", MaxIterations: 5},
 		},
 	}

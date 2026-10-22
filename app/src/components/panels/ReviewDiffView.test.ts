@@ -4,7 +4,9 @@ import type { ColorPalette } from "../../theme";
 import { parseUnifiedDiff } from "./DiffViewer";
 import {
   type CommentAnchor,
+  commentEmphasis,
   commentImpact,
+  commentKind,
   type FileSummary,
   impactColor,
   navigableAnchors,
@@ -99,9 +101,9 @@ describe("orderedComments", () => {
   it("carries the file index so navigation can expand the right section", () => {
     const { summaries, byFile, orphans } = summarize(DIFF, [comment("a1", "a.go", 2), comment("b1", "b.go", 2), comment("orphan", "gone.go", 1)]);
     expect(orderedComments(summaries, byFile, orphans)).toEqual([
-      { id: "a1", path: "a.go", fileIdx: 0, fresh: false },
-      { id: "b1", path: "b.go", fileIdx: 1, fresh: false },
-      { id: "orphan", path: "gone.go", fileIdx: -1, fresh: false },
+      { id: "a1", path: "a.go", fileIdx: 0, fresh: false, kind: "unjudged" },
+      { id: "b1", path: "b.go", fileIdx: 1, fresh: false, kind: "unjudged" },
+      { id: "orphan", path: "gone.go", fileIdx: -1, fresh: false, kind: "unjudged" },
     ]);
   });
 
@@ -130,17 +132,42 @@ describe("navigableAnchors", () => {
     ]);
   });
 
+  it("carries each comment's kind", () => {
+    const { summaries, byFile, orphans } = summarize(DIFF, [
+      comment("blocking", "a.go", 2, { verdict: "real", impact: "blocking" }),
+      comment("fp", "a.go", 3, { verdict: "false_positive" }),
+      comment("reply", "b.go", 2, { source: "github", github_id: 2, reply_to: 1 }),
+      comment("orphan", "gone.go", 1, { verdict: "already_fixed" }),
+    ]);
+    expect(orderedComments(summaries, byFile, orphans).map((a) => [a.id, a.kind])).toEqual([
+      ["blocking", "blocking"],
+      ["fp", "false_positive"],
+      ["reply", undefined],
+      ["orphan", "already_fixed"],
+    ]);
+  });
+
   const anchors: CommentAnchor[] = [
-    { id: "latest", path: "a.go", fileIdx: 0, fresh: true },
-    { id: "earlier", path: "a.go", fileIdx: 0, fresh: false },
-    { id: "gh", path: "b.go", fileIdx: 1, fresh: false },
+    { id: "latest", path: "a.go", fileIdx: 0, fresh: true, kind: "blocking" },
+    { id: "latest-nit", path: "a.go", fileIdx: 0, fresh: true, kind: "nice_to_have" },
+    { id: "earlier", path: "a.go", fileIdx: 0, fresh: false, kind: "blocking" },
+    { id: "gh", path: "b.go", fileIdx: 1, fresh: false, kind: "unjudged" },
+    { id: "gh-reply", path: "b.go", fileIdx: 1, fresh: false },
   ];
 
   it.each([
-    ["all", ["latest", "earlier", "gh"]],
-    ["new", ["latest"]],
-  ] as const)("scope %s", (scope, want) => {
-    expect(navigableAnchors(anchors, scope).map((a) => a.id)).toEqual(want);
+    ["all", "any", ["latest", "latest-nit", "earlier", "gh", "gh-reply"]],
+    ["new", "any", ["latest", "latest-nit"]],
+    ["all", "blocking", ["latest", "earlier"]],
+    ["new", "blocking", ["latest"]],
+    ["all", "unjudged", ["gh"]],
+    ["new", "false_positive", []],
+  ] as const)("scope %s, kind %s", (scope, kind, want) => {
+    expect(navigableAnchors(anchors, scope, kind).map((a) => a.id)).toEqual(want);
+  });
+
+  it("walks every kind by default", () => {
+    expect(navigableAnchors(anchors, "new").map((a) => a.id)).toEqual(["latest", "latest-nit"]);
   });
 });
 
@@ -194,6 +221,35 @@ describe("commentImpact", () => {
     ["none for an unassessed thread", { source: "github", github_id: 1 }, undefined],
   ])("%s", (_name, extra, want) => {
     expect(commentImpact(comment("c", "a.go", 1, extra))).toBe(want);
+  });
+});
+
+describe("commentKind", () => {
+  it.each<[string, Partial<ReviewComment>, string | undefined]>([
+    ["a blocking finding", { source: "agent", verdict: "real", impact: "blocking" }, "blocking"],
+    ["a nice-to-have finding", { verdict: "real", impact: "nice_to_have" }, "nice_to_have"],
+    ["a false positive", { verdict: "false_positive" }, "false_positive"],
+    ["an already fixed finding", { verdict: "already_fixed" }, "already_fixed"],
+    ["a finding not judged yet", { source: "agent" }, "unjudged"],
+    ["an open blocking thread", { source: "github", github_id: 1, thread: { status: "open", impact: "blocking" } }, "blocking"],
+    ["an addressed thread as fixed", { source: "github", github_id: 1, thread: { status: "addressed" } }, "already_fixed"],
+    ["an unassessed thread", { source: "github", github_id: 1 }, "unjudged"],
+    ["no kind for a reply", { source: "github", github_id: 2, reply_to: 1 }, undefined],
+  ])("%s", (_name, extra, want) => {
+    expect(commentKind(comment("c", "a.go", 1, extra))).toBe(want);
+  });
+});
+
+describe("commentEmphasis", () => {
+  const fresh = new Set(["new1", "new2"]);
+  it.each<[string, string, string | null, string | undefined]>([
+    ["the landed comment, new or not", "new1", "new1", "current"],
+    ["the landed comment among old ones", "old", "old", "current"],
+    ["another new comment", "new2", "new1", "fresh"],
+    ["a new comment before landing", "new1", null, "fresh"],
+    ["an old comment", "old", "new1", undefined],
+  ])("%s", (_name, id, landedId, want) => {
+    expect(commentEmphasis(id, landedId, fresh)).toBe(want);
   });
 });
 

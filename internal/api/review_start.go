@@ -25,14 +25,17 @@ const (
 // run forks: "chat" (the channel's chat session), "fresh", or a session id;
 // empty keeps the review session's own choice. Scope picks what the runs
 // review: "auto", "full" or "incremental"; empty keeps the session's choice.
+// ConfigDefaults skips the channel's overrides, so an empty model or effort
+// is the config's default, as the panel's "Default" choice is.
 type reviewStartRequest struct {
-	PRNumber      int    `json:"pr_number"`
-	Model         string `json:"model"`
-	Effort        string `json:"effort"`
-	Mode          string `json:"mode"`
-	MaxIterations int    `json:"max_iterations"`
-	Fork          string `json:"fork"`
-	Scope         string `json:"scope"`
+	PRNumber       int    `json:"pr_number"`
+	Model          string `json:"model"`
+	Effort         string `json:"effort"`
+	Mode           string `json:"mode"`
+	MaxIterations  int    `json:"max_iterations"`
+	Fork           string `json:"fork"`
+	Scope          string `json:"scope"`
+	ConfigDefaults bool   `json:"config_defaults"`
 }
 
 // reviewStartScopes maps the request's scope values to the session's.
@@ -119,8 +122,11 @@ func (s *Server) handleReviewStart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "channel not found", http.StatusNotFound)
 		return
 	}
-	model := cmp.Or(strings.TrimSpace(req.Model), ch.ModelOverride)
-	effort = cmp.Or(effort, ch.EffortOverride)
+	model := strings.TrimSpace(req.Model)
+	if !req.ConfigDefaults {
+		model = cmp.Or(model, ch.ModelOverride)
+		effort = cmp.Or(effort, ch.EffortOverride)
+	}
 
 	// Two starts racing on one channel would both see it idle; the second
 	// one loses here.

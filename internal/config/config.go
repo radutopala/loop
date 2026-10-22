@@ -447,6 +447,7 @@ func (l *Loader) parse() (*Config, error) {
 	}
 
 	cfg.Review.Verify = true
+	cfg.Review.UpdateBase = true
 	if jc.Review != nil {
 		cfg.Review.Enabled = ptrDefault(jc.Review.Enabled, false)
 		cfg.Review.Prompt = jc.Review.Prompt
@@ -454,6 +455,7 @@ func (l *Loader) parse() (*Config, error) {
 		cfg.Review.Verify = ptrDefault(jc.Review.Verify, true)
 		cfg.Review.VerifyPrompt = jc.Review.VerifyPrompt
 		cfg.Review.MaxIterations = jc.Review.MaxIterations
+		cfg.Review.UpdateBase = ptrDefault(jc.Review.UpdateBase, true)
 	}
 
 	if jc.PlaygroundShare != nil {

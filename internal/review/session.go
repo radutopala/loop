@@ -222,7 +222,7 @@ type Store struct {
 	mu       sync.RWMutex
 	sessions map[string]*Session
 	saver    Saver
-	// saved is what saver last got per channel.
+	// saved is what was last kept per channel, which saver got.
 	saved map[string]*Saved
 }
 
@@ -238,12 +238,9 @@ func (s *Store) SetSaver(sv Saver) {
 	s.saver = sv
 }
 
-// save hands sess to the saver when what is kept of it changed. The
-// caller holds the write lock.
+// save records what is kept of sess, and hands it to the saver when it
+// changed. The caller holds the write lock.
 func (s *Store) save(sess *Session) {
-	if s.saver == nil {
-		return
-	}
 	cur := sess.saved()
 	if cur == nil {
 		return
@@ -251,7 +248,9 @@ func (s *Store) save(sess *Session) {
 	if prev := s.saved[sess.ChannelID]; prev != nil && *prev == *cur {
 		return
 	}
-	s.saver.SaveSession(cur)
+	if s.saver != nil {
+		s.saver.SaveSession(cur)
+	}
 	s.saved[sess.ChannelID] = cur
 }
 
@@ -283,6 +282,52 @@ func (s *Store) Put(channelID string, sess *Session) {
 	defer s.mu.Unlock()
 	s.sessions[channelID] = sess
 	s.save(sess)
+}
+
+// Settle replaces the loading session for channelID with sess, its PR now
+// loaded. The run choices made on the loading session while the PR loaded
+// carry over to sess: they are newer than those sess was built with.
+func (s *Store) Settle(channelID string, sess *Session) {
+	sess.ChannelID = channelID
+	sess.UpdatedAt = time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if cur, ok := s.sessions[channelID]; ok && cur.Status == StatusLoading {
+		sess.ForkMode, sess.ForkSessionID = cur.ForkMode, cur.ForkSessionID
+		sess.Model, sess.Effort = cur.Model, cur.Effort
+		sess.Scope = cur.Scope
+	}
+	s.sessions[channelID] = sess
+	s.save(sess)
+}
+
+// Kept returns what was last kept of channelID's session while it was on
+// PR prNumber, nil when nothing was.
+func (s *Store) Kept(channelID string, prNumber int) *Saved {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	sv := s.saved[channelID]
+	if sv == nil || sv.PRNumber != prNumber {
+		return nil
+	}
+	cp := *sv
+	return &cp
+}
+
+// Keep records saved as kept already, without handing them to the saver:
+// the sessions a daemon start restores, so a PR loaded again before the
+// restore reaches its channel keeps their choices. A channel kept since
+// is left as it is.
+func (s *Store) Keep(saved []*Saved) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, sv := range saved {
+		if _, ok := s.saved[sv.ChannelID]; ok {
+			continue
+		}
+		cp := *sv
+		s.saved[sv.ChannelID] = &cp
+	}
 }
 
 // SessionSummary is the minimal (channel_id, status, updated_at) triple

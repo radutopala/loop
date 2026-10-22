@@ -604,6 +604,9 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 		if pc.Review.MaxIterations != 0 {
 			merged.Review.MaxIterations = pc.Review.MaxIterations
 		}
+		if pc.Review.UpdateBase != nil {
+			merged.Review.UpdateBase = *pc.Review.UpdateBase
+		}
 	}
 
 	// PlaygroundShare: Enabled overrides global only when explicitly set.
