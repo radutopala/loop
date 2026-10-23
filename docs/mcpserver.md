@@ -35,7 +35,7 @@ Agent (Claude Code)  ←→  MCP Protocol (stdio)  ←→  loop mcp  ←→  HTT
 | Tool | Description |
 |------|-------------|
 | `schedule_task` | Create a scheduled task (cron, interval, once, or manual) running a prompt, a workflow (`workflow_name`), or a shell script (`bash_script`). Supports `template_name` for deduplication and `auto_delete_sec` for thread cleanup. |
-| `list_tasks` | List all scheduled tasks for the current channel |
+| `list_tasks` | List all scheduled tasks for the current channel and its worktree threads; `threads: true` adds its plain threads |
 | `show_task` | Show full task details by ID including complete prompt |
 | `cancel_task` | Cancel a scheduled task by ID |
 | `toggle_task` | Enable or disable a task by ID |

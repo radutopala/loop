@@ -218,6 +218,131 @@ func (s *ServerSuite) TestListTasksEmpty() {
 	s.scheduler.AssertExpectations(s.T())
 }
 
+func (s *ServerSuite) TestListTasksWithThreads() {
+	own := &db.ScheduledTask{ID: 1, ChannelID: "ch1", Prompt: "own"}
+	wtTask := &db.ScheduledTask{ID: 2, ChannelID: "wt1", Prompt: "in worktree"}
+	plainTask := &db.ScheduledTask{ID: 3, ChannelID: "th1", Prompt: "in thread"}
+	wt := &db.Channel{ChannelID: "wt1", Name: "feature-x", DirPath: "/home/user/project/.worktrees/feature-x", ParentID: "ch1", Worktree: true}
+	plain := &db.Channel{ChannelID: "th1", Name: "chat", DirPath: "/home/user/project", ParentID: "ch1"}
+	dbErr := errors.New("db error")
+
+	tests := []struct {
+		name     string
+		query    string
+		setup    func()
+		wantCode int
+		wantIDs  []int64
+	}{
+		{
+			name:  "adds worktree thread tasks only",
+			query: "&worktrees=true",
+			setup: func() {
+				s.store.On("ListChannelIDsByParentID", mock.Anything, "ch1").Return([]string{"th1", "gone", "wt1"}, nil)
+				s.store.On("GetChannel", mock.Anything, "th1").Return(plain, nil)
+				s.store.On("GetChannel", mock.Anything, "gone").Return(nil, nil)
+				s.store.On("GetChannel", mock.Anything, "wt1").Return(wt, nil)
+				s.scheduler.On("ListTasks", mock.Anything, "wt1").Return([]*db.ScheduledTask{wtTask}, nil)
+			},
+			wantCode: http.StatusOK,
+			wantIDs:  []int64{1, 2},
+		},
+		{
+			name:  "adds plain thread tasks only",
+			query: "&threads=true",
+			setup: func() {
+				s.store.On("ListChannelIDsByParentID", mock.Anything, "ch1").Return([]string{"wt1", "th1"}, nil)
+				s.store.On("GetChannel", mock.Anything, "wt1").Return(wt, nil)
+				s.store.On("GetChannel", mock.Anything, "th1").Return(plain, nil)
+				s.scheduler.On("ListTasks", mock.Anything, "th1").Return([]*db.ScheduledTask{plainTask}, nil)
+			},
+			wantCode: http.StatusOK,
+			wantIDs:  []int64{1, 3},
+		},
+		{
+			name:  "adds both",
+			query: "&worktrees=true&threads=true",
+			setup: func() {
+				s.store.On("ListChannelIDsByParentID", mock.Anything, "ch1").Return([]string{"wt1", "th1"}, nil)
+				s.store.On("GetChannel", mock.Anything, "wt1").Return(wt, nil)
+				s.store.On("GetChannel", mock.Anything, "th1").Return(plain, nil)
+				s.scheduler.On("ListTasks", mock.Anything, "wt1").Return([]*db.ScheduledTask{wtTask}, nil)
+				s.scheduler.On("ListTasks", mock.Anything, "th1").Return([]*db.ScheduledTask{plainTask}, nil)
+			},
+			wantCode: http.StatusOK,
+			wantIDs:  []int64{1, 2, 3},
+		},
+		{
+			name:     "neither flag leaves threads out",
+			setup:    func() {},
+			wantCode: http.StatusOK,
+			wantIDs:  []int64{1},
+		},
+		{
+			name:  "list children error",
+			query: "&worktrees=true",
+			setup: func() {
+				s.store.On("ListChannelIDsByParentID", mock.Anything, "ch1").Return(nil, dbErr)
+			},
+			wantCode: http.StatusInternalServerError,
+		},
+		{
+			name:  "get thread error",
+			query: "&worktrees=true",
+			setup: func() {
+				s.store.On("ListChannelIDsByParentID", mock.Anything, "ch1").Return([]string{"wt1"}, nil)
+				s.store.On("GetChannel", mock.Anything, "wt1").Return(nil, dbErr)
+			},
+			wantCode: http.StatusInternalServerError,
+		},
+		{
+			name:  "thread tasks error",
+			query: "&worktrees=true",
+			setup: func() {
+				s.store.On("ListChannelIDsByParentID", mock.Anything, "ch1").Return([]string{"wt1"}, nil)
+				s.store.On("GetChannel", mock.Anything, "wt1").Return(wt, nil)
+				s.scheduler.On("ListTasks", mock.Anything, "wt1").Return(nil, dbErr)
+			},
+			wantCode: http.StatusInternalServerError,
+		},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, nil)
+			s.scheduler.On("ListTasks", mock.Anything, "ch1").Return([]*db.ScheduledTask{own}, nil)
+			tt.setup()
+
+			rec := s.testRequest("GET", "/api/tasks?channel_id=ch1"+tt.query, "")
+
+			require.Equal(s.T(), tt.wantCode, rec.Code)
+			s.store.AssertExpectations(s.T())
+			s.scheduler.AssertExpectations(s.T())
+			if tt.wantCode != http.StatusOK {
+				return
+			}
+			var resp []taskResponse
+			require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+			ids := make([]int64, 0, len(resp))
+			for _, r := range resp {
+				ids = append(ids, r.ID)
+			}
+			require.Equal(s.T(), tt.wantIDs, ids)
+			threads := map[string]*db.Channel{"wt1": wt, "th1": plain}
+			for _, r := range resp {
+				ch := threads[r.ChannelID]
+				if ch == nil {
+					require.Empty(s.T(), r.ChannelName)
+					require.False(s.T(), r.ChannelWorktree)
+					continue
+				}
+				require.Equal(s.T(), ch.Name, r.ChannelName)
+				require.Equal(s.T(), ch.DirPath, r.DirPath)
+				require.Equal(s.T(), ch.Worktree, r.ChannelWorktree)
+			}
+		})
+	}
+}
+
 func (s *ServerSuite) TestListAllTasks() {
 	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	tasks := []*db.ScheduledTask{

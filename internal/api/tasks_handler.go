@@ -133,11 +133,19 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 	channelID := r.URL.Query().Get("channel_id")
 
 	var tasks []*db.ScheduledTask
+	var threads map[string]*db.Channel
 	var err error
 	if channelID == "" {
 		tasks, err = s.store.ListAllScheduledTasks(r.Context())
 	} else {
-		tasks, err = s.scheduler.ListTasks(r.Context(), s.resolveTaskChannelID(r.Context(), channelID))
+		channelID = s.resolveTaskChannelID(r.Context(), channelID)
+		tasks, err = s.scheduler.ListTasks(r.Context(), channelID)
+		worktrees, plain := r.URL.Query().Get("worktrees") == "true", r.URL.Query().Get("threads") == "true"
+		if err == nil && (worktrees || plain) {
+			var more []*db.ScheduledTask
+			more, threads, err = s.threadTasks(r.Context(), channelID, worktrees, plain)
+			tasks = append(tasks, more...)
+		}
 	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -160,6 +168,9 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 	resp := make([]taskResponse, 0, len(tasks))
 	for _, t := range tasks {
 		tr := toTaskResponse(t)
+		if ch := threads[t.ChannelID]; ch != nil {
+			tr.ChannelName, tr.DirPath, tr.ChannelWorktree = ch.Name, ch.DirPath, ch.Worktree
+		}
 		if channelMap != nil {
 			ch := channelMap[t.ChannelID]
 			if ch != nil {
@@ -175,6 +186,33 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeHTTPJSON(w, http.StatusOK, resp, s.logger)
+}
+
+// threadTasks returns the tasks of channelID's worktree threads and/or plain
+// threads, with those threads by id.
+func (s *Server) threadTasks(ctx context.Context, channelID string, worktrees, plain bool) ([]*db.ScheduledTask, map[string]*db.Channel, error) {
+	ids, err := s.store.ListChannelIDsByParentID(ctx, channelID)
+	if err != nil {
+		return nil, nil, err
+	}
+	var tasks []*db.ScheduledTask
+	threads := make(map[string]*db.Channel)
+	for _, id := range ids {
+		ch, err := s.store.GetChannel(ctx, id)
+		if err != nil {
+			return nil, nil, err
+		}
+		if ch == nil || (ch.Worktree && !worktrees) || (!ch.Worktree && !plain) {
+			continue
+		}
+		more, err := s.scheduler.ListTasks(ctx, id)
+		if err != nil {
+			return nil, nil, err
+		}
+		threads[id] = ch
+		tasks = append(tasks, more...)
+	}
+	return tasks, threads, nil
 }
 
 func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {

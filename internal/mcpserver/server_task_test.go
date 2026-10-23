@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/stretchr/testify/require"
 )
@@ -325,6 +326,34 @@ func (s *MCPServerSuite) TestListTasksWithWorktreeFields() {
 	require.False(s.T(), isError)
 	require.Contains(s.T(), text, "branch: develop")
 	require.Contains(s.T(), text, "update_before_run: true")
+}
+
+func (s *MCPServerSuite) TestListTasksWithThreads() {
+	body := `[{"id":1,"channel_id":"test-channel","schedule":"5m","type":"interval","prompt":"own","enabled":true},` +
+		`{"id":2,"channel_id":"wt-1","channel_name":"feature-x","channel_worktree":true,"schedule":"1h","type":"interval","prompt":"wt task","enabled":true},` +
+		`{"id":3,"channel_id":"th-1","channel_name":"chat","schedule":"1h","type":"interval","prompt":"thread task","enabled":true}]`
+	tests := []struct {
+		name    string
+		args    map[string]any
+		wantURL string
+	}{
+		{"worktree threads by default", map[string]any{}, "channel_id=test-channel&worktrees=true"},
+		{"plain threads too", map[string]any{"threads": true}, "channel_id=test-channel&worktrees=true&threads=true"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+				require.True(s.T(), strings.HasSuffix(req.URL.String(), tt.wantURL), req.URL.String())
+				return jsonResponse(http.StatusOK, body), nil
+			}
+
+			text, isError := s.callTool("list_tasks", tt.args)
+			require.False(s.T(), isError)
+			require.Contains(s.T(), text, "- ID 1: own (schedule: 5m, type: interval, enabled: true)\n")
+			require.Contains(s.T(), text, "- ID 2: wt task (schedule: 1h, type: interval, enabled: true, worktree thread: feature-x (wt-1))")
+			require.Contains(s.T(), text, "- ID 3: thread task (schedule: 1h, type: interval, enabled: true, thread: chat (th-1))")
+		})
+	}
 }
 
 func (s *MCPServerSuite) TestListTasksWithWorkflow() {
