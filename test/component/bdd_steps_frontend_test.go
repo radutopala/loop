@@ -222,7 +222,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I drag across the text of "([^"]*)"$`, tc.dragAcrossText)
 	ctx.Step(`^the selected text should contain "([^"]*)"$`, tc.assertSelectedText)
 	ctx.Step(`^the row info should show the (channel|worktree)'s path and branch "([^"]*)"$`, tc.assertRowInfo)
-	ctx.Step(`^the row info "(ticket|branch-detail|commit|commit-detail|sync|model|status|description)" should read "([^"]*)"$`, tc.assertRowInfoLine)
+	ctx.Step(`^the row info "(title|ticket|branch-detail|commit|commit-detail|sync|model|status|description)" should read "([^"]*)"$`, tc.assertRowInfoLine)
 	ctx.Step(`^the row info should not show "(ticket|commit|sync|model|status|description)"$`, tc.assertRowInfoLineAbsent)
 	ctx.Step(`^I commit "([^"]*)" in the worktree$`, tc.commitInWorktree)
 	ctx.Step(`^I right-click on the element with text "([^"]*)"$`, tc.rightClickElementWithText)

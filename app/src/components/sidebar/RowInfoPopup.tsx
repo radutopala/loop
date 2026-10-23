@@ -4,6 +4,7 @@ import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { Channel } from "../../types";
 import { type RowInfoLine, rowInfoLines } from "./rowInfo";
+import { sessionName } from "./sessions";
 
 interface RowInfoPopupProps {
   channel: Channel;
@@ -14,23 +15,23 @@ interface RowInfoPopupProps {
 }
 
 /**
- * RowInfoPopup shows a sidebar row's description, ticket, directory, git
- * state and agent settings beside it as soon as the pointer is on the row. A click, drag or scroll hides it until the
- * pointer comes back.
+ * RowInfoPopup shows a sidebar row's full name, description, ticket,
+ * directory, git state and agent settings beside it as soon as the pointer is
+ * on the row. A click, drag or scroll hides it until the pointer comes back.
  */
 export function RowInfoPopup({ channel, anchorRef, hovered }: RowInfoPopupProps) {
   const { colors } = useTheme();
   // rowMid is the row's vertical middle, where the arrow points.
   const [pos, setPos] = useState<{ top: number; left: number; rowMid: number } | null>(null);
   const popupRef = useRef<HTMLDivElement>(null);
+  const title = sessionName(channel);
   const lines = rowInfoLines(channel);
   const description = channel.description?.trim();
-  const hasInfo = lines.length > 0 || !!description;
 
   // A layout effect, so the popup shows in the same frame as the row's
   // hover background.
   useLayoutEffect(() => {
-    if (!hovered || !hasInfo) {
+    if (!hovered) {
       setPos(null);
       return;
     }
@@ -50,7 +51,7 @@ export function RowInfoPopup({ channel, anchorRef, hovered }: RowInfoPopupProps)
       window.removeEventListener("dragstart", hide, true);
       window.removeEventListener("wheel", hide, true);
     };
-  }, [hovered, hasInfo, anchorRef]);
+  }, [hovered, anchorRef]);
 
   // Center it on the row, kept on screen; the arrow still points at the row
   // when it's shifted.
@@ -112,6 +113,20 @@ export function RowInfoPopup({ channel, anchorRef, hovered }: RowInfoPopupProps)
           transform: "rotate(45deg)",
         }}
       />
+      {/* The row cuts a long name short; here it shows in full. */}
+      <div
+        data-testid="sidebar-row-info-title"
+        style={{
+          gridColumn: "1 / -1",
+          color: colors.textLight,
+          fontWeight: 600,
+          whiteSpace: "pre-wrap",
+          overflowWrap: "anywhere",
+          ...(description || lines.length > 0 ? { paddingBottom: 6, marginBottom: 4, borderBottom: border } : {}),
+        }}
+      >
+        {title}
+      </div>
       {description && (
         <div
           data-testid="sidebar-row-info-description"
