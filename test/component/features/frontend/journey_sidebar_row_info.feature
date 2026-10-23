@@ -1,8 +1,8 @@
 @frontend @rowinfo
 Feature: Sidebar Row Info
   Hovering a channel, thread or worktree thread in the sidebar immediately
-  shows its directory, git branch, commit and subject in a popup beside the
-  row. A worktree thread also names the branch it was cut from and how far it
+  shows its full name, directory, git branch, commit and subject in a popup
+  beside the row. A worktree thread also names the branch it was cut from and how far it
   is from it, and a channel with its own model or effort shows them too.
 
   Scenario: A channel and its worktree thread show their path and branch
@@ -26,7 +26,8 @@ Feature: Sidebar Row Info
     Then the row info "model" should read "claude-opus-5-5 · high"
 
     When I rest the pointer on "row-info-wt" in the sidebar
-    Then the row info should show the worktree's path and branch "worktree/row-info-wt"
+    Then the row info "title" should read "row-info-wt (main)"
+    And the row info should show the worktree's path and branch "worktree/row-info-wt"
     And the row info "branch-detail" should read " (from main)"
     And the row info "commit" should read "{head}"
     And the row info "sync" should read "even with main"
@@ -39,6 +40,16 @@ Feature: Sidebar Row Info
 
     When I move the pointer off the sidebar
     Then I wait up to "2s" for "[data-testid='sidebar-row-info']" to disappear
+
+  @row-title
+  Scenario: A name too long for the sidebar shows in full in the row info
+    Given I set up a test channel via API for git repo "bdd-row-title"
+    And I set up a worktree "a-worktree-thread-name-far-too-long-to-fit-in-the-sidebar-row" on branch "main" under the current channel via API
+    And I open the app in a browser
+    And I wait for text "a-worktree-thread-name" to appear
+
+    When I rest the pointer on "a-worktree-thread-name" in the sidebar
+    Then the row info "title" should read "a-worktree-thread-name-far-too-long-to-fit-in-the-sidebar-row (main)"
 
   @row-description
   Scenario: A thread's description shows in its row info and is set from the context menu
