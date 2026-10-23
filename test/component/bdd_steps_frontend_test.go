@@ -221,9 +221,12 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I move the pointer off the sidebar$`, tc.movePointerOffSidebar)
 	ctx.Step(`^I drag across the text of "([^"]*)"$`, tc.dragAcrossText)
 	ctx.Step(`^the selected text should contain "([^"]*)"$`, tc.assertSelectedText)
+	ctx.Step(`^the channel's repo has origin "([^"]*)"$`, tc.setChannelOrigin)
+	ctx.Step(`^gh reports PR #(\d+) "([^"]*)" for any branch$`, tc.fakeGhPR)
+	ctx.Step(`^glab reports MR !(\d+) "([^"]*)" for any branch$`, tc.fakeGlabMR)
 	ctx.Step(`^the row info should show the (channel|worktree)'s path and branch "([^"]*)"$`, tc.assertRowInfo)
-	ctx.Step(`^the row info "(title|ticket|branch-detail|commit|commit-detail|sync|model|status|description)" should read "([^"]*)"$`, tc.assertRowInfoLine)
-	ctx.Step(`^the row info should not show "(ticket|commit|sync|model|status|description)"$`, tc.assertRowInfoLineAbsent)
+	ctx.Step(`^the row info "(title|ticket|branch-detail|pr|pr-detail|commit|commit-detail|sync|model|status|description)" should read "([^"]*)"$`, tc.assertRowInfoLine)
+	ctx.Step(`^the row info should not show "(ticket|pr|commit|sync|model|status|description)"$`, tc.assertRowInfoLineAbsent)
 	ctx.Step(`^I commit "([^"]*)" in the worktree$`, tc.commitInWorktree)
 	ctx.Step(`^I right-click on the element with text "([^"]*)"$`, tc.rightClickElementWithText)
 	ctx.Step(`^I right-click on "([^"]*)" in the sidebar$`, tc.rightClickInSidebar)
@@ -1343,6 +1346,54 @@ func (tc *TestContext) movePointerOffSidebar() error {
 		return err
 	}
 	return chromedp.Run(tc.chromeTab.ctx, chromedp.MouseEvent(input.MouseMoved, at[0], at[1]))
+}
+
+// setChannelOrigin points the channel's repo at url, which picks the CLI
+// the daemon looks its PR up with.
+func (tc *TestContext) setChannelOrigin(url string) error {
+	if tc.ChannelDir == "" {
+		return fmt.Errorf("no channel dir set; use 'I set up a test channel via API for git repo' step first")
+	}
+	if out, err := exec.Command("git", "-C", tc.ChannelDir, "remote", "add", "origin", url).CombinedOutput(); err != nil {
+		return fmt.Errorf("adding origin: %s: %w", out, err)
+	}
+	return nil
+}
+
+// fakeGhPR puts a gh on the daemon's PATH (it runs in this container) that
+// reports PR number, titled title, open on whatever branch is asked about.
+// cleanup removes it. A real gh on PATH is left alone: the step fails.
+func (tc *TestContext) fakeGhPR(number int, title string) error {
+	view, _ := json.Marshal(map[string]any{
+		"number": number, "url": fmt.Sprintf("https://github.com/o/r/pull/%d", number),
+		"baseRefName": "main", "headRefName": "feat", "state": "OPEN", "title": title, "isDraft": false,
+	})
+	return tc.fakeCLI("gh", "pr view", string(view))
+}
+
+// fakeGlabMR is fakeGhPR for glab: it reports MR iid, opened on whatever
+// branch is asked about.
+func (tc *TestContext) fakeGlabMR(iid int, title string) error {
+	list, _ := json.Marshal([]map[string]any{{
+		"iid": iid, "web_url": fmt.Sprintf("https://gitlab.example.com/g/r/-/merge_requests/%d", iid),
+		"target_branch": "main", "source_branch": "feat", "state": "opened", "title": title, "draft": false,
+	}})
+	return tc.fakeCLI("glab", "mr list", string(list))
+}
+
+// fakeCLI installs a fake bin in /usr/local/bin that prints out for the
+// subcommand sub (its first two args) and fails for anything else.
+func (tc *TestContext) fakeCLI(bin, sub, out string) error {
+	if found, err := exec.LookPath(bin); err == nil {
+		return fmt.Errorf("a %s is already on PATH at %s", bin, found)
+	}
+	path := "/usr/local/bin/" + bin
+	script := fmt.Sprintf("#!/bin/sh\nif [ \"$1 $2\" = \"%s\" ]; then echo '%s'; exit 0; fi\necho \"fake %s: unsupported: $*\" >&2\nexit 1\n", sub, out, bin)
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		return err
+	}
+	tc.FakeBinPaths = append(tc.FakeBinPaths, path)
+	return nil
 }
 
 // assertRowInfo checks the one row-info popup shows the channel's (or

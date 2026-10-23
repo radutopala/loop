@@ -47,6 +47,7 @@ type TestContext struct {
 	CreatedThreadIDs         []string
 	CreatedTaskIDs           []string
 	CreatedDirs              []string
+	FakeBinPaths             []string // fake gh/glab installed on the daemon's PATH
 	WorktreeThreadID         string
 	LearnChannelID           string   // hidden learn thread seeded under ChannelID
 	ExplainMsgID             string   // last bot message of a turn seeded in ChannelID
@@ -180,6 +181,10 @@ func (tc *TestContext) cleanup() {
 	if tc.WorktreeThreadID != "" {
 		req, _ := http.NewRequest("DELETE", tc.BaseURL+"/api/threads/"+tc.WorktreeThreadID, nil)
 		tc.HTTPClient.Do(req) //nolint:errcheck
+	}
+
+	for _, p := range tc.FakeBinPaths {
+		os.Remove(p) //nolint:errcheck
 	}
 
 	// Remove temp directories.

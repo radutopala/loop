@@ -104,6 +104,16 @@ Browser settings are grouped under `"browser"`:
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `github.gh_user` | `string` | `""` | Named `gh` CLI account to use for PR lookups (see `gh auth status`). Empty falls back to whichever account `gh` currently has active. Used by `GET /api/channels/{id}/pr` and the Git panel's PR chip. |
+| `github.mount_gh_config` | `bool` | `false` | Mounts the host's `~/.config/gh` into agent containers at the same path, so `gh` there uses your accounts. In Settings, turning it on adds `~/.config/gh:~/.config/gh` to `mounts` (unless a mount at that path, or inside it, is already there) and turning it off removes the mounts there. Tokens `gh` keeps in the OS keychain don't come along; only those in its `hosts.yml` do. A project override needs trust. |
+
+#### GitLab
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `gitlab.glab_config_dir` | `string` | `""` | `glab` config dir for MR lookups, passed as `GLAB_CONFIG_DIR`. Each dir holds one account per host, so a second dir picks another account. Empty uses `glab`'s default. A project override needs trust. |
+| `gitlab.mount_glab_config` | `bool` | `false` | Mounts the host's `glab` config dir (`gitlab.glab_config_dir`, else `~/Library/Application Support/glab-cli` on macOS and `~/.config/glab-cli` on Linux) into agent containers at `~/.config/glab-cli`. In Settings, turning it on adds that mount to `mounts` (unless a mount at `~/.config/glab-cli`, or inside it such as a `config.yml` file mount, is already there), turning it off removes the mounts there, and changing `glab_config_dir` while it is on updates the entry. A project override needs trust. |
+
+A row's branch shows its GitLab merge request instead of a GitHub PR when the repo's `origin` points at a GitLab host: one whose name contains `gitlab`, or one listed in the `glab` config's `hosts`. That needs `glab` on the daemon's `PATH`.
 
 #### Plugins
 
@@ -728,6 +738,8 @@ Not all global fields are available in project configs. The following fields can
 | `browser.extensions` | **Replaces** the global list when set (entries are not merged). Read when the channel's sidecar is created. |
 | `browser.cookie_import` | **Overrides** per key: `source` and `auto` when set, `domains` **replaces** the global list when present. |
 | `github.gh_user` | **Overrides** global value when set. |
+| `github.mount_gh_config` | **Overrides** global value when set, once the project config is trusted. Set to `false`, it also drops the global mounts at `~/.config/gh`. |
+| `gitlab.glab_config_dir` / `gitlab.mount_glab_config` | Each **overrides** the global value when set, once the project config is trusted. `mount_glab_config: false` also drops the global mounts at `~/.config/glab-cli`. |
 | `review.enabled` / `review.prompt` / `review.prompt_path` / `review.verify` / `review.verify_prompt` / `review.max_iterations` / `review.update_base` | Each field **overrides** the global value only when explicitly set (see [Review](#review)). |
 | `learn.enabled` / `learn.min_turns` / `learn.model` / `learn.effort` / `learn.prompt` | Each field **overrides** the global value only when set: `enabled` and `min_turns` when present, the strings when non-empty (see [Learn](#learn)). |
 | `explain.enabled` / `explain.model` / `explain.effort` / `explain.prompt` | Each field **overrides** the global value only when set: `enabled` when present, the strings when non-empty (see [Explain](#explain)). |
@@ -759,6 +771,7 @@ The project config lives in the workspace, so an agent can edit it. The fields t
 - `anthropic_base_url` (the global credentials are sent there)
 - `browser.mode`, `browser.host_cdp_port`, `browser.extensions`, `browser.cookie_import`
 - `memory.paths`
+- `github.mount_gh_config`, `gitlab.glab_config_dir`, `gitlab.mount_glab_config` (they hand the host's `gh`/`glab` credentials to the agent)
 
 Everything else (model, image, prompt shortcuts, MCP servers and so on) only shapes the agent's own container and applies as written.
 
@@ -861,7 +874,14 @@ The AWS CLI saves a token in `~/.aws/sso/cache` or `~/.aws/cli/cache` by writing
 
   // GitHub integration (used by the Git panel's PR chip)
   //"github": {
-  //  "gh_user": "" // named gh CLI account; empty = gh's currently-active account
+  //  "gh_user": "", // named gh CLI account; empty = gh's currently-active account
+  //  "mount_gh_config": false // mount ~/.config/gh into agent containers
+  //},
+
+  // GitLab integration (MR lookups via glab)
+  //"gitlab": {
+  //  "glab_config_dir": "", // GLAB_CONFIG_DIR for lookups; empty = glab's default
+  //  "mount_glab_config": false // mount the glab config dir into agent containers
   //},
 
   // RBAC permissions
@@ -1048,9 +1068,16 @@ The AWS CLI saves a token in `~/.aws/sso/cache` or `~/.aws/cli/cache` by writing
   //  }
   //},
 
-  // GitHub override (per-project gh CLI account)
+  // GitHub override (per-project gh CLI account; mount_gh_config needs trust)
   //"github": {
-  //  "gh_user": ""
+  //  "gh_user": "",
+  //  "mount_gh_config": false
+  //},
+
+  // GitLab override (needs trust)
+  //"gitlab": {
+  //  "glab_config_dir": "",
+  //  "mount_glab_config": false
   //},
 
   // Memory config (paths appended to global; embeddings override global)

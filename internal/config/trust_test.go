@@ -648,3 +648,95 @@ func (s *TrustSuite) TestProjectPlugins() {
 		})
 	}
 }
+
+func (s *TrustSuite) TestMergeCLIConfigsNeedTrust() {
+	main := &Config{
+		GitHub: GitHubConfig{GHUser: "global-user"},
+		GitLab: GitLabConfig{GlabConfigDir: "/global/glab"},
+	}
+
+	s.project(`{"github": {"gh_user": "proj-user", "mount_gh_config": true}, "gitlab": {"glab_config_dir": "/proj/glab", "mount_glab_config": true}}`)
+	st, err := s.store.Status("/proj")
+	require.NoError(s.T(), err)
+	require.False(s.T(), st.Trusted)
+	require.Contains(s.T(), st.Current, `"mount_gh_config": true`)
+	require.Contains(s.T(), st.Current, `"glab_config_dir": "/proj/glab"`)
+	require.NotContains(s.T(), st.Current, "proj-user", "gh_user needs no trust")
+	merged, err := s.loader().loadProjectConfig("/proj", main)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "proj-user", merged.GitHub.GHUser)
+	require.False(s.T(), merged.GitHub.MountGHConfig)
+	require.Equal(s.T(), "/global/glab", merged.GitLab.GlabConfigDir)
+	require.False(s.T(), merged.GitLab.MountGlabConfig)
+
+	require.NoError(s.T(), s.store.Trust("/proj", st.Hash))
+	merged, err = s.loader().loadProjectConfig("/proj", main)
+	require.NoError(s.T(), err)
+	require.True(s.T(), merged.GitHub.MountGHConfig)
+	require.Equal(s.T(), "/proj/glab", merged.GitLab.GlabConfigDir)
+	require.True(s.T(), merged.GitLab.MountGlabConfig)
+
+	// An agent drops or changes them: the approved values stay in effect.
+	s.project(`{"github": {"gh_user": "other"}, "gitlab": {"glab_config_dir": "/tmp/evil"}}`)
+	merged, err = s.loader().loadProjectConfig("/proj", main)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "other", merged.GitHub.GHUser)
+	require.True(s.T(), merged.GitHub.MountGHConfig)
+	require.Equal(s.T(), "/proj/glab", merged.GitLab.GlabConfigDir)
+	require.True(s.T(), merged.GitLab.MountGlabConfig)
+
+	// Even with the blocks gone from the file.
+	s.project(`{"mounts": ["/new:/new"]}`)
+	merged, err = s.loader().loadProjectConfig("/proj", main)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "global-user", merged.GitHub.GHUser)
+	require.True(s.T(), merged.GitHub.MountGHConfig)
+	require.True(s.T(), merged.GitLab.MountGlabConfig)
+}
+
+func (s *TrustSuite) TestMergeCLIConfigsTrustedOff() {
+	main := &Config{GitHub: GitHubConfig{MountGHConfig: true}, GitLab: GitLabConfig{MountGlabConfig: true}}
+
+	// A trusted project can turn the global mounts off.
+	s.project(`{"github": {"mount_gh_config": false}, "gitlab": {"mount_glab_config": false}}`)
+	require.NoError(s.T(), s.store.Trust("/proj", ""))
+	merged, err := s.loader().loadProjectConfig("/proj", main)
+	require.NoError(s.T(), err)
+	require.False(s.T(), merged.GitHub.MountGHConfig)
+	require.False(s.T(), merged.GitLab.MountGlabConfig)
+	require.Empty(s.T(), merged.GitLab.GlabConfigDir)
+
+	// A trusted project without them leaves the global values.
+	s.files = map[string][]byte{}
+	s.project(`{"github": {"gh_user": "u"}, "gitlab": {}}`)
+	merged, err = s.loader().loadProjectConfig("/proj", main)
+	require.NoError(s.T(), err)
+	require.True(s.T(), merged.GitHub.MountGHConfig)
+	require.True(s.T(), merged.GitLab.MountGlabConfig)
+}
+
+func (s *TrustSuite) TestMergeCLIConfigsOffDropsGlobalMounts() {
+	global := []string{
+		"/a:/a",
+		GHConfigMount,
+		"~/Library/Application Support/glab-cli:~/.config/glab-cli",
+		"~/Library/Application Support/glab-cli/config.yml:~/.config/glab-cli/config.yml:ro",
+		"/g:~/.config/ghost",
+	}
+	main := &Config{Mounts: global, GitHub: GitHubConfig{MountGHConfig: true}, GitLab: GitLabConfig{MountGlabConfig: true}}
+
+	// Turned off in a trusted project, the global entries for it go too.
+	s.project(`{"github": {"mount_gh_config": false}, "gitlab": {"mount_glab_config": false}}`)
+	require.NoError(s.T(), s.store.Trust("/proj", ""))
+	merged, err := s.loader().loadProjectConfig("/proj", main)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"/a:/a", "/g:~/.config/ghost"}, merged.Mounts)
+	require.Equal(s.T(), global, main.Mounts, "global config untouched")
+
+	// Turned on, or left unset, they stay.
+	s.files = map[string][]byte{}
+	s.project(`{"github": {"mount_gh_config": true}, "gitlab": {}}`)
+	merged, err = s.loader().loadProjectConfig("/proj", main)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), global, merged.Mounts)
+}

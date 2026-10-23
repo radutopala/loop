@@ -5,6 +5,8 @@ import { apiFetch, contentCapBase, encodePathSegments, getApiUrl } from "./api";
 export interface RootEntry {
   index: number;
   path: string;
+  /** path with the daemon user's home shown as ~. */
+  display_path?: string;
   name: string;
 }
 

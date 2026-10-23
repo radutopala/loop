@@ -14,6 +14,21 @@ import (
 	"github.com/radutopala/loop/internal/types"
 )
 
+// projectGitHubConfig is the project layer's github block; MountGHConfig is
+// a pointer so an unset value keeps the global one. It needs trust.
+type projectGitHubConfig struct {
+	GHUser        string `json:"gh_user"`
+	MountGHConfig *bool  `json:"mount_gh_config"`
+}
+
+// projectGitLabConfig is the project layer's gitlab block. Both fields need
+// trust: they hand glab's credentials to the agent or pick where glab reads
+// them from.
+type projectGitLabConfig struct {
+	GlabConfigDir   string `json:"glab_config_dir"`
+	MountGlabConfig *bool  `json:"mount_glab_config"`
+}
+
 // projectConfig is the structure for project-specific .loop/config.json files.
 type projectConfig struct {
 	Mounts                     []string                   `json:"mounts"`
@@ -47,7 +62,8 @@ type projectConfig struct {
 	Permissions                *jsonPermissionsConfig     `json:"permissions"`
 	ExtraDirs                  []string                   `json:"extra_dirs"`
 	Gates                      *jsonGatesConfig           `json:"gates"`
-	GitHub                     *GitHubConfig              `json:"github"`
+	GitHub                     *projectGitHubConfig       `json:"github"`
+	GitLab                     *projectGitLabConfig       `json:"gitlab"`
 	Review                     *jsonReviewConfig          `json:"review"`
 	PlaygroundShare            *jsonPlaygroundShareConfig `json:"playground_share"`
 	Learn                      *jsonLearnConfig           `json:"learn"`
@@ -62,7 +78,9 @@ type projectConfig struct {
 // Merge behavior:
 //   - Mounts: Project mounts are added to the global ones, a project mount
 //     replacing a global one at the same container path; inherit_mounts: false
-//     makes them replace the global list instead
+//     makes them replace the global list instead. A project that turns
+//     github.mount_gh_config or gitlab.mount_glab_config off also drops the
+//     mounts at that config's container path
 //   - Proxies.HTTPProxy/HTTPSProxy: Project value replaces the global one when set
 //   - Proxies.NoProxy: Project entries are appended to the global ones
 //   - MCP Servers: Merged with project servers taking precedence over main config
@@ -580,6 +598,25 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 	if pc.GitHub != nil && pc.GitHub.GHUser != "" {
 		merged.GitHub.GHUser = pc.GitHub.GHUser
 	}
+	if pc.GitHub != nil && pc.GitHub.MountGHConfig != nil {
+		merged.GitHub.MountGHConfig = *pc.GitHub.MountGHConfig
+		if !merged.GitHub.MountGHConfig {
+			merged.Mounts = dropMountsAt(merged.Mounts, mountTarget(GHConfigMount))
+		}
+	}
+
+	// GitLab: each field overrides global only when set in the project.
+	if pc.GitLab != nil {
+		if pc.GitLab.GlabConfigDir != "" {
+			merged.GitLab.GlabConfigDir = pc.GitLab.GlabConfigDir
+		}
+		if pc.GitLab.MountGlabConfig != nil {
+			merged.GitLab.MountGlabConfig = *pc.GitLab.MountGlabConfig
+			if !merged.GitLab.MountGlabConfig {
+				merged.Mounts = dropMountsAt(merged.Mounts, GlabConfigTarget)
+			}
+		}
+	}
 
 	// Review: each field overrides global only when explicitly set in the
 	// project layer. Enabled is *bool so we can distinguish "unset" from
@@ -734,6 +771,25 @@ func mountTarget(mount string) string {
 	_, rest, _ := strings.Cut(mount, ":")
 	target, _, _ := strings.Cut(rest, ":")
 	return strings.TrimSuffix(target, "/")
+}
+
+// mountCovers reports whether mount's container path is target or lies
+// inside it.
+func mountCovers(mount, target string) bool {
+	t := mountTarget(mount)
+	return t == target || strings.HasPrefix(t, target+"/")
+}
+
+// dropMountsAt returns mounts without those at or inside target: a project
+// that turns a config mount off drops the global entry for it too.
+func dropMountsAt(mounts []string, target string) []string {
+	var out []string
+	for _, m := range mounts {
+		if !mountCovers(m, target) {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // ResolveMount returns a project config mount with a relative host path

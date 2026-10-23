@@ -32,6 +32,8 @@ type PRInfo struct {
 	State   string `json:"state"`
 	Title   string `json:"title,omitempty"`
 	IsDraft bool   `json:"is_draft,omitempty"`
+	// Kind is "mr" for a GitLab merge request; empty for a GitHub PR.
+	Kind string `json:"kind,omitempty"`
 }
 
 // ErrGhNotInstalled signals the gh binary couldn't be located. Callers

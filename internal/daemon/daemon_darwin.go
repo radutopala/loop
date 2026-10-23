@@ -52,7 +52,7 @@ func Start(sys System, logFile string) error {
 	// from config per request instead.
 	extraEnv := map[string]string{"SHELL": shell}
 
-	plist := generatePlist(binPath, logFile, extraEnv)
+	plist := generatePlist(binPath, logFile, home, extraEnv)
 	if err := sys.WriteFile(plistPath, []byte(plist), 0o644); err != nil {
 		return fmt.Errorf("writing plist: %w", err)
 	}
@@ -127,7 +127,10 @@ func Status(sys System) (string, error) {
 	return "stopped", nil
 }
 
-func generatePlist(binaryPath, logFile string, extraEnv map[string]string) string {
+// generatePlist renders the launchd agent. PATH ends with ~/go/bin so the
+// daemon finds CLIs installed with `go install` (e.g. glab), after the
+// system and Homebrew dirs so those still win.
+func generatePlist(binaryPath, logFile, home string, extraEnv map[string]string) string {
 	var envEntries strings.Builder
 	// Sort keys for deterministic output.
 	keys := make([]string, 0, len(extraEnv))
@@ -163,9 +166,9 @@ func generatePlist(binaryPath, logFile string, extraEnv map[string]string) strin
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>
-		<string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:%s</string>
 %s	</dict>
 </dict>
 </plist>
-`, serviceLabel, binaryPath, logFile, logFile, envEntries.String())
+`, serviceLabel, binaryPath, logFile, logFile, filepath.Join(home, "go", "bin"), envEntries.String())
 }

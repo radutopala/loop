@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { fetchCommits } from "../../api/git";
+import { useChannelPR } from "../../hooks/useChannelPR";
 import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
 import type { Channel } from "../../types";
 import { logErr } from "../../utils/log";
 import { openExternalUrl } from "../../utils/openExternal";
+import { prKind, prRef, prState, prSummary } from "../../utils/prState";
 import { ticketKey } from "../../utils/ticketUrl";
 
 interface ChannelHeaderInfoProps {
@@ -14,12 +16,13 @@ interface ChannelHeaderInfoProps {
   hideBranch?: boolean;
 }
 
-/** Read-only channel info (dir path, session, commit, branch) for use in header drag regions. */
+/** Read-only channel info (dir path, ticket, PR, session, commit, branch) for use in header drag regions. */
 export function ChannelHeaderInfo({ channel, colors, hideBranch }: ChannelHeaderInfoProps) {
   const dirPath = channel.dir_path || "";
   const branch = channel.branch || "";
   const commit = channel.commit || "";
   const ticketURL = channel.ticket_url?.trim() || "";
+  const pr = useChannelPR(channel.id, branch);
 
   // For a worktree thread, flag when it still sits at its base branch's commit
   // (i.e. no commits made yet). Compare the worktree HEAD (channel.commit) to
@@ -46,28 +49,28 @@ export function ChannelHeaderInfo({ channel, colors, hideBranch }: ChannelHeader
 
   if (!dirPath) return null;
 
+  // One row that scrolls sideways when the window is too narrow, every
+  // item kept whole.
   return (
-    <>
+    <span data-testid="header-info" style={{ display: "flex", alignItems: "center", flex: "0 1 auto", minWidth: 0, overflowX: "auto", scrollbarWidth: "none" }}>
       <span
         onDoubleClick={(e) => {
           navigator.clipboard.writeText(dirPath);
           const sel = window.getSelection();
           sel?.selectAllChildren(e.currentTarget);
         }}
-        title="Double-click to copy path"
+        title={`${dirPath}\nDouble-click to copy path`}
         style={{
           fontSize: 12,
           color: colors.textDim,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
           whiteSpace: "nowrap",
-          minWidth: 0,
+          flexShrink: 0,
           marginLeft: 12,
           cursor: "default",
           WebkitAppRegion: "no-drag",
         }}
       >
-        {dirPath}
+        {channel.display_path || dirPath}
       </span>
       <span style={{ color: colors.border, flexShrink: 0, margin: "0 8px 0 12px" }}>|</span>
       <span style={{ fontSize: 11, color: colors.textDim, fontFamily: fonts.mono, flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 4 }}>
@@ -115,6 +118,31 @@ export function ChannelHeaderInfo({ channel, colors, hideBranch }: ChannelHeader
               <path d="M13 5v2M13 17v2M13 11v2" />
             </svg>
             {ticketKey(ticketURL)}
+          </span>
+        </>
+      )}
+      {pr && (
+        <>
+          <span style={{ color: colors.border, flexShrink: 0, margin: "0 8px 0 12px" }}>|</span>
+          <span
+            data-testid="header-pr"
+            role="link"
+            onClick={() => openExternalUrl(pr.url)}
+            title={`${prKind(pr)} ${prSummary(pr)}\n${pr.url}\nClick to open`}
+            style={{
+              fontSize: 11,
+              color: colors.active,
+              fontFamily: fonts.mono,
+              flexShrink: 0,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              cursor: "pointer",
+              WebkitAppRegion: "no-drag",
+            }}
+          >
+            <span data-testid="header-pr-state" data-state={prState(pr, "").label} style={{ width: 6, height: 6, borderRadius: 3, background: prState(pr, colors.textDim).dot, flexShrink: 0 }} />
+            {prKind(pr)} {prRef(pr)}
           </span>
         </>
       )}
@@ -218,6 +246,6 @@ export function ChannelHeaderInfo({ channel, colors, hideBranch }: ChannelHeader
           = {channel.base_branch}
         </span>
       )}
-    </>
+    </span>
   );
 }

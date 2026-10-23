@@ -1,8 +1,9 @@
-import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { ConfigResponse, ConfigSchema, SchemaProperty } from "../../api/configApi";
 import { useTheme } from "../../ThemeContext";
 import type { ColorPalette } from "../../theme";
 import { builtinThemes, fonts } from "../../theme";
+import { mountToggles, syncConfigMounts } from "./configMounts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -347,9 +348,18 @@ export const ConfigForm = forwardRef<ConfigFormHandle, ConfigFormProps>(function
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => () => clearTimeout(autoSaveTimerRef.current), []);
 
+  // Toggles such as Mount gh Config add their entry to the mounts list, so
+  // it shows under Workspace. A project inheriting the global mounts finds
+  // an entry there already present.
+  const toggles = useMemo(() => mountToggles(schema?.properties), [schema]);
+  const inheritedMounts = useCallback(
+    (data: ConfigData): string[] => (inheritedConfig && data.inherit_mounts !== false && Array.isArray(inheritedConfig.mounts) ? (inheritedConfig.mounts as string[]) : []),
+    [inheritedConfig],
+  );
+
   const handleFormChange = useCallback(
     (key: string, value: ConfigData | FieldValue | ConfigData[] | undefined) => {
-      setFormData((prev) => setNestedValue(prev, key, value));
+      setFormData((prev) => syncConfigMounts(prev, setNestedValue(prev, key, value), key, toggles, inheritedMounts(prev)) as ConfigData);
       if (autoSave) {
         clearTimeout(autoSaveTimerRef.current);
         autoSaveTimerRef.current = setTimeout(() => handleSaveRef.current(), 100);
@@ -357,7 +367,7 @@ export const ConfigForm = forwardRef<ConfigFormHandle, ConfigFormProps>(function
         setDirty(true);
       }
     },
-    [autoSave],
+    [autoSave, toggles, inheritedMounts],
   );
 
   const handleCancel = useCallback(() => {

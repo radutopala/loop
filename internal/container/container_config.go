@@ -136,6 +136,45 @@ func (r *DockerRunner) processMount(mount string) (string, error) {
 	return ms.String(), nil
 }
 
+// withCLIConfigMounts returns cfg.Mounts plus the gh and glab config dirs
+// the config mounts into agent containers (github.mount_gh_config,
+// gitlab.mount_glab_config). Settings writes these into the mounts list;
+// this covers a config edited by hand. glab's default dir is under
+// Application Support on macOS; inside the container it is always
+// ~/.config/glab-cli. A configured mount at the same container path, or
+// inside it, wins.
+func (r *DockerRunner) withCLIConfigMounts(cfg *config.Config) []string {
+	var extra []string
+	if cfg.GitHub.MountGHConfig {
+		extra = append(extra, config.GHConfigMount)
+	}
+	if cfg.GitLab.MountGlabConfig {
+		extra = append(extra, config.GlabConfigMount(r.goos, cfg.GitLab.GlabConfigDir))
+	}
+	if len(extra) == 0 {
+		return cfg.Mounts
+	}
+	target := func(m string) string {
+		ms, err := parseMountSpec(m)
+		if err != nil {
+			return ""
+		}
+		p, _ := r.expandPath(ms.Container)
+		return p
+	}
+	mounts := append([]string(nil), cfg.Mounts...)
+	for _, m := range extra {
+		t := target(m)
+		if !slices.ContainsFunc(cfg.Mounts, func(c string) bool {
+			ct := target(c)
+			return ct == t || strings.HasPrefix(ct, t+"/")
+		}) {
+			mounts = append(mounts, m)
+		}
+	}
+	return mounts
+}
+
 // gitExcludesMount detects the host git core.excludesFile and returns a bind
 // mount string so the file is available inside the container at the path git
 // will look for it. Returns "" if unconfigured or the file doesn't exist.

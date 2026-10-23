@@ -28,6 +28,8 @@ export interface SchemaProperty {
   "x-placeholder"?: string;
   "x-widget"?: string;
   "x-auto-save"?: boolean;
+  "x-mount"?: string;
+  "x-mount-source"?: string;
 }
 
 export interface ConfigResponse {

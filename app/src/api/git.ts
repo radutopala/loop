@@ -114,6 +114,8 @@ export interface PRInfo {
   state: string;
   title?: string;
   is_draft?: boolean;
+  /** "mr" for a GitLab merge request; absent for a GitHub PR. */
+  kind?: string;
 }
 
 export interface PRResponse {

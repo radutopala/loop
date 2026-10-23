@@ -8,6 +8,11 @@ export interface MenuItem {
   onClick: () => void;
   danger?: boolean;
   separator?: boolean;
+  /** Marks the current choice in a picker; items with it set get a check column. */
+  checked?: boolean;
+  /** Dim text after the label, such as a path. */
+  hint?: string;
+  title?: string;
 }
 
 interface ContextMenuProps {
@@ -36,6 +41,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
   // Arrow nav walks every item: a separator only draws a line above its
   // own item, which stays actionable.
   const itemIndices = items.map((_, i) => i);
+  const hasChecks = items.some((item) => item.checked !== undefined);
 
   useLayoutEffect(() => {
     const el = menuRef.current;
@@ -187,7 +193,9 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
               />
             )}
             <button
-              role="menuitem"
+              role={hasChecks ? "menuitemradio" : "menuitem"}
+              aria-checked={hasChecks ? !!item.checked : undefined}
+              title={item.title}
               tabIndex={focusIdx === i ? 0 : -1}
               ref={(el) => {
                 itemRefs.current[i] = el;
@@ -219,7 +227,9 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
                 e.currentTarget.style.backgroundColor = "transparent";
               }}
             >
+              {hasChecks && <span style={{ width: 10, flexShrink: 0, color: colors.active }}>{item.checked ? "✓" : ""}</span>}
               {item.label}
+              {item.hint && <span style={{ color: colors.textDim, fontFamily: fonts.mono, fontSize: 10, marginLeft: "auto", paddingLeft: 12 }}>{item.hint}</span>}
             </button>
           </div>
         ))}

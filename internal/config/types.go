@@ -627,6 +627,7 @@ type Config struct {
 	Desktop                    DesktopConfig
 	Gates                      GatesConfig
 	GitHub                     GitHubConfig
+	GitLab                     GitLabConfig
 	Review                     ReviewConfig
 	PlaygroundShare            PlaygroundShareConfig
 	Backup                     BackupConfig
@@ -745,8 +746,41 @@ func (p *PluginsConfig) UnmarshalJSON(data []byte) error {
 // account (per `gh auth status`); when set, PR lookups read its token via
 // `gh auth token --user <name>` and invoke `gh` with GH_TOKEN env override —
 // avoiding the racy mutation of global gh state via `gh auth switch`.
+// MountGHConfig mounts the host's ~/.config/gh into agent
+// containers so gh works there with the host's accounts.
 type GitHubConfig struct {
-	GHUser string `json:"gh_user"`
+	GHUser        string `json:"gh_user"`
+	MountGHConfig bool   `json:"mount_gh_config"`
+}
+
+// GitLabConfig holds GitLab integration settings. A project override of
+// either needs trust (see trustedFields): both hand glab's credentials over.
+// glab keeps one account per host, so GlabConfigDir picks the account by
+// pointing glab at a config directory (GLAB_CONFIG_DIR) that has it logged
+// in. MountGlabConfig mounts that directory (or glab's default one) into
+// agent containers at ~/.config/glab-cli.
+type GitLabConfig struct {
+	GlabConfigDir   string `json:"glab_config_dir"`
+	MountGlabConfig bool   `json:"mount_glab_config"`
+}
+
+// GHConfigMount is the mount github.mount_gh_config adds.
+const GHConfigMount = "~/.config/gh:~/.config/gh"
+
+// GlabConfigTarget is where gitlab.mount_glab_config mounts glab's config
+// dir: glab's default on Linux, which the agent containers run.
+const GlabConfigTarget = "~/.config/glab-cli"
+
+// GlabConfigMount is the mount gitlab.mount_glab_config adds: dir, else
+// glab's default config dir on goos, at GlabConfigTarget.
+func GlabConfigMount(goos, dir string) string {
+	if dir == "" {
+		dir = GlabConfigTarget
+		if goos == "darwin" {
+			dir = "~/Library/Application Support/glab-cli"
+		}
+	}
+	return dir + ":" + GlabConfigTarget
 }
 
 // DesktopConfig holds Electron desktop app preferences.

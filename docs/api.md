@@ -133,6 +133,7 @@ List all channels with optional filtering. Enriches each channel with container 
     "channel_id": "abc123",
     "name": "my-project-a1b2",
     "dir_path": "/home/user/projects/my-project",
+    "display_path": "~/projects/my-project",
     "parent_id": "",
     "active": true,
     "container_running": true,
@@ -149,6 +150,7 @@ List all channels with optional filtering. Enriches each channel with container 
 
 **Behavior notes:**
 - When a channel has no `dir_path`, falls back to `~/.loop/{channel_id}/work`.
+- `display_path` is `dir_path` with the daemon user's home dir shown as `~`, for display; the header shows it.
 - `container_running` is determined by querying the Docker daemon for running containers.
 - `agent_running` indicates whether an active Claude agent run exists for the channel. A run is registered before its `agent.status` "running" event is broadcast, so a response to a request made after that event reflects the run.
 - `review_running` is true while a review run or a dedup pass runs on the channel's [review session](#review) (its status is `reviewing`, or `verifying` during the [verification step](#post-apichannelsidreviewverify)). Review sessions live in the daemon's memory, so this comes from the review store, not the database. The sidebar shows the channel as running and patches the flag live from `review.status` events.
@@ -1829,14 +1831,14 @@ List all root directories for a channel: the primary `dir_path` followed by any 
 ```json
 {
   "roots": [
-    "/home/user/projects/my-project",
-    "/home/user/projects/shared-lib",
-    "/home/user/projects/proto"
+    {"index": 0, "path": "/home/user/projects/my-project", "display_path": "~/projects/my-project", "name": "my-project"},
+    {"index": 1, "path": "/home/user/projects/shared-lib", "display_path": "~/projects/shared-lib", "name": "shared-lib"},
+    {"index": 2, "path": "/opt/proto", "display_path": "/opt/proto", "name": "proto"}
   ]
 }
 ```
 
-The first entry is always the primary `dir_path`. Subsequent entries are the extra directories in the order they were set.
+The first entry is always the primary `dir_path`. Subsequent entries are the extra directories in the order they were set. `index` is the value file endpoints take as `root`; `display_path` is `path` with the daemon user's home dir shown as `~`, which the root dropdowns show.
 
 **Errors:** `404` if channel not found.
 
@@ -2164,7 +2166,7 @@ Get git diff information for a channel's working directory. Includes both tracke
 
 ### `GET /api/channels/{id}/pr`
 
-Look up the open GitHub pull request whose head branch matches the channel's current branch. Shells out to `gh pr view` against the channel's working directory.
+Look up the pull request whose head branch matches the channel's current branch: a GitHub PR via `gh`, or a GitLab merge request via `glab` when the repo's `origin` is a GitLab host. Shells out against the channel's working directory.
 
 **Response (200, PR found):**
 ```json
@@ -2182,6 +2184,8 @@ Look up the open GitHub pull request whose head branch matches the channel's cur
 }
 ```
 
+A GitLab merge request has `"kind": "mr"`, its IID as `number`, and GitLab's lowercase `state` (`opened`, `merged`, `closed`); `kind` is absent for a GitHub PR.
+
 **Response (200, no PR):**
 ```json
 {"present": false}
@@ -2190,7 +2194,8 @@ Look up the open GitHub pull request whose head branch matches the channel's cur
 **Behavior notes:**
 - The lookup uses `gh pr view --json number,url,baseRefName,headRefName,state,title,isDraft` and falls back to a `gh pr list` query when `pr view` reports no match.
 - The `gh` account is picked by the `github.gh_user` config key (mergeable per-project via `.loop/config.json`); empty falls back to whichever account `gh` currently has active.
-- Environmental failures (`gh` not installed, no GitHub remote, network) degrade to `present: false` rather than a 5xx so the UI hides the PR chip silently.
+- A repo without an `origin` remote looks nothing up. An `origin` on a GitLab host (its name contains `gitlab`, or the `glab` config lists it) runs `glab mr list --source-branch <branch> --all`, newest first; `gitlab.glab_config_dir` picks the config, so the account, it uses. Any other host goes to `gh`, GitHub Enterprise included.
+- Environmental failures (`gh` or `glab` not installed, network) degrade to `present: false` rather than a 5xx so the UI hides the PR chip silently.
 
 **Errors:** `404` if channel not found.
 

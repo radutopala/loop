@@ -1,5 +1,6 @@
 import { Fragment, type ReactNode, type RefObject, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useChannelPR } from "../../hooks/useChannelPR";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { Channel } from "../../types";
@@ -16,7 +17,7 @@ interface RowInfoPopupProps {
 
 /**
  * RowInfoPopup shows a sidebar row's full name, description, ticket,
- * directory, git state and agent settings beside it as soon as the pointer is
+ * directory, git state, PR and agent settings beside it as soon as the pointer is
  * on the row. A click, drag or scroll hides it until the pointer comes back.
  */
 export function RowInfoPopup({ channel, anchorRef, hovered }: RowInfoPopupProps) {
@@ -25,7 +26,9 @@ export function RowInfoPopup({ channel, anchorRef, hovered }: RowInfoPopupProps)
   const [pos, setPos] = useState<{ top: number; left: number; rowMid: number } | null>(null);
   const popupRef = useRef<HTMLDivElement>(null);
   const title = sessionName(channel);
-  const lines = rowInfoLines(channel);
+  // Looked up only while the popup shows, not for every row in the sidebar.
+  const pr = useChannelPR(channel.id, channel.branch, hovered);
+  const lines = rowInfoLines(channel, pr);
   const description = channel.description?.trim();
 
   // A layout effect, so the popup shows in the same frame as the row's
@@ -54,14 +57,14 @@ export function RowInfoPopup({ channel, anchorRef, hovered }: RowInfoPopupProps)
   }, [hovered, anchorRef]);
 
   // Center it on the row, kept on screen; the arrow still points at the row
-  // when it's shifted.
+  // when it's shifted. Again when the PR line arrives and makes it taller.
   useLayoutEffect(() => {
     const el = popupRef.current;
     if (!el || !pos) return;
     const h = el.getBoundingClientRect().height;
     const top = Math.round(Math.max(8, Math.min(pos.rowMid - h / 2, window.innerHeight - 8 - h)));
     if (top !== pos.top) setPos({ ...pos, top });
-  }, [pos]);
+  }, [pos, pr]);
 
   if (!pos) return null;
   // A step lighter than anything under it on dark themes, so it stands out
@@ -185,6 +188,13 @@ const ICONS: Record<RowInfoLine["key"], ReactNode> = {
     <>
       <circle cx="12" cy="12" r="3" />
       <path d="M3 12h6M15 12h6" />
+    </>
+  ),
+  pr: (
+    <>
+      <circle cx="6" cy="6" r="3" />
+      <circle cx="18" cy="18" r="3" />
+      <path d="M6 9v12M13 6h3a2 2 0 0 1 2 2v7" />
     </>
   ),
   sync: <path d="M7 20V4M3 8l4-4 4 4M17 4v16M13 16l4 4 4-4" />,

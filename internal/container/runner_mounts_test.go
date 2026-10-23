@@ -753,3 +753,78 @@ func (s *RunnerSuite) TestBuildInteractiveClaudeCmdWithExtraDirs() {
 	got := BuildInteractiveClaudeCmd(cfg, "ch-1", "/work", "", "", false)
 	require.Contains(s.T(), got, "--add-dir /extra/dir")
 }
+
+func (s *RunnerSuite) TestWithCLIConfigMounts() {
+	tests := []struct {
+		name   string
+		goos   string
+		cfg    config.Config
+		expect []string
+	}{
+		{
+			name:   "off keeps the configured mounts",
+			cfg:    config.Config{Mounts: []string{"/a:/a"}},
+			expect: []string{"/a:/a"},
+		},
+		{
+			name:   "gh config",
+			cfg:    config.Config{GitHub: config.GitHubConfig{MountGHConfig: true}},
+			expect: []string{"~/.config/gh:~/.config/gh"},
+		},
+		{
+			name:   "glab config on macOS",
+			goos:   "darwin",
+			cfg:    config.Config{GitLab: config.GitLabConfig{MountGlabConfig: true}},
+			expect: []string{"~/Library/Application Support/glab-cli:~/.config/glab-cli"},
+		},
+		{
+			name:   "glab config on Linux",
+			goos:   "linux",
+			cfg:    config.Config{GitLab: config.GitLabConfig{MountGlabConfig: true}},
+			expect: []string{"~/.config/glab-cli:~/.config/glab-cli"},
+		},
+		{
+			name:   "glab config from the configured dir",
+			goos:   "darwin",
+			cfg:    config.Config{GitLab: config.GitLabConfig{GlabConfigDir: "~/glab-work", MountGlabConfig: true}},
+			expect: []string{"~/glab-work:~/.config/glab-cli"},
+		},
+		{
+			name: "a mount already at the target wins",
+			goos: "linux",
+			cfg: config.Config{
+				Mounts: []string{"/srv/gh:/home/testuser/.config/gh:ro", "bad-spec"},
+				GitHub: config.GitHubConfig{MountGHConfig: true},
+				GitLab: config.GitLabConfig{MountGlabConfig: true},
+			},
+			expect: []string{"/srv/gh:/home/testuser/.config/gh:ro", "bad-spec", "~/.config/glab-cli:~/.config/glab-cli"},
+		},
+		{
+			name: "a mount inside the target wins",
+			goos: "darwin",
+			cfg: config.Config{
+				Mounts: []string{"~/Library/Application Support/glab-cli/config.yml:~/.config/glab-cli/config.yml:ro", "/x:/home/testuser/.config/ghost"},
+				GitHub: config.GitHubConfig{MountGHConfig: true},
+				GitLab: config.GitLabConfig{MountGlabConfig: true},
+			},
+			expect: []string{"~/Library/Application Support/glab-cli/config.yml:~/.config/glab-cli/config.yml:ro", "/x:/home/testuser/.config/ghost", "~/.config/gh:~/.config/gh"},
+		},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			r := &DockerRunner{sys: newDefaultMockSystem(), goos: tt.goos}
+			got := r.withCLIConfigMounts(&tt.cfg)
+			require.Equal(s.T(), tt.expect, got)
+		})
+	}
+}
+
+func (s *RunnerSuite) TestWithCLIConfigMountsDoesNotAliasConfig() {
+	r := &DockerRunner{sys: newDefaultMockSystem()}
+	cfg := &config.Config{Mounts: make([]string, 1, 4), GitHub: config.GitHubConfig{MountGHConfig: true}}
+	cfg.Mounts[0] = "/a:/a"
+	got := r.withCLIConfigMounts(cfg)
+	require.Equal(s.T(), []string{"/a:/a", "~/.config/gh:~/.config/gh"}, got)
+	require.Equal(s.T(), []string{"/a:/a"}, cfg.Mounts)
+	require.Len(s.T(), cfg.Mounts[:cap(cfg.Mounts)][1], 0, "spare capacity untouched")
+}

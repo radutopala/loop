@@ -30,6 +30,7 @@ import (
 	"github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/fsmigrate"
 	"github.com/radutopala/loop/internal/githubapi"
+	"github.com/radutopala/loop/internal/gitlabapi"
 	"github.com/radutopala/loop/internal/local"
 	"github.com/radutopala/loop/internal/logging"
 	"github.com/radutopala/loop/internal/memory"
@@ -626,6 +627,7 @@ func (a *app) serve() error {
 	}
 	serverOpts := []api.Option{
 		api.WithGitHubLookup(ghClient),
+		api.WithGitLabLookup(gitlabapi.NewClient(hostProxyEnv)),
 		api.WithTunnel(tunnel.NewManager(filepath.Join(cfg.LoopDir, "bin"), logger)),
 		api.WithReview(ghClient, review.NewStore(), &review.GitPR{Run: review.CommandRunner(worktree.ExecCommandRunnerWithEnv(hostProxyEnv))}),
 		api.WithReviewAgent(&review.Runner{Agent: runner}, "", reviewPrompt),

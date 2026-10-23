@@ -8,6 +8,7 @@ import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
 import type { AgentStatusData, WSEvent } from "../../types";
 import { logErr } from "../../utils/log";
+import { prKind, prRef, prState, prSummary } from "../../utils/prState";
 import { storageGet, storageSet } from "../../utils/storage";
 import type { FileLinkOpenDetail } from "../chat/FileLink";
 import { ContextMenu } from "../shared/ContextMenu";
@@ -18,6 +19,7 @@ import type { ParsedFile } from "./DiffViewer";
 import { DiffViewer, fileKey } from "./DiffViewer";
 import { COMMITS_PAGE, type GitMode, type GitView, gitViewKey, loadGitView } from "./gitView";
 import { PaneRootSelect } from "./PaneRootSelect";
+import { RootPicker } from "./RootPicker";
 import { WorktreesPanel } from "./WorktreesPanel";
 
 const MIN_WIDTH = 280;
@@ -488,13 +490,7 @@ export function GitPanel({
         {!leafId && roots.length > 1 && (gitMode === "uncommitted" || gitMode === "branches" || gitMode === "commits") && (
           <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
             <span style={{ fontSize: 10, color: colors.textDim }}>root</span>
-            <select value={rootIndex} onChange={(e) => setRootIndex(Number(e.target.value))} style={selectStyle} title="Workspace root" data-testid="git-panel-root-select">
-              {roots.map((r) => (
-                <option key={r.index} value={r.index} title={r.path}>
-                  {r.path}
-                </option>
-              ))}
-            </select>
+            <RootPicker roots={roots} value={rootIndex} onChange={setRootIndex} testId="git-panel-root-select" title="Workspace root" />
           </span>
         )}
         {pr && <PRChip pr={pr} colors={colors} />}
@@ -944,9 +940,8 @@ export function GitPanel({
 // GitHub: green dot for open, grey for draft, purple for merged, red for
 // closed. Clicking opens the PR URL in the user's browser.
 function PRChip({ pr, colors }: { pr: PRInfo; colors: ColorPalette }) {
-  const dot = pr.is_draft ? colors.textDim : pr.state === "MERGED" ? "#a371f7" : pr.state === "CLOSED" ? "#cf222e" : "#3fb950";
-  const label = pr.is_draft ? "draft" : pr.state.toLowerCase();
-  const title = pr.title ? `#${pr.number} ${pr.title} (${label})` : `#${pr.number} (${label})`;
+  const { dot } = prState(pr, colors.textDim);
+  const title = prSummary(pr);
   return (
     <a
       href={pr.url}
@@ -971,7 +966,7 @@ function PRChip({ pr, colors }: { pr: PRInfo; colors: ColorPalette }) {
       }}
     >
       <span style={{ width: 6, height: 6, borderRadius: 3, background: dot, flexShrink: 0 }} />
-      PR #{pr.number}
+      {prKind(pr)} {prRef(pr)}
     </a>
   );
 }
