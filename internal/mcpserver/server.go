@@ -108,7 +108,7 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "list_tasks",
-		Description: "List all scheduled tasks for this channel.",
+		Description: "List all scheduled tasks for this channel, including those of its worktree threads; set threads to also include its plain threads.",
 	}, s.handleListTasks)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{

@@ -1601,6 +1601,8 @@ List tasks for a channel.
 | Param        | Type   | Required | Description |
 |--------------|--------|----------|-------------|
 | `channel_id` | string | yes      | Channel ID |
+| `worktrees`  | bool   | no       | `true` also lists the tasks of the channel's worktree threads |
+| `threads`    | bool   | no       | `true` also lists the tasks of the channel's plain (non-worktree) threads |
 
 **Response (200):**
 ```json
@@ -1626,7 +1628,7 @@ List tasks for a channel.
 ]
 ```
 
-The `running` field indicates whether the task is currently being executed. It is set atomically when execution begins and cleared when it finishes. When `workflow_name` is set, the task triggers a workflow run instead of an agent prompt. `plugin_id` and `plugin_action`, omitted otherwise, are set on the task of a [plugin action](plugins.md#scheduled-actions): it asks the plugin's container in the channel to run the action.
+The `running` field indicates whether the task is currently being executed. It is set atomically when execution begins and cleared when it finishes. When `workflow_name` is set, the task triggers a workflow run instead of an agent prompt. `plugin_id` and `plugin_action`, omitted otherwise, are set on the task of a [plugin action](plugins.md#scheduled-actions): it asks the plugin's container in the channel to run the action. With `worktrees=true` or `threads=true`, a task of a listed thread carries the thread's `channel_name` and `dir_path`, and `channel_worktree: true` when it is a worktree thread.
 
 **Errors:** `400` if `channel_id` is missing.
 

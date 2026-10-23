@@ -59,7 +59,9 @@ type showTaskInput struct {
 	TaskID int64 `json:"task_id" jsonschema:"The ID of the task to show"`
 }
 
-type listTasksInput struct{}
+type listTasksInput struct {
+	Threads bool `json:"threads,omitempty" jsonschema:"Also list the tasks of this channel's plain (non-worktree) threads; worktree thread tasks are always listed"`
+}
 
 func (s *Server) handleScheduleTask(_ context.Context, _ *mcp.CallToolRequest, input scheduleTaskInput) (*mcp.CallToolResult, any, error) {
 	s.logger.Info("mcp tool call", "tool", "schedule_task", "schedule", input.Schedule, "type", input.Type, "prompt", input.Prompt)
@@ -117,11 +119,14 @@ func (s *Server) handleScheduleTask(_ context.Context, _ *mcp.CallToolRequest, i
 	}, nil, nil
 }
 
-func (s *Server) handleListTasks(_ context.Context, _ *mcp.CallToolRequest, _ listTasksInput) (*mcp.CallToolResult, any, error) {
+func (s *Server) handleListTasks(_ context.Context, _ *mcp.CallToolRequest, input listTasksInput) (*mcp.CallToolResult, any, error) {
 	s.logger.Info("mcp tool call", "tool", "list_tasks", "channel_id", s.channelID)
 
 	type taskEntry struct {
 		ID              int64  `json:"id"`
+		ChannelID       string `json:"channel_id"`
+		ChannelName     string `json:"channel_name"`
+		ChannelWorktree bool   `json:"channel_worktree"`
 		Schedule        string `json:"schedule"`
 		Type            string `json:"type"`
 		Prompt          string `json:"prompt"`
@@ -136,7 +141,11 @@ func (s *Server) handleListTasks(_ context.Context, _ *mcp.CallToolRequest, _ li
 		WorkflowName    string `json:"workflow_name"`
 		WorkflowInputs  string `json:"workflow_inputs"`
 	}
-	tasks, errResult, err := doAPICall[[]taskEntry](s, "GET", fmt.Sprintf("%s/api/tasks?channel_id=%s", s.apiURL, s.channelID), http.StatusOK, nil)
+	reqURL := fmt.Sprintf("%s/api/tasks?channel_id=%s&worktrees=true", s.apiURL, s.channelID)
+	if input.Threads {
+		reqURL += "&threads=true"
+	}
+	tasks, errResult, err := doAPICall[[]taskEntry](s, "GET", reqURL, http.StatusOK, nil)
 	if errResult != nil || err != nil {
 		return errResult, nil, err
 	}
@@ -163,6 +172,13 @@ func (s *Server) handleListTasks(_ context.Context, _ *mcp.CallToolRequest, _ li
 			} else {
 				fmt.Fprintf(&text, "- ID %d: %s (schedule: %s, type: %s, enabled: %v", t.ID, prompt, t.Schedule, t.Type, t.Enabled)
 			}
+		}
+		if t.ChannelName != "" && t.ChannelID != s.channelID {
+			kind := "thread"
+			if t.ChannelWorktree {
+				kind = "worktree thread"
+			}
+			fmt.Fprintf(&text, ", %s: %s (%s)", kind, t.ChannelName, t.ChannelID)
 		}
 		if t.AutoDeleteSec > 0 {
 			fmt.Fprintf(&text, ", auto_delete: %ds", t.AutoDeleteSec)

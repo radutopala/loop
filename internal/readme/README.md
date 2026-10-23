@@ -1116,7 +1116,7 @@ In headless/Linux environments where Electron can't launch, `LOOP_NO_ELECTRON=1 
 | Tool | Description |
 |---|---|
 | `schedule_task` | Create a scheduled task (cron/interval/once) |
-| `list_tasks` | List all scheduled tasks for this channel |
+| `list_tasks` | List all scheduled tasks for this channel and its worktree threads; `threads: true` adds its plain threads |
 | `show_task` | Show details of a scheduled task by ID |
 | `cancel_task` | Cancel a scheduled task by ID |
 | `toggle_task` | Enable or disable a scheduled task by ID |
