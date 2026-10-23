@@ -226,7 +226,9 @@ func (s *Server) rootDirByIndex(ctx context.Context, channelID string, rootIdx i
 type rootEntry struct {
 	Index int    `json:"index"`
 	Path  string `json:"path"`
-	Name  string `json:"name"`
+	// DisplayPath is Path with the daemon user's home shown as ~.
+	DisplayPath string `json:"display_path"`
+	Name        string `json:"name"`
 }
 
 type listRootsResponse struct {
@@ -244,15 +246,17 @@ func (s *Server) handleListRoots(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	home, _ := s.sys.UserHomeDir()
 	roots := make([]rootEntry, 0, len(allPaths))
 	for i, p := range allPaths {
 		if p == "" {
 			continue
 		}
 		roots = append(roots, rootEntry{
-			Index: i,
-			Path:  p,
-			Name:  filepath.Base(p),
+			Index:       i,
+			Path:        p,
+			DisplayPath: homeDisplayPath(home, p),
+			Name:        filepath.Base(p),
 		})
 	}
 

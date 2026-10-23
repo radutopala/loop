@@ -67,6 +67,7 @@ type jsonConfig struct {
 	Desktop                    *DesktopConfig             `json:"desktop"`
 	Gates                      *jsonGatesConfig           `json:"gates"`
 	GitHub                     *GitHubConfig              `json:"github"`
+	GitLab                     *GitLabConfig              `json:"gitlab"`
 	Review                     *jsonReviewConfig          `json:"review"`
 	PlaygroundShare            *jsonPlaygroundShareConfig `json:"playground_share"`
 	Learn                      *jsonLearnConfig           `json:"learn"`
@@ -441,6 +442,9 @@ func (l *Loader) parse() (*Config, error) {
 
 	if jc.GitHub != nil {
 		cfg.GitHub = *jc.GitHub
+	}
+	if jc.GitLab != nil {
+		cfg.GitLab = *jc.GitLab
 	}
 	if jc.Plugins != nil {
 		cfg.Plugins = *jc.Plugins

@@ -80,6 +80,16 @@ func (c *configResolver) ghUser(workdir, parentDirPath string) string {
 	return cfg.GitHub.GHUser
 }
 
+// glabConfigDir returns the glab config dir for the channel's workdir, or ""
+// (glab's default) on any load error.
+func (c *configResolver) glabConfigDir(workdir, parentDirPath string) string {
+	cfg := c.merged(workdir, parentDirPath)
+	if cfg == nil {
+		return ""
+	}
+	return cfg.GitLab.GlabConfigDir
+}
+
 // reviewEnabled mirrors ghUser for the review.enabled flag. Returns false on
 // any config-load error so a broken config doesn't silently expose the panel.
 func (c *configResolver) reviewEnabled(workdir, parentDirPath string) bool {

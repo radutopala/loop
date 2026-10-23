@@ -1,8 +1,8 @@
 @frontend @rowinfo
 Feature: Sidebar Row Info
   Hovering a channel, thread or worktree thread in the sidebar immediately
-  shows its full name, directory, git branch, commit and subject in a popup
-  beside the row. A worktree thread also names the branch it was cut from and how far it
+  shows its full name, directory, git branch, the PR open on it, commit and
+  subject in a popup beside the row. A worktree thread also names the branch it was cut from and how far it
   is from it, and a channel with its own model or effort shows them too.
 
   Scenario: A channel and its worktree thread show their path and branch
@@ -15,6 +15,7 @@ Feature: Sidebar Row Info
     Then the row info should show the channel's path and branch "main"
     And the row info "commit" should read "{head}"
     And the row info "commit-detail" should read " initial commit"
+    And the row info should not show "pr"
     And the row info should not show "sync"
     And the row info should not show "model"
 
@@ -50,6 +51,39 @@ Feature: Sidebar Row Info
 
     When I rest the pointer on "a-worktree-thread-name" in the sidebar
     Then the row info "title" should read "a-worktree-thread-name-far-too-long-to-fit-in-the-sidebar-row (main)"
+
+  @row-pr
+  Scenario: The PR open on a channel's branch shows in its row info and the header
+    Given I set up a test channel via API for git repo "bdd-row-pr"
+    And the channel's repo has origin "https://github.com/o/r.git"
+    And gh reports PR #42 "Fix the login redirect" for any branch
+    And I open the app in a browser
+    And I wait for text "bdd-row-pr" to appear
+    And I click on "bdd-row-pr" in the sidebar
+
+    Then the element "[data-testid='header-pr']" should contain text "PR #42"
+    And I wait for "[data-testid='header-pr-state'][data-state='open']" to be visible
+
+    When I rest the pointer on "bdd-row-pr" in the sidebar
+    Then the row info "pr" should read "#42"
+    And the row info "pr-detail" should read " Fix the login redirect (open)"
+    And the row info should show the channel's path and branch "main"
+
+  @row-mr
+  Scenario: A GitLab repo's merge request shows as an MR
+    Given I set up a test channel via API for git repo "bdd-row-mr"
+    And the channel's repo has origin "https://gitlab.example.com/g/r.git"
+    And glab reports MR !12 "Fix the logout redirect" for any branch
+    And I open the app in a browser
+    And I wait for text "bdd-row-mr" to appear
+    And I click on "bdd-row-mr" in the sidebar
+
+    Then the element "[data-testid='header-pr']" should contain text "MR !12"
+    And I wait for "[data-testid='header-pr-state'][data-state='open']" to be visible
+
+    When I rest the pointer on "bdd-row-mr" in the sidebar
+    Then the row info "pr" should read "!12"
+    And the row info "pr-detail" should read " Fix the logout redirect (open)"
 
   @row-description
   Scenario: A thread's description shows in its row info and is set from the context menu

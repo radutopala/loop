@@ -1,8 +1,10 @@
+import type { PRInfo } from "../../api/git";
 import type { Channel } from "../../types";
+import { prRef, prState } from "../../utils/prState";
 
 /** One line of a sidebar row's info popup. */
 export interface RowInfoLine {
-  key: "ticket" | "path" | "branch" | "commit" | "sync" | "model" | "status";
+  key: "ticket" | "path" | "branch" | "pr" | "commit" | "sync" | "model" | "status";
   value: string;
   /** Shown dimmed after the value, e.g. the commit's subject. */
   detail?: string;
@@ -10,11 +12,11 @@ export interface RowInfoLine {
 
 /**
  * The lines of a sidebar row's info popup, leaving out any with nothing to
- * say: its ticket's URL, its directory, its branch, its
+ * say: its ticket's URL, its directory, its branch, the PR open on it, its
  * commit and subject, how far it is from its base and upstream branches, its
  * model/effort overrides, and whether its agent is running or it's locked.
  */
-export function rowInfoLines(channel: Channel): RowInfoLine[] {
+export function rowInfoLines(channel: Channel, pr?: PRInfo | null): RowInfoLine[] {
   const lines: RowInfoLine[] = [];
   const ticket = channel.ticket_url?.trim();
   if (ticket) lines.push({ key: "ticket", value: ticket });
@@ -26,6 +28,7 @@ export function rowInfoLines(channel: Channel): RowInfoLine[] {
   } else if (commit) {
     lines.push({ key: "branch", value: "detached" });
   }
+  if (pr) lines.push({ key: "pr", value: prRef(pr), detail: [pr.title, `(${prState(pr, "").label})`].filter(Boolean).join(" ") });
   if (commit) lines.push({ key: "commit", value: commit, ...(channel.subject ? { detail: channel.subject } : {}) });
   const sync = [channel.sync_base ? distance(channel.base_ahead, channel.base_behind, channel.sync_base) : "", channel.upstream ? distance(channel.ahead, channel.behind, channel.upstream) : ""]
     .filter(Boolean)

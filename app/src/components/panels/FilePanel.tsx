@@ -188,6 +188,8 @@ export function FilePanel({ title, channel, maximized, sidebarOpen, noPadding, e
           display: "flex",
           alignItems: "center",
           paddingLeft: maximized && !sidebarOpen ? 76 : maximized ? 4 : 0,
+          // Keeps the row clear of the Loop logo pinned over the top-right corner.
+          paddingRight: 76,
           WebkitAppRegion: "drag",
         }}
       >

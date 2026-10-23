@@ -33,6 +33,8 @@ interface ChannelAPIResponse {
   channel_id: string;
   name: string;
   dir_path: string;
+  /** dir_path with the daemon user's home shown as ~. */
+  display_path?: string;
   parent_id: string;
   session_id: string;
   active: boolean;
@@ -74,6 +76,7 @@ export async function fetchChannels(): Promise<Channel[]> {
     id: c.channel_id,
     name: c.name,
     dir_path: c.dir_path,
+    display_path: c.display_path,
     parent_id: c.parent_id,
     session_id: c.session_id || "",
     active: c.active,

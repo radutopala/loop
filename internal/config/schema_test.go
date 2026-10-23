@@ -429,3 +429,29 @@ func (s *SchemaSuite) TestSectionAssignment() {
 		})
 	}
 }
+
+func (s *SchemaSuite) TestCLIConfigMountHints() {
+	tests := []struct {
+		goos string
+		glab string
+	}{
+		{goos: "darwin", glab: "~/Library/Application Support/glab-cli:~/.config/glab-cli"},
+		{goos: "linux", glab: "~/.config/glab-cli:~/.config/glab-cli"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.goos, func() {
+			props := buildSchema(tt.goos).Properties
+			gh := props["github"].Properties["mount_gh_config"]
+			require.Equal(s.T(), "~/.config/gh:~/.config/gh", gh.XMount)
+			require.Empty(s.T(), gh.XMountSource)
+			glab := props["gitlab"].Properties["mount_glab_config"]
+			require.Equal(s.T(), tt.glab, glab.XMount)
+			require.Equal(s.T(), "gitlab.glab_config_dir", glab.XMountSource)
+		})
+	}
+}
+
+func (s *SchemaSuite) TestGlabConfigMount() {
+	require.Equal(s.T(), "~/glab-work:~/.config/glab-cli", GlabConfigMount("darwin", "~/glab-work"))
+	require.Equal(s.T(), "~/.config/glab-cli:~/.config/glab-cli", GlabConfigMount("linux", ""))
+}

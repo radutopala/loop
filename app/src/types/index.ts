@@ -6,6 +6,8 @@ export interface Channel {
   name: string;
   parent_id: string;
   dir_path: string;
+  /** dir_path with the daemon user's home shown as ~. */
+  display_path?: string;
   session_id: string;
   active: boolean;
   container_running: boolean;

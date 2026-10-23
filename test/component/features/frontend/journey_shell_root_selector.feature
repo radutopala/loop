@@ -21,6 +21,14 @@ Feature: Workspace root selector
     When I add a "Git" panel
     Then the element "[data-testid='git-panel-root-select']" should be visible
 
+    # The selector opens a menu listing each root by name with its path; picking
+    # one shows its path on the button.
+    When I click on "[data-testid='git-panel-root-select']"
+    Then the element "[data-testid='context-menu']" should contain text "bdd-extra-root-"
+    When I click on "bdd-extra-root-" in the context menu
+    Then the element "[data-testid='context-menu']" should not exist
+    And the element "[data-testid='git-panel-root-select']" should contain text "bdd-extra-root-"
+
   Scenario: Root selector is hidden for single-root channels
     Given I set up a test channel via API for git repo "bdd-single-root"
     And I open the app in a browser

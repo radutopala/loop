@@ -1,6 +1,7 @@
 package config
 
 import (
+	"runtime"
 	"strconv"
 	"sync"
 )
@@ -27,6 +28,11 @@ type SchemaProperty struct {
 	XPlaceholder         string                     `json:"x-placeholder,omitempty"`
 	XWidget              string                     `json:"x-widget,omitempty"`
 	XAutoSave            bool                       `json:"x-auto-save,omitempty"`
+	// XMount is the mounts entry a boolean field adds when on and removes
+	// when off; XMountSource names a field whose value, when set, replaces
+	// the entry's host path.
+	XMount       string `json:"x-mount,omitempty"`
+	XMountSource string `json:"x-mount-source,omitempty"`
 }
 
 // ConfigSchema is the top-level JSON schema for the config file.
@@ -44,7 +50,7 @@ var (
 // configuration fields with their types and UI metadata.
 func GlobalConfigSchema() *ConfigSchema {
 	globalSchemaOnce.Do(func() {
-		globalSchema = buildSchema()
+		globalSchema = buildSchema(runtime.GOOS)
 	})
 	return globalSchema
 }
@@ -78,7 +84,9 @@ func effortEnum() []any {
 	return []any{"", "low", "medium", "high", "xhigh", "max"}
 }
 
-func buildSchema() *ConfigSchema {
+// buildSchema builds the schema for a daemon running on goos, which picks
+// glab's default config dir.
+func buildSchema(goos string) *ConfigSchema {
 	return &ConfigSchema{
 		Type: "object",
 		Properties: map[string]*SchemaProperty{
@@ -1035,6 +1043,34 @@ func buildSchema() *ConfigSchema {
 						Type:        "string",
 						Title:       "gh CLI User",
 						Description: "Named gh CLI account to use for PR lookups (see `gh auth status`). Per-project override goes in .loop/config.json. Empty uses gh's currently-active account.",
+					},
+					"mount_gh_config": {
+						Type:        "boolean",
+						Title:       "Mount gh Config",
+						Description: "Mount the host's ~/.config/gh into agent containers, so gh there uses the host's accounts. Turning it on adds the mount to Workspace › Mounts, turning it off removes it. Tokens kept only in the macOS keychain don't come along. A project override needs the project's config trusted.",
+						Default:     false,
+						XMount:      GHConfigMount,
+					},
+				},
+			},
+
+			// ── GitLab section ──
+			"gitlab": {
+				Type:     "object",
+				XSection: "GitLab",
+				Properties: map[string]*SchemaProperty{
+					"glab_config_dir": {
+						Type:        "string",
+						Title:       "glab Config Dir",
+						Description: "glab config directory with the account to use for MR lookups (passed as GLAB_CONFIG_DIR; log in there with `GLAB_CONFIG_DIR=<dir> glab auth login`). glab keeps one account per host, so a second account needs its own dir. Per-project override goes in .loop/config.json and needs the project's config trusted. Empty uses glab's default config.",
+					},
+					"mount_glab_config": {
+						Type:         "boolean",
+						Title:        "Mount glab Config",
+						Description:  "Mount the host's glab config directory (the glab config dir above, or glab's default: ~/Library/Application Support/glab-cli on macOS, ~/.config/glab-cli elsewhere) into agent containers at ~/.config/glab-cli. Turning it on adds the mount to Workspace › Mounts, turning it off removes it. Tokens kept only in the macOS keychain don't come along. A project override needs the project's config trusted.",
+						Default:      false,
+						XMount:       GlabConfigMount(goos, ""),
+						XMountSource: "gitlab.glab_config_dir",
 					},
 				},
 			},

@@ -784,6 +784,7 @@ func (s *ServerSuite) TestSearchChannelsSuccess() {
 	}
 	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
 	s.store.On("ChannelActivity", mock.Anything).Return(map[string]time.Time{}, nil)
+	s.srv.sys = homeSystem{home: "/home/user"}
 
 	rec := s.testRequest("GET", "/api/channels", "")
 
@@ -794,6 +795,7 @@ func (s *ServerSuite) TestSearchChannelsSuccess() {
 	require.Len(s.T(), resp, 2)
 	require.Equal(s.T(), "ch-1", resp[0].ChannelID)
 	require.Equal(s.T(), "general", resp[0].Name)
+	require.Equal(s.T(), "~/general", resp[0].DisplayPath)
 	require.True(s.T(), resp[0].Active)
 	require.Equal(s.T(), "ch-2", resp[1].ChannelID)
 	require.Equal(s.T(), "ch-1", resp[1].ParentID)
@@ -1486,6 +1488,22 @@ func (s *ServerSuite) TestDeleteChannelCleansUpThreads() {
 			s.store.AssertNotCalled(s.T(), "ListHiddenThreads", mock.Anything, "ch-1")
 			s.store.AssertNotCalled(s.T(), "ListHiddenThreads", mock.Anything, "learn-c")
 			reg.AssertExpectations(s.T())
+		})
+	}
+}
+
+func (s *ServerSuite) TestHomeDisplayPath() {
+	for _, tc := range []struct {
+		name, home, dir, want string
+	}{
+		{"under home", "/Users/me", "/Users/me/dev/loop", "~/dev/loop"},
+		{"home itself", "/Users/me", "/Users/me", "~"},
+		{"sibling prefix", "/Users/me", "/Users/meow/x", "/Users/meow/x"},
+		{"outside home", "/Users/me", "/opt/project", "/opt/project"},
+		{"no home", "", "/Users/me/x", "/Users/me/x"},
+	} {
+		s.Run(tc.name, func() {
+			require.Equal(s.T(), tc.want, homeDisplayPath(tc.home, tc.dir))
 		})
 	}
 }

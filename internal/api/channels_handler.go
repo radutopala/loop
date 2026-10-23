@@ -38,9 +38,11 @@ type createChannelResponse struct {
 }
 
 type channelResponse struct {
-	ChannelID        string `json:"channel_id"`
-	Name             string `json:"name"`
-	DirPath          string `json:"dir_path"`
+	ChannelID string `json:"channel_id"`
+	Name      string `json:"name"`
+	DirPath   string `json:"dir_path"`
+	// DisplayPath is DirPath with the daemon user's home shown as ~.
+	DisplayPath      string `json:"display_path"`
 	ParentID         string `json:"parent_id"`
 	SessionID        string `json:"session_id"`
 	Active           bool   `json:"active"`
@@ -85,6 +87,20 @@ type channelResponse struct {
 	TrustPending bool `json:"trust_pending,omitempty"`
 	// PluginBadges are the labels plugins show on the row.
 	PluginBadges []pluginBadge `json:"plugin_badges,omitempty"`
+}
+
+// homeDisplayPath shows dir under home as ~: "/Users/me/dev/x" → "~/dev/x".
+func homeDisplayPath(home, dir string) string {
+	if home == "" {
+		return dir
+	}
+	if dir == home {
+		return "~"
+	}
+	if rest, ok := strings.CutPrefix(dir, home+"/"); ok {
+		return "~/" + rest
+	}
+	return dir
 }
 
 func (s *Server) handleEnsureChannel(w http.ResponseWriter, r *http.Request) {
@@ -177,6 +193,9 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 	reviews := s.reviewSummaries()
 	badges := s.pluginBadgesByChannel(r.Context())
 
+	// Without a home dir the paths show in full.
+	home, _ := s.sys.UserHomeDir()
+
 	query := r.URL.Query().Get("query")
 	platformFilter := r.URL.Query().Get("platform")
 
@@ -263,6 +282,7 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 			ChannelID:           ch.ChannelID,
 			Name:                ch.Name,
 			DirPath:             dirPath,
+			DisplayPath:         homeDisplayPath(home, dirPath),
 			ParentID:            ch.ParentID,
 			SessionID:           ch.SessionID,
 			Active:              ch.Active,

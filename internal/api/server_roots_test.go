@@ -337,6 +337,7 @@ func (s *ServerSuite) TestListRootsSuccess() {
 
 	s.store.On("GetChannel", mock.Anything, "ch-roots").
 		Return(&db.Channel{ChannelID: "ch-roots", DirPath: tmpDir}, nil)
+	s.srv.sys = homeSystem{home: "/home/user"}
 
 	rec := s.testRequest("GET", "/api/channels/ch-roots/roots", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
@@ -349,6 +350,7 @@ func (s *ServerSuite) TestListRootsSuccess() {
 	require.Equal(s.T(), filepath.Base(tmpDir), resp.Roots[0].Name)
 	require.Equal(s.T(), 1, resp.Roots[1].Index)
 	require.Equal(s.T(), "/home/user/lib", resp.Roots[1].Path)
+	require.Equal(s.T(), "~/lib", resp.Roots[1].DisplayPath)
 	require.Equal(s.T(), "lib", resp.Roots[1].Name)
 }
 

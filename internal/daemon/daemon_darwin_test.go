@@ -347,7 +347,7 @@ func (s *DaemonSuite) TestStatusStatError() {
 // --- generatePlist test ---
 
 func (s *DaemonSuite) TestGeneratePlist() {
-	plist := generatePlist("/usr/local/bin/loop", "/home/test/.loop/loop.log", nil)
+	plist := generatePlist("/usr/local/bin/loop", "/home/test/.loop/loop.log", "/home/test", nil)
 	require.Contains(s.T(), plist, "<string>com.loop.agent</string>")
 	require.Contains(s.T(), plist, "<string>/usr/bin/caffeinate</string>")
 	require.Contains(s.T(), plist, "<string>-s</string>")
@@ -358,7 +358,7 @@ func (s *DaemonSuite) TestGeneratePlist() {
 	require.Contains(s.T(), plist, "/home/test/.loop/loop.log")
 	require.NotContains(s.T(), plist, "loop.out.log")
 	require.NotContains(s.T(), plist, "loop.err.log")
-	require.Contains(s.T(), plist, "/opt/homebrew/bin")
+	require.Contains(s.T(), plist, "<string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:/home/test/go/bin</string>")
 }
 
 func (s *DaemonSuite) TestGeneratePlistWithProxyEnv() {
@@ -366,7 +366,7 @@ func (s *DaemonSuite) TestGeneratePlistWithProxyEnv() {
 		"HTTP_PROXY":  "http://127.0.0.1:3128",
 		"HTTPS_PROXY": "http://127.0.0.1:3128",
 	}
-	plist := generatePlist("/usr/local/bin/loop", "/home/test/.loop/loop.log", env)
+	plist := generatePlist("/usr/local/bin/loop", "/home/test/.loop/loop.log", "/home/test", env)
 	require.Contains(s.T(), plist, "<key>HTTP_PROXY</key>")
 	require.Contains(s.T(), plist, "<string>http://127.0.0.1:3128</string>")
 	require.Contains(s.T(), plist, "<key>HTTPS_PROXY</key>")

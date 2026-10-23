@@ -16,6 +16,12 @@ type GitHubLookup interface {
 	LookupPR(ctx context.Context, workdir, ghUser, branch string) (*githubapi.PRInfo, error)
 }
 
+// GitLabLookup is the subset of gitlabapi.Client the PR endpoint needs.
+type GitLabLookup interface {
+	IsGitLabHost(host, configDir string) bool
+	LookupMR(ctx context.Context, workdir, configDir, branch string) (*githubapi.PRInfo, error)
+}
+
 // prCacheTTL bounds how long a PR lookup (hit or miss) is served from cache.
 // Every lookup is a `gh` subprocess doing a network round-trip (1-3s through
 // a proxy), and the Git panel fires one per channel select — mostly for
@@ -38,6 +44,7 @@ func prCacheKey(dir, branch string) string { return dir + "\x00" + branch }
 // returns empty, nil cache lazily created on first put).
 type prLookup struct {
 	client GitHubLookup
+	gitlab GitLabLookup
 	mu     sync.Mutex
 	cache  map[string]prCacheEntry
 	clock  func() time.Time // injectable cache clock for tests; nil → time.Now
@@ -87,4 +94,10 @@ func (p *prLookup) now() time.Time {
 // response — useful in tests and headless environments.
 func WithGitHubLookup(g GitHubLookup) Option {
 	return func(s *Server) { s.prLookup.client = g }
+}
+
+// WithGitLabLookup configures the glab client used for repos whose origin
+// is a GitLab host. Without it those repos get an empty response.
+func WithGitLabLookup(g GitLabLookup) Option {
+	return func(s *Server) { s.prLookup.gitlab = g }
 }

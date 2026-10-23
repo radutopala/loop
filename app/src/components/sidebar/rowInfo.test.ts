@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { PRInfo } from "../../api/git";
 import type { Channel } from "../../types";
 import { rowInfoLines } from "./rowInfo";
 
@@ -91,5 +92,48 @@ describe("rowInfoLines", () => {
     ["a running agent on a locked channel", { agent_running: true, locked: true }, [{ key: "status", value: "agent running · locked" }]],
   ])("shows %s", (_, overrides, want) => {
     expect(rowInfoLines({ ...base, ...overrides })).toEqual(want);
+  });
+});
+
+describe("rowInfoLines with a PR", () => {
+  const pr: PRInfo = { number: 12, url: "https://github.com/o/r/pull/12", base_ref: "main", head_ref: "feat", state: "OPEN", title: "Fix the login" };
+  it.each<[string, PRInfo | null, ReturnType<typeof rowInfoLines>]>([
+    [
+      "after the branch, before the commit",
+      pr,
+      [
+        { key: "branch", value: "feat" },
+        { key: "pr", value: "#12", detail: "Fix the login (open)" },
+        { key: "commit", value: "abc1234" },
+      ],
+    ],
+    [
+      "its state alone without a title",
+      { ...pr, title: undefined, is_draft: true },
+      [
+        { key: "branch", value: "feat" },
+        { key: "pr", value: "#12", detail: "(draft)" },
+        { key: "commit", value: "abc1234" },
+      ],
+    ],
+    [
+      "a GitLab MR as !N",
+      { ...pr, kind: "mr", state: "opened" },
+      [
+        { key: "branch", value: "feat" },
+        { key: "pr", value: "!12", detail: "Fix the login (open)" },
+        { key: "commit", value: "abc1234" },
+      ],
+    ],
+    [
+      "nothing without one",
+      null,
+      [
+        { key: "branch", value: "feat" },
+        { key: "commit", value: "abc1234" },
+      ],
+    ],
+  ])("shows %s", (_, p, want) => {
+    expect(rowInfoLines({ ...base, branch: "feat", commit: "abc1234def" }, p)).toEqual(want);
   });
 });

@@ -46,6 +46,20 @@ type trustedFields struct {
 	// PluginSchedules is the scheduled tasks the project asks of plugins,
 	// each run of which can start an agent.
 	PluginSchedules map[string]map[string]PluginSchedule `json:"plugin_schedules,omitempty"`
+	// GitHub and GitLab are the CLI config mounts, which hand the host's
+	// gh/glab credentials to the agent, and the glab config dir the daemon
+	// reads them from.
+	GitHub *trustedGitHub `json:"github,omitempty"`
+	GitLab *trustedGitLab `json:"gitlab,omitempty"`
+}
+
+type trustedGitHub struct {
+	MountGHConfig *bool `json:"mount_gh_config,omitempty"`
+}
+
+type trustedGitLab struct {
+	GlabConfigDir   string `json:"glab_config_dir,omitempty"`
+	MountGlabConfig *bool  `json:"mount_glab_config,omitempty"`
 }
 
 // trustedBrowser is the part of the browser block that reaches the host:
@@ -82,6 +96,12 @@ func trustedFieldsOf(pc *projectConfig) trustedFields {
 	}
 	if m := pc.Memory; m != nil && len(m.Paths) > 0 {
 		t.Memory = &trustedMemory{Paths: m.Paths}
+	}
+	if g := pc.GitHub; g != nil && g.MountGHConfig != nil {
+		t.GitHub = &trustedGitHub{MountGHConfig: g.MountGHConfig}
+	}
+	if g := pc.GitLab; g != nil && (g.GlabConfigDir != "" || g.MountGlabConfig != nil) {
+		t.GitLab = &trustedGitLab{GlabConfigDir: g.GlabConfigDir, MountGlabConfig: g.MountGlabConfig}
 	}
 	if pc.Plugins != nil {
 		for id, c := range pc.Plugins.ByID {
@@ -131,6 +151,22 @@ func (t trustedFields) apply(pc *projectConfig) {
 		if t.Memory != nil {
 			pc.Memory.Paths = t.Memory.Paths
 		}
+	}
+	if pc.GitHub != nil || t.GitHub != nil {
+		if pc.GitHub == nil {
+			pc.GitHub = &projectGitHubConfig{}
+		}
+		pc.GitHub.MountGHConfig = nil
+		if t.GitHub != nil {
+			pc.GitHub.MountGHConfig = t.GitHub.MountGHConfig
+		}
+	}
+	if pc.GitLab != nil || t.GitLab != nil {
+		g := t.GitLab
+		if g == nil {
+			g = &trustedGitLab{}
+		}
+		pc.GitLab = &projectGitLabConfig{GlabConfigDir: g.GlabConfigDir, MountGlabConfig: g.MountGlabConfig}
 	}
 	if pc.Plugins != nil || t.Plugins != nil || t.PluginSchedules != nil {
 		if pc.Plugins == nil {

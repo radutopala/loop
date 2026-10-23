@@ -202,16 +202,18 @@ Hovering a channel, thread or worktree thread shows a popup beside the row (`Row
 
 | Line | Shows |
 |------|-------|
+| **title** | The row's full name, in bold at the top: the sidebar cuts a long one short. |
 | **description** | What the thread is for, above the other lines, as written (line breaks kept). Set from the [context menu](#thread-description) or by the agent's `set_thread_description` MCP tool. Left out when empty. |
 | **ticket** | The URL of the row's [ticket](#ticket-url), e.g. a Jira issue. Left out when there's none. |
 | **path** | The row's directory. For a worktree thread, that's the worktree's checkout. |
 | **branch** | The checked-out branch, e.g. `main`, picked out in the theme's accent color. A worktree thread adds the branch it was cut from, e.g. `worktree/fix (from main)`. A detached checkout shows `detached`. |
+| **pr** | The [pull request](#pull-request) open on the branch, e.g. `#42 Fix the login (open)`. Left out when there's none. |
 | **commit** | The short commit hash and its subject line. |
 | **sync** | How far the branch is from its base (worktree threads) and its upstream, e.g. `↑3 ↓1 vs main · ↑1 vs origin/main`, or `even with main`. |
 | **model** | The model and effort picked for this channel in the chat, e.g. `claude-opus-5-5 · high`. Left out when it uses the config's. Updates as soon as they're changed. |
 | **status** | `agent running` or `container running`, and `locked`, when any of them apply. |
 
-The git lines follow the [branch poller](events.md#channelupdated), so they update within a few seconds of a commit, even while the popup is open. A line with nothing to show is left out, and a row with no lines has no popup. Moving off the row, clicking, dragging or scrolling hides it.
+The git lines follow the [branch poller](events.md#channelupdated), so they update within a few seconds of a commit, even while the popup is open. A line with nothing to show is left out; every row has at least its title. Moving off the row, clicking, dragging or scrolling hides it.
 
 ---
 
@@ -279,6 +281,12 @@ A channel, thread or worktree thread can be linked to its ticket: the URL of a J
 It shows as the first line of the [row info](#row-info) popup and follows changes live, like the description. The popup can't be clicked, so the row's context menu gets an **Open Ticket** item while one is set, which opens it in the browser. The workspace header shows it too, after the channel or thread id, by its key (`ChannelHeaderInfo`, `ticketKey`): the issue key when the URL carries one (`PROJ-123`, Jira's `?selectedIssue=` included, Linear and the like), `owner/repo#7` for a GitHub issue or PR, `project!5` / `project#3` for a GitLab merge request or issue, otherwise the URL's last path segment. Clicking it opens the ticket; hovering shows the full URL.
 
 Right-click any row but the DM and pick **Edit Ticket** to open the ticket dialog (`TicketDialog`), prefilled with the current URL when there is one. Enter saves, Escape cancels; saving it empty clears it. It checks the URL as you type with the same rules as the API, so a URL the API would reject (a bare `PROJ-123`, a non-http(s) scheme) shows why and can't be saved. It's offered on locked rows too, since it changes nothing on disk.
+
+### Pull Request
+
+The PR open on a row's branch isn't stored: the daemon looks it up with `gh`, or with `glab` when the repo's `origin` is a GitLab host (see [GitLab](configuration.md#gitlab)) (`GET /api/channels/{id}/pr`, cached for a minute per directory and branch, and dropped when the branch poller sees the branch or commit change). So it follows the branch: a new PR or a branch switch shows without anyone setting it. Without `gh` (or `glab`), without an `origin` remote, or for a branch with no PR, nothing shows.
+
+It shows in the [row info](#row-info) popup, looked up only while the popup is open, and in the workspace header after the ticket (`ChannelHeaderInfo`, `useChannelPR`) as `PR #42` with a dot in GitHub's state colors: green open, grey draft, purple merged, red closed. A GitLab merge request shows as `MR !12`. Clicking it opens the PR; hovering shows its title, state and URL. The Git panel shows the same PR as a chip.
 
 ### Delete Thread
 

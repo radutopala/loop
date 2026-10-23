@@ -81,6 +81,8 @@ export const WorkflowsGlobalPanel = forwardRef<WorkflowsGlobalPanelHandle, Workf
           display: "flex",
           alignItems: "center",
           paddingLeft: sidebarOpen === false ? 76 : 4,
+          // Keeps the row clear of the Loop logo pinned over the top-right corner.
+          paddingRight: 76,
           WebkitAppRegion: "drag",
         }}
       >

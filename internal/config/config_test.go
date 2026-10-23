@@ -159,13 +159,16 @@ func (s *ConfigSuite) TestLoadGitHubConfig() {
 			"platforms": ["discord"],
 			"discord_token": "t",
 			"discord_app_id": "a",
-			"github": { "gh_user": "radutopala" }
+			"github": { "gh_user": "radutopala", "mount_gh_config": true },
+			"gitlab": { "glab_config_dir": "~/glab-work", "mount_glab_config": true }
 		}`), nil
 	}
 
 	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "radutopala", cfg.GitHub.GHUser)
+	require.True(s.T(), cfg.GitHub.MountGHConfig)
+	require.Equal(s.T(), GitLabConfig{GlabConfigDir: "~/glab-work", MountGlabConfig: true}, cfg.GitLab)
 	require.False(s.T(), cfg.Plugins.Enabled, "plugins are off by default")
 }
 

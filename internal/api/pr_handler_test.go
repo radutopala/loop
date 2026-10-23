@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/githubapi"
+	"github.com/radutopala/loop/internal/gitlabapi"
 )
 
 // mockGitHubLookup is a testify mock implementing GitHubLookup.
@@ -32,8 +34,9 @@ func (m *mockGitHubLookup) LookupPR(ctx context.Context, workdir, ghUser, branch
 }
 
 // gitInitRepoWithBranch creates a temp git repo on a named branch with one
-// commit. Returns the dir path. Branch creation lets the handler's gitBranch
-// helper return a non-empty value.
+// commit and a GitHub origin. Returns the dir path. Branch creation lets the
+// handler's gitBranch helper return a non-empty value; the origin routes the
+// lookup to gh.
 func gitInitRepoWithBranch(t *testing.T, branch string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -41,6 +44,7 @@ func gitInitRepoWithBranch(t *testing.T, branch string) string {
 		{"git", "init", "-b", branch},
 		{"git", "config", "user.email", "t@t"},
 		{"git", "config", "user.name", "t"},
+		{"git", "remote", "add", "origin", "https://github.com/o/r.git"},
 	}
 	for _, c := range cmds {
 		cmd := exec.Command(c[0], c[1:]...)
@@ -526,4 +530,182 @@ func (s *ServerSuite) TestChannelPRLookupErrorNotCached() {
 func (s *ServerSuite) TestResolveReviewEnabledDefaultLoader() {
 	c := configResolver{}
 	_ = c.reviewEnabled(s.T().TempDir(), "")
+}
+
+// mockGitLabLookup is a testify mock implementing GitLabLookup.
+type mockGitLabLookup struct {
+	mock.Mock
+}
+
+func (m *mockGitLabLookup) IsGitLabHost(host, configDir string) bool {
+	return m.Called(host, configDir).Bool(0)
+}
+
+func (m *mockGitLabLookup) LookupMR(ctx context.Context, workdir, configDir, branch string) (*githubapi.PRInfo, error) {
+	args := m.Called(ctx, workdir, configDir, branch)
+	pr, _ := args.Get(0).(*githubapi.PRInfo)
+	return pr, args.Error(1)
+}
+
+// setOrigin points dir's origin remote at url, or removes it when url is "".
+func setOrigin(t *testing.T, dir, url string) {
+	t.Helper()
+	args := []string{"remote", "set-url", "origin", url}
+	if url == "" {
+		args = []string{"remote", "remove", "origin"}
+	}
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	require.NoError(t, cmd.Run())
+}
+
+func (s *ServerSuite) TestWithGitLabLookup() {
+	gl := new(mockGitLabLookup)
+	srv := NewServer(nil, nil, nil, nil, nil, nil, WithGitLabLookup(gl))
+	require.Equal(s.T(), gl, srv.prLookup.gitlab)
+}
+
+func (s *ServerSuite) TestChannelPRGitLabMR() {
+	dir := gitInitRepoWithBranch(s.T(), "feat-mr")
+	setOrigin(s.T(), dir, "git@lab.example.org:group/repo.git")
+	s.srv.configs.load = func() (*config.Config, error) {
+		return &config.Config{GitLab: config.GitLabConfig{GlabConfigDir: "~/glab-work"}}, nil
+	}
+	s.srv.sys = homeSystem{home: "/home/testuser"}
+	gl := new(mockGitLabLookup)
+	gl.On("IsGitLabHost", "lab.example.org", "/home/testuser/glab-work").Return(true)
+	gl.On("LookupMR", mock.Anything, dir, "/home/testuser/glab-work", "feat-mr").
+		Return(&githubapi.PRInfo{Number: 7, URL: "https://lab.example.org/group/repo/-/merge_requests/7", State: "opened", Kind: "mr"}, nil)
+	gh := new(mockGitHubLookup)
+	s.srv.prLookup.client = gh
+	s.srv.prLookup.gitlab = gl
+	s.store.On("GetChannel", mock.Anything, "ch-mr").
+		Return(&db.Channel{ChannelID: "ch-mr", DirPath: dir}, nil)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/channels/{id}/pr", s.srv.handleChannelPR)
+	req := httptest.NewRequest("GET", "/api/channels/ch-mr/pr", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	require.Equal(s.T(), http.StatusOK, w.Code)
+
+	var resp prResponse
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	require.True(s.T(), resp.Present)
+	require.Equal(s.T(), 7, resp.PR.Number)
+	require.Equal(s.T(), "mr", resp.PR.Kind)
+	gh.AssertNotCalled(s.T(), "LookupPR", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (s *ServerSuite) TestChannelPRGlabNotInstalled() {
+	dir := gitInitRepoWithBranch(s.T(), "feat-noglab")
+	setOrigin(s.T(), dir, "https://gitlab.com/group/repo.git")
+	gl := new(mockGitLabLookup)
+	gl.On("IsGitLabHost", "gitlab.com", "").Return(true)
+	gl.On("LookupMR", mock.Anything, dir, "", "feat-noglab").Return(nil, fmt.Errorf("wrapped: %w", gitlabapi.ErrGlabNotInstalled))
+	s.srv.prLookup.gitlab = gl
+	s.store.On("GetChannel", mock.Anything, "ch-noglab").
+		Return(&db.Channel{ChannelID: "ch-noglab", DirPath: dir}, nil)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/channels/{id}/pr", s.srv.handleChannelPR)
+	req := httptest.NewRequest("GET", "/api/channels/ch-noglab/pr", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	require.Contains(s.T(), w.Body.String(), `"present":false`)
+}
+
+func (s *ServerSuite) TestLookupBranchPRRouting() {
+	tests := []struct {
+		name      string
+		origin    string
+		withGH    bool
+		withGL    bool
+		isGitLab  bool
+		wantPR    int
+		wantGH    bool
+		wantGL    bool
+		checkHost string
+	}{
+		{name: "no origin skips both", origin: "", withGH: true, withGL: true},
+		{name: "GitHub origin goes to gh", origin: "https://github.com/o/r.git", withGH: true, withGL: true, checkHost: "github.com", wantGH: true, wantPR: 1},
+		{name: "GitLab origin goes to glab", origin: "git@gitlab.com:g/r.git", withGH: true, withGL: true, isGitLab: true, checkHost: "gitlab.com", wantGL: true, wantPR: 2},
+		{name: "gh only", origin: "https://github.com/o/r.git", withGH: true, wantGH: true, wantPR: 1},
+		{name: "glab only and not a GitLab host", origin: "https://github.com/o/r.git", withGL: true, checkHost: "github.com"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			dir := gitInitRepoWithBranch(s.T(), "b")
+			setOrigin(s.T(), dir, tt.origin)
+			gh := new(mockGitHubLookup)
+			gh.On("LookupPR", mock.Anything, dir, "", "b").Return(&githubapi.PRInfo{Number: 1}, nil)
+			gl := new(mockGitLabLookup)
+			gl.On("IsGitLabHost", tt.checkHost, "").Return(tt.isGitLab)
+			gl.On("LookupMR", mock.Anything, dir, "", "b").Return(&githubapi.PRInfo{Number: 2, Kind: "mr"}, nil)
+			s.srv.prLookup.client = nil
+			s.srv.prLookup.gitlab = nil
+			if tt.withGH {
+				s.srv.prLookup.client = gh
+			}
+			if tt.withGL {
+				s.srv.prLookup.gitlab = gl
+			}
+
+			pr, err := s.srv.lookupBranchPR(context.Background(), dir, "", "b")
+			require.NoError(s.T(), err)
+			if tt.wantPR == 0 {
+				require.Nil(s.T(), pr)
+			} else {
+				require.Equal(s.T(), tt.wantPR, pr.Number)
+			}
+			if !tt.wantGH {
+				gh.AssertNotCalled(s.T(), "LookupPR", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+			}
+			if !tt.wantGL {
+				gl.AssertNotCalled(s.T(), "LookupMR", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+			}
+		})
+	}
+}
+
+func (s *ServerSuite) TestRemoteHost() {
+	tests := []struct {
+		url  string
+		want string
+	}{
+		{url: "https://github.com/o/r.git", want: "github.com"},
+		{url: "https://user:token@gitlab.example.com/g/r.git", want: "gitlab.example.com"},
+		{url: "https://lab.example.org:8443/g/r.git", want: "lab.example.org"},
+		{url: "ssh://git@lab.example.org:2222/g/r.git", want: "lab.example.org"},
+		{url: "ssh://git@github.com", want: "github.com"},
+		{url: "git@github.com:o/r.git", want: "github.com"},
+		{url: "lab.example.org:g/r.git", want: "lab.example.org"},
+		{url: "/srv/repos/r.git", want: ""},
+		{url: "./a:b", want: ""},
+		{url: ":nohost", want: ""},
+		{url: "", want: ""},
+	}
+	for _, tt := range tests {
+		s.Run(tt.url, func() {
+			require.Equal(s.T(), tt.want, remoteHost(tt.url))
+		})
+	}
+}
+
+func (s *ServerSuite) TestGlabConfigDir() {
+	tests := []struct {
+		name string
+		load func() (*config.Config, error)
+		want string
+	}{
+		{name: "configured", load: func() (*config.Config, error) {
+			return &config.Config{GitLab: config.GitLabConfig{GlabConfigDir: "/cfg/glab"}}, nil
+		}, want: "/cfg/glab"},
+		{name: "load error", load: func() (*config.Config, error) { return nil, errors.New("bad") }, want: ""},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			c := configResolver{load: tt.load}
+			require.Equal(s.T(), tt.want, c.glabConfigDir("", ""))
+		})
+	}
 }

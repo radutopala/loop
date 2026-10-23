@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -138,6 +139,9 @@ type DockerRunner struct {
 	loadWorktreeProjectConfig func(string, string, *config.Config) (*config.Config, error)
 	osRandRead                func([]byte) (int, error)
 	osTimeLocalName           func() string
+	// goos is the host OS (runtime.GOOS), injectable so tests cover the
+	// per-OS paths of the CLI config mounts.
+	goos string
 	// sleep waits for d or until ctx is cancelled, returning ctx.Err() if
 	// cancelled. Injectable so retry-backoff tests don't sleep in real time.
 	sleep      func(ctx context.Context, d time.Duration) error
@@ -233,6 +237,7 @@ func NewDockerRunner(client DockerClient, cfg *config.Config, configLoad func() 
 		loadWorktreeProjectConfig: config.LoadWorktreeProjectConfig,
 		osRandRead:                rand.Read,
 		osTimeLocalName:           func() string { return time.Now().Location().String() },
+		goos:                      runtime.GOOS,
 		sleep:                     sleepCtx,
 		instanceID:                hex.EncodeToString(b),
 		live:                      map[string]*liveSession{},
@@ -721,7 +726,7 @@ func (r *DockerRunner) createAndStartContainer(
 		return "", "", "", false, err
 	}
 
-	binds, masks, chownPaths := r.buildContainerMounts(cfg.Mounts, workDir, parentDirPath, cfg.ExtraDirs)
+	binds, masks, chownPaths := r.buildContainerMounts(r.withCLIConfigMounts(cfg), workDir, parentDirPath, cfg.ExtraDirs)
 	copyFilesList := withClaudeConfig(cfg.CopyFiles)
 	for _, f := range r.filterMountedCopyFiles(copyFilesList, binds) {
 		if expanded, err := r.expandPath(f); err == nil {
