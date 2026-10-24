@@ -203,6 +203,8 @@ func (s *Server) agentRefusal(r *http.Request, pattern string) string {
 
 	var channels, dirs []string
 	if id := r.PathValue("id"); id != "" {
+		// A task or run is refused by its own id: naming its channel would
+		// show the agent another project's channel it didn't name.
 		switch {
 		case strings.Contains(pattern, "/api/channels/{id}"), strings.Contains(pattern, "/api/threads/{id}"):
 			channels = append(channels, id)
@@ -211,13 +213,17 @@ func (s *Server) agentRefusal(r *http.Request, pattern string) string {
 			if !ok {
 				return "unknown task"
 			}
-			channels = append(channels, ch)
+			if ch != "" && !s.agentOwnsChannel(ctx, p, ch) {
+				return "task " + id + " is outside this agent's project"
+			}
 		case strings.Contains(pattern, "/api/workflows/runs/{id}"):
 			ch, ok := s.workflowRunChannel(ctx, id)
 			if !ok {
 				return "unknown workflow run"
 			}
-			channels = append(channels, ch)
+			if ch != "" && !s.agentOwnsChannel(ctx, p, ch) {
+				return "workflow run " + id + " is outside this agent's project"
+			}
 		}
 	}
 	q := r.URL.Query()

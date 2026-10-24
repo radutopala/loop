@@ -60,6 +60,8 @@ On the routes it may call, an agent is held to its own project. Every channel, t
 
 On the UI bridge, an agent's command must start with `select_channel` to a channel of its project, and every `select_channel` in it must name a channel of the project. `GET /api/ui/state` leaves out the `state` of windows showing a channel outside it. The UI WebSocket stays owner-only.
 
+Listings an agent makes, such as a channel's sessions with the ids imported into other channels, name only its project's items, and a refusal names what the request named: another project's task or run is refused by its id, not its channel. `agent_scope_spec_test.go` checks this over a daemon serving two projects: every agent route, with each of the other project's ids in each place a handler reads one, shows and changes nothing of the other project's (`GET /api/channels` lists every channel by design).
+
 ### Public routes
 
 | Route | Why |

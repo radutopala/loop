@@ -80,12 +80,14 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	// the DB. A learn or explain thread's session isn't importable, so it's
 	// left out of the list; not while fork_pending, though, which learn
 	// threads from before passes forked at their turn may still have: the
-	// id is then the reviewed run's, borrowed until a run forks it.
+	// id is then the reviewed run's, borrowed until a run forks it. An
+	// agent's list names only its own project's imported ids.
 	var importedIDs []string
 	hiddenSessions := map[string]bool{}
+	shows := s.listingShows(r, "")
 	if allChannels, err := s.store.ListChannels(r.Context()); err == nil {
 		for _, c := range allChannels {
-			if c.SessionID != "" {
+			if c.SessionID != "" && shows(c.ChannelID) {
 				importedIDs = append(importedIDs, c.SessionID)
 			}
 			if c.SessionID != "" && db.IsHiddenKind(c.Kind) && !c.ForkPending {
