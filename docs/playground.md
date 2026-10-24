@@ -163,6 +163,8 @@ Playgrounds are stored in two locations depending on scope:
 
 The global playground directory is bind-mounted into agent containers, so agents can also read/write playground files directly. Project-scoped playgrounds live within the project directory and are accessible via the channel's mount.
 
+Since agents can write there, Loop opens each playground's files within that playground's directory: a symlink inside it is followed only while it stays in the playground, so a link to a host file or to another playground is refused rather than served, written or deleted. A playground that is itself a link to another one in the same base still works. A project's `.loop/playground` must be a real directory, not a symlink.
+
 ---
 
 ## API Endpoints

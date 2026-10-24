@@ -564,11 +564,7 @@ func (s *ServerSuite) TestPlaygroundDeleteRemoveError() {
 	pgDir := filepath.Join(dir, "playground", "locked")
 	require.NoError(s.T(), os.MkdirAll(pgDir, 0o755))
 
-	info, err := os.Stat(pgDir)
-	require.NoError(s.T(), err)
-	s.sys.Override("Stat", mock.Anything).Return(info, nil)
-	s.sys.Override("RemoveAll", mock.Anything).Return(fmt.Errorf("injected remove error"))
-	s.srv.sys = &realOpenSys{s.sys}
+	s.srv.playground.removeAll = func(*os.Root, string) error { return fmt.Errorf("injected remove error") }
 
 	rec := s.testRequest("DELETE", "/api/playground?name=locked", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
@@ -608,7 +604,7 @@ func (s *ServerSuite) TestValidatePlaygroundDir() {
 	// Valid name.
 	pgDir, err := s.srv.playground.validatePlaygroundDir("my-app")
 	require.NoError(s.T(), err)
-	require.Contains(s.T(), pgDir, "playground/my-app")
+	require.Contains(s.T(), pgDir.dir(), "playground/my-app")
 	// Traversal attempt (fails containment check).
 	_, err = s.srv.playground.validatePlaygroundDir("../escape")
 	require.ErrorContains(s.T(), err, "invalid or missing playground name")
@@ -621,25 +617,24 @@ func (s *ServerSuite) TestValidatePlaygroundDir() {
 }
 
 func (s *ServerSuite) TestValidatePlaygroundPath() {
-	root := "/tmp/test-root"
-	// Valid path.
-	p, err := validatePlaygroundPath(root, "script.js")
+	// Valid paths come back cleaned.
+	p, err := validatePlaygroundPath("lib/../script.js")
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), filepath.Join(root, "script.js"), p)
+	require.Equal(s.T(), "script.js", p)
 	// Empty path.
-	_, err = validatePlaygroundPath(root, "")
+	_, err = validatePlaygroundPath("")
 	require.ErrorContains(s.T(), err, "path is required")
 	// Absolute path.
-	_, err = validatePlaygroundPath(root, "/etc/passwd")
+	_, err = validatePlaygroundPath("/etc/passwd")
 	require.ErrorContains(s.T(), err, "absolute paths")
 	// Null byte.
-	_, err = validatePlaygroundPath(root, "foo\x00bar")
+	_, err = validatePlaygroundPath("foo\x00bar")
 	require.ErrorContains(s.T(), err, "invalid characters")
 	// Traversal.
-	_, err = validatePlaygroundPath(root, "../../etc/passwd")
+	_, err = validatePlaygroundPath("../../etc/passwd")
 	require.ErrorContains(s.T(), err, "path traversal")
-	// Single dot (resolves to root itself, not under root+separator).
-	_, err = validatePlaygroundPath(root, ".")
+	// Single dot names the playground dir itself.
+	_, err = validatePlaygroundPath(".")
 	require.ErrorContains(s.T(), err, "path traversal")
 }
 
@@ -703,12 +698,12 @@ func (s *ServerSuite) TestResolvePlaygroundDirProjectScope() {
 	req := httptest.NewRequest("GET", "/api/playground?name=my-app&scope=project&channel_id=ch1", nil)
 	resolved, err := s.srv.playground.resolvePlaygroundDir(req, "my-app")
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), pgDir, resolved)
+	require.Equal(s.T(), pgDir, resolved.dir())
 	// Verify global scope still works.
 	req2 := httptest.NewRequest("GET", "/api/playground?name=my-app", nil)
 	resolved2, err := s.srv.playground.resolvePlaygroundDir(req2, "my-app")
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), filepath.Join(dir, "playground", "my-app"), resolved2)
+	require.Equal(s.T(), filepath.Join(dir, "playground", "my-app"), resolved2.dir())
 }
 
 func (s *ServerSuite) TestResolvePlaygroundDirProjectScopeMissingChannelID() {
@@ -825,7 +820,7 @@ func (s *ServerSuite) TestResolveProjectPlaygroundDirSuccess() {
 
 	resolved, err := s.srv.playground.resolveProjectPlaygroundDir(req)
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), filepath.Join(projectDir, ".loop", "playground", "my-app"), resolved)
+	require.Equal(s.T(), filepath.Join(projectDir, ".loop", "playground", "my-app"), resolved.dir())
 }
 
 func (s *ServerSuite) TestResolveProjectPlaygroundDirMissingChannelID() {
@@ -1260,63 +1255,6 @@ func (s *ServerSuite) TestProjectPlaygroundDirNoDirPathNoLoopDir() {
 
 // --- symlink containment ---
 
-func (s *ServerSuite) TestPlaygroundRealPath() {
-	dir := s.T().TempDir()
-	realDir, err := filepath.EvalSymlinks(dir)
-	require.NoError(s.T(), err)
-	require.NoError(s.T(), os.Symlink(filepath.Join(dir, "missing"), filepath.Join(dir, "dangling")))
-
-	got, err := s.srv.playground.realPath(filepath.Join(dir, "a", "b", "c.txt"))
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), filepath.Join(realDir, "a", "b", "c.txt"), got)
-
-	_, err = s.srv.playground.realPath(filepath.Join(dir, "dangling"))
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "path traversal not allowed")
-
-	_, err = s.srv.playground.realPath(filepath.Join(dir, "dangling", "x.txt"))
-	require.Error(s.T(), err)
-}
-
-func (s *ServerSuite) TestPlaygroundRealPathUnresolvable() {
-	s.sys.Override("EvalSymlinks", mock.Anything).Return("", errors.New("injected eval error"))
-	s.srv.sys = s.sys
-
-	_, err := s.srv.playground.realPath("/a/b")
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "path not found")
-}
-
-func (s *ServerSuite) TestPlaygroundRealPathIn() {
-	base := s.T().TempDir()
-	outside := s.T().TempDir()
-	require.NoError(s.T(), os.Symlink(outside, filepath.Join(base, "escape")))
-	require.NoError(s.T(), os.Symlink(filepath.Join(base, "missing"), filepath.Join(base, "dangling")))
-
-	tests := []struct {
-		name    string
-		base    string
-		path    string
-		wantErr bool
-	}{
-		{"inside", base, filepath.Join(base, "x"), false},
-		{"base itself", base, base, true},
-		{"symlink out of base", base, filepath.Join(base, "escape", "x"), true},
-		{"dangling path", base, filepath.Join(base, "dangling"), true},
-		{"dangling base", filepath.Join(base, "dangling"), filepath.Join(base, "dangling", "x"), true},
-	}
-	for _, tc := range tests {
-		s.Run(tc.name, func() {
-			_, err := s.srv.playground.realPathIn(tc.base, tc.path)
-			if tc.wantErr {
-				require.Error(s.T(), err)
-				return
-			}
-			require.NoError(s.T(), err)
-		})
-	}
-}
-
 func (s *ServerSuite) TestPlaygroundDirSymlinkedOutsideRefused() {
 	dir := s.setPlaygroundDir()
 	outside := s.T().TempDir()
@@ -1357,8 +1295,9 @@ func (s *ServerSuite) TestPlaygroundFileSymlinkOutsideRefused() {
 	_, err := os.Stat(filepath.Join(outside, "new.txt"))
 	require.True(s.T(), os.IsNotExist(err))
 
+	// Deleting the link takes the link away, not what it points to.
 	rec = s.testRequest("DELETE", "/api/playground/file?name=demo&path=leak.txt", "")
-	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
 	_, err = os.Stat(filepath.Join(outside, "secret.txt"))
 	require.NoError(s.T(), err)
 }

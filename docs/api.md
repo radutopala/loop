@@ -2082,7 +2082,7 @@ Persist an image pasted into the chat input. The desktop app calls this from `Ch
 The returned `path` is **absolute**, so the agent's built-in `Read` tool (which requires absolute paths) can pick the file up directly. The renderer inserts the path at the caret position in the chat input.
 
 **Behavior notes:**
-- The file is written under `<workspace>/.loop/pastes/`; the directory is created with `MkdirAll` on first paste. `.loop/` should be gitignored.
+- The file is written under `<workspace>/.loop/pastes/`; the directory is created with `MkdirAll` on first paste. `.loop/` should be gitignored. Both are opened within the workspace: a `.loop` or `pastes` symlink leading out of it fails the paste with `500`.
 - Filename format: `paste-<YYYYMMDD>-<HHMMSS>-<8-hex>.<ext>` (UTC timestamp, 4-byte random suffix). Collisions within the same second are avoided by the random suffix.
 - Extension is derived from `media_type` — `.jpg` for `image/jpeg`, `.png`/`.gif`/`.webp` otherwise.
 - Request body is limited to **5 MB** of raw image bytes after base64 decoding. Larger payloads return `413`.
@@ -4269,6 +4269,8 @@ Canonical names per kind:
 The playground stores named HTML/CSS/JS items and broadcasts updates for live rendering in the desktop app's Playground panel. Items can be stored globally (`~/.loop/playground/{name}/`) or per-project (`.loop/playground/{name}/` in the channel's working directory).
 
 All playground endpoints accept optional `scope` and `channel_id` query parameters to target project-scoped items. Without these, operations default to global scope.
+
+A playground's files are opened within its own directory, so a symlink an agent plants there is followed only while it stays inside: one to a host file or another playground gets `400`, or `404` on the serve routes. Deleting a link removes the link, never its target. A project's `.loop/playground` must be a real directory, not a symlink.
 
 ### `PUT /api/playground?name=...`
 

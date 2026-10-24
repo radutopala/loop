@@ -3,17 +3,22 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
+	"io/fs"
 	"mime"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/adrg/frontmatter"
+
+	"github.com/radutopala/loop/internal/osutil"
 )
 
 var validPlaygroundName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
@@ -54,16 +59,14 @@ func buildReadme(title, body string) string {
 	return buf.String()
 }
 
-// validatePlaygroundDirIn validates a playground name under an arbitrary base directory.
-func validatePlaygroundDirIn(baseDir, name string) (string, error) {
+// validatePlaygroundDirIn validates a playground name and locates it in
+// baseDir, a playground base under project ("" for the global one).
+func validatePlaygroundDirIn(project, baseDir, name string) (playgroundLoc, error) {
 	pgDir := filepath.Join(baseDir, filepath.Clean(name))
-	if !strings.HasPrefix(pgDir, baseDir+string(filepath.Separator)) {
-		return "", fmt.Errorf("invalid or missing playground name")
+	if !strings.HasPrefix(pgDir, baseDir+string(filepath.Separator)) || !validPlaygroundName.MatchString(name) {
+		return playgroundLoc{}, fmt.Errorf("invalid or missing playground name")
 	}
-	if !validPlaygroundName.MatchString(name) {
-		return "", fmt.Errorf("invalid or missing playground name")
-	}
-	return pgDir, nil
+	return playgroundLoc{project: project, base: baseDir, name: name}, nil
 }
 
 func playgroundScopeFromRequest(r *http.Request) (scope, channelID string) {
@@ -73,10 +76,11 @@ func playgroundScopeFromRequest(r *http.Request) (scope, channelID string) {
 	return "global", ""
 }
 
-// validatePlaygroundPath validates a relative file path within a playground directory,
-// preventing path traversal. Unlike validateFilePath, it does not require the target
-// directory to exist (playground dirs are created on demand by the server).
-func validatePlaygroundPath(rootDir, relativePath string) (string, error) {
+// validatePlaygroundPath validates a file path relative to a playground dir
+// and returns it cleaned. It refuses one that names the dir itself or climbs
+// out of it by name; where its symlinks lead is left to the playground's
+// os.Root.
+func validatePlaygroundPath(relativePath string) (string, error) {
 	if relativePath == "" {
 		return "", fmt.Errorf("path is required")
 	}
@@ -87,20 +91,16 @@ func validatePlaygroundPath(rootDir, relativePath string) (string, error) {
 		return "", fmt.Errorf("path contains invalid characters")
 	}
 	cleaned := filepath.Clean(relativePath)
-	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("path traversal not allowed")
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return "", errors.New(errPlaygroundTraversal)
 	}
-	fullPath := filepath.Join(rootDir, cleaned)
-	if !strings.HasPrefix(fullPath, rootDir+string(filepath.Separator)) {
-		return "", fmt.Errorf("path traversal not allowed")
-	}
-	return fullPath, nil
+	return cleaned, nil
 }
 
 // handlePlaygroundUpdate handles PUT /api/playground?name=...&scope=...&channel_id=... — stores code and pushes event.
 func (s *playgroundService) handlePlaygroundUpdate(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
-	pgDir, err := s.resolvePlaygroundDir(r, name)
+	loc, err := s.resolvePlaygroundDir(r, name)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -113,30 +113,22 @@ func (s *playgroundService) handlePlaygroundUpdate(w http.ResponseWriter, r *htt
 	}
 	content.Name = name
 	content.Scope, content.ChannelID = playgroundScopeFromRequest(r)
-	if err := os.MkdirAll(pgDir, 0o755); err != nil {
-		http.Error(w, "creating playground dir: "+err.Error(), http.StatusInternalServerError)
+	pg, err := loc.open(true)
+	if err != nil {
+		playgroundFileError(w, err, "creating playground dir: ")
 		return
 	}
+	defer pg.Close()
 
 	if content.HTML != "" {
-		indexPath, err := s.playgroundFile(pgDir, "index.html")
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if err := os.WriteFile(indexPath, []byte(content.HTML), 0o644); err != nil {
-			http.Error(w, "writing index.html: "+err.Error(), http.StatusInternalServerError)
+		if err := pg.WriteFile("index.html", []byte(content.HTML), 0o644); err != nil {
+			playgroundFileError(w, err, "writing index.html: ")
 			return
 		}
 	}
 	if readme := buildReadme(content.Title, content.Description); readme != "" {
-		readmePath, err := s.playgroundFile(pgDir, "README.md")
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if err := os.WriteFile(readmePath, []byte(readme), 0o644); err != nil {
-			http.Error(w, "writing README.md: "+err.Error(), http.StatusInternalServerError)
+		if err := pg.WriteFile("README.md", []byte(readme), 0o644); err != nil {
+			playgroundFileError(w, err, "writing README.md: ")
 			return
 		}
 	}
@@ -156,13 +148,20 @@ func (s *playgroundService) handlePlaygroundUpdate(w http.ResponseWriter, r *htt
 // handlePlaygroundGet handles GET /api/playground?name=...&scope=...&channel_id=... — retrieves playground content.
 func (s *playgroundService) handlePlaygroundGet(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
-	pgDir, err := s.resolvePlaygroundDir(r, name)
+	loc, err := s.resolvePlaygroundDir(r, name)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	html, _ := s.readPlaygroundFile(pgDir, "index.html")
-	readme, _ := s.readPlaygroundFile(pgDir, "README.md")
+	pg, ok := openPlayground(w, loc, http.StatusBadRequest)
+	if !ok {
+		return
+	}
+	if pg != nil {
+		defer pg.Close()
+	}
+	html, _ := readPlaygroundFile(pg, "index.html")
+	readme, _ := readPlaygroundFile(pg, "README.md")
 
 	if len(html) == 0 {
 		http.Error(w, "no playground content", http.StatusNotFound)
@@ -189,17 +188,21 @@ type playgroundItem struct {
 	Scope       string `json:"scope"` // "global" or "project"
 }
 
-// listPlaygroundsIn scans a base directory for valid playground subdirectories.
-func listPlaygroundsIn(baseDir, scope string) []playgroundItem {
-	entries, err := os.ReadDir(baseDir)
+// listPlaygroundsIn scans the base dir of l (whose name is unused) for
+// valid playground subdirectories, reading each README.md through the base
+// as a root.
+func listPlaygroundsIn(l playgroundLoc, scope string) []playgroundItem {
+	base, err := l.openBase(false)
 	if err != nil {
 		return nil
 	}
+	defer base.Close()
+	entries, _ := fs.ReadDir(base.FS(), ".")
 	var items []playgroundItem
 	for _, e := range entries {
 		if e.IsDir() && validPlaygroundName.MatchString(e.Name()) {
 			item := playgroundItem{Name: e.Name(), Scope: scope}
-			if readme, readErr := os.ReadFile(filepath.Join(baseDir, e.Name(), "README.md")); readErr == nil {
+			if readme, readErr := base.ReadFile(path.Join(e.Name(), "README.md")); readErr == nil {
 				item.Title, item.Description = parseReadme(readme)
 			}
 			items = append(items, item)
@@ -212,14 +215,14 @@ func listPlaygroundsIn(baseDir, scope string) []playgroundItem {
 // Returns items from both global (~/.loop/playground/) and project ({dir}/.loop/playground/) scopes.
 func (s *playgroundService) handlePlaygroundList(w http.ResponseWriter, r *http.Request) {
 	globalDir := filepath.Join(s.deps.loopDir, "playground")
-	items := listPlaygroundsIn(globalDir, "global")
+	items := listPlaygroundsIn(playgroundLoc{base: globalDir}, "global")
 
 	// If channel_id is provided, also list project-scoped playgrounds.
 	if channelID := r.URL.Query().Get("channel_id"); channelID != "" {
 		if dirPath, err := s.projectPlaygroundDir(r.Context(), channelID); err == nil {
 			projectDir := filepath.Clean(filepath.Join(dirPath, ".loop", "playground"))
 			if !strings.Contains(projectDir, "..") {
-				items = append(items, listPlaygroundsIn(projectDir, "project")...)
+				items = append(items, listPlaygroundsIn(playgroundLoc{project: dirPath, base: projectDir}, "project")...)
 			}
 		}
 	}
@@ -277,14 +280,32 @@ const consoleBridgeScript = `<script>
 })();
 </script>`
 
+// servePlayground serves loc's page when rel is empty, else its file rel,
+// answering with refuseStatus when loc leads outside its base. Shared by the
+// local serve routes, the capability route and the public /p/{token} routes.
+func (s *playgroundService) servePlayground(w http.ResponseWriter, loc playgroundLoc, rel, baseHref string, refuseStatus int) {
+	pg, ok := openPlayground(w, loc, refuseStatus)
+	if !ok {
+		return
+	}
+	if pg != nil {
+		defer pg.Close()
+	}
+	if rel == "" {
+		s.renderPlaygroundIndex(w, pg, baseHref)
+		return
+	}
+	s.servePlaygroundFile(w, pg, rel)
+}
+
 // renderPlaygroundIndex composes and writes the full HTML document for a
-// playground given its resolved absolute directory and the <base href> the
+// playground given its opened dir (nil when missing) and the <base href> the
 // relative assets (style.css, script.js, ES module imports) should resolve
 // against. Shared by the local serve routes and the public /p/{token} route so
 // the served output is byte-identical regardless of entry point.
-func (s *playgroundService) renderPlaygroundIndex(w http.ResponseWriter, pgDir, baseHref string) {
-	rawHTML, _ := s.readPlaygroundFile(pgDir, "index.html")
-	importMap, _ := s.readPlaygroundFile(pgDir, "importmap.json")
+func (s *playgroundService) renderPlaygroundIndex(w http.ResponseWriter, pg *os.Root, baseHref string) {
+	rawHTML, _ := readPlaygroundFile(pg, "index.html")
+	importMap, _ := readPlaygroundFile(pg, "importmap.json")
 
 	var importMapBlock string
 	if len(importMap) > 0 {
@@ -314,23 +335,22 @@ func (s *playgroundService) renderPlaygroundIndex(w http.ResponseWriter, pgDir, 
 	w.Write(buf.Bytes()) //nolint:errcheck
 }
 
-// servePlaygroundFile serves a single file from a playground directory,
-// guarding against path traversal and setting the content type by extension.
-// Shared by the local serve-file routes and the public /p/{token}/{path...}
-// route.
-func (s *playgroundService) servePlaygroundFile(w http.ResponseWriter, pgDir, relPath string) {
-	fullPath, err := s.playgroundFile(pgDir, relPath)
+// servePlaygroundFile serves a single file from an opened playground dir
+// (nil when missing), guarding against path traversal and setting the
+// content type by extension.
+func (s *playgroundService) servePlaygroundFile(w http.ResponseWriter, pg *os.Root, relPath string) {
+	rel, err := validatePlaygroundPath(relPath)
 	if err != nil {
 		http.Error(w, "file not found", http.StatusNotFound)
 		return
 	}
-	data, err := os.ReadFile(fullPath)
+	data, err := readPlaygroundFile(pg, rel)
 	if err != nil {
 		http.Error(w, "file not found", http.StatusNotFound)
 		return
 	}
 
-	ext := filepath.Ext(fullPath)
+	ext := filepath.Ext(rel)
 	ct := mime.TypeByExtension(ext)
 	if ct == "" {
 		ct = "application/octet-stream"
@@ -343,7 +363,7 @@ func (s *playgroundService) servePlaygroundFile(w http.ResponseWriter, pgDir, re
 // GET /api/playground/serve/{name}?scope=...&channel_id=...
 func (s *playgroundService) handlePlaygroundServe(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	pgDir, err := s.resolvePlaygroundDir(r, name)
+	loc, err := s.resolvePlaygroundDir(r, name)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -356,59 +376,73 @@ func (s *playgroundService) handlePlaygroundServe(w http.ResponseWriter, r *http
 		channelID := r.URL.Query().Get("channel_id")
 		baseURL = fmt.Sprintf("/api/playground/serve-project/%s/%s/", channelID, name)
 	}
-	s.renderPlaygroundIndex(w, pgDir, baseURL)
+	s.servePlayground(w, loc, "", baseURL, http.StatusBadRequest)
 }
 
 // handlePlaygroundServeFile serves individual files from a playground directory.
 // GET /api/playground/serve/{name}/{path...}?scope=...&channel_id=...
 func (s *playgroundService) handlePlaygroundServeFile(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	pgDir, err := s.resolvePlaygroundDir(r, name)
+	loc, err := s.resolvePlaygroundDir(r, r.PathValue("name"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	s.servePlaygroundFile(w, pgDir, r.PathValue("path"))
+	s.servePlayground(w, loc, r.PathValue("path"), "", http.StatusBadRequest)
 }
 
 // handlePlaygroundServeProject serves the composed HTML page for a project-scoped playground.
 // GET /api/playground/serve-project/{channel_id}/{name}
 func (s *playgroundService) handlePlaygroundServeProject(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	pgDir, err := s.resolveProjectPlaygroundDir(r)
+	loc, err := s.resolveProjectPlaygroundDir(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	channelID := r.PathValue("channel_id")
 	baseURL := fmt.Sprintf("/api/playground/serve-project/%s/%s/", channelID, name)
-	s.renderPlaygroundIndex(w, pgDir, baseURL)
+	s.servePlayground(w, loc, "", baseURL, http.StatusBadRequest)
 }
 
 // handlePlaygroundServeProjectFile serves files from a project-scoped playground.
 // GET /api/playground/serve-project/{channel_id}/{name}/{path...}
 func (s *playgroundService) handlePlaygroundServeProjectFile(w http.ResponseWriter, r *http.Request) {
-	pgDir, err := s.resolveProjectPlaygroundDir(r)
+	loc, err := s.resolveProjectPlaygroundDir(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	s.servePlaygroundFile(w, pgDir, r.PathValue("path"))
+	s.servePlayground(w, loc, r.PathValue("path"), "", http.StatusBadRequest)
 }
 
 // handlePlaygroundDelete handles DELETE /api/playground?name=...&scope=...&channel_id=... — removes an entire playground.
 func (s *playgroundService) handlePlaygroundDelete(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
-	pgDir, err := s.resolvePlaygroundDir(r, name)
+	loc, err := s.resolvePlaygroundDir(r, name)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if _, err := s.deps.sys.Stat(pgDir); os.IsNotExist(err) {
+	// The playground is removed through its base as a root: a playground
+	// dir that is a symlink loses the link, never what it points to.
+	base, err := loc.openBase(false)
+	if err == nil {
+		defer base.Close()
+		_, err = base.Stat(loc.name)
+	}
+	if osutil.IsEscape(err) {
+		http.Error(w, errPlaygroundTraversal, http.StatusBadRequest)
+		return
+	}
+	if err != nil {
 		http.Error(w, "playground not found", http.StatusNotFound)
 		return
 	}
-	if err := s.deps.sys.RemoveAll(pgDir); err != nil {
+	removeAll := s.removeAll
+	if removeAll == nil {
+		removeAll = (*os.Root).RemoveAll
+	}
+	if err := removeAll(base, loc.name); err != nil {
 		http.Error(w, "deleting playground: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -428,12 +462,12 @@ func (s *playgroundService) handlePlaygroundDelete(w http.ResponseWriter, r *htt
 // handlePlaygroundFileWrite handles PUT /api/playground/file?name=...&path=...&scope=...&channel_id=... — creates or updates a file.
 func (s *playgroundService) handlePlaygroundFileWrite(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
-	pgDir, err := s.resolvePlaygroundDir(r, name)
+	loc, err := s.resolvePlaygroundDir(r, name)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	fullPath, err := s.playgroundFile(pgDir, r.URL.Query().Get("path"))
+	rel, err := validatePlaygroundPath(r.URL.Query().Get("path"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -445,14 +479,20 @@ func (s *playgroundService) handlePlaygroundFileWrite(w http.ResponseWriter, r *
 		return
 	}
 
-	if dir := filepath.Dir(fullPath); dir != pgDir {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			http.Error(w, "creating directory: "+err.Error(), http.StatusInternalServerError)
+	pg, err := loc.open(true)
+	if err != nil {
+		playgroundFileError(w, err, "creating directory: ")
+		return
+	}
+	defer pg.Close()
+	if dir := filepath.Dir(rel); dir != "." {
+		if err := pg.MkdirAll(dir, 0o755); err != nil {
+			playgroundFileError(w, err, "creating directory: ")
 			return
 		}
 	}
-	if err := os.WriteFile(fullPath, content, 0o644); err != nil {
-		http.Error(w, "writing file: "+err.Error(), http.StatusInternalServerError)
+	if err := pg.WriteFile(rel, content, 0o644); err != nil {
+		playgroundFileError(w, err, "writing file: ")
 		return
 	}
 
@@ -470,18 +510,18 @@ func (s *playgroundService) handlePlaygroundFileWrite(w http.ResponseWriter, r *
 
 // handlePlaygroundFileRead handles GET /api/playground/file?name=...&path=...&scope=...&channel_id=... — reads a file.
 func (s *playgroundService) handlePlaygroundFileRead(w http.ResponseWriter, r *http.Request) {
-	name := r.URL.Query().Get("name")
-	pgDir, err := s.resolvePlaygroundDir(r, name)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	pg, rel, ok := s.playgroundFileRequest(w, r)
+	if !ok {
 		return
 	}
-	fullPath, err := s.playgroundFile(pgDir, r.URL.Query().Get("path"))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if pg != nil {
+		defer pg.Close()
+	}
+	data, err := readPlaygroundFile(pg, rel)
+	if osutil.IsEscape(err) {
+		http.Error(w, errPlaygroundTraversal, http.StatusBadRequest)
 		return
 	}
-	data, err := os.ReadFile(fullPath)
 	if err != nil {
 		http.Error(w, "file not found", http.StatusNotFound)
 		return
@@ -494,17 +534,20 @@ func (s *playgroundService) handlePlaygroundFileRead(w http.ResponseWriter, r *h
 // handlePlaygroundFileDelete handles DELETE /api/playground/file?name=...&path=...&scope=...&channel_id=... — removes a file.
 func (s *playgroundService) handlePlaygroundFileDelete(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
-	pgDir, err := s.resolvePlaygroundDir(r, name)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	pg, rel, ok := s.playgroundFileRequest(w, r)
+	if !ok {
 		return
 	}
-	fullPath, err := s.playgroundFile(pgDir, r.URL.Query().Get("path"))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if pg == nil {
+		http.Error(w, "file not found", http.StatusNotFound)
 		return
 	}
-	if err := os.Remove(fullPath); err != nil {
+	defer pg.Close()
+	// Remove takes a symlink itself away, never what it points to.
+	if err := pg.Remove(rel); osutil.IsEscape(err) {
+		http.Error(w, errPlaygroundTraversal, http.StatusBadRequest)
+		return
+	} else if err != nil {
 		http.Error(w, "file not found", http.StatusNotFound)
 		return
 	}
@@ -523,25 +566,49 @@ func (s *playgroundService) handlePlaygroundFileDelete(w http.ResponseWriter, r 
 
 // handlePlaygroundFileList handles GET /api/playground/files?name=...&scope=...&channel_id=... — lists all files.
 func (s *playgroundService) handlePlaygroundFileList(w http.ResponseWriter, r *http.Request) {
-	name := r.URL.Query().Get("name")
-	pgDir, err := s.resolvePlaygroundDir(r, name)
+	loc, err := s.resolvePlaygroundDir(r, r.URL.Query().Get("name"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	pg, ok := openPlayground(w, loc, http.StatusBadRequest)
+	if !ok {
+		return
+	}
 	var files []string
-	filepath.WalkDir(pgDir, func(path string, d os.DirEntry, _ error) error { //nolint:errcheck
-		if d != nil && !d.IsDir() {
-			if rel, relErr := filepath.Rel(pgDir, path); relErr == nil {
-				files = append(files, rel)
+	if pg != nil {
+		defer pg.Close()
+		// WalkDir lists symlinks as entries and doesn't follow them.
+		fs.WalkDir(pg.FS(), ".", func(p string, d fs.DirEntry, _ error) error { //nolint:errcheck
+			if d != nil && !d.IsDir() {
+				files = append(files, filepath.FromSlash(p))
 			}
-		}
-		return nil
-	})
+			return nil
+		})
+	}
 	if files == nil {
 		files = []string{}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string][]string{"files": files}) //nolint:errcheck
+}
+
+// playgroundFileRequest resolves the playground and file path of a
+// /api/playground/file request (?name=&path=&scope=&channel_id=) and opens
+// the playground (nil when missing), answering the request itself when it
+// can't.
+func (s *playgroundService) playgroundFileRequest(w http.ResponseWriter, r *http.Request) (*os.Root, string, bool) {
+	loc, err := s.resolvePlaygroundDir(r, r.URL.Query().Get("name"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return nil, "", false
+	}
+	rel, err := validatePlaygroundPath(r.URL.Query().Get("path"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return nil, "", false
+	}
+	pg, ok := openPlayground(w, loc, http.StatusBadRequest)
+	return pg, rel, ok
 }

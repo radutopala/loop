@@ -9,6 +9,8 @@ import (
 	"maps"
 	"net/http"
 	"os"
+
+	"github.com/radutopala/loop/internal/osutil"
 )
 
 const (
@@ -23,32 +25,43 @@ const (
 // maxPlaygroundStateBytes.
 var errPlaygroundStateTooLarge = errors.New("playground state is larger than 1 MiB")
 
-// playgroundStatePath resolves the state file of the playground r names
-// (?name=&scope=&channel_id=), answering the request itself when it can't.
-func (s *playgroundService) playgroundStatePath(w http.ResponseWriter, r *http.Request) (string, bool) {
+// openPlaygroundState opens the playground r names (?name=&scope=&channel_id=)
+// to reach its state file through, answering the request itself when it
+// can't. The caller closes the root.
+func (s *playgroundService) openPlaygroundState(w http.ResponseWriter, r *http.Request) (*os.Root, bool) {
 	name := r.URL.Query().Get("name")
-	pgDir, err := s.resolvePlaygroundDir(r, name)
+	loc, err := s.resolvePlaygroundDir(r, name)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
-		return "", false
+		return nil, false
 	}
-	if info, err := os.Stat(pgDir); err != nil || !info.IsDir() {
+	pg, err := loc.open(false)
+	if osutil.IsEscape(err) {
+		http.Error(w, errPlaygroundTraversal, http.StatusBadRequest)
+		return nil, false
+	}
+	if err != nil {
 		http.Error(w, fmt.Sprintf("no playground %q", name), http.StatusNotFound)
-		return "", false
+		return nil, false
 	}
-	path, err := s.playgroundFile(pgDir, playgroundStateFile)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return "", false
-	}
-	return path, true
+	return pg, true
 }
 
-// readPlaygroundState reads the state at path; a playground without one has
-// an empty state.
-func readPlaygroundState(path string) (map[string]json.RawMessage, error) {
+// stateError answers a failed state read or write: a state file that leads
+// outside the playground is a 400, anything else a 500.
+func stateError(w http.ResponseWriter, err error, what string) {
+	if osutil.IsEscape(err) {
+		http.Error(w, errPlaygroundTraversal, http.StatusBadRequest)
+		return
+	}
+	http.Error(w, what+err.Error(), http.StatusInternalServerError)
+}
+
+// readPlaygroundState reads the state of the playground pg; a playground
+// without one has an empty state.
+func readPlaygroundState(pg *os.Root) (map[string]json.RawMessage, error) {
 	state := map[string]json.RawMessage{}
-	data, err := os.ReadFile(path)
+	data, err := pg.ReadFile(playgroundStateFile)
 	if errors.Is(err, fs.ErrNotExist) {
 		return state, nil
 	}
@@ -66,15 +79,16 @@ func readPlaygroundState(path string) (map[string]json.RawMessage, error) {
 // playground's state, a JSON object its page keeps through
 // window.loop.state.
 func (s *playgroundService) handlePlaygroundStateGet(w http.ResponseWriter, r *http.Request) {
-	path, ok := s.playgroundStatePath(w, r)
+	pg, ok := s.openPlaygroundState(w, r)
 	if !ok {
 		return
 	}
+	defer pg.Close()
 	s.stateMu.Lock()
-	state, err := readPlaygroundState(path)
+	state, err := readPlaygroundState(pg)
 	s.stateMu.Unlock()
 	if err != nil {
-		http.Error(w, "reading state: "+err.Error(), http.StatusInternalServerError)
+		stateError(w, err, "reading state: ")
 		return
 	}
 	writeHTTPJSON(w, http.StatusOK, state, s.deps.logger)
@@ -85,23 +99,24 @@ func (s *playgroundService) handlePlaygroundStateGet(w http.ResponseWriter, r *h
 // answers with the new state and tells the playground's panels, which pass
 // it to their page.
 func (s *playgroundService) handlePlaygroundStatePatch(w http.ResponseWriter, r *http.Request) {
-	path, ok := s.playgroundStatePath(w, r)
+	pg, ok := s.openPlaygroundState(w, r)
 	if !ok {
 		return
 	}
+	defer pg.Close()
 	var patch map[string]json.RawMessage
 	if err := json.NewDecoder(io.LimitReader(r.Body, maxPlaygroundStateBytes+1)).Decode(&patch); err != nil || patch == nil {
 		http.Error(w, "the body must be a JSON object of at most 1 MiB", http.StatusBadRequest)
 		return
 	}
 
-	state, err := s.patchPlaygroundState(path, patch)
+	state, err := s.patchPlaygroundState(pg, patch)
 	if errors.Is(err, errPlaygroundStateTooLarge) {
 		http.Error(w, err.Error(), http.StatusRequestEntityTooLarge)
 		return
 	}
 	if err != nil {
-		http.Error(w, "writing state: "+err.Error(), http.StatusInternalServerError)
+		stateError(w, err, "writing state: ")
 		return
 	}
 
@@ -116,11 +131,12 @@ func (s *playgroundService) handlePlaygroundStatePatch(w http.ResponseWriter, r 
 	writeHTTPJSON(w, http.StatusOK, state, s.deps.logger)
 }
 
-// patchPlaygroundState merges patch into the state at path and writes it.
-func (s *playgroundService) patchPlaygroundState(path string, patch map[string]json.RawMessage) (map[string]json.RawMessage, error) {
+// patchPlaygroundState merges patch into the state of the playground pg and
+// writes it.
+func (s *playgroundService) patchPlaygroundState(pg *os.Root, patch map[string]json.RawMessage) (map[string]json.RawMessage, error) {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
-	state, err := readPlaygroundState(path)
+	state, err := readPlaygroundState(pg)
 	if err != nil {
 		return nil, err
 	}
@@ -136,7 +152,7 @@ func (s *playgroundService) patchPlaygroundState(path string, patch map[string]j
 	}
 	write := s.writeStateFile
 	if write == nil {
-		write = os.WriteFile
+		write = (*os.Root).WriteFile
 	}
-	return state, write(path, data, 0o644)
+	return state, write(pg, playgroundStateFile, data, 0o644)
 }

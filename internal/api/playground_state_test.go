@@ -117,7 +117,7 @@ func (s *ServerSuite) TestPlaygroundStateReadError() {
 
 func (s *ServerSuite) TestPlaygroundStateWriteError() {
 	s.playgroundStateDir()
-	s.srv.playground.writeStateFile = func(string, []byte, os.FileMode) error { return errors.New("disk full") }
+	s.srv.playground.writeStateFile = func(*os.Root, string, []byte, os.FileMode) error { return errors.New("disk full") }
 
 	rec := s.testRequest("PATCH", "/api/playground/state?name=my-app", `{"a":1}`)
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
