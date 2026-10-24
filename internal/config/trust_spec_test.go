@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -23,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/radutopala/loop/internal/buildctx"
 	"github.com/radutopala/loop/internal/types"
 )
 
@@ -30,6 +32,22 @@ const (
 	specDir  = "/proj"
 	specFile = "/proj/.loop/config.json"
 )
+
+// memBuildFiles fingerprints the files in files under dir's build
+// context, as regular files that aren't executable.
+func memBuildFiles(files map[string][]byte, dir string) buildctx.Files {
+	prefix := filepath.Join(dir, ".loop", "container") + "/"
+	var out buildctx.Files
+	for p, b := range files {
+		if rel, ok := strings.CutPrefix(p, prefix); ok {
+			if out == nil {
+				out = buildctx.Files{}
+			}
+			out[rel] = buildctx.FileDigest(b, 0o644)
+		}
+	}
+	return out
+}
 
 // newMemTrustStore returns a TrustStore whose trust file lives in files.
 func newMemTrustStore(files map[string][]byte) *TrustStore {
@@ -50,6 +68,9 @@ func newMemTrustStore(files map[string][]byte) *TrustStore {
 		writeFile: func(p string, b []byte, _ os.FileMode) error {
 			files[p] = b
 			return nil
+		},
+		buildFiles: func(dir string) (buildctx.Files, error) {
+			return memBuildFiles(files, dir), nil
 		},
 		mkdirAll: func(string, os.FileMode) error { return nil },
 		rename: func(from, to string) error {

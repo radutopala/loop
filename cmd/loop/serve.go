@@ -811,6 +811,7 @@ func (a *app) serve() error {
 	listChildProjects := childProjectsLister(store, cfg, config.LoadProjectConfig)
 	childImages := container.NewChildImageManager(dockerClient, cfg.ContainerImage,
 		listChildProjects, lifecycleMgr.BeginBuild, logger)
+	childImages.SetBuildTrust(config.NewTrustStoreIn(a.userConfigDir))
 	lifecycleMgr.SetReclaimScope(reclaimScope(store, cfg, listChildProjects))
 	lifecycleMgr.SetChildRebuilder(childImages.RebuildStale)
 	runner.SetImageGate(lifecycleMgr, a.version, cfg.ContainerImage)

@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/radutopala/loop/internal/buildctx"
 	"github.com/radutopala/loop/internal/types"
 )
 
@@ -46,6 +47,9 @@ func (s *TrustSuite) SetupTest() {
 		writeFile: func(p string, b []byte, _ os.FileMode) error {
 			s.files[p] = b
 			return nil
+		},
+		buildFiles: func(dir string) (buildctx.Files, error) {
+			return memBuildFiles(s.files, dir), nil
 		},
 		mkdirAll: func(string, os.FileMode) error { return nil },
 		rename: func(from, to string) error {
@@ -405,6 +409,7 @@ func (s *TrustSuite) TestNewTrustStore() {
 	require.NotNil(s.T(), st.userConfigDir)
 	require.NotNil(s.T(), st.readFile)
 	require.NotNil(s.T(), st.readIn)
+	require.NotNil(s.T(), st.buildFiles)
 	require.NotNil(s.T(), st.writeFile)
 	require.NotNil(s.T(), st.mkdirAll)
 	require.NotNil(s.T(), st.rename)
@@ -886,6 +891,7 @@ func (s *TrustSuite) TestAdoptContainerImage() {
 		config   string
 		trusted  bool
 		approved string // what's trusted after; "" when the trust file is left alone
+		build    string // the project's .loop/container/Dockerfile; "" for none
 	}{
 		{name: "no image", snapshot: `{` + mountsA + `}`, config: `{` + mountsA + `}`, trusted: true},
 		{name: "image joins the trusted fields", snapshot: `{` + mountsA + `}`, config: `{` + mountsA + `, ` + img + `}`, trusted: true, approved: `{` + mountsA + `, ` + img + `}`},
@@ -895,6 +901,7 @@ func (s *TrustSuite) TestAdoptContainerImage() {
 		{name: "a trusted image is kept", snapshot: `{` + img + `}`, config: `{` + imgLater + `}`},
 		{name: "a trusted autobuild keeps the image untrusted", snapshot: `{` + build + `}`, config: `{` + imgLater + `, ` + build + `}`},
 		{name: "unreadable config is left for review", snapshot: `{` + mountsA + `}`, config: `{"container_image": 1}`},
+		{name: "the build context joins", snapshot: `{` + mountsA + `}`, config: `{` + mountsA + `, ` + img + `}`, build: "FROM loop-agent\n", trusted: true, approved: `{` + mountsA + `, ` + img + `}`},
 	}
 	canon := func(content string) []byte {
 		f, err := fieldsOfData([]byte(content))
@@ -909,6 +916,9 @@ func (s *TrustSuite) TestAdoptContainerImage() {
 			}
 			before := s.files[trustPath]
 			s.project(tt.config)
+			if tt.build != "" {
+				s.files[dockerfilePath] = []byte(tt.build)
+			}
 			require.NoError(s.T(), s.store.AdoptContainerImage("/proj"))
 			if tt.approved == "" {
 				require.Equal(s.T(), before, s.files[trustPath], "the trust file is left alone")
@@ -916,7 +926,12 @@ func (s *TrustSuite) TestAdoptContainerImage() {
 				got, ok, err := s.store.approved("/proj")
 				require.NoError(s.T(), err)
 				require.True(s.T(), ok)
-				require.Equal(s.T(), string(canon(tt.approved)), string(got.canonical()))
+				want, err := fieldsOfData([]byte(tt.approved))
+				require.NoError(s.T(), err)
+				if tt.build != "" {
+					want.ContainerBuild = buildctx.Files{"Dockerfile": buildctx.FileDigest([]byte(tt.build), 0o644)}
+				}
+				require.Equal(s.T(), string(want.canonical()), string(got.canonical()))
 			}
 			if tt.name == "unreadable config is left for review" {
 				return

@@ -48,6 +48,14 @@ rebuild from the UI/API — so they never linger on an old base:
   project's. When there's no Dockerfile at all, Loop writes one to the
   project's `.loop/container/Dockerfile` with just `FROM` the base image, to
   add to.
+- Loop builds only the `.loop/container` you trusted (see
+  [Project config trust](configuration.md#project-config-trust)), since the
+  gate and the docker proxy run from inside the image. It copies the
+  directory first and builds from the copy when every file in it matches the
+  version you trusted. A directory holding just the Dockerfile Loop writes
+  needs no trust. A worktree's copy of its project's trusted directory builds
+  too. Otherwise the build fails, and the project waits for you to review it
+  in **Settings → Project**.
 - Opt out per project with `"container_image_autobuild": false`.
 
 Running containers are unaffected; the next agent run picks up the new image.

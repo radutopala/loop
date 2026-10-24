@@ -13,12 +13,15 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 
+	"github.com/radutopala/loop/internal/buildctx"
 	"github.com/radutopala/loop/internal/osutil"
 )
 
@@ -63,6 +66,15 @@ type ChildImageManager struct {
 	// tests.
 	writeFile func(root, path string, data []byte) error
 
+	// trust is what the owner trusts of each project's build context; nil
+	// trusts none, so only Loop's own default Dockerfile builds.
+	trust BuildTrust
+
+	// snapshot copies the build context in contextDir, under the project
+	// dir root, to a dir to build from, and fingerprints the copy. cleanup
+	// removes the copy. Injectable for tests.
+	snapshot func(root, contextDir string) (dst string, files buildctx.Files, cleanup func(), err error)
+
 	cascadeMu sync.Mutex // serializes cascades
 
 	// imagesMu guards images, which holds a lock per project image: a
@@ -100,7 +112,100 @@ func NewChildImageManager(client DockerClient, baseImage string, listProjects fu
 		beginBuild:   beginBuild,
 		readFile:     os.ReadFile,
 		writeFile:    writeFileMkdir,
+		snapshot:     snapshotContext,
 	}
+}
+
+// BuildTrust is what the owner trusts of a project's build context,
+// .loop/container. Satisfied by *config.TrustStore.
+type BuildTrust interface {
+	// TrustedBuild is the fingerprint of the build context of the project
+	// in dir as the owner last trusted it.
+	TrustedBuild(dir string) (buildctx.Files, error)
+	// KeepBuild keeps the project in dir trusted across Loop writing the
+	// file rel of its build context.
+	KeepBuild(dir, rel string, data []byte, mode fs.FileMode) error
+}
+
+// SetBuildTrust makes project images build only from the build context the
+// owner trusted: an agent can write .loop/container, and the gate and the
+// docker proxy run from inside the image.
+func (m *ChildImageManager) SetBuildTrust(t BuildTrust) {
+	m.trust = t
+}
+
+// errUntrustedBuild refuses a build context that isn't the trusted one.
+var errUntrustedBuild = errors.New("the project's .loop/container isn't the version you trusted; review it in Settings → Project")
+
+// build builds image with labels from the build context in contextDir, of
+// the project in dir. It builds from a copy, and only when the copy is just
+// Loop's default Dockerfile or the context the owner trusted for one of
+// trustDirs (a worktree's checkout of its project's trusted context is that
+// context), so what was checked is what's built.
+func (m *ChildImageManager) build(ctx context.Context, image, dir, contextDir string, trustDirs []string, labels map[string]string) error {
+	src, files, cleanup, err := m.snapshot(dir, contextDir)
+	if err != nil {
+		return fmt.Errorf("copying the build context %s: %w", contextDir, err)
+	}
+	defer cleanup()
+	if ok, err := m.trusted(files, trustDirs); err != nil {
+		return err
+	} else if !ok {
+		return errUntrustedBuild
+	}
+	return m.client.ImageBuildFileLabels(ctx, src, "Dockerfile", image, labels)
+}
+
+// trusted reports whether a build context with files may build: it's just
+// Loop's default Dockerfile, or the owner trusted it for one of dirs.
+func (m *ChildImageManager) trusted(files buildctx.Files, dirs []string) (bool, error) {
+	if maps.Equal(files, m.defaultBuild()) {
+		return true, nil
+	}
+	if m.trust == nil {
+		return false, nil
+	}
+	for _, dir := range dirs {
+		trusted, err := m.trust.TrustedBuild(dir)
+		if err != nil {
+			return false, err
+		}
+		if maps.Equal(files, trusted) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// defaultBuild is the fingerprint of a build context of just the default
+// Dockerfile, which needs no trust: it adds nothing to Loop's image.
+func (m *ChildImageManager) defaultBuild() buildctx.Files {
+	return buildctx.Files{"Dockerfile": buildctx.FileDigest([]byte(defaultDockerfile(m.baseImage)), defaultDockerfileMode)}
+}
+
+// defaultDockerfileMode is the mode BuildMissing writes the default
+// Dockerfile with.
+const defaultDockerfileMode = 0o644
+
+// snapshotContext copies the build context in contextDir to a new temp dir,
+// without following a link out of the project dir root.
+func snapshotContext(root, contextDir string) (string, buildctx.Files, func(), error) {
+	r, err := osutil.OpenRootIn(root, contextDir)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	defer r.Close()
+	dst, err := os.MkdirTemp("", "loop-build-")
+	if err != nil {
+		return "", nil, nil, err
+	}
+	cleanup := func() { _ = os.RemoveAll(dst) }
+	files, err := buildctx.Snapshot(r, dst)
+	if err != nil {
+		cleanup()
+		return "", nil, nil, err
+	}
+	return dst, files, cleanup, nil
 }
 
 // RebuildStale rebuilds every eligible child image whose recorded parent ID
@@ -137,8 +242,8 @@ func (m *ChildImageManager) RebuildStale(ctx context.Context, handoff func()) {
 	}
 
 	type staleChild struct {
-		image, contextDir string
-		end               func()
+		image, dir, contextDir string
+		end                    func()
 	}
 	var stale []staleChild
 	seen := map[string]bool{}
@@ -156,7 +261,7 @@ func (m *ChildImageManager) RebuildStale(ctx context.Context, handoff func()) {
 		if labels, err := m.client.ImageInspectLabels(ctx, p.Image); err == nil && labels != nil && labels[ParentIDLabel] == parentID {
 			continue // already built on the current base
 		}
-		stale = append(stale, staleChild{image: p.Image, contextDir: contextDir})
+		stale = append(stale, staleChild{image: p.Image, dir: p.DirPath, contextDir: contextDir})
 	}
 
 	for i := range stale {
@@ -165,21 +270,21 @@ func (m *ChildImageManager) RebuildStale(ctx context.Context, handoff func()) {
 	handoff()
 
 	for _, c := range stale {
-		m.rebuildChild(ctx, c.image, c.contextDir, parentID)
+		m.rebuildChild(ctx, c.image, c.dir, c.contextDir, parentID)
 		c.end()
 	}
 }
 
 // rebuildChild rebuilds image on base parentID under its build lock,
 // unless a build that held it first (BuildMissing's) already did.
-func (m *ChildImageManager) rebuildChild(ctx context.Context, image, contextDir, parentID string) {
+func (m *ChildImageManager) rebuildChild(ctx context.Context, image, dir, contextDir, parentID string) {
 	defer m.lockImage(image)()
 	if labels, err := m.client.ImageInspectLabels(ctx, image); err == nil && labels != nil && labels[ParentIDLabel] == parentID {
 		return
 	}
 	m.logger.Info("child images: rebuilding on new base",
 		"image", image, "base", m.baseImage, "parent_id", parentID)
-	if err := m.client.ImageBuildFileLabels(ctx, contextDir, "Dockerfile", image, map[string]string{ParentIDLabel: parentID}); err != nil {
+	if err := m.build(ctx, image, dir, contextDir, []string{dir}, map[string]string{ParentIDLabel: parentID}); err != nil {
 		m.logger.Error("child images: rebuild failed", "image", image, "error", err)
 		return
 	}
@@ -251,7 +356,7 @@ func writeFileMkdir(root, path string, data []byte) error {
 	if err := osutil.MkdirAllIn(root, filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return osutil.WriteFileIn(root, path, data, 0o644)
+	return osutil.WriteFileIn(root, path, data, defaultDockerfileMode)
 }
 
 // defaultDockerfile is the Dockerfile BuildMissing writes for a project that
@@ -309,10 +414,16 @@ func (m *ChildImageManager) BuildMissing(ctx context.Context, image string, auto
 			return nil
 		}
 		dockerfile := filepath.Join(projectDir, childDockerfileRelPath)
-		if err := m.writeFile(projectDir, dockerfile, []byte(defaultDockerfile(m.baseImage))); err != nil {
+		data := []byte(defaultDockerfile(m.baseImage))
+		if err := m.writeFile(projectDir, dockerfile, data); err != nil {
 			return fmt.Errorf("writing %s: %w", dockerfile, err)
 		}
 		m.logger.Info("child images: wrote a Dockerfile FROM the base image", "image", image, "path", dockerfile)
+		if m.trust != nil {
+			if err := m.trust.KeepBuild(projectDir, filepath.Base(dockerfile), data, defaultDockerfileMode); err != nil {
+				m.logger.Warn("child images: keeping the project trusted", "dir", projectDir, "error", err)
+			}
+		}
 		contextDir = filepath.Dir(dockerfile)
 	}
 
@@ -320,7 +431,8 @@ func (m *ChildImageManager) BuildMissing(ctx context.Context, image string, auto
 	end := m.beginBuild(image)
 	defer end()
 	m.logger.Info("child images: building missing image", "image", image, "base", m.baseImage, "parent_id", parentIDs[0])
-	if err := m.client.ImageBuildFileLabels(ctx, contextDir, "Dockerfile", image, map[string]string{ParentIDLabel: parentIDs[0]}); err != nil {
+	trustDirs := slices.DeleteFunc(slices.Clone(dirs), func(d string) bool { return d == "" })
+	if err := m.build(ctx, image, projectDir, contextDir, trustDirs, map[string]string{ParentIDLabel: parentIDs[0]}); err != nil {
 		return fmt.Errorf("building image %s: %w", image, err)
 	}
 	m.logger.Info("child images: built", "image", image)
