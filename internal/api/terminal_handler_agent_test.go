@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/stretchr/testify/mock"
@@ -226,89 +227,73 @@ func (s *TerminalHandlerSuite) TestOpenModeForkOnEmptyChannelDoesNotFork() {
 	s.sendCreateWithOpenMode("", "fork", "", false, "claude --dangerously-skip-permissions")
 }
 
-func (s *TerminalHandlerSuite) TestAutoAcceptScansOutput() {
-	s.terminal.On("SendInput", "sid-1", []byte("\r")).Return(nil)
-
-	tc := &terminalWSConn{
+// newAutoAcceptConn returns a conn on session sid-1 whose waits are short.
+func (s *TerminalHandlerSuite) newAutoAcceptConn() *terminalWSConn {
+	return &terminalWSConn{
 		manager:   s.terminal,
 		sessionID: "sid-1",
+		delays:    fastTerminalDelays(),
 		logger:    slog.Default(),
 	}
+}
+
+func (s *TerminalHandlerSuite) TestAutoAcceptScansOutput() {
+	sent := countSendInput(s.terminal, "sid-1", []byte("\r"), nil)
+
+	tc := s.newAutoAcceptConn()
 	tc.enableAutoAccept()
 
-	// Output without trigger — should not send Enter.
+	// Output without trigger — should not send Enter. Nothing is scheduled,
+	// so there is nothing to wait for.
 	tc.scanAutoAccept([]byte("Loading Claude..."))
-	time.Sleep(50 * time.Millisecond)
 	s.terminal.AssertNotCalled(s.T(), "SendInput", "sid-1", []byte("\r"))
 
-	// Output with trigger — should send Enter (first retry at 500ms).
+	// Output with trigger — should send Enter, once per wait.
 	tc.scanAutoAccept([]byte("Entertoconfirm · Esc to cancel"))
-	time.Sleep(700 * time.Millisecond)
-	s.terminal.AssertCalled(s.T(), "SendInput", "sid-1", []byte("\r"))
+	require.Eventually(s.T(), func() bool { return sent.Load() == 3 }, 5*time.Second, time.Millisecond)
 }
 
 func (s *TerminalHandlerSuite) TestAutoAcceptFiresForMultiplePrompts() {
-	s.terminal.On("SendInput", "sid-1", []byte("\r")).Return(nil)
+	sent := countSendInput(s.terminal, "sid-1", []byte("\r"), nil)
 
-	tc := &terminalWSConn{
-		manager:   s.terminal,
-		sessionID: "sid-1",
-		logger:    slog.Default(),
-	}
+	tc := s.newAutoAcceptConn()
 	tc.enableAutoAccept()
 
-	// First prompt fires (with retries).
-	tc.scanAutoAccept([]byte("Entertoconfirm · Esc to cancel"))
-	time.Sleep(3 * time.Second)
-
-	// Second prompt also fires.
-	tc.scanAutoAccept([]byte("Entertoconfirm · Esc to cancel"))
-	time.Sleep(3 * time.Second)
-
 	// Each trigger sends Enter 3 times (retries), so 6 total.
-	s.terminal.AssertNumberOfCalls(s.T(), "SendInput", 6)
+	tc.scanAutoAccept([]byte("Entertoconfirm · Esc to cancel"))
+	require.Eventually(s.T(), func() bool { return sent.Load() == 3 }, 5*time.Second, time.Millisecond)
+	tc.scanAutoAccept([]byte("Entertoconfirm · Esc to cancel"))
+	require.Eventually(s.T(), func() bool { return sent.Load() == 6 }, 5*time.Second, time.Millisecond)
 }
 
 func (s *TerminalHandlerSuite) TestAutoAcceptSendError() {
-	s.terminal.On("SendInput", "sid-1", []byte("\r")).Return(errors.New("session gone"))
+	sent := countSendInput(s.terminal, "sid-1", []byte("\r"), errors.New("session gone"))
 
-	tc := &terminalWSConn{
-		manager:   s.terminal,
-		sessionID: "sid-1",
-		logger:    slog.Default(),
-	}
+	tc := s.newAutoAcceptConn()
 	tc.enableAutoAccept()
 
 	tc.scanAutoAccept([]byte("Entertoconfirm"))
-	time.Sleep(700 * time.Millisecond)
-	// Error on first retry, stops immediately.
-	s.terminal.AssertNumberOfCalls(s.T(), "SendInput", 1)
+	require.Eventually(s.T(), func() bool { return sent.Load() == 1 }, 5*time.Second, time.Millisecond)
+	// Error on first retry, stops immediately: the next retry would follow
+	// within a millisecond.
+	require.Never(s.T(), func() bool { return sent.Load() > 1 }, 50*time.Millisecond, time.Millisecond)
 }
 
 func (s *TerminalHandlerSuite) TestAutoAcceptDisabledByDefault() {
-	tc := &terminalWSConn{
-		manager:   s.terminal,
-		sessionID: "sid-1",
-		logger:    slog.Default(),
-	}
-	// No enableAutoAccept() — should not scan.
+	tc := s.newAutoAcceptConn()
+	// No enableAutoAccept() — should not scan, so nothing is scheduled.
 	tc.scanAutoAccept([]byte("Entertoconfirm"))
-	time.Sleep(50 * time.Millisecond)
 	s.terminal.AssertNotCalled(s.T(), "SendInput", mock.Anything, mock.Anything)
 }
 
 func (s *TerminalHandlerSuite) TestDisableAutoAcceptStopsTrigger() {
-	tc := &terminalWSConn{
-		manager:   s.terminal,
-		sessionID: "sid-1",
-		logger:    slog.Default(),
-	}
+	tc := s.newAutoAcceptConn()
 	tc.enableAutoAccept()
 	tc.disableAutoAccept()
 
-	// After disable, the trigger string must be ignored even with budget previously armed.
+	// After disable, the trigger string must be ignored even with budget
+	// previously armed, so nothing is scheduled.
 	tc.scanAutoAccept([]byte("Entertoconfirm · Esc to cancel"))
-	time.Sleep(700 * time.Millisecond)
 	s.terminal.AssertNotCalled(s.T(), "SendInput", mock.Anything, mock.Anything)
 }
 
@@ -318,6 +303,7 @@ func (s *TerminalHandlerSuite) newRelaunchConn(builder *MockInteractiveCmdBuilde
 	tc := &terminalWSConn{
 		manager:    s.terminal,
 		cmdBuilder: builder,
+		delays:     fastTerminalDelays(),
 		logger:     slog.Default(),
 	}
 	tc.setSessionID("sid-1")
@@ -351,14 +337,13 @@ func (s *TerminalHandlerSuite) TestScanClaudeExitCleanExitDoesNotRelaunch() {
 	tc := s.newRelaunchConn(builder)
 	tc.enableRelaunch("ch-1", "/work", "", "", "agent-0")
 
+	// A clean exit schedules nothing, so there is nothing to wait for.
 	tc.scanClaudeExit([]byte("__LOOP_CLAUDE_EXIT:0\n"))
-	time.Sleep(1200 * time.Millisecond)
 
 	s.terminal.AssertNotCalled(s.T(), "SendInput", "sid-1", []byte("claude --continue\n"))
 	builder.AssertNotCalled(s.T(), "BuildContinueCmd", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	// A subsequent abnormal marker must not relaunch either — budget is zeroed.
 	tc.scanClaudeExit([]byte("__LOOP_CLAUDE_EXIT:1\n"))
-	time.Sleep(1200 * time.Millisecond)
 	s.terminal.AssertNotCalled(s.T(), "SendInput", "sid-1", []byte("claude --continue\n"))
 }
 
@@ -368,8 +353,8 @@ func (s *TerminalHandlerSuite) TestScanClaudeExitDisabledByDefault() {
 	builder := new(MockInteractiveCmdBuilder)
 	tc := s.newRelaunchConn(builder)
 
+	// Nothing is scheduled, so there is nothing to wait for.
 	tc.scanClaudeExit([]byte("__LOOP_CLAUDE_EXIT:137\n"))
-	time.Sleep(1200 * time.Millisecond)
 
 	s.terminal.AssertNotCalled(s.T(), "SendInput", mock.Anything, mock.Anything)
 	builder.AssertNotCalled(s.T(), "BuildContinueCmd", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
@@ -380,7 +365,7 @@ func (s *TerminalHandlerSuite) TestScanClaudeExitDisabledByDefault() {
 func (s *TerminalHandlerSuite) TestScanClaudeExitBudgetExhausted() {
 	builder := new(MockInteractiveCmdBuilder)
 	builder.On("BuildContinueCmd", "ch-1", "/work", "", "", "agent-0").Return("claude --continue")
-	s.terminal.On("SendInput", "sid-1", []byte("claude --continue\n")).Return(nil)
+	sent := countSendInput(s.terminal, "sid-1", []byte("claude --continue\n"), nil)
 
 	tc := s.newRelaunchConn(builder)
 	tc.enableRelaunch("ch-1", "/work", "", "", "agent-0")
@@ -389,12 +374,12 @@ func (s *TerminalHandlerSuite) TestScanClaudeExitBudgetExhausted() {
 	for i := 0; i < maxClaudeRelaunches; i++ {
 		tc.scanClaudeExit([]byte("__LOOP_CLAUDE_EXIT:137\n"))
 	}
-	time.Sleep(1200 * time.Millisecond)
-	s.terminal.AssertNumberOfCalls(s.T(), "SendInput", maxClaudeRelaunches)
+	require.Eventually(s.T(), func() bool { return sent.Load() == maxClaudeRelaunches }, 5*time.Second, time.Millisecond)
 
-	// One more abnormal exit beyond the budget must not relaunch again.
+	// One more abnormal exit beyond the budget must not relaunch again: it
+	// schedules nothing.
 	tc.scanClaudeExit([]byte("__LOOP_CLAUDE_EXIT:137\n"))
-	time.Sleep(1200 * time.Millisecond)
+	require.Zero(s.T(), tc.relaunchRemaining)
 	s.terminal.AssertNumberOfCalls(s.T(), "SendInput", maxClaudeRelaunches)
 }
 
@@ -406,7 +391,6 @@ func (s *TerminalHandlerSuite) TestScanClaudeExitNoMarkerIsNoop() {
 	tc.enableRelaunch("ch-1", "/work", "", "", "agent-0")
 
 	tc.scanClaudeExit([]byte("some ordinary output\n"))
-	time.Sleep(200 * time.Millisecond)
 
 	s.terminal.AssertNotCalled(s.T(), "SendInput", mock.Anything, mock.Anything)
 }
@@ -416,16 +400,20 @@ func (s *TerminalHandlerSuite) TestScanClaudeExitNoMarkerIsNoop() {
 // no longer owns.
 func (s *TerminalHandlerSuite) TestScanClaudeExitSkipsIfSessionMovedOn() {
 	builder := new(MockInteractiveCmdBuilder)
-	builder.On("BuildContinueCmd", "ch-1", "/work", "", "", "agent-0").Return("claude --continue").Maybe()
+	var built atomic.Bool
+	builder.On("BuildContinueCmd", "ch-1", "/work", "", "", "agent-0").Return("claude --continue").Maybe().
+		Run(func(_ mock.Arguments) { built.Store(true) })
 
 	tc := s.newRelaunchConn(builder)
+	// Long enough for the pane to move on before the relaunch fires.
+	tc.delays.relaunch = 20 * time.Millisecond
 	tc.enableRelaunch("ch-1", "/work", "", "", "agent-0")
 
 	tc.scanClaudeExit([]byte("__LOOP_CLAUDE_EXIT:137\n"))
-	// Simulate the pane moving to a new session before the 1s relaunch delay fires.
+	// Simulate the pane moving to a new session before the relaunch delay fires.
 	tc.setSessionID("sid-2")
-	time.Sleep(1200 * time.Millisecond)
 
+	require.Never(s.T(), built.Load, 100*time.Millisecond, time.Millisecond)
 	s.terminal.AssertNotCalled(s.T(), "SendInput", "sid-1", mock.Anything)
 }
 
@@ -460,8 +448,8 @@ func (s *TerminalHandlerSuite) TestDisableRelaunchClearsState() {
 	tc.enableRelaunch("ch-1", "/work", "", "", "agent-0")
 	tc.disableRelaunch()
 
+	// Nothing is scheduled, so there is nothing to wait for.
 	tc.scanClaudeExit([]byte("__LOOP_CLAUDE_EXIT:137\n"))
-	time.Sleep(1200 * time.Millisecond)
 
 	s.terminal.AssertNotCalled(s.T(), "SendInput", mock.Anything, mock.Anything)
 	builder.AssertNotCalled(s.T(), "BuildContinueCmd", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
@@ -483,7 +471,6 @@ func (s *TerminalHandlerSuite) TestScanClaudeExitOverflowingCodeIsNoop() {
 	tc.enableRelaunch("ch-1", "/work", "", "", "agent-0")
 
 	tc.scanClaudeExit([]byte("__LOOP_CLAUDE_EXIT:99999999999999999999999\n"))
-	time.Sleep(200 * time.Millisecond)
 
 	s.terminal.AssertNotCalled(s.T(), "SendInput", mock.Anything, mock.Anything)
 	builder.AssertNotCalled(s.T(), "BuildContinueCmd", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)

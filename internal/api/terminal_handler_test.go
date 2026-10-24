@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -121,7 +122,17 @@ func (s *TerminalHandlerSuite) SetupTest() {
 	// Default DetachSession mock to prevent panics on WS close in all tests.
 	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.srv = nilServer()
+	s.srv.termDelays = fastTerminalDelays()
 	s.srv.SetTerminalManager(s.terminal)
+}
+
+// fastTerminalDelays keeps a pane's waits short, so tests needn't sleep
+// through them.
+func fastTerminalDelays() terminalDelays {
+	return terminalDelays{
+		autoAccept: []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond},
+		relaunch:   time.Millisecond,
+	}
 }
 
 // dialWS creates a test HTTP server with the terminal WS handler and returns a connected websocket.
@@ -165,6 +176,16 @@ func onSendInputCalled(m *MockTerminalManager, sessionID string, data []byte) <-
 		ch <- struct{}{}
 	})
 	return ch
+}
+
+// countSendInput stubs SendInput of data to sessionID to return err, and
+// counts its calls.
+func countSendInput(m *MockTerminalManager, sessionID string, data []byte, err error) *atomic.Int32 {
+	n := new(atomic.Int32)
+	m.On("SendInput", sessionID, data).Return(err).Run(func(_ mock.Arguments) {
+		n.Add(1)
+	})
+	return n
 }
 
 func sendControl(t *testing.T, conn *websocket.Conn, msg wsControlMessage) {

@@ -161,6 +161,7 @@ type Server struct {
 	termManager             TerminalManager
 	hostTermManager         TerminalManager
 	cmdBuilder              InteractiveCmdBuilder
+	termDelays              terminalDelays // how long terminal panes wait before acting on their output
 	containerRegistry       ContainerManager
 	containerKeepAlive      time.Duration  // how long a deleted channel's containers stay before removal
 	shellMu                 sync.Mutex     // orders releaseShell and claimShell
@@ -405,6 +406,7 @@ func NewServer(sched scheduler.Scheduler, channels ChannelEnsurer, threads Threa
 		removeMCPConfig: bot.RemoveMCPConfig,
 		newBackupKey:    age.GenerateX25519Identity,
 		deliverAsync:    func(f func()) { go f() },
+		termDelays:      defaultTerminalDelays(),
 		worktreeCreator: &worktree.Creator{
 			Sys: sys,
 			Run: worktree.ExecCommandRunner,
