@@ -110,6 +110,12 @@ func (h *ExecveHandler) Handle(ctx context.Context, req ExecveRequest) Outcome {
 	if len(argv) == 0 {
 		argv = []string{req.Filename}
 	}
+	// The kernel runs Filename; argv[0] is whatever the caller passed
+	// (bash's exec -a, env -a), so a name other than the file's isn't the
+	// command's.
+	if filepath.Base(argv[0]) != filepath.Base(req.Filename) {
+		argv = append([]string{req.Filename}, argv[1:]...)
+	}
 	effective := unwrapCommand(argv)
 
 	match := h.Policy.MatchCommand(effective[0], effective[1:])

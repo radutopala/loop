@@ -468,3 +468,35 @@ func (s *ExecveSuite) TestHandleUnwrapsWrapperOperands() {
 		s.Require().Equalf(types.DecisionDeny, out.Decision, "%q", argv)
 	}
 }
+
+func (s *ExecveSuite) TestHandleJudgesTheProgramThatRuns() {
+	// argv[0] is the caller's to choose (bash's exec -a, env -a, execve
+	// itself), so the command is the file the kernel runs: a git push
+	// passed as ls, or as a wrapper, is still git push.
+	policy := s.mustPolicy(types.DecisionAllow, types.CommandRule{
+		Commands:     []string{"git"},
+		ArgsPatterns: []string{`^push\b`},
+		Decision:     types.DecisionDeny,
+	})
+	h := NewExecveHandler(policy, nil)
+	tests := []struct {
+		name     string
+		filename string
+		argv     []string
+		want     types.Decision
+	}{
+		{"named as another command", "/usr/bin/git", []string{"ls", "push"}, types.DecisionDeny},
+		{"named as a wrapper", "/usr/bin/git", []string{"env", "push"}, types.DecisionDeny},
+		{"a wrapper named as the command", "/usr/bin/env", []string{"git", "ls", "push"}, types.DecisionAllow},
+		{"a wrapper named as another wrapper", "/usr/bin/env", []string{"nice", "git", "push"}, types.DecisionDeny},
+		{"named as itself", "/usr/bin/git", []string{"git", "push"}, types.DecisionDeny},
+		{"a relative filename", "./git", []string{"ls", "push"}, types.DecisionDeny},
+		{"a login shell's dash", "/bin/bash", []string{"-bash", "-c", "true"}, types.DecisionAllow},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			out := h.Handle(context.Background(), ExecveRequest{Filename: tc.filename, Argv: tc.argv})
+			s.Require().Equal(tc.want, out.Decision)
+		})
+	}
+}
