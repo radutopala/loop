@@ -204,7 +204,9 @@ func (s *Server) agentRefusal(r *http.Request, pattern string) string {
 	var channels, dirs []string
 	if id := r.PathValue("id"); id != "" {
 		// A task or run is refused by its own id: naming its channel would
-		// show the agent another project's channel it didn't name.
+		// show the agent another project's channel it didn't name. One that
+		// belongs to no project the agent can be matched to, such as a run
+		// the owner started on a dir alone, is refused too.
 		switch {
 		case strings.Contains(pattern, "/api/channels/{id}"), strings.Contains(pattern, "/api/threads/{id}"):
 			channels = append(channels, id)
@@ -213,15 +215,22 @@ func (s *Server) agentRefusal(r *http.Request, pattern string) string {
 			if !ok {
 				return "unknown task"
 			}
-			if ch != "" && !s.agentOwnsChannel(ctx, p, ch) {
+			if ch == "" || !s.agentOwnsChannel(ctx, p, ch) {
 				return "task " + id + " is outside this agent's project"
 			}
 		case strings.Contains(pattern, "/api/workflows/runs/{id}"):
-			ch, ok := s.workflowRunChannel(ctx, id)
+			ch, dir, ok := s.workflowRunOwner(ctx, id)
 			if !ok {
 				return "unknown workflow run"
 			}
-			if ch != "" && !s.agentOwnsChannel(ctx, p, ch) {
+			owned := false
+			switch {
+			case ch != "":
+				owned = s.agentOwnsChannel(ctx, p, ch)
+			case dir != "":
+				owned = s.agentOwnsDir(ctx, p, dir)
+			}
+			if !owned {
 				return "workflow run " + id + " is outside this agent's project"
 			}
 		}
@@ -321,16 +330,17 @@ func (s *Server) taskChannel(ctx context.Context, id string) (string, bool) {
 	return task.ChannelID, true
 }
 
-// workflowRunChannel returns the channel a workflow run belongs to.
-func (s *Server) workflowRunChannel(ctx context.Context, id string) (string, bool) {
+// workflowRunOwner returns the channel and the dir a workflow run belongs
+// to. A run the owner starts on a dir alone has no channel.
+func (s *Server) workflowRunOwner(ctx context.Context, id string) (channelID, dirPath string, ok bool) {
 	if s.workflowEngine == nil {
-		return "", false
+		return "", "", false
 	}
 	run, _, err := s.workflowEngine.GetRun(ctx, id)
 	if err != nil || run == nil {
-		return "", false
+		return "", "", false
 	}
-	return run.ChannelID, true
+	return run.ChannelID, run.DirPath, true
 }
 
 // agentOwnsChannel reports whether channelID is in the agent's project: its
