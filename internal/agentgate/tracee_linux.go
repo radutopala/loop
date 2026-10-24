@@ -221,6 +221,9 @@ func (t *ProcTracee) EvalSymlinks(path string) (string, error) {
 			return "", err
 		}
 		fi, err := t.Lstat(next)
+		if errors.Is(err, os.ErrNotExist) && strings.Trim(rest, "/") == "" {
+			return next, nil
+		}
 		if err != nil {
 			return "", err
 		}

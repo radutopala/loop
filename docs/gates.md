@@ -208,6 +208,8 @@ Order matters: the pinned policy self-deny, then the pinned project-config appro
 
 Anything that doesn't match falls through to `gates.agentgate.default_decision` (`"allow"` by default).
 
+A rule names a file, not a spelling: the path is resolved in the agent's view (cwd or dirfd, `.`, `..`, duplicate slashes, symlinks) before matching. A file that doesn't exist yet resolves to where the create puts it, so `/tmp/s/rc` with `/tmp/s` linked to `~/.ssh`, or a dangling link to `~/.ssh/rc`, still hits rule 4. `file_alias_spec_test.go` checks every spelling against rule 4's operations. Patterns are matched as written, so write them in resolved form: under a `/var/run` → `/run` link, a rule on `/var/run/x` matches nothing.
+
 #### Exec file rules
 
 A file rule whose operations list `exec` also covers the file an `execve` / `execveat` runs, matched on its absolute, symlink-resolved path: a relative name resolves against the cwd, or the dirfd for `execveat`, since the kernel doesn't search `$PATH`. Only rules that list `exec` count. A rule with no operations doesn't, and neither does `default_decision`, so a policy without one runs as before. A `deny` refuses the exec whatever the command rules say; `allow` and `approve` leave it to them. None of the defaults use it; [plugin containers](plugins.md#agentgate) deny running files from the dirs they can write.

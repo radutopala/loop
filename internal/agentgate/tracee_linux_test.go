@@ -438,6 +438,10 @@ func (s *ProcTraceeSuite) TestEvalSymlinksWalk() {
 		{"absolute link", map[string]string{"/work/l": "/etc"}, []string{"/work", "/etc", "/etc/x"}, "/work/l/x", "/etc/x"},
 		{"link with dotdot", map[string]string{"/work/sub/l": "../a"}, []string{"/work", "/work/sub", "/work/a"}, "/work/sub/l", "/work/a"},
 		{"chained links", map[string]string{"/a": "/b", "/b": "c", "/c": "/work"}, []string{"/work", "/work/f"}, "/a/f", "/work/f"},
+		{"missing last component", nil, []string{"/work"}, "/work/new", "/work/new"},
+		{"missing last component with trailing slashes", nil, []string{"/work"}, "/work/new//", "/work/new"},
+		{"missing last component under a dir link", map[string]string{"/tmp/s": "/home/a/.ssh"}, []string{"/tmp", "/home", "/home/a", "/home/a/.ssh"}, "/tmp/s/rc", "/home/a/.ssh/rc"},
+		{"dangling link", map[string]string{"/tmp/r": "/home/a/.ssh/rc"}, []string{"/tmp", "/home", "/home/a", "/home/a/.ssh"}, "/tmp/r", "/home/a/.ssh/rc"},
 	}
 	for _, c := range cases {
 		s.Run(c.name, func() {
@@ -492,6 +496,7 @@ func (s *ProcTraceeSuite) TestEvalSymlinksErrors() {
 		want error
 	}{
 		{"missing component", &fakeLinkFS{plain: plainSet("/work")}, "/work/nope/x", unix.ENOENT},
+		{"missing component before dotdot", &fakeLinkFS{plain: plainSet("/work")}, "/work/nope/..", unix.ENOENT},
 		{"lstat error", &fakeLinkFS{lstatFn: func(string) error { return sentinel }}, "/work", sentinel},
 		{"readlink error", &fakeLinkFS{links: map[string]string{"/l": "/x"}, readErr: sentinel}, "/l", sentinel},
 		{"symlink loop", &fakeLinkFS{links: map[string]string{"/a": "/b", "/b": "/a"}}, "/a", unix.ELOOP},
