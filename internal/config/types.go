@@ -157,13 +157,15 @@ type ChatComponent struct {
 }
 
 // Dir returns the template's directory under loopDir: path, or the name
-// when path is unset.
+// when path is unset. It stays inside {loopDir}/components: a project's
+// config is the agent's to write, so a path with ".." in it can't make the
+// daemon read template files from elsewhere on the host.
 func (c *ChatComponent) Dir(loopDir string) string {
 	p := c.Path
 	if p == "" {
 		p = c.Name
 	}
-	return filepath.Join(loopDir, "components", p)
+	return filepath.Join(loopDir, "components", filepath.Clean("/"+p))
 }
 
 // resolvePromptField resolves a prompt from either an inline value or a file path.

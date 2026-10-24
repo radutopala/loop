@@ -4713,7 +4713,7 @@ List all available workflow definitions from the merged config.
 
 ### `POST /api/workflows`
 
-Add, update, or delete a workflow definition in the global or project config file.
+Add, update, or delete a workflow definition in the global or project config file. An agent token can only change project workflows (`403` otherwise); `workflows` needs [project config trust](configuration.md#project-config-trust), so an agent's change waits for the user, and the user's own change keeps a trusted project trusted.
 
 **Request Body:**
 
@@ -4727,7 +4727,7 @@ Add, update, or delete a workflow definition in the global or project config fil
 
 **Response:** `204 No Content`
 
-**Errors:** `400` invalid request or workflow definition (for example a `plugin` node without exactly one of `action` and `tool`), `404` workflow not found (update/delete), `409` duplicate name (add).
+**Errors:** `400` invalid request or workflow definition (for example a `plugin` node without exactly one of `action` and `tool`), or a project config that a symlink leads outside the project, `403` an agent writing outside project scope, `404` workflow not found (update/delete), `409` duplicate name (add).
 
 ### `POST /api/workflows/runs`
 

@@ -259,6 +259,11 @@ func (s *Server) agentRefusal(r *http.Request, pattern string) string {
 	if pattern == "POST /api/bash-shortcuts" && refs.Scope != "project" {
 		return "agents can only change project bash shortcuts"
 	}
+	// Workflow bash nodes run on the host under workflow_bash_local, and
+	// project workflows wait for the user's trust like bash shortcuts.
+	if pattern == "POST /api/workflows" && refs.Scope != "project" {
+		return "agents can only change project workflows"
+	}
 	// With workflow_bash_local, workflow bash nodes run on the host.
 	if s.workflowBashLocal && startsWorkflow(pattern, refs) {
 		return "agents can't start workflows while workflow bash runs on the host"

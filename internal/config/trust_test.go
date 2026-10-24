@@ -238,7 +238,14 @@ func (s *TrustSuite) TestKeep() {
 	require.NoError(s.T(), s.store.Keep("/proj", []byte(`{not hjson`), []byte(`{"mounts": ["/d:/d"]}`)))
 	require.False(s.T(), trusted())
 
-	// Nothing that needs trust before: the owner's write is trusted.
+	// Nothing that needs trust before, after the owner trusted fields that
+	// were taken out since: it was waiting for review, so it stays waiting.
+	require.NoError(s.T(), s.store.Keep("/proj", []byte(`{"claude_model": "opus"}`), []byte(`{"mounts": ["/d:/d"]}`)))
+	require.False(s.T(), trusted())
+
+	// Nothing that needs trust before, never trusted: the owner's write is
+	// trusted.
+	delete(s.files, trustPath)
 	require.NoError(s.T(), s.store.Keep("/proj", []byte(`{"claude_model": "opus"}`), []byte(`{"mounts": ["/d:/d"]}`)))
 	require.True(s.T(), trusted())
 }

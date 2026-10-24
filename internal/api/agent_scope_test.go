@@ -144,6 +144,10 @@ func (s *AgentScopeSuite) TestGuard() {
 
 		{name: "project bash shortcut", tok: "agent", method: "POST", target: "/api/bash-shortcuts", body: `{"scope":"project","channel_id":"ch1"}`, want: 200},
 		{name: "global bash shortcut", tok: "agent", method: "POST", target: "/api/bash-shortcuts", body: `{"scope":"global"}`, want: 403, wantMsg: "project bash shortcuts"},
+		{name: "project workflow", tok: "agent", method: "POST", target: "/api/workflows", body: `{"scope":"project","channel_id":"ch1"}`, want: 200},
+		{name: "global workflow", tok: "agent", method: "POST", target: "/api/workflows", body: `{"scope":"global"}`, want: 403, wantMsg: "project workflows"},
+		{name: "workflow without scope", tok: "agent", method: "POST", target: "/api/workflows", body: `{}`, want: 403, wantMsg: "project workflows"},
+		{name: "owner global workflow", tok: "owner", method: "POST", target: "/api/workflows", body: `{"scope":"global"}`, want: 200},
 		{name: "workflow run", tok: "agent", method: "POST", target: "/api/workflows/runs", body: `{"channel_id":"ch1"}`, want: 200},
 
 		// Changing review comments, on the PR too, is held to the agent's own

@@ -36,8 +36,11 @@ type trustedFields struct {
 	Permissions   *jsonPermissionsConfig `json:"permissions,omitempty"`
 	Gates         *jsonGatesConfig       `json:"gates,omitempty"`
 	BashShortcuts []BashShortcut         `json:"bash_shortcuts,omitempty"`
-	Browser       *trustedBrowser        `json:"browser,omitempty"`
-	Memory        *trustedMemory         `json:"memory,omitempty"`
+	// Workflows run bash nodes on the host under workflow_bash_local, and a
+	// project workflow replaces the global one of the same name.
+	Workflows []WorkflowDef   `json:"workflows,omitempty"`
+	Browser   *trustedBrowser `json:"browser,omitempty"`
+	Memory    *trustedMemory  `json:"memory,omitempty"`
 	// AnthropicBaseURL is where the global credentials are sent.
 	AnthropicBaseURL string `json:"anthropic_base_url,omitempty"`
 	// Plugins is which plugins the project turns on or off: a plugin runs
@@ -66,9 +69,12 @@ type trustedGitLab struct {
 // driving the user's own Chrome, loading extensions from host paths, and
 // importing the host browser's cookies.
 type trustedBrowser struct {
-	Mode         string                  `json:"mode,omitempty"`
-	HostCDPPort  *int                    `json:"host_cdp_port,omitempty"`
-	Extensions   []string                `json:"extensions,omitempty"`
+	Mode        string `json:"mode,omitempty"`
+	HostCDPPort *int   `json:"host_cdp_port,omitempty"`
+	// Extensions is a pointer so an empty list, which replaces the global
+	// one and runs Chrome without extensions, stays apart from an unset one
+	// in canonical(): omitempty drops both alike.
+	Extensions   *[]string               `json:"extensions,omitempty"`
 	CookieImport *jsonCookieImportConfig `json:"cookie_import,omitempty"`
 }
 
@@ -89,10 +95,14 @@ func trustedFieldsOf(pc *projectConfig) trustedFields {
 		Permissions:   pc.Permissions,
 		Gates:         pc.Gates,
 		BashShortcuts: pc.BashShortcuts,
+		Workflows:     pc.Workflows,
 	}
 	t.AnthropicBaseURL = pc.AnthropicBaseURL
 	if b := pc.Browser; b != nil && (b.Mode != "" || b.HostCDPPort != nil || b.Extensions != nil || b.CookieImport != nil) {
-		t.Browser = &trustedBrowser{Mode: b.Mode, HostCDPPort: b.HostCDPPort, Extensions: b.Extensions, CookieImport: b.CookieImport}
+		t.Browser = &trustedBrowser{Mode: b.Mode, HostCDPPort: b.HostCDPPort, CookieImport: b.CookieImport}
+		if ext := b.Extensions; ext != nil {
+			t.Browser.Extensions = &ext
+		}
 	}
 	if m := pc.Memory; m != nil && len(m.Paths) > 0 {
 		t.Memory = &trustedMemory{Paths: m.Paths}
@@ -132,6 +142,7 @@ func (t trustedFields) apply(pc *projectConfig) {
 	pc.Permissions = t.Permissions
 	pc.Gates = t.Gates
 	pc.BashShortcuts = t.BashShortcuts
+	pc.Workflows = t.Workflows
 	pc.AnthropicBaseURL = t.AnthropicBaseURL
 	if pc.Browser != nil || t.Browser != nil {
 		if pc.Browser == nil {
@@ -141,7 +152,10 @@ func (t trustedFields) apply(pc *projectConfig) {
 		if b == nil {
 			b = &trustedBrowser{}
 		}
-		pc.Browser.Mode, pc.Browser.HostCDPPort, pc.Browser.Extensions, pc.Browser.CookieImport = b.Mode, b.HostCDPPort, b.Extensions, b.CookieImport
+		pc.Browser.Mode, pc.Browser.HostCDPPort, pc.Browser.Extensions, pc.Browser.CookieImport = b.Mode, b.HostCDPPort, nil, b.CookieImport
+		if b.Extensions != nil {
+			pc.Browser.Extensions = *b.Extensions
+		}
 	}
 	if pc.Memory != nil || t.Memory != nil {
 		if pc.Memory == nil {
@@ -318,21 +332,30 @@ func (s *TrustStore) approved(dir string) (trustedFields, bool, error) {
 	return t, true, nil
 }
 
+// trustedAs reports whether a project config whose trusted fields are
+// canon is trusted as it is: they're the ones the owner last trusted
+// (approved, when ok), or the owner never trusted any and there are none.
+// Taking the fields out is a change like any other: what an agent takes out
+// can be a limit the owner put there, such as mount_gh_config: false.
+func trustedAs(canon []byte, approved trustedFields, ok bool) bool {
+	if !ok {
+		return string(canon) == "{}"
+	}
+	return bytes.Equal(approved.canonical(), canon)
+}
+
 // resolve returns the fields of pc that apply for the project in dir: pc's
 // own when they're trusted, else the last trusted ones, else none, and
 // whether pc's own apply. A project with nothing that needs trust is trusted
-// as is. An unreadable trust file trusts nothing.
+// as is, unless the owner trusted a version that had some. An unreadable
+// trust file trusts nothing.
 func (s *TrustStore) resolve(dir string, pc *projectConfig) (trustedFields, bool) {
 	cur := trustedFieldsOf(pc)
-	canon := cur.canonical()
-	if string(canon) == "{}" {
-		return cur, true
-	}
 	approved, ok, err := s.approved(dir)
-	if err != nil || !ok {
+	if err != nil {
 		return trustedFields{}, false
 	}
-	if bytes.Equal(approved.canonical(), canon) {
+	if trustedAs(cur.canonical(), approved, ok) {
 		return cur, true
 	}
 	return approved, false
@@ -382,7 +405,7 @@ func (s *TrustStore) Status(dir string) (TrustStatus, error) {
 	st := TrustStatus{
 		Current: indentJSON(canon),
 		Hash:    hashFields(canon),
-		Trusted: string(canon) == "{}" || (ok && bytes.Equal(approved.canonical(), canon)),
+		Trusted: trustedAs(canon, approved, ok),
 	}
 	if ok {
 		st.Approved = indentJSON(approved.canonical())
@@ -463,15 +486,12 @@ func (s *TrustStore) Keep(dir string, before, after []byte) error {
 	if err != nil {
 		return err
 	}
-	canon := prev.canonical()
-	if string(canon) != "{}" {
-		approved, ok, err := s.approved(dir)
-		if err != nil {
-			return err
-		}
-		if !ok || !bytes.Equal(approved.canonical(), canon) {
-			return nil
-		}
+	approved, ok, err := s.approved(dir)
+	if err != nil {
+		return err
+	}
+	if !trustedAs(prev.canonical(), approved, ok) {
+		return nil
 	}
 	return s.record(dir, next.canonical())
 }

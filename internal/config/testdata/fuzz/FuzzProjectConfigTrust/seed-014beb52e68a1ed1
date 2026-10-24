@@ -1,0 +1,3 @@
+go test fuzz v1
+string("{}")
+string("{\"GitLab\": {\"GLAB_Config_Dir\": \"/x\"}, \"Browser\": {\"MODE\": \"host\", \"Host_CDP_Port\": 1}}")

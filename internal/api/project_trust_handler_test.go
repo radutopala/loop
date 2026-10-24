@@ -196,6 +196,29 @@ func (s *ServerSuite) TestModifyBashShortcutProjectTrust() {
 	require.NotContains(s.T(), st.Approved, "deploy")
 }
 
+func (s *ServerSuite) TestModifyWorkflowProjectTrust() {
+	s.trustProject("")
+	add := func(name string, agent bool) {
+		body := `{"action":"add","scope":"project","channel_id":"ch-1","workflow":{"name":"` + name + `","nodes":[{"id":"b","type":"bash","command":"make ` + name + `"}]}}`
+		req := httptest.NewRequest("POST", "/api/workflows", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		if agent {
+			req = req.WithContext(apiauth.WithPrincipal(req.Context(), apiauth.Principal{Kind: apiauth.KindAgent, ChannelID: "ch-1"}))
+		}
+		rec := httptest.NewRecorder()
+		s.mux.ServeHTTP(rec, req)
+		require.Equal(s.T(), http.StatusNoContent, rec.Code, rec.Body.String())
+	}
+
+	add("build", false)
+	require.True(s.T(), s.projectTrustStatus().Trusted)
+	add("deploy", true)
+	st := s.projectTrustStatus()
+	require.False(s.T(), st.Trusted)
+	require.Contains(s.T(), st.Current, "deploy")
+	require.NotContains(s.T(), st.Approved, "deploy")
+}
+
 type mockProjectTrust struct {
 	mock.Mock
 }

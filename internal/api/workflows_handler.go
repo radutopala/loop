@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -505,9 +506,15 @@ func (s *Server) handleModifyWorkflow(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to serialize config", http.StatusInternalServerError)
 		return
 	}
-	if err := s.sys.WriteFile(configPath, append(out, '\n'), 0644); err != nil {
+	out = append(out, '\n')
+	if err := s.sys.WriteFile(configPath, out, 0644); err != nil {
 		http.Error(w, "failed to write config file", http.StatusInternalServerError)
 		return
+	}
+	// Project workflows need trust: the owner's own change keeps a trusted
+	// project trusted, an agent's waits for the owner.
+	if req.Scope == "project" && s.projectTrust != nil && !isAgentRequest(r) {
+		s.keepProjectTrust(filepath.Dir(filepath.Dir(configPath)), configData, out)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
