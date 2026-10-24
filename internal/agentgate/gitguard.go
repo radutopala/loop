@@ -22,8 +22,9 @@ import (
 
 // The git guard protects the files that make git run code: a repo's config
 // (core.fsmonitor, core.sshCommand, filter drivers, aliases, …), its hooks,
-// and the pointers that send git to another git dir (a .git file, commondir).
-// Under a host-backed mount these reach the user's own git on the host.
+// the pointers that send git to another git dir (a .git file, commondir),
+// and a HEAD outside any .git dir, which makes its dir a git dir. Under a
+// host-backed mount these reach the user's own git on the host.
 //
 // A write the gate can't see the content of is refused outright: open(2) for
 // create/write, truncate, link, symlink, mknod. Git itself never writes these
@@ -60,6 +61,7 @@ const (
 	gitPointer               // commondir: points git at another git dir
 	gitHook                  // anything under hooks/, except the *.sample files
 	gitHooksRoot             // the hooks dir itself
+	gitHead                  // a HEAD outside any .git dir: makes its dir a git dir
 )
 
 // GuardSnapshot is what the guard read for one rename: the source's bytes
@@ -264,13 +266,20 @@ func (g *GitGuard) InsideGitDir(path string) bool {
 }
 
 // TreeRename checks a rename into a git dir onto a path that isn't itself
-// guarded. Git renames files there all the time (refs, the index, objects),
-// and those go on to the file rules: ok=false. A directory or symlink would
-// bring a whole tree in unreviewed — say a submodule's git dir under
-// .git/modules with its own hooks and config — so it's refused, as is
-// RENAME_EXCHANGE, which git never uses.
+// guarded, and one out of a git dir: of the .git entry, or of something
+// inside a git dir, to a path outside every git dir. Git renames files
+// within a git dir all the time (refs, the index, objects), and those go on
+// to the file rules: ok=false. A directory or symlink would move a whole
+// tree unreviewed, so it's refused, as is RENAME_EXCHANGE, which git never
+// uses. Moved in, the tree could be a git dir with its own hooks and
+// config, landing as a submodule's under .git/modules. Moved out, it's a
+// git dir under a plain name (.git renamed, or .git/modules/<name> moved
+// up): git run inside takes it for a git dir, and its config and hooks are
+// no longer under a .git dir, where the guard would see them.
 func (g *GitGuard) TreeRename(r GuardRename) (resp TrapResponse, refused bool) {
-	if !g.InsideGitDir(r.Dst) && (r.Flags&renameExchange == 0 || !g.InsideGitDir(r.Src)) {
+	into := g.InsideGitDir(r.Dst)
+	out := !into && (g.InsideGitDir(r.Src) || g.classify(r.Src) == gitEntry)
+	if !into && !out {
 		return TrapResponse{}, false
 	}
 	if r.Flags&renameExchange != 0 {
@@ -315,15 +324,26 @@ func (g *GitGuard) rel(path string) (string, bool) {
 // case-insensitively (with Unicode folding): the host filesystem behind a
 // mount is often case-insensitive, where .GIT/HOOKS/pre-commit is the same
 // file as .git/hooks/pre-commit.
+//
+// Outside every .git dir, a HEAD is guarded too. Git takes any dir holding
+// HEAD, objects/ and refs/ for a git dir (a bare repo), and git run inside
+// it reads that dir's config and hooks, which no .git dir guards. objects/
+// and refs/ are plain dirs; HEAD is the one file such a dir can't do
+// without.
 func classifyGitRel(rel string) gitPathKind {
 	comps := strings.Split(rel, "/")
+	inGitDir := false
 	for i, c := range comps {
 		if !strings.EqualFold(c, ".git") {
 			continue
 		}
+		inGitDir = true
 		if k := classifyGitDir(comps[i+1:]); k != gitNone {
 			return k
 		}
+	}
+	if !inGitDir && strings.EqualFold(comps[len(comps)-1], "HEAD") {
+		return gitHead
 	}
 	return gitNone
 }
@@ -482,6 +502,8 @@ func gitGuardMessage(kind gitPathKind) string {
 		return "git config change — review the diff"
 	case gitHook, gitHooksRoot:
 		return "git hook write — review the script"
+	case gitHead:
+		return "HEAD outside .git — beside objects/ and refs/, it makes this dir a git dir whose config and hooks git reads; allow only a bare repo you expect"
 	default:
 		return "git dir pointer write — review the target"
 	}

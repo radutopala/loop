@@ -144,6 +144,14 @@ func (s *GitGuardSuite) TestClassify() {
 		{".git inside .git", nil, "/work/.git/.git", gitEntry},
 		{"other dir under .git", nil, "/work/.git/refs/heads/hooks", gitNone},
 		{"config outside .git", nil, "/work/notgit/config", gitNone},
+		{"HEAD outside .git", nil, "/work/bare/HEAD", gitHead},
+		{"HEAD at the root", nil, "/work/HEAD", gitHead},
+		{"head folds to HEAD", nil, "/work/bare/head", gitHead},
+		{"HEAD in a git dir's subdir", nil, "/work/.git/refs/remotes/origin/HEAD", gitNone},
+		{"reflog HEAD", nil, "/work/.git/logs/HEAD", gitNone},
+		{"HEAD below a nested .git", nil, "/work/sub/.git/x/HEAD", gitNone},
+		{"HEAD outside the roots", nil, "/tmp/bare/HEAD", gitNone},
+		{"HEADS is not HEAD", nil, "/work/bare/HEADS", gitNone},
 		{"root itself", nil, "/work", gitNone},
 		{"outside the roots", nil, "/tmp/repo/.git/config", gitNone},
 		{"sibling sharing a prefix", nil, "/workspace/.git/config", gitNone},
@@ -377,12 +385,19 @@ func (s *GitGuardSuite) TestTreeRename() {
 	}{
 		{name: "outside any git dir", src: "/work/a", dst: "/work/b"},
 		{name: "exchange outside any git dir", src: "/work/a", dst: "/work/b", flags: renameExchange},
-		{name: "source inside, plain rename out", src: "/work/.git/modules/foo", dst: "/work/foo"},
+		{name: "directory out of a git dir", src: "/work/.git/modules/foo", dst: "/work/foo", refused: true, errno: syscall.EPERM, asked: true},
+		{name: "git dir moved to a plain name", src: "/work/.git", dst: "/work/gd", refused: true, errno: syscall.EPERM, asked: true},
+		{name: "nested git dir moved to a plain name", src: "/work/sub/.git", dst: "/work/sub/gd", refused: true, errno: syscall.EPERM, asked: true},
+		{name: "file out of a git dir", src: "/work/.git/notes.txt", dst: "/work/notes.txt", regular: true, asked: true},
+		{name: "gitdir file moved to a plain name", src: "/work/sub/.git", dst: "/work/sub/gitfile", regular: true, asked: true},
+		{name: "directory within a git dir", src: "/work/.git/modules/foo", dst: "/work/.git/modules/bar", refused: true, errno: syscall.EPERM, asked: true},
 		{name: "file into a git dir", src: "/work/.git/refs/heads/main.lock", dst: "/work/.git/refs/heads/main", regular: true, asked: true},
 		{name: "noreplace file into a git dir", src: "/work/.git/x.lock", dst: "/work/.git/x", flags: renameNoReplace, regular: true, asked: true},
 		{name: "directory into a git dir", src: "/work/staging", dst: "/work/.git/modules/foo", refused: true, errno: syscall.EPERM, asked: true},
 		{name: "exchange into a git dir", src: "/work/a", dst: "/work/.git/refs/heads/main", flags: renameExchange, refused: true, errno: syscall.EPERM},
 		{name: "exchange out of a git dir", src: "/work/.git/modules/foo", dst: "/work/foo", flags: renameExchange, refused: true, errno: syscall.EPERM},
+		{name: "exchange of the git dir entry", src: "/work/.git", dst: "/work/gd", flags: renameExchange, refused: true, errno: syscall.EPERM},
+		{name: "source vanished on the way out", src: "/work/.git/gone", dst: "/work/gone", regularErr: syscall.ENOENT, refused: true, errno: syscall.ENOENT, asked: true},
 		{name: "source vanished", src: "/work/gone", dst: "/work/.git/refs/heads/main", regularErr: syscall.ENOENT, refused: true, errno: syscall.ENOENT, asked: true},
 		{name: "stat fails oddly", src: "/work/a", dst: "/work/.git/refs/heads/main", regularErr: errors.New("weird"), refused: true, errno: syscall.EPERM, asked: true},
 	}
@@ -575,6 +590,14 @@ func (s *GitGuardSuite) TestRenameAsksForPointer() {
 	s.Require().Equal("git dir pointer write — review the target", s.approver.got.Message)
 }
 
+func (s *GitGuardSuite) TestRenameAsksForHeadOutsideGitDir() {
+	s.fs.snap = &GuardSnapshot{Dst: "/work/bare/HEAD", Data: []byte("ref: refs/heads/main\n")}
+	got := s.guard.Rename(context.Background(), s.rename("/work/bare/HEAD.lock", "/work/bare/HEAD", 0))
+	s.requirePerformed(got)
+	s.Require().Equal(gitGuardMessage(gitHead), s.approver.got.Message)
+	s.Require().Contains(s.approver.got.Details["diff"], "+ref: refs/heads/main")
+}
+
 func (s *GitGuardSuite) TestRenameDeniedByApprover() {
 	s.approver.out = Outcome{Decision: types.DecisionDeny, Actor: "user-1"}
 	s.fs.snap = &GuardSnapshot{Dst: "/work/.git/hooks/pre-commit", Data: []byte("x\n")}
@@ -607,6 +630,7 @@ func (s *GitGuardSuite) TestGitGuardMessage() {
 		{gitHooksRoot, "git hook write — review the script"},
 		{gitPointer, "git dir pointer write — review the target"},
 		{gitEntry, "git dir pointer write — review the target"},
+		{gitHead, "HEAD outside .git — beside objects/ and refs/, it makes this dir a git dir whose config and hooks git reads; allow only a bare repo you expect"},
 	}
 	for _, c := range cases {
 		s.Require().Equal(c.want, gitGuardMessage(c.kind))
