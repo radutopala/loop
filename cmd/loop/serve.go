@@ -457,13 +457,15 @@ func (a *app) serve() error {
 	// tracked in the fs_migrations table alongside schema_migrations.
 	if w, ok := store.(interface{ WriterDB() *sql.DB }); ok {
 		if writer := w.WriterDB(); writer != nil {
+			trust := config.NewTrustStoreIn(a.userConfigDir)
 			if err := a.fsMigrateRun(context.Background(), writer, &fsmigrate.Ctx{
-				Sys:                a.sys,
-				LoopDir:            cfg.LoopDir,
-				Version:            a.version,
-				ProjectDirs:        projectDirs(context.Background(), store, logger),
-				ProjectSys:         func(dir string) fsmigrate.System { return osutil.RootFS{Root: dir} },
-				AdoptProjectConfig: config.NewTrustStoreIn(a.userConfigDir).Adopt,
+				Sys:                   a.sys,
+				LoopDir:               cfg.LoopDir,
+				Version:               a.version,
+				ProjectDirs:           projectDirs(context.Background(), store, logger),
+				ProjectSys:            func(dir string) fsmigrate.System { return osutil.RootFS{Root: dir} },
+				AdoptProjectConfig:    trust.Adopt,
+				AdoptProjectWorkflows: trust.AdoptWorkflows,
 			}); err != nil {
 				return fmt.Errorf("running fs migrations: %w", err)
 			}

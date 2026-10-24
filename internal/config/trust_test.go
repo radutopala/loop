@@ -809,3 +809,65 @@ func (s *TrustSuite) TestProjectConfigSymlinkOut() {
 		})
 	}
 }
+
+// TestAdoptWorkflows: the upgrade to workflow trust adds the workflows a
+// project has to what was trusted there before, and nothing else.
+func (s *TrustSuite) TestAdoptWorkflows() {
+	const (
+		wf       = `"workflows": [{"name": "w", "nodes": [{"id": "b", "type": "bash", "script": "id"}]}]`
+		wfLater  = `"workflows": [{"name": "w", "nodes": [{"id": "b", "type": "bash", "script": "curl x"}]}]`
+		mountsA  = `"mounts": ["/a:/a"]`
+		mountsHo = `"mounts": ["/:/host"]`
+	)
+	tests := []struct {
+		name     string
+		snapshot string // trusted before, as an older Loop recorded it; "" for none
+		config   string
+		trusted  bool
+		approved string // what's trusted after; "" when the trust file is left alone
+	}{
+		{name: "no workflows", snapshot: `{` + mountsA + `}`, config: `{` + mountsA + `}`, trusted: true},
+		{name: "workflows join the trusted fields", snapshot: `{` + mountsA + `}`, config: `{` + mountsA + `, ` + wf + `}`, trusted: true, approved: `{` + mountsA + `, ` + wf + `}`},
+		{name: "never trusted", config: `{` + wf + `}`, trusted: true, approved: `{` + wf + `}`},
+		{name: "other changes still wait", snapshot: `{` + mountsA + `}`, config: `{` + mountsHo + `, ` + wf + `}`, approved: `{` + mountsA + `, ` + wf + `}`},
+		{name: "trusted workflows are kept", snapshot: `{` + wf + `}`, config: `{` + wfLater + `}`},
+		{name: "unreadable config is left for review", snapshot: `{` + mountsA + `}`, config: `{"workflows": "not a list"}`},
+	}
+	canon := func(content string) []byte {
+		f, err := fieldsOfData([]byte(content))
+		require.NoError(s.T(), err)
+		return f.canonical()
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			if tt.snapshot != "" {
+				require.NoError(s.T(), s.store.record("/proj", canon(tt.snapshot)))
+			}
+			before := s.files[trustPath]
+			s.project(tt.config)
+			require.NoError(s.T(), s.store.AdoptWorkflows("/proj"))
+			if tt.approved == "" {
+				require.Equal(s.T(), before, s.files[trustPath], "the trust file is left alone")
+			} else {
+				got, ok, err := s.store.approved("/proj")
+				require.NoError(s.T(), err)
+				require.True(s.T(), ok)
+				require.Equal(s.T(), string(canon(tt.approved)), string(got.canonical()))
+			}
+			if tt.name == "unreadable config is left for review" {
+				return
+			}
+			st, err := s.store.Status("/proj")
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tt.trusted, st.Trusted)
+		})
+	}
+
+	s.Run("unreadable trust file", func() {
+		s.SetupTest()
+		s.project(`{` + wf + `}`)
+		s.files[trustPath] = []byte("not json")
+		require.ErrorContains(s.T(), s.store.AdoptWorkflows("/proj"), "parsing")
+	})
+}

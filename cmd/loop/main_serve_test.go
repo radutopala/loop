@@ -191,6 +191,7 @@ func (s *MainSuite) TestServeFSMigrationProjectDirs() {
 			s.app.fsMigrateRun = func(_ context.Context, _ *sql.DB, c *fsmigrate.Ctx) error {
 				got = c.ProjectDirs
 				require.NotNil(s.T(), c.AdoptProjectConfig)
+				require.NotNil(s.T(), c.AdoptProjectWorkflows)
 				require.Equal(s.T(), osutil.RootFS{Root: "/x"}, c.ProjectSys("/x"))
 				// Stop serve() here: the dirs are all this test is after.
 				return errors.New("stop")

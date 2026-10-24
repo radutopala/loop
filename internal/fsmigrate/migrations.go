@@ -312,6 +312,15 @@ var migrations = []Migration{
 		Description: "patch review-loop/review-fix-loop to verify the comments once, at the end",
 		Apply:       patchReviewLoopFinalCheck,
 	},
+	{
+		// Project workflows now apply only once the owner trusts them: a
+		// workflow's bash nodes can run on the host, and a project workflow
+		// replaces the global one of the same name. Projects that had
+		// workflows keep running them: the workflows as they are at the
+		// upgrade join each project's trusted config.
+		Description: "trust existing project workflows",
+		Apply:       adoptProjectWorkflows,
+	},
 }
 
 // adoptProjectConfigs trusts the project config of every project checkout
@@ -323,6 +332,20 @@ func adoptProjectConfigs(_ context.Context, c *Ctx) error {
 	for _, dir := range c.ProjectDirs {
 		if err := c.AdoptProjectConfig(dir); err != nil {
 			return fmt.Errorf("trusting the project config of %s: %w", dir, err)
+		}
+	}
+	return nil
+}
+
+// adoptProjectWorkflows adds the workflows of every project checkout Loop
+// has a channel for to its trusted project config.
+func adoptProjectWorkflows(_ context.Context, c *Ctx) error {
+	if c.AdoptProjectWorkflows == nil {
+		return nil
+	}
+	for _, dir := range c.ProjectDirs {
+		if err := c.AdoptProjectWorkflows(dir); err != nil {
+			return fmt.Errorf("trusting the project workflows of %s: %w", dir, err)
 		}
 	}
 	return nil

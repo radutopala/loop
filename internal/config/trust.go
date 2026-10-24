@@ -470,6 +470,27 @@ func (s *TrustStore) Adopt(dir string) error {
 	return s.record(dir, canon)
 }
 
+// AdoptWorkflows adds the workflows of the project config in dir, as they
+// are now, to what the owner trusts there: the one-time upgrade for when
+// workflows began to need trust, so projects that had them keep running
+// them. The other trusted fields stay as the owner approved them. A dir
+// whose trusted version has workflows already keeps them, and a config
+// AdoptWorkflows can't read is left for the owner to review.
+func (s *TrustStore) AdoptWorkflows(dir string) error {
+	trustMu.Lock()
+	defer trustMu.Unlock()
+	cur, err := s.readProject(dir)
+	if err != nil || len(cur.Workflows) == 0 {
+		return nil
+	}
+	approved, _, err := s.approved(dir)
+	if err != nil || approved.Workflows != nil {
+		return err
+	}
+	approved.Workflows = cur.Workflows
+	return s.record(dir, approved.canonical())
+}
+
 // Keep records an owner's change to the project config in dir, from the
 // file content before to after (nil when there was no file), and keeps the
 // project trusted when before was. The owner wrote the change, so it needs
