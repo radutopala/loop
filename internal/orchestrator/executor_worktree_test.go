@@ -662,10 +662,14 @@ func (s *TaskExecutorSuite) TestWorktreeNoUpdatePromptWhenDisabled() {
 // -transcript case.
 type mockWorktreeSys struct{ readFileErr error }
 
-func (m *mockWorktreeSys) MkdirAll(string, os.FileMode) error          { return nil }
-func (m *mockWorktreeSys) WriteFile(string, []byte, os.FileMode) error { return nil }
-func (m *mockWorktreeSys) ReadFile(string) ([]byte, error)             { return nil, m.readFileErr }
-func (m *mockWorktreeSys) UserHomeDir() (string, error)                { return "/home/test", nil }
+func (m *mockWorktreeSys) MkdirAll(string, os.FileMode) error           { return nil }
+func (m *mockWorktreeSys) WriteFile(string, []byte, os.FileMode) error  { return nil }
+func (m *mockWorktreeSys) ReadFile(string) ([]byte, error)              { return nil, m.readFileErr }
+func (m *mockWorktreeSys) UserHomeDir() (string, error)                 { return "/home/test", nil }
+func (m *mockWorktreeSys) MkdirAllIn(string, string, os.FileMode) error { return nil }
+func (m *mockWorktreeSys) WriteFileIn(string, string, []byte, os.FileMode) error {
+	return nil
+}
 
 func (s *TaskExecutorSuite) TestRefreshConfigReloads() {
 	called := false

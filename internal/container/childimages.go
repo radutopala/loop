@@ -18,6 +18,8 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+
+	"github.com/radutopala/loop/internal/osutil"
 )
 
 // ParentIDLabel marks a child image with the image ID of the base it was
@@ -57,8 +59,9 @@ type ChildImageManager struct {
 	// readFile is injectable for tests; nil → os.ReadFile.
 	readFile func(string) ([]byte, error)
 
-	// writeFile writes a file, creating its dir. Injectable for tests.
-	writeFile func(path string, data []byte) error
+	// writeFile writes a file under root, creating its dir. Injectable for
+	// tests.
+	writeFile func(root, path string, data []byte) error
 
 	cascadeMu sync.Mutex // serializes cascades
 
@@ -241,12 +244,14 @@ func (m *ChildImageManager) childContext(image, dir string) (string, error) {
 	return filepath.Dir(dockerfile), nil
 }
 
-// writeFileMkdir writes data to path, creating path's dir first.
-func writeFileMkdir(path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+// writeFileMkdir writes data to path, creating path's dir first. Both stay
+// in root, the project dir: a symlink the agent planted under its .loop
+// can't turn the write onto a host file.
+func writeFileMkdir(root, path string, data []byte) error {
+	if err := osutil.MkdirAllIn(root, filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	return osutil.WriteFileIn(root, path, data, 0o644)
 }
 
 // defaultDockerfile is the Dockerfile BuildMissing writes for a project that
@@ -304,7 +309,7 @@ func (m *ChildImageManager) BuildMissing(ctx context.Context, image string, auto
 			return nil
 		}
 		dockerfile := filepath.Join(projectDir, childDockerfileRelPath)
-		if err := m.writeFile(dockerfile, []byte(defaultDockerfile(m.baseImage))); err != nil {
+		if err := m.writeFile(projectDir, dockerfile, []byte(defaultDockerfile(m.baseImage))); err != nil {
 			return fmt.Errorf("writing %s: %w", dockerfile, err)
 		}
 		m.logger.Info("child images: wrote a Dockerfile FROM the base image", "image", image, "path", dockerfile)

@@ -257,7 +257,9 @@ func (a *app) onboardLocal(apiURL, ownerID, platform string) error {
 
 	// Read existing .mcp.json if it exists, merge into it
 	existing := make(map[string]any)
-	if data, err := a.sys.ReadFile(mcpPath); err == nil {
+	// Every file below is reached through dir: an agent working there may
+	// have planted symlinks, and none may turn a write onto a host file.
+	if data, err := a.sys.ReadFileIn(dir, mcpPath); err == nil {
 		if err := json.Unmarshal(data, &existing); err != nil {
 			return fmt.Errorf("parsing existing .mcp.json: %w", err)
 		}
@@ -282,7 +284,7 @@ func (a *app) onboardLocal(apiURL, ownerID, platform string) error {
 	existing["mcpServers"] = servers
 
 	mcpJSON, _ := json.MarshalIndent(existing, "", "  ")
-	if err := a.sys.WriteFile(mcpPath, append(mcpJSON, '\n'), 0644); err != nil {
+	if err := a.sys.WriteFileIn(dir, mcpPath, append(mcpJSON, '\n'), 0644); err != nil {
 		return fmt.Errorf("writing .mcp.json: %w", err)
 	}
 
@@ -297,7 +299,7 @@ func (a *app) onboardLocal(apiURL, ownerID, platform string) error {
 	loopDir := filepath.Join(dir, ".loop")
 	projectConfigPath := filepath.Join(loopDir, "config.json")
 	if _, err := a.sys.Stat(projectConfigPath); os.IsNotExist(err) {
-		if err := a.sys.MkdirAll(loopDir, 0755); err != nil {
+		if err := a.sys.MkdirAllIn(dir, loopDir, 0755); err != nil {
 			return fmt.Errorf("creating .loop directory: %w", err)
 		}
 		projectData := config.ProjectExampleConfig
@@ -313,7 +315,7 @@ func (a *app) onboardLocal(apiURL, ownerID, platform string) error {
   },`, ownerID))
 			projectData = bytes.Replace(projectData, commented, uncommented, 1)
 		}
-		if err := a.sys.WriteFile(projectConfigPath, projectData, 0644); err != nil {
+		if err := a.sys.WriteFileIn(dir, projectConfigPath, projectData, 0644); err != nil {
 			return fmt.Errorf("writing project config: %w", err)
 		}
 		fmt.Printf("Created project config at %s\n", projectConfigPath)
@@ -325,13 +327,13 @@ func (a *app) onboardLocal(apiURL, ownerID, platform string) error {
 
 	// Create templates directory for project-level prompt_path templates
 	templatesDir := filepath.Join(loopDir, "templates")
-	if err := a.sys.MkdirAll(templatesDir, 0755); err != nil {
+	if err := a.sys.MkdirAllIn(dir, templatesDir, 0755); err != nil {
 		return fmt.Errorf("creating templates directory: %w", err)
 	}
 
 	// Create shortcuts directory for project-level prompt_path shortcuts
 	shortcutsDir := filepath.Join(loopDir, "shortcuts")
-	if err := a.sys.MkdirAll(shortcutsDir, 0755); err != nil {
+	if err := a.sys.MkdirAllIn(dir, shortcutsDir, 0755); err != nil {
 		return fmt.Errorf("creating shortcuts directory: %w", err)
 	}
 

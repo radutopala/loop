@@ -248,3 +248,8 @@ func (e errSystem) EvalSymlinks(p string) (string, error)    { return e.base.Eva
 func (e errSystem) Chmod(n string, m os.FileMode) error      { return e.base.Chmod(n, m) }
 func (e errSystem) Rename(o, n string) error                 { return e.base.Rename(o, n) }
 func (e errSystem) CreateTemp(d, p string) (*os.File, error) { return e.base.CreateTemp(d, p) }
+func (e errSystem) ReadFileIn(r, n string) ([]byte, error)   { return e.base.ReadFileIn(r, n) }
+func (e errSystem) WriteFileIn(r, n string, d []byte, m os.FileMode) error {
+	return e.base.WriteFileIn(r, n, d, m)
+}
+func (e errSystem) MkdirAllIn(r, n string, m os.FileMode) error { return e.base.MkdirAllIn(r, n, m) }

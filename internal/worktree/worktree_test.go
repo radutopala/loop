@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/radutopala/loop/internal/osutil"
 )
 
 type mockSystem struct {
@@ -40,6 +42,14 @@ func (m *mockSystem) WriteFile(name string, data []byte, perm os.FileMode) error
 		return m.writeFileFn(name, data, perm)
 	}
 	return nil
+}
+
+func (m *mockSystem) MkdirAllIn(_, path string, perm os.FileMode) error {
+	return m.MkdirAll(path, perm)
+}
+
+func (m *mockSystem) WriteFileIn(_, name string, data []byte, perm os.FileMode) error {
+	return m.WriteFile(name, data, perm)
 }
 
 func (m *mockSystem) ReadFile(name string) ([]byte, error) {
@@ -132,6 +142,27 @@ func (s *CreatorSuite) TestCreateSuccess() {
 	require.Len(s.T(), s.sys.writeFileCalls, 1)
 	require.Contains(s.T(), string(s.sys.writeFileCalls[0].data), "extra_dirs")
 	require.Contains(s.T(), string(s.sys.writeFileCalls[0].data), "/proj")
+}
+
+// A branch can carry a .loop/config.json that's a symlink to a host file:
+// seeding the worktree's config leaves that file as it was.
+func (s *CreatorSuite) TestCreateSeedStaysInTheWorktree() {
+	host := filepath.Join(s.T().TempDir(), "file")
+	require.NoError(s.T(), os.WriteFile(host, []byte("host"), 0o644))
+	proj := s.T().TempDir()
+	s.creator.Sys = osutil.RealSystem{}
+	s.creator.Run = func(_ context.Context, _, _ string, args ...string) ([]byte, error) {
+		loopDir := filepath.Join(args[4], ".loop")
+		require.NoError(s.T(), os.MkdirAll(loopDir, 0o755))
+		return nil, os.Symlink(host, filepath.Join(loopDir, "config.json"))
+	}
+
+	_, err := s.creator.Create(context.Background(), proj, "main", "wt-abc", "")
+
+	require.NoError(s.T(), err)
+	data, err := os.ReadFile(host)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "host", string(data))
 }
 
 func (s *CreatorSuite) TestCreateWithSessionCopy() {

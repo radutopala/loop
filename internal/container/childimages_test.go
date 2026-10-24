@@ -13,6 +13,8 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/radutopala/loop/internal/osutil"
 )
 
 type ChildImagesSuite struct {
@@ -57,7 +59,7 @@ func (s *ChildImagesSuite) newMgr(projects []ChildProject, listErr error) *Child
 		}
 		return nil, fs.ErrNotExist
 	}
-	m.writeFile = func(path string, data []byte) error {
+	m.writeFile = func(_, path string, data []byte) error {
 		if s.writeErr != nil {
 			return s.writeErr
 		}
@@ -450,14 +452,31 @@ func (s *ChildImagesSuite) TestDefaultDockerfileIsFromBase() {
 }
 
 func TestWriteFileMkdir(t *testing.T) {
-	path := filepath.Join(t.TempDir(), ".loop", "container", "Dockerfile")
-	require.NoError(t, writeFileMkdir(path, []byte("FROM loop-agent:latest\n")))
+	root := t.TempDir()
+	path := filepath.Join(root, ".loop", "container", "Dockerfile")
+	require.NoError(t, writeFileMkdir(root, path, []byte("FROM loop-agent:latest\n")))
 	got, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.Equal(t, "FROM loop-agent:latest\n", string(got))
 
 	// The dir can't be created under a file.
-	require.Error(t, writeFileMkdir(filepath.Join(path, "Dockerfile"), nil))
+	require.Error(t, writeFileMkdir(root, filepath.Join(path, "Dockerfile"), nil))
+
+	// A Dockerfile that's a dangling symlink out of root isn't written
+	// through, and neither is a container dir that leads out.
+	host := t.TempDir()
+	for _, link := range []struct{ at, to string }{
+		{filepath.Join(root, "a", ".loop", "container", "Dockerfile"), filepath.Join(host, "Dockerfile")},
+		{filepath.Join(root, "b", ".loop", "container"), host},
+	} {
+		require.NoError(t, os.MkdirAll(filepath.Dir(link.at), 0o755))
+		require.NoError(t, os.Symlink(link.to, link.at))
+	}
+	for _, project := range []string{"a", "b"} {
+		dir := filepath.Join(root, project)
+		require.True(t, osutil.IsEscape(writeFileMkdir(dir, filepath.Join(dir, childDockerfileRelPath), nil)))
+	}
+	require.NoFileExists(t, filepath.Join(host, "Dockerfile"))
 }
 
 func (s *ChildImagesSuite) TestBuildMissingNoBase() {

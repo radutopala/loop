@@ -14,6 +14,7 @@ import (
 	"github.com/tailscale/hujson"
 
 	containerimage "github.com/radutopala/loop/internal/container/image"
+	"github.com/radutopala/loop/internal/osutil"
 )
 
 // migrations holds all filesystem migrations in order. Position in the slice
@@ -967,22 +968,28 @@ type workflowInputValue struct {
 // the old key is absent, or when either key holds something that is not an
 // array.
 func renameNoProxyHosts(_ context.Context, c *Ctx) error {
-	for _, configPath := range configPaths(c) {
-		if err := renameNoProxyHostsAt(c.Sys, configPath); err != nil {
+	return eachConfig(c, renameNoProxyHostsAt)
+}
+
+// eachConfig runs fn on every config file Loop owns: the global one, then
+// one per project checkout it has a channel for. A project's is reached
+// through c.ProjectSys, which keeps it, and the temp file beside it, in the
+// project: the agent may write the project's .loop. One that a symlink
+// leads out of the project isn't Loop's to migrate, and is skipped.
+func eachConfig(c *Ctx, fn func(sys System, configPath string) error) error {
+	if err := fn(c.Sys, filepath.Join(c.LoopDir, "config.json")); err != nil {
+		return err
+	}
+	for _, dir := range c.ProjectDirs {
+		sys := c.Sys
+		if c.ProjectSys != nil {
+			sys = c.ProjectSys(dir)
+		}
+		if err := fn(sys, filepath.Join(dir, ".loop", "config.json")); err != nil && !osutil.IsEscape(err) {
 			return err
 		}
 	}
 	return nil
-}
-
-// configPaths returns every config file Loop owns: the global one, then one per
-// project checkout it has a channel for.
-func configPaths(c *Ctx) []string {
-	paths := []string{filepath.Join(c.LoopDir, "config.json")}
-	for _, dir := range c.ProjectDirs {
-		paths = append(paths, filepath.Join(dir, ".loop", "config.json"))
-	}
-	return paths
 }
 
 func renameNoProxyHostsAt(sys System, configPath string) error {
@@ -1023,12 +1030,7 @@ func renameNoProxyHostsAt(sys System, configPath string) error {
 var legacyProxyKeys = []string{"http_proxy", "https_proxy", "no_proxy"}
 
 func moveProxiesIntoBlock(_ context.Context, c *Ctx) error {
-	for _, configPath := range configPaths(c) {
-		if err := moveProxiesIntoBlockAt(c.Sys, configPath); err != nil {
-			return err
-		}
-	}
-	return nil
+	return eachConfig(c, moveProxiesIntoBlockAt)
 }
 
 // moveProxiesIntoBlockAt moves the legacy top-level proxy keys into a proxies
@@ -1123,12 +1125,7 @@ func moveProxiesIntoBlockAt(sys System, configPath string) error {
 const devChannelsKey = "claude_dangerously_load_development_channels"
 
 func dropDevChannelsKey(_ context.Context, c *Ctx) error {
-	for _, configPath := range configPaths(c) {
-		if err := dropDevChannelsKeyAt(c.Sys, configPath); err != nil {
-			return err
-		}
-	}
-	return nil
+	return eachConfig(c, dropDevChannelsKeyAt)
 }
 
 // dropDevChannelsKeyAt removes devChannelsKey from the top level of a config,

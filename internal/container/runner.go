@@ -121,6 +121,10 @@ type runnerSystem interface {
 	WriteFile(name string, data []byte, perm os.FileMode) error
 	Remove(name string) error
 	MkdirAll(path string, perm os.FileMode) error
+	// MkdirAllIn and WriteFileIn reach name, under root, without leaving
+	// root through a symlink; see osutil.WriteFileIn.
+	MkdirAllIn(root, name string, perm os.FileMode) error
+	WriteFileIn(root, name string, data []byte, perm os.FileMode) error
 	Readlink(name string) (string, error)
 	EvalSymlinks(path string) (string, error)
 	UserHomeDir() (string, error)

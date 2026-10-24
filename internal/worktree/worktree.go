@@ -18,6 +18,10 @@ type System interface {
 	WriteFile(name string, data []byte, perm os.FileMode) error
 	ReadFile(name string) ([]byte, error)
 	UserHomeDir() (string, error)
+	// MkdirAllIn and WriteFileIn reach name, under root, without leaving
+	// root through a symlink; see osutil.WriteFileIn.
+	MkdirAllIn(root, name string, perm os.FileMode) error
+	WriteFileIn(root, name string, data []byte, perm os.FileMode) error
 }
 
 // CommandRunner executes a command in a given directory and returns the combined output.
@@ -89,10 +93,12 @@ func (c *Creator) Create(ctx context.Context, dirPath, branch, name, sessionID s
 	}
 
 	// Seed worktree config with extra_dirs pointing at the parent project.
+	// The branch checked out may carry a .loop of symlinks: the writes stay
+	// in the worktree.
 	wtLoopDir := filepath.Join(worktreePath, ".loop")
-	if err := c.Sys.MkdirAll(wtLoopDir, 0o755); err == nil {
+	if err := c.Sys.MkdirAllIn(worktreePath, wtLoopDir, 0o755); err == nil {
 		wtCfg := fmt.Sprintf("{\n  \"extra_dirs\": [\n    %q\n  ]\n}\n", dirPath)
-		_ = c.Sys.WriteFile(filepath.Join(wtLoopDir, "config.json"), []byte(wtCfg), 0o644)
+		_ = c.Sys.WriteFileIn(worktreePath, filepath.Join(wtLoopDir, "config.json"), []byte(wtCfg), 0o644)
 	}
 
 	// Copy session file so --resume --fork-session works in the worktree dir.

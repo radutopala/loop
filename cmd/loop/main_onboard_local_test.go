@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/radutopala/loop/internal/config"
+	"github.com/radutopala/loop/internal/osutil"
 )
 
 // --- onboard:local ---
@@ -514,4 +515,40 @@ func (s *MainSuite) TestOnboardLocalCmdWithOwnerIDFlag() {
 	content := string(data)
 	require.Contains(s.T(), content, `"ULOCAL123"`)
 	require.Contains(s.T(), content, `"permissions": {`)
+}
+
+// inDirSystem is the real filesystem, working in dir.
+type inDirSystem struct {
+	osutil.RealSystem
+	dir string
+}
+
+func (f inDirSystem) Getwd() (string, error) { return f.dir, nil }
+
+// An agent working in the project may have made .mcp.json, or the project
+// config, a dangling symlink to a host file: onboarding creates neither.
+func (s *MainSuite) TestOnboardLocalStaysInTheProject() {
+	s.app.ensureAllChannelsFn = func(_, _ string) ([]ensureResult, error) { return nil, nil }
+	host := s.T().TempDir()
+	tests := []struct {
+		name, link, wantErr string
+	}{
+		{"mcp json", ".mcp.json", "writing .mcp.json"},
+		{"project config", filepath.Join(".loop", "config.json"), "writing project config"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			dir := s.T().TempDir()
+			require.NoError(s.T(), os.MkdirAll(filepath.Join(dir, ".loop"), 0o755))
+			target := filepath.Join(host, tt.name)
+			require.NoError(s.T(), os.Symlink(target, filepath.Join(dir, tt.link)))
+			s.app.sys = inDirSystem{dir: dir}
+
+			err := s.app.onboardLocal("http://localhost:8222", "", "")
+
+			require.ErrorContains(s.T(), err, tt.wantErr)
+			require.True(s.T(), osutil.IsEscape(err), "%v", err)
+			require.NoFileExists(s.T(), target)
+		})
+	}
 }

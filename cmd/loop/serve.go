@@ -462,6 +462,7 @@ func (a *app) serve() error {
 				LoopDir:            cfg.LoopDir,
 				Version:            a.version,
 				ProjectDirs:        projectDirs(context.Background(), store, logger),
+				ProjectSys:         func(dir string) fsmigrate.System { return osutil.RootFS{Root: dir} },
 				AdoptProjectConfig: config.NewTrustStoreIn(a.userConfigDir).Adopt,
 			}); err != nil {
 				return fmt.Errorf("running fs migrations: %w", err)
