@@ -40,6 +40,22 @@ func (m *MockSystem) WriteFile(name string, data []byte, perm os.FileMode) error
 	return m.Called(name, data, perm).Error(0)
 }
 
+// The *In methods answer from the expectations of their unconfined
+// counterparts: root only confines where the real ones may reach.
+func (m *MockSystem) ReadFileIn(_, name string) ([]byte, error) { return m.ReadFile(name) }
+
+func (m *MockSystem) WriteFileIn(_, name string, data []byte, perm os.FileMode) error {
+	return m.WriteFile(name, data, perm)
+}
+
+func (m *MockSystem) MkdirAllIn(_, name string, perm os.FileMode) error {
+	return m.MkdirAll(name, perm)
+}
+
+func (m *MockSystem) RenameIn(_, oldpath, newpath string) error { return m.Rename(oldpath, newpath) }
+
+func (m *MockSystem) RemoveIn(_, name string) error { return m.Remove(name) }
+
 func (m *MockSystem) ReadDir(name string) ([]fs.DirEntry, error) {
 	args := m.Called(name)
 	if args.Get(0) == nil {

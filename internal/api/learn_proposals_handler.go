@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -444,7 +443,9 @@ func (s *Server) editLearnConfig(ctx context.Context, ch *db.Channel, v any, wri
 	if err != nil {
 		return "", nil, nil, err
 	}
-	configPath = filepath.Join(dir, ".loop", "config.json")
+	if configPath, err = projectConfigFile(dir); err != nil {
+		return "", nil, nil, err
+	}
 	defer s.lockConfig(configPath, "learn")()
 	merged := s.configs.merged(ch.DirPath, s.workspace.resolveParentDirPath(ctx, ch.ChannelID))
 	if merged == nil {
@@ -485,7 +486,7 @@ func (s *Server) editLearnConfig(ctx context.Context, ch *db.Channel, v any, wri
 	if write {
 		edit = hjsonedit.AppendData
 	}
-	before, after, err = edit(s.sys, configPath, path, item)
+	before, after, err = edit(projectFS{s.sys, dir}, configPath, path, item)
 	if err != nil {
 		return configPath, nil, nil, err
 	}

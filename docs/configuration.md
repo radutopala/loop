@@ -784,6 +784,14 @@ Projects you set up before Loop asked for trust keep working: the upgrade trusts
 
 A worktree's own `.loop/config.json` follows the same rule, except for the parent project dir Loop seeds into its `extra_dirs`, which always applies.
 
+Symlinks in a project's `.loop` dir can't lead out of the project. Every read and write of a file there goes through the project dir, which refuses a link that leaves it at the moment of the call, so a link swapped in after a check is refused too:
+
+- Shortcut, bash shortcut and component files that lead out are skipped as if missing.
+- A project config write (Settings, a project shortcut or workflow, a learn proposal, a history restore) is refused with a `400` when `.loop` or `.loop/config.json` is a symlink out of the project, so it can't change another file, such as the global config, as the project's. The temp file a learn proposal is written through can't be redirected either.
+- A project config that leads out isn't read. Runs in the project fail with a `loading project config` error, as they do when the file is malformed, and the Settings, history and trust views show nothing of the file it points to.
+
+Links that stay inside the project work as before.
+
 Trusted versions are kept in `loop/project-trust.json` under your OS user config dir (`~/Library/Application Support` on macOS, `~/.config` on Linux), next to the API token, where containers can't reach them. The API routes are [`GET` and `POST /api/config/project/trust`](api.md#get-apiconfigprojecttrust).
 
 ### Example: aws and kubectl

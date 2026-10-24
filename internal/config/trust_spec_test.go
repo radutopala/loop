@@ -41,6 +41,12 @@ func newMemTrustStore(files map[string][]byte) *TrustStore {
 			}
 			return nil, os.ErrNotExist
 		},
+		readIn: func(_, p string) ([]byte, error) {
+			if b, ok := files[p]; ok {
+				return b, nil
+			}
+			return nil, os.ErrNotExist
+		},
 		writeFile: func(p string, b []byte, _ os.FileMode) error {
 			files[p] = b
 			return nil
@@ -196,7 +202,7 @@ func (e *specEnv) write(content []byte) {
 
 // load merges the project config onto specMain and returns its trustView.
 func (e *specEnv) load() (string, error) {
-	l := &Loader{readFile: e.store.readFile, trust: e.store}
+	l := &Loader{readFile: e.store.readFile, readIn: e.store.readIn, trust: e.store}
 	merged, err := l.loadProjectConfig(specDir, specMain())
 	if err != nil {
 		return "", err
@@ -587,7 +593,7 @@ func (s *TrustSpecSuite) TestUnreadableTrustFile() {
 func (s *TrustSpecSuite) TestDeletedWorktreeConfigKeepsTrusted() {
 	const wt = "/proj/.worktrees/wt"
 	e := newSpecEnv()
-	l := &Loader{readFile: e.store.readFile, trust: e.store}
+	l := &Loader{readFile: e.store.readFile, readIn: e.store.readIn, trust: e.store}
 	e.files[wt+"/.loop/config.json"] = []byte(`{"github": {"mount_gh_config": false}}`)
 	require.NoError(s.T(), e.store.Trust(wt, ""))
 	delete(e.files, wt+"/.loop/config.json")

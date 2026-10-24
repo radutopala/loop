@@ -102,6 +102,13 @@ type serverSystem interface {
 	Lstat(name string) (os.FileInfo, error)
 	ReadFile(name string) ([]byte, error)
 	WriteFile(name string, data []byte, perm os.FileMode) error
+	// The *In methods reach name, under root, without leaving root
+	// through a symlink; see osutil.ReadFileIn.
+	ReadFileIn(root, name string) ([]byte, error)
+	WriteFileIn(root, name string, data []byte, perm os.FileMode) error
+	MkdirAllIn(root, name string, perm os.FileMode) error
+	RenameIn(root, oldpath, newpath string) error
+	RemoveIn(root, name string) error
 	ReadDir(name string) ([]fs.DirEntry, error)
 	Remove(name string) error
 	RemoveAll(path string) error

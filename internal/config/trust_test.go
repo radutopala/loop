@@ -37,6 +37,12 @@ func (s *TrustSuite) SetupTest() {
 			}
 			return nil, os.ErrNotExist
 		},
+		readIn: func(_, p string) ([]byte, error) {
+			if b, ok := s.files[p]; ok {
+				return b, nil
+			}
+			return nil, os.ErrNotExist
+		},
 		writeFile: func(p string, b []byte, _ os.FileMode) error {
 			s.files[p] = b
 			return nil
@@ -56,7 +62,7 @@ func (s *TrustSuite) project(content string) {
 }
 
 func (s *TrustSuite) loader() *Loader {
-	return &Loader{readFile: s.store.readFile, trust: s.store}
+	return &Loader{readFile: s.store.readFile, readIn: s.store.readIn, trust: s.store}
 }
 
 func (s *TrustSuite) TestNothingToTrust() {
@@ -327,7 +333,7 @@ func (s *TrustSuite) TestErrors() {
 	require.ErrorContains(s.T(), err, "parsing project config file")
 	s.SetupTest()
 
-	s.store.readFile = func(string) ([]byte, error) { return nil, boom }
+	s.store.readIn = func(string, string) ([]byte, error) { return nil, boom }
 	_, err = s.store.Status("/proj")
 	require.ErrorContains(s.T(), err, "reading project config file")
 	require.ErrorContains(s.T(), s.store.Trust("/proj", ""), "reading project config file")
@@ -398,6 +404,7 @@ func (s *TrustSuite) TestNewTrustStore() {
 	st := NewTrustStore()
 	require.NotNil(s.T(), st.userConfigDir)
 	require.NotNil(s.T(), st.readFile)
+	require.NotNil(s.T(), st.readIn)
 	require.NotNil(s.T(), st.writeFile)
 	require.NotNil(s.T(), st.mkdirAll)
 	require.NotNil(s.T(), st.rename)
@@ -746,4 +753,59 @@ func (s *TrustSuite) TestMergeCLIConfigsOffDropsGlobalMounts() {
 	merged, err = s.loader().loadProjectConfig("/proj", main)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), global, merged.Mounts)
+}
+
+// TestProjectConfigSymlinkOut: the agent may write the project's .loop, so
+// a config.json there that a symlink leads outside the project is refused,
+// not read; one that stays inside the project still loads.
+func (s *TrustSuite) TestProjectConfigSymlinkOut() {
+	outside := filepath.Join(s.T().TempDir(), "host.json")
+	require.NoError(s.T(), os.WriteFile(outside, []byte(`{"extra_dirs": ["/host"], "memory": {"paths": ["/host"]}}`), 0o644))
+	cfgDir := s.T().TempDir()
+	newProject := func(link func(dir string) string) string {
+		dir := s.T().TempDir()
+		require.NoError(s.T(), os.MkdirAll(filepath.Join(dir, ".loop"), 0o755))
+		require.NoError(s.T(), os.Symlink(link(dir), filepath.Join(dir, ".loop", "config.json")))
+		return dir
+	}
+	tests := []struct {
+		name string
+		link func(dir string) string
+		want []string
+	}{
+		{"absolute link out", func(string) string { return outside }, nil},
+		{"relative link out", func(dir string) string {
+			rel, err := filepath.Rel(filepath.Join(dir, ".loop"), outside)
+			require.NoError(s.T(), err)
+			return rel
+		}, nil},
+		{"link inside", func(dir string) string {
+			require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "cfg.json"), []byte(`{"extra_dirs": ["/in"], "memory": {"paths": ["/in"]}}`), 0o644))
+			return "../cfg.json"
+		}, []string{"/in"}},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			dir := newProject(tc.link)
+			store := NewTrustStoreIn(func() (string, error) { return cfgDir, nil })
+			l := NewProjectLoader(nil)
+			merged, err := l.LoadProject(dir, &Config{})
+			st, statusErr := store.Status(dir)
+			if tc.want == nil {
+				require.ErrorContains(s.T(), err, "reading project config file")
+				_, err = l.LoadWorktreeProject(dir, "", &Config{})
+				require.ErrorContains(s.T(), err, "reading project config file")
+				require.ErrorContains(s.T(), statusErr, "reading project config file")
+				require.Error(s.T(), store.Trust(dir, ""))
+				require.Nil(s.T(), store.MemoryPaths(dir))
+				return
+			}
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tc.want, merged.ExtraDirs)
+			require.NoError(s.T(), statusErr)
+			require.False(s.T(), st.Trusted)
+			require.NoError(s.T(), store.Trust(dir, ""))
+			require.Equal(s.T(), tc.want, store.MemoryPaths(dir))
+		})
+	}
 }

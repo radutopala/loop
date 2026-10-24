@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/radutopala/loop/internal/osutil"
 	"github.com/radutopala/loop/internal/unidiff"
 	"github.com/tailscale/hujson"
 )
@@ -245,10 +246,13 @@ var trustMu sync.Mutex
 type TrustStore struct {
 	userConfigDir func() (string, error)
 	readFile      func(string) ([]byte, error)
-	writeFile     func(string, []byte, os.FileMode) error
-	mkdirAll      func(string, os.FileMode) error
-	rename        func(string, string) error
-	now           func() time.Time
+	// readIn reads a project config without following a symlink out of
+	// the project.
+	readIn    func(root, path string) ([]byte, error)
+	writeFile func(string, []byte, os.FileMode) error
+	mkdirAll  func(string, os.FileMode) error
+	rename    func(string, string) error
+	now       func() time.Time
 }
 
 // NewTrustStore returns the TrustStore of this machine's user.
@@ -262,6 +266,7 @@ func NewTrustStoreIn(userConfigDir func() (string, error)) *TrustStore {
 	return &TrustStore{
 		userConfigDir: userConfigDir,
 		readFile:      os.ReadFile,
+		readIn:        osutil.ReadFileIn,
 		writeFile:     os.WriteFile,
 		mkdirAll:      os.MkdirAll,
 		rename:        os.Rename,
@@ -364,7 +369,7 @@ func (s *TrustStore) resolve(dir string, pc *projectConfig) (trustedFields, bool
 // readProject returns the trusted fields of the project config in dir, as
 // the file has them now. A missing file has none.
 func (s *TrustStore) readProject(dir string) (trustedFields, error) {
-	data, err := s.readFile(filepath.Join(dir, ".loop", "config.json"))
+	data, err := s.readIn(dir, filepath.Join(dir, ".loop", "config.json"))
 	if os.IsNotExist(err) {
 		return trustedFields{}, nil
 	}
@@ -377,7 +382,7 @@ func (s *TrustStore) readProject(dir string) (trustedFields, error) {
 // MemoryPaths returns the project's memory paths that apply: the trusted
 // ones. An unreadable project config has none.
 func (s *TrustStore) MemoryPaths(dir string) []string {
-	data, err := s.readFile(filepath.Join(dir, ".loop", "config.json"))
+	data, err := s.readIn(dir, filepath.Join(dir, ".loop", "config.json"))
 	if err != nil {
 		return nil
 	}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/tailscale/hujson"
 
+	"github.com/radutopala/loop/internal/osutil"
 	"github.com/radutopala/loop/internal/types"
 )
 
@@ -214,6 +215,9 @@ type jsonPermissionsConfig struct {
 type Loader struct {
 	userHomeDir func() (string, error)
 	readFile    func(string) ([]byte, error)
+	// readIn reads a project's .loop/config.json without following a
+	// symlink out of the project: the agent may write that dir.
+	readIn func(root, path string) ([]byte, error)
 	// trust gates the project config fields that need the owner's trust;
 	// nil applies them as written.
 	trust *TrustStore
@@ -223,6 +227,7 @@ func newLoader() *Loader {
 	return &Loader{
 		userHomeDir: os.UserHomeDir,
 		readFile:    os.ReadFile,
+		readIn:      osutil.ReadFileIn,
 		trust:       NewTrustStore(),
 	}
 }

@@ -3908,7 +3908,7 @@ Add, update, or delete a prompt shortcut in the global or project config file.
 **Response:** `204 No Content` on success.
 
 **Errors:**
-- `400` — missing name, invalid action, missing prompt, mutually exclusive fields, or missing channel_id for project scope
+- `400` — missing name, invalid action, missing prompt, mutually exclusive fields, missing channel_id for project scope, or a project `.loop` or `.loop/config.json` that is a symlink outside the project
 - `404` — shortcut not found (update/delete)
 - `409` — duplicate name (add)
 
@@ -3964,7 +3964,7 @@ Add, update, or delete a bash shortcut in the global or project config file.
 **Response:** `204 No Content` on success.
 
 **Errors:**
-- `400` — missing name, invalid action, missing command, mutually exclusive fields, or missing channel_id for project scope
+- `400` — missing name, invalid action, missing command, mutually exclusive fields, missing channel_id for project scope, or a project `.loop` or `.loop/config.json` that is a symlink outside the project
 - `404` — shortcut not found (update/delete)
 - `409` — duplicate name (add)
 
@@ -3991,7 +3991,7 @@ Save project config for a channel. Owner-only.
 
 Creates the `.loop/` directory and config file if they don't exist. A project config that was trusted stays trusted (see [`GET /api/config/project/trust`](#get-apiconfigprojecttrust)).
 
-**Errors:** `400` if `channel_id` is missing, the channel isn't found, or the HJSON is invalid.
+**Errors:** `400` if `channel_id` is missing, the channel isn't found, the HJSON is invalid, or `.loop` or `.loop/config.json` is a symlink outside the project.
 
 ---
 
@@ -4169,7 +4169,7 @@ Write a revision's content back to its file. Owner-only. The restore is recorded
 
 **Response:** `204 No Content`
 
-**Errors:** `400` for an invalid id, or a revision of a file that's no longer one of the files above. `404` if there's no such revision. `500` if the loop directory isn't configured or the file can't be written. `501` if config history isn't configured.
+**Errors:** `400` for an invalid id, or a revision of a file that's no longer one of the files above. `404` if there's no such revision. `500` if the loop directory isn't configured or the file can't be written, which includes a project file that a symlink leads outside the project. `501` if config history isn't configured.
 
 ---
 

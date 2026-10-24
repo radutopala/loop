@@ -425,7 +425,7 @@ func (s *Server) handleModifyWorkflow(w http.ResponseWriter, r *http.Request) {
 	defer s.lockConfig(configPath, "workflows")()
 
 	// Read existing config.
-	configData, err := s.sys.ReadFile(configPath)
+	configData, err := s.readScopedConfig(req.Scope, configPath)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			http.Error(w, "failed to read config file", http.StatusInternalServerError)
@@ -507,7 +507,7 @@ func (s *Server) handleModifyWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out = append(out, '\n')
-	if err := s.sys.WriteFile(configPath, out, 0644); err != nil {
+	if err := s.writeScopedConfig(req.Scope, configPath, out); err != nil {
 		http.Error(w, "failed to write config file", http.StatusInternalServerError)
 		return
 	}

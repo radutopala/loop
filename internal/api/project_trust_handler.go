@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"path/filepath"
 
 	"github.com/radutopala/loop/internal/config"
 )
@@ -105,7 +106,7 @@ func (s *Server) readProjectConfigBefore(path string) (before []byte, ok bool) {
 	if s.projectTrust == nil {
 		return nil, false
 	}
-	data, err := s.sys.ReadFile(path)
+	data, err := s.sys.ReadFileIn(filepath.Dir(filepath.Dir(path)), path)
 	if os.IsNotExist(err) {
 		return nil, true
 	}

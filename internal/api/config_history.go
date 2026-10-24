@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/radutopala/loop/internal/config/hjsonedit"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/unidiff"
 )
@@ -117,6 +118,22 @@ func (s *Server) lockConfigFile(path, source string) func() {
 	}
 }
 
+// configFileFS is what the config file at path is read and written
+// through. A project's, under a .loop dir other than the global one, stays
+// under its project dir, which the agent may write; the global one is the
+// owner's own.
+func (s *Server) configFileFS(path string) hjsonedit.FS {
+	for d := filepath.Dir(path); d != filepath.Dir(d); d = filepath.Dir(d) {
+		if filepath.Base(d) == ".loop" {
+			if d == s.loopDir {
+				break
+			}
+			return projectFS{s.sys, filepath.Dir(d)}
+		}
+	}
+	return s.sys
+}
+
 // recordConfig stores the config file at path as its newest revision,
 // written by source, when its content changed. A missing file, or one that
 // isn't UTF-8 text, records nothing. Callers hold path's config lock.
@@ -124,7 +141,7 @@ func (s *Server) recordConfig(path, source string) {
 	if s.history.store == nil {
 		return
 	}
-	data, err := s.sys.ReadFile(path)
+	data, err := s.configFileFS(path).ReadFile(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			s.logger.Warn("reading config for its history", "path", path, "error", err)
@@ -476,8 +493,9 @@ func (s *Server) handleRestoreConfigRevision(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "not a config file", http.StatusBadRequest)
 		return
 	}
+	fsys := s.configFileFS(rev.Path)
 	dir := filepath.Dir(rev.Path)
-	if err := s.sys.MkdirAll(dir, 0755); err != nil {
+	if err := fsys.MkdirAll(dir, 0755); err != nil {
 		http.Error(w, "failed to create "+dir, http.StatusInternalServerError)
 		return
 	}
@@ -485,7 +503,7 @@ func (s *Server) handleRestoreConfigRevision(w http.ResponseWriter, r *http.Requ
 	if rel != configFileName {
 		// Not part of the trusted project config, nor read by the plugins.
 		defer s.lockConfigFile(rev.Path, source)()
-		if err := s.sys.WriteFile(rev.Path, []byte(rev.Content), 0644); err != nil {
+		if err := fsys.WriteFile(rev.Path, []byte(rev.Content), 0644); err != nil {
 			http.Error(w, "failed to write "+rel, http.StatusInternalServerError)
 			return
 		}
@@ -501,7 +519,7 @@ func (s *Server) handleRestoreConfigRevision(w http.ResponseWriter, r *http.Requ
 		before, keep = s.readProjectConfigBefore(rev.Path)
 	}
 	content := []byte(rev.Content)
-	if err := s.sys.WriteFile(rev.Path, content, 0644); err != nil {
+	if err := fsys.WriteFile(rev.Path, content, 0644); err != nil {
 		http.Error(w, "failed to write config file", http.StatusInternalServerError)
 		return
 	}

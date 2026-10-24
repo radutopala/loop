@@ -37,7 +37,7 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	path := filepath.Join(home, ".loop", "config.json")
-	resp := readConfigFile(s.sys, path)
+	resp := readConfigFile(s.sys.ReadFile, path)
 	writeHTTPJSON(w, http.StatusOK, resp, s.logger)
 }
 
@@ -79,8 +79,9 @@ func (s *Server) handleGetProjectConfig(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// Read through the project dir: a symlink in .loop can't lead out.
 	path := filepath.Join(dirPath, ".loop", "config.json")
-	resp := readConfigFile(s.sys, path)
+	resp := readConfigFile(func(p string) ([]byte, error) { return s.sys.ReadFileIn(dirPath, p) }, path)
 	writeHTTPJSON(w, http.StatusOK, resp, s.logger)
 }
 
@@ -104,16 +105,19 @@ func (s *Server) handleSaveProjectConfig(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	loopDir := filepath.Join(dirPath, ".loop")
-	if err := s.sys.MkdirAll(loopDir, 0755); err != nil {
+	path, err := projectConfigFile(dirPath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.sys.MkdirAllIn(dirPath, filepath.Dir(path), 0755); err != nil {
 		http.Error(w, "failed to create .loop directory", http.StatusInternalServerError)
 		return
 	}
-	path := filepath.Join(loopDir, "config.json")
 	// See handleSaveConfig.
 	defer s.lockConfig(path, "settings")()
 	before, keep := s.readProjectConfigBefore(path)
-	if err := s.sys.WriteFile(path, content, 0644); err != nil {
+	if err := s.sys.WriteFileIn(dirPath, path, content, 0644); err != nil {
 		http.Error(w, "failed to write config file", http.StatusInternalServerError)
 		return
 	}
@@ -186,10 +190,10 @@ func (s *Server) resolveWorkflowConfigPaths(ctx context.Context, channelID strin
 	return ch.DirPath, "", nil
 }
 
-// readConfigFile reads a config file and returns a configResponse.
+// readConfigFile reads a config file with read and returns a configResponse.
 // If the file does not exist, it returns a response with nil content and empty raw.
-func readConfigFile(sys serverSystem, path string) configResponse {
-	data, err := sys.ReadFile(path)
+func readConfigFile(read func(string) ([]byte, error), path string) configResponse {
+	data, err := read(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return configResponse{Path: path}

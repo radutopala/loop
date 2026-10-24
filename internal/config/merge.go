@@ -146,7 +146,7 @@ func (l *Loader) loadWorktreeProjectConfig(worktreeDir, parentDir string, mainCo
 	// The seeded parent dir is the project the worktree belongs to, so it
 	// needs no trust: worktree configs seeded before trust existed, or
 	// rewritten by an agent, keep it.
-	data, _ := l.readFile(filepath.Join(worktreeDir, ".loop", "config.json"))
+	data, _ := l.readIn(worktreeDir, filepath.Join(worktreeDir, ".loop", "config.json"))
 	if parentDir != "" && seedsParentDir(data, parentDir) {
 		worktreeMerged.ExtraDirs = unionExtraDirs(worktreeMerged.ExtraDirs, []string{parentDir})
 	}
@@ -223,7 +223,7 @@ func unionExtraDirs(a, b []string) []string {
 func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config, error) {
 	projectConfigPath := filepath.Join(workDir, ".loop", "config.json")
 
-	data, err := l.readFile(projectConfigPath)
+	data, err := l.readIn(workDir, projectConfigPath)
 	missing := os.IsNotExist(err)
 	if err != nil && !missing {
 		return nil, fmt.Errorf("reading project config file: %w", err)
