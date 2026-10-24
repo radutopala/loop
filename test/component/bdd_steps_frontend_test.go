@@ -489,8 +489,33 @@ func leadCursorActions(findJS string) []chromedp.Action {
 	return []chromedp.Action{chromedp.Evaluate(moveJS, nil), chromedp.Sleep(500 * time.Millisecond)}
 }
 
+// waitSettled waits until the element sel matches has kept its box for a few
+// samples in a row. chromedp.Click clicks where the element was when it
+// measured it, so a click on one that's still moving, such as a card centred
+// in a pane that's still being laid out, lands beside it.
+func waitSettled(sel string) chromedp.Action {
+	js := fmt.Sprintf(`(() => {
+		const key = %q;
+		const seen = (window.__bddSettled ??= {});
+		const el = document.querySelector(key);
+		if (!el) {
+			delete seen[key];
+			return false;
+		}
+		const r = el.getBoundingClientRect();
+		const box = [r.left, r.top, r.width, r.height].join(",");
+		const prev = seen[key];
+		const same = prev && prev.box === box ? prev.same + 1 : 0;
+		seen[key] = { box, same };
+		if (same < 3) return false;
+		delete seen[key];
+		return true;
+	})()`, sel)
+	return chromedp.Poll(js, nil, chromedp.WithPollingTimeout(10*time.Second), chromedp.WithPollingInterval(20*time.Millisecond))
+}
+
 func (tc *TestContext) clickOn(selector string) error {
-	actions := []chromedp.Action{chromedp.WaitVisible(selector, chromedp.ByQuery)}
+	actions := []chromedp.Action{chromedp.WaitVisible(selector, chromedp.ByQuery), waitSettled(selector)}
 	actions = append(actions, leadCursorActions(fmt.Sprintf(`document.querySelector(%q)`, selector))...)
 	actions = append(actions, chromedp.Click(selector, chromedp.ByQuery))
 	return chromedp.Run(tc.chromeTab.ctx, actions...)
@@ -1201,6 +1226,7 @@ func (tc *TestContext) clickButtonWithTitle(title string) error {
 	sel := fmt.Sprintf(`button[title="%s"]`, title)
 	return chromedp.Run(tc.chromeTab.ctx,
 		chromedp.WaitVisible(sel, chromedp.ByQuery),
+		waitSettled(sel),
 		chromedp.Click(sel, chromedp.ByQuery),
 	)
 }
