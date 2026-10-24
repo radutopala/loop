@@ -475,6 +475,39 @@ func (s *TrustSpecSuite) TestFieldClassification() {
 	}
 }
 
+// trustedFieldsFile lists the trusted classes of projectFieldClasses, path
+// and sample, for the container package's trust spec, which drives a
+// container's create config with them and can't import this package's
+// tests. TestTrustedFieldsFile keeps it in step;
+// LOOP_UPDATE_TRUSTED_FIELDS=1 rewrites it.
+const trustedFieldsFile = "testdata/trusted_fields.json"
+
+// trustedFieldSample is one entry of trustedFieldsFile.
+type trustedFieldSample struct {
+	Path   string          `json:"path"`
+	Sample json.RawMessage `json:"sample"`
+}
+
+// TestTrustedFieldsFile: trustedFieldsFile lists every trusted field, so a
+// newly classified one reaches the container spec too.
+func (s *TrustSpecSuite) TestTrustedFieldsFile() {
+	var want []trustedFieldSample
+	for _, c := range projectFieldClasses {
+		if c.trusted {
+			want = append(want, trustedFieldSample{Path: c.path, Sample: json.RawMessage(c.sample)})
+		}
+	}
+	data, err := json.MarshalIndent(want, "", "  ")
+	require.NoError(s.T(), err)
+	data = append(data, '\n')
+	if os.Getenv("LOOP_UPDATE_TRUSTED_FIELDS") == "1" {
+		require.NoError(s.T(), os.WriteFile(trustedFieldsFile, data, 0o644))
+	}
+	got, err := os.ReadFile(trustedFieldsFile)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), string(data), string(got), "%s is out of date: rerun with LOOP_UPDATE_TRUSTED_FIELDS=1", trustedFieldsFile)
+}
+
 // TestSneakTrustedFields tries ways to get a trusted field past the owner:
 // key spellings encoding/json folds onto a field, duplicate keys, nested
 // blocks, stripping or deleting what the owner trusted, and changes
