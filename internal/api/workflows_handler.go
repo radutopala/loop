@@ -186,8 +186,12 @@ func (s *Server) handleListWorkflowRuns(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	shows := s.listingShows(r, channelID)
 	resp := make([]workflowRunResponse, 0, len(runs))
 	for _, run := range runs {
+		if !shows(run.ChannelID) {
+			continue
+		}
 		var ch *db.Channel
 		if channelMap != nil {
 			ch = resolveNamedChannel(channelMap, run.ChannelID)

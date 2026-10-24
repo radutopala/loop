@@ -181,7 +181,34 @@ func parseUICommand(w http.ResponseWriter, r *http.Request) (uiCommandRequest, [
 			return req, nil, false
 		}
 	}
+	if msg := uiStepKeysRespelled(req.Steps); msg != "" {
+		http.Error(w, msg, http.StatusBadRequest)
+		return req, nil, false
+	}
 	return req, steps, true
+}
+
+// uiStepKeys are the keys of a step the daemon reads, uiStep's.
+var uiStepKeys = []string{"op", "pane", "panel", "channel_id"}
+
+// uiStepKeysRespelled returns why steps spell a key the daemon reads some
+// other way, or "" when they don't. encoding/json matches a key to uiStep
+// case-insensitively, keeping the last match, but the window reads the key
+// as written: {"channel_id":"other","Channel_ID":"own"} would have the daemon
+// check one channel and the window open the other.
+func uiStepKeysRespelled(steps json.RawMessage) string {
+	var raw []map[string]json.RawMessage
+	_ = json.Unmarshal(steps, &raw) // parseUICommand read them as objects
+	for _, step := range raw {
+		for k := range step {
+			for _, key := range uiStepKeys {
+				if k != key && strings.EqualFold(k, key) {
+					return fmt.Sprintf("step key %q must be written %q", k, key)
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // uiSideChatsToParents has a select_channel to a side chat open the side

@@ -158,6 +158,15 @@ type requestRefs struct {
 	WorkflowName   string `json:"workflow_name"`
 }
 
+// decodeRequestRefs reads what body names. A type error still leaves the
+// other fields decoded, and the handler would use them, so they're checked
+// either way.
+func decodeRequestRefs(body []byte) requestRefs {
+	var refs requestRefs
+	_ = json.NewDecoder(bytes.NewReader(body)).Decode(&refs)
+	return refs
+}
+
 // agentGuard holds an agent to its own project. Every channel, thread,
 // task, workflow run and dir an agent request names, in the path, the query
 // or the JSON body, must belong to the project of the agent's own channel.
@@ -223,9 +232,7 @@ func (s *Server) agentRefusal(r *http.Request, pattern string) string {
 			return "request body too large"
 		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
-		// A type error still leaves the other fields decoded, and the
-		// handler would use them, so they're checked either way.
-		_ = json.NewDecoder(bytes.NewReader(body)).Decode(&refs)
+		refs = decodeRequestRefs(body)
 	}
 	channels = append(channels, refs.LearnChannelID, refs.ThreadID)
 	// Agents post to any channel, the way they did before API tokens: the
@@ -268,6 +275,26 @@ func startsWorkflow(pattern string, refs requestRefs) bool {
 		return refs.WorkflowName != ""
 	}
 	return false
+}
+
+// listingShows returns whether a listing may show an item of a channel to
+// the caller of r. A listing filtered to a named channel was checked by the
+// guard, and an owner sees every channel's items; an agent's listing of every
+// channel shows its project's, the ones the guard would let it fetch by id.
+func (s *Server) listingShows(r *http.Request, named string) func(channelID string) bool {
+	if named != "" || !isAgentRequest(r) {
+		return func(string) bool { return true }
+	}
+	p, _ := apiauth.PrincipalFrom(r.Context())
+	owns := map[string]bool{}
+	return func(channelID string) bool {
+		ok, seen := owns[channelID]
+		if !seen {
+			ok = s.agentOwnsChannel(r.Context(), p, channelID)
+			owns[channelID] = ok
+		}
+		return ok
+	}
 }
 
 // taskChannel returns the channel a scheduled task belongs to.
