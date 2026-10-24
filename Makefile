@@ -1,4 +1,4 @@
-.PHONY: help build build-linux install test test-integration test-integration-browser test-integration-plugin test-integration-pluginsdk test-component test-runner-build test-runner-push bdd-serve lint lint-go lint-app sdk-gen sdk-gen-check coverage coverage-check codeql-download codeql codeql-js docker-build docs-build docs-serve docs-capture docs-architecture run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-test app-install app-build-binary app-dist-linux app-icons _sync-loop-overrides
+.PHONY: help build build-linux install test test-integration test-integration-browser test-integration-plugin test-integration-pluginsdk test-component test-runner-build test-runner-push bdd-serve lint lint-go lint-app sdk-gen sdk-gen-check coverage coverage-check prove-seccomp codeql-download codeql codeql-js docker-build docs-build docs-serve docs-capture docs-architecture run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-test app-install app-build-binary app-dist-linux app-icons _sync-loop-overrides
 .DEFAULT_GOAL := help
 
 # Strip gate-child env inheritance when invoking make from inside a
@@ -232,6 +232,23 @@ coverage-check: ## Run tests and enforce 100% coverage (via Docker on host, dire
 	else \
 		docker run --rm -v "$$(pwd)":/app -w /app golang:1.27 make _coverage-check-run; \
 	fi
+
+prove-seccomp: ## Prove the agent gate's seccomp filter for amd64 + arm64 with the z3 SMT solver, over every syscall number (in the test-runner image unless z3 is installed)
+	@if command -v z3 >/dev/null; then \
+		$(MAKE) --no-print-directory _prove-seccomp-run; \
+	else \
+		docker run --rm -v "$$(pwd)":/app -w /app $(TEST_RUNNER_IMAGE) make --no-print-directory _prove-seccomp-run; \
+	fi
+
+# The non-native GOARCH runs under emulation: Docker Desktop provides it, CI
+# registers it with docker/setup-qemu-action.
+_prove-seccomp-run:
+	@command -v z3 >/dev/null || { echo "error: z3 not found; rebuild the test-runner image with make test-runner-build" >&2; exit 1; }
+	@for arch in amd64 arm64; do \
+		echo "== $$arch"; \
+		out=$$(SECCOMP_PROOF=1 GOARCH=$$arch go test -count=1 -v -run '^TestSeccompProofSuite$$' ./internal/agentgate/ 2>&1) || { echo "$$out" >&2; exit 1; }; \
+		echo "$$out" | grep -E '^\s*--- |^ok'; \
+	done
 
 # Hugo version pinned to match .github/workflows/pages.yaml so local
 # builds reproduce CI output exactly. Update both when bumping.

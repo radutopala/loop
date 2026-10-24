@@ -1,6 +1,7 @@
 package agentgate
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -538,6 +539,11 @@ var (
 // [section.sub] form — returns ok=false, so the caller asks rather than
 // risk reading the file differently from git.
 func parseGitConfigStrict(b []byte) ([]gitConfigEntry, bool) {
+	// git keeps reading a line past a NUL but stores the value as a C
+	// string, so "url = a\x00b" reads as "a" there and "a\x00b" here.
+	if bytes.IndexByte(b, 0) >= 0 {
+		return nil, false
+	}
 	var out []gitConfigEntry
 	section, sub := "", ""
 	for _, line := range strings.Split(string(b), "\n") {
@@ -547,7 +553,9 @@ func parseGitConfigStrict(b []byte) ([]gitConfigEntry, bool) {
 		}
 		if line[0] == '[' {
 			m := gitConfigHeaderRe.FindStringSubmatch(line)
-			if m == nil {
+			// [section ""] is an empty subsection to git ("section..key"),
+			// not the bare section; refuse rather than conflate the two.
+			if m == nil || (m[2] == "" && strings.Contains(line, `"`)) {
 				return nil, false
 			}
 			section, sub = strings.ToLower(m[1]), m[2]
@@ -557,7 +565,14 @@ func parseGitConfigStrict(b []byte) ([]gitConfigEntry, bool) {
 		if m == nil || section == "" || strings.ContainsAny(m[2], `"\;#`) {
 			return nil, false
 		}
-		out = append(out, gitConfigEntry{section: section, sub: sub, key: strings.ToLower(m[1]), value: m[2]})
+		// git drops the whitespace around an unquoted value, a CR included
+		// (CRLF files). A tab or CR inside it reads as a space in some git
+		// versions and verbatim in others, so refuse it.
+		value := strings.Trim(m[2], " \t\r")
+		if strings.ContainsAny(value, "\t\r") {
+			return nil, false
+		}
+		out = append(out, gitConfigEntry{section: section, sub: sub, key: strings.ToLower(m[1]), value: value})
 	}
 	return out, true
 }

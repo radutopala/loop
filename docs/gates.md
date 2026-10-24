@@ -95,10 +95,10 @@ Both layers feed into the same `agentgate.Manager` for `approve` decisions, so a
 
 | Package | Role |
 |---|---|
-| `internal/agentgate/bpf.go` | Hand-assembled BPF: arch check (x86_64 + aarch64, kill-on-mismatch), 12 trap syscalls (`connect`, `execve`, `execveat`, `openat`, `openat2`, `renameat2`, `unlinkat`, `linkat`, `symlinkat`, `fchmodat`, `fchownat`, `mkdirat`), 3 deny syscalls (`io_uring_setup` / `_enter` / `_register` → `EPERM`) |
+| `internal/agentgate/bpf.go` | Hand-assembled BPF: arch check (x86_64 + aarch64, kill-on-mismatch), 12 trap syscalls (`connect`, `execve`, `execveat`, `openat`, `openat2`, `renameat2`, `unlinkat`, `linkat`, `symlinkat`, `fchmodat`, `fchownat`, `mkdirat`), 3 deny syscalls (`io_uring_setup` / `_enter` / `_register` → `EPERM`); on x86_64, every x32-ABI syscall number (bit 30 set) → `ENOSYS`, since those report the native arch but match no native trap number. `make prove-seccomp` proves the emitted program against this spec (see [Verifying the filter](#verifying-the-filter)) |
 | `internal/agentgate/server.go` | Seccomp notify loop; dispatches by syscall nr to connect / execve / file handlers. Runs in-container inside the `loop syscallwrap` parent process |
 | `internal/agentgate/connect.go` | Parses `AF_UNIX` sockaddr; abstract sockets rendered as `@name` |
-| `internal/agentgate/execve.go` | Reads argv via `ProcessVMReadv`; transparent-wrapper unwrap (`env`, `sudo`, `nice`, `ionice`, `chrt`, `timeout`, `nohup`, `unshare`, `setsid`, `taskset`, `stdbuf`, `script`, `ld-linux*`); `execveat`+`AT_EMPTY_PATH` resolves fd and denies `memfd:` unconditionally |
+| `internal/agentgate/execve.go` | Reads argv via `ProcessVMReadv`; transparent-wrapper unwrap (`env`, `sudo`, `nice`, `ionice`, `chrt`, `timeout`, `nohup`, `unshare`, `setsid`, `taskset`, `stdbuf`, `ld-linux*`), each parsed with its own option grammar; `execveat`+`AT_EMPTY_PATH` resolves fd and denies `memfd:` unconditionally |
 | `internal/agentgate/file.go`, `file_syscalls.go` | Per-syscall arg-layout dispatcher; dirfd resolution via `/proc/<pid>/fd/<N>`; `AT_FDCWD` via `/proc/<pid>/cwd`; mandatory `filepath.EvalSymlinks`; FIFO decision cache (1024 entries) |
 | `internal/agentgate/handshake.go` | `ReceiveHandshake` / `SendAck` — `[4-byte BE length][channel-id][SCM_RIGHTS fd]`. Shared code path for the in-container socketpair handshake |
 | `internal/agentgate/policy.go` | `PathRule` / `CommandRule` / `FileRule` compilation: doublestar for paths, `regexp` for argv, `filepath.Match` for command basenames |
@@ -120,6 +120,20 @@ Both layers feed into the same `agentgate.Manager` for `approve` decisions, so a
 
 ---
 
+### Verifying the filter
+
+`make prove-seccomp` checks the seccomp program `buildFilter` emits, not a model of it. `TestSeccompProofSuite` (`internal/agentgate/bpf_proof_test.go`) renders the program as one SMT-LIB bit-vector term, the verdict for a symbolic syscall number and audit arch, and has the [z3](https://github.com/Z3Prover/z3) SMT solver look for any input that breaks each property below. Finding none proves it for all 2^32 syscall numbers. The target runs the suite as amd64 and as arm64 (the other arch under emulation), in the test-runner image, which ships z3; CI runs it in the `prove-seccomp` job. Plain `go test` skips the suite when z3 isn't installed.
+
+| Property | Claim |
+|---|---|
+| P1 | A wrong audit arch always ends in `KILL_PROCESS` |
+| P2 | On the native arch, every number gets exactly its trap / deny / allow verdict (x32 numbers `ENOSYS` on x86_64) |
+| P2' | x86_64: no x32-ABI number is allowed |
+| P3 | No number is both trapped and denied |
+| P4 | x86_64: every number the kernel dispatches to a trapped syscall is stopped, with the x32 ABI off and on |
+
+`TestFilterPropertiesCanFail` checks that the proof can fail: a filter without the x32 guard, or with a trap entry dropped, is refuted. The trusted base is the cBPF semantics in `smtVerdict`, the property statements, z3 and the x32 dispatch table in `x32Numbers`. P4 checks the filter against the gate's own trap list; it doesn't claim that list covers every way to reach a file or socket.
+
 ## Default policy
 
 All defaults ship from code (`internal/config/defaults_gate.go`), not from an example JSON. The example templates at `internal/config/config.*.example.json` document the surface but are commented out so new installs pick up the baseline automatically.
@@ -134,7 +148,7 @@ The default posture is **default-allow with targeted exceptions**: the agent can
 
 ### Connect (`PathRule`, 2 rules, first-match-wins)
 
-Covers `connect(2)` on `AF_UNIX` paths.
+Covers `connect(2)` on `AF_UNIX` paths. A rule names a socket, not a spelling: the requested path and each rule's pattern are resolved in the agent's view (cwd, `.`, `..`, duplicate slashes, symlinks) before comparing, so `/run/docker.sock.host` (via the `/var/run` → `/run` link) or a symlink in `/tmp` still hits rule 1. A relative path whose cwd can't be read is denied.
 
 | # | Pattern | Decision | Why |
 |---|---|---|---|
@@ -143,7 +157,7 @@ Covers `connect(2)` on `AF_UNIX` paths.
 
 ### Exec (`CommandRule`, 1 static rule + 1 dynamic workspace rule, first-match-wins)
 
-Seccomp catches `execve` / `execveat`; transparent wrappers (`env`, `sudo`, `nice`, `timeout`, …) are unwrapped so the rule matches the real target.
+Seccomp catches `execve` / `execveat`; transparent wrappers (`env`, `sudo`, `nice`, `timeout`, …) are unwrapped so the rule matches the real target. Each wrapper is read with its real option grammar — option values (`sudo -u root`, `nice -n 5`, `env -u X`) and operands (`timeout`'s DURATION, `taskset`'s MASK, `chrt`'s PRIORITY) are skipped, so `timeout 5 git push` matches a `git push` rule. When the command can't be named for sure — an unknown or malformed option, a mode that doesn't run it as given (`sudo -s`/`-i`/`-e`/`-l`, `taskset -p`, `--help`), or an `env -S` string that uses quotes, escapes or `${VAR}` — the wrapper itself stays the command. That never hides one: every wrapper but the loader execs its command, which traps again on its own. `script` isn't unwrapped; it runs `$SHELL -c CMD`, which traps with the shell named. `internal/agentgate/execve_unwrap_linux_test.go` checks the grammar against the installed wrapper binaries.
 
 | # | Command | Args regex | Decision | Why |
 |---|---|---|---|---|

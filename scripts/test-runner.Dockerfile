@@ -10,9 +10,12 @@ FROM golang:1.27.3
 # back to the deprecated classic builder, which cannot cross-build.
 #
 # Node 24 and npm 12.1.0 match the agent images (see internal/container/image/Dockerfile).
+#
+# z3 is the SMT solver `make prove-seccomp` uses to prove the agent gate's
+# seccomp filter (internal/agentgate/bpf_proof_test.go).
 RUN apt-get update -qq && \
     apt-get install -yqq --no-install-recommends \
-        curl chromium ffmpeg fluidsynth fluid-soundfont-gm && \
+        curl chromium ffmpeg fluidsynth fluid-soundfont-gm z3 && \
     install -m 0755 -d /etc/apt/keyrings && \
     curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc && \
     chmod a+r /etc/apt/keyrings/docker.asc && \

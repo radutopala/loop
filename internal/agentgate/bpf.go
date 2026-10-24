@@ -34,6 +34,12 @@ const (
 	seccompRetErrno       uint32 = 0x00050000
 )
 
+// x32SyscallBit is __X32_SYSCALL_BIT (arch/x86/include/uapi/asm/unistd.h).
+// On an x86_64 kernel built with CONFIG_X86_X32_ABI, a syscall number with
+// this bit set is dispatched through the x32 table while seccomp still
+// reports AUDIT_ARCH_X86_64, so the arch check alone does not exclude it.
+const x32SyscallBit uint32 = 0x40000000
+
 // auditArchFor maps a Go GOARCH string to the kernel audit arch tag. Unsupported
 // architectures return an error rather than a default — a mismatched filter is
 // worse than refusing to start.
@@ -88,15 +94,26 @@ func DenySyscalls() []uint32 {
 //	for nr in deny:
 //	    jeq nr, jt=0, jf=1
 //	    ret ERRNO(EPERM)
+//	jge  X32_SYSCALL_BIT, jt=0, jf=1  ; x86_64 only: refuse the x32 ABI
+//	ret  ERRNO(ENOSYS)
 //	ret  ALLOW
 //
 // Inlining the RET after each JEQ (rather than packing all RETs at the end)
 // keeps jump distances trivially 0/1. Program size is 5 + 2*(len(trap)+len(deny))
-// instructions — comfortably below the 4096-instruction seccomp limit.
+// instructions (plus 2 for the x32 guard on x86_64), comfortably below the
+// 4096-instruction seccomp limit.
+//
+// Without the x32 guard, x32's execveat (0x40000000|545), openat
+// (0x40000000|257) and the rest reach ALLOW on kernels with
+// CONFIG_X86_X32_ABI, since none of them equals a trapped native number.
+// No trapped or denied number has bit 30 set, so placing the guard last
+// changes the verdict only for x32 numbers. ENOSYS is what an x32-less
+// kernel returns for them.
 func buildFilter(expectedArch uint32, trap, deny []uint32) []unix.SockFilter {
 	const (
 		ldW  = uint16(unix.BPF_LD | unix.BPF_W | unix.BPF_ABS)
 		jeqK = uint16(unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K)
+		jgeK = uint16(unix.BPF_JMP | unix.BPF_JGE | unix.BPF_K)
 		retK = uint16(unix.BPF_RET | unix.BPF_K)
 	)
 
@@ -119,6 +136,12 @@ func buildFilter(expectedArch uint32, trap, deny []uint32) []unix.SockFilter {
 		prog = append(prog,
 			unix.SockFilter{Code: jeqK, Jt: 0, Jf: 1, K: nr},
 			unix.SockFilter{Code: retK, K: seccompRetErrno | uint32(unix.EPERM)},
+		)
+	}
+	if expectedArch == auditArchX86_64 {
+		prog = append(prog,
+			unix.SockFilter{Code: jgeK, Jt: 0, Jf: 1, K: x32SyscallBit},
+			unix.SockFilter{Code: retK, K: seccompRetErrno | uint32(unix.ENOSYS)},
 		)
 	}
 	prog = append(prog, unix.SockFilter{Code: retK, K: seccompRetAllow})

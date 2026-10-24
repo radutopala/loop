@@ -152,6 +152,24 @@ jobs:
       - name: Run API performance tests
         run: make test-component-perf
 
+  # Proves the agent gate's seccomp filter with z3 (in the test-runner image).
+  prove-seccomp:
+    needs: ensure-test-runner
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ghcr.io/radutopala/loop/test-runner:latest
+    steps:
+      - uses: actions/checkout@v7
+      # The arm64 proof runs its test binary under qemu.
+      - uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+      - name: Prove the seccomp filter
+        run: make prove-seccomp
+
   electron-typecheck:
     runs-on: ubuntu-latest
     steps:

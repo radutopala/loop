@@ -17,7 +17,14 @@ import (
 type ConnectRequest struct {
 	PID       int
 	ChannelID string
-	Path      string // absolute filesystem path, or "@<name>" for abstract sockets
+	Path      string // sun_path as the caller wrote it, or "@<name>" for abstract sockets
+	// Canonical is Path resolved the way the kernel will resolve it for the
+	// caller (cwd, ".", "..", duplicate slashes, symlinks). Empty for abstract
+	// sockets or when the dispatcher did not resolve.
+	Canonical string
+	// Canon resolves an absolute rule pattern the same way, so a rule names a
+	// socket rather than one spelling of it. Nil disables canonical matching.
+	Canon func(string) string
 }
 
 // ConnectHandler evaluates connect(2) traps against path_rules. Construct via
@@ -50,7 +57,7 @@ func NewConnectHandler(policy *Policy, approver Approver) *ConnectHandler {
 // resolved internally via the Approver.
 func (h *ConnectHandler) Handle(ctx context.Context, req ConnectRequest) Outcome {
 	start := h.Now()
-	match := h.Policy.MatchPath(req.Path)
+	match := h.Policy.MatchSocket(req.Path, req.Canonical, req.Canon)
 	var out Outcome
 	if match.Decision == types.DecisionApprove {
 		if h.Approver == nil {

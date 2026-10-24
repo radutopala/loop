@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -194,88 +195,405 @@ func execveBurstKey(argv []string) string {
 	return "execve-argv:" + hex.EncodeToString(sum[:])
 }
 
-// transparentWrappers are argv[0] basenames that we look through to find the
-// "real" command before policy evaluation. We deliberately omit eatmydata
-// (not installed in our container image).
-var transparentWrappers = map[string]struct{}{
-	"env":     {},
-	"sudo":    {},
-	"nice":    {},
-	"ionice":  {},
-	"chrt":    {},
-	"timeout": {},
-	"nohup":   {},
-	"unshare": {},
-	"setsid":  {},
-	"taskset": {},
-	"stdbuf":  {},
-	"script":  {},
+// optKind says how a wrapper option treats a value. The zero value marks an
+// option the wrapper doesn't have.
+type optKind uint8
+
+const (
+	optFlag     optKind = iota + 1 // takes no value
+	optValue                       // takes a value: attached ("-n5", "--adjustment=5") or the next argument
+	optOptional                    // takes a value only when attached ("--mount=FILE")
+	optSplit                       // env -S: the value is split into arguments read in its place
+	optOpaque                      // turns the wrapper away from running its command: help, pid mode, a shell, …
+)
+
+// wrapperGrammar is the command line of a transparent wrapper, read the way
+// getopt_long with a leading "+" reads it: options up to the first operand
+// or "--", clustered short flags, attached or separate values, unambiguous
+// long-option prefixes. Values aren't validated — a wrapper that rejects one
+// runs nothing, so the command named in its place never executes.
+type wrapperGrammar struct {
+	short map[byte]optKind
+	long  map[string]optKind
+	// pre sees each argument before it's read as an option and returns how
+	// many arguments it consumed (0: none, read it as usual).
+	pre func(argv []string, i int) int
+	// operands is how many arguments follow the options before the
+	// command (timeout's DURATION, taskset's MASK, chrt's PRIORITY).
+	operands int
+	// post skips what sits between the operands and the command.
+	post func(argv []string, i int) int
+	// needOpt marks a wrapper that refuses to run without an option.
+	needOpt bool
 }
 
-// isWrapper returns true when basename matches a transparent wrapper.
-// ld-linux* is matched by prefix because its filename carries an ABI suffix
-// ("ld-linux-x86-64.so.2", "ld-linux-aarch64.so.1", …).
-func isWrapper(base string) bool {
-	if strings.HasPrefix(base, "ld-linux") {
-		return true
+// shortOpts builds a short-option table from a getopt spec ("k:s:fpv"; ':'
+// takes a value, '::' an attached one), then marks the opaque ones.
+func shortOpts(spec, opaque string) map[byte]optKind {
+	m := map[byte]optKind{}
+	for i := 0; i < len(spec); i++ {
+		kind := optFlag
+		if strings.HasPrefix(spec[i+1:], "::") {
+			kind = optOptional
+		} else if strings.HasPrefix(spec[i+1:], ":") {
+			kind = optValue
+		}
+		m[spec[i]] = kind
+		for i+1 < len(spec) && spec[i+1] == ':' {
+			i++
+		}
 	}
-	_, ok := transparentWrappers[base]
-	return ok
+	for i := 0; i < len(opaque); i++ {
+		m[opaque[i]] = optOpaque
+	}
+	return m
+}
+
+// transparentWrappers are argv[0] basenames that we look through to find the
+// "real" command before policy evaluation, each with its option grammar
+// (checked against coreutils 9.7, util-linux 2.41 and sudo 1.9's
+// parse_args.c). Every one of them execs its command, so that exec traps
+// again on its own; unwrapping makes the wrapper's own trap judge the same
+// command. script(1) isn't one: it runs `$SHELL -c CMD`, whose exec traps
+// with the shell named. We deliberately omit eatmydata (not installed in our
+// container image).
+var transparentWrappers = map[string]*wrapperGrammar{
+	"env": {
+		short: func() map[byte]optKind {
+			m := shortOpts("a:iC:S:u:v0", "0") // -0 refuses a command
+			m['S'] = optSplit
+			return m
+		}(),
+		long: map[string]optKind{
+			"argv0": optValue, "ignore-environment": optFlag, "null": optOpaque,
+			"unset": optValue, "chdir": optValue, "split-string": optSplit,
+			"block-signal": optOptional, "default-signal": optOptional, "ignore-signal": optOptional,
+			"list-signal-handling": optFlag, "debug": optFlag, "help": optOpaque, "version": optOpaque,
+		},
+		post: envAssignments,
+	},
+	"sudo": {
+		// -h is help unless a host follows, which pre consumes; -e, -l, -v,
+		// -K edit, list, validate or drop credentials instead of running;
+		// -s and -i run the command through a shell.
+		short: shortOpts("Aa:BbC:c:D:Eeg:Hh::iKklNnPp:R:r:SsT:t:U:u:Vv", "ehiKlsVv"),
+		long: map[string]optKind{
+			"background": optFlag, "preserve-env": optOptional, "edit": optOpaque, "set-home": optFlag,
+			"login": optOpaque, "remove-timestamp": optOpaque, "list": optOpaque, "preserve-groups": optFlag,
+			"shell": optOpaque, "other-user": optValue, "validate": optOpaque, "askpass": optFlag,
+			"auth-type": optValue, "bell": optFlag, "close-from": optValue, "login-class": optValue,
+			"chdir": optValue, "group": optValue, "help": optOpaque, "host": optValue,
+			"reset-timestamp": optFlag, "no-update": optFlag, "non-interactive": optFlag, "prompt": optValue,
+			"chroot": optValue, "role": optValue, "stdin": optFlag, "command-timeout": optValue,
+			"type": optValue, "user": optValue, "version": optOpaque,
+		},
+		pre: sudoPre,
+	},
+	"nice": {
+		short: shortOpts("n:", ""),
+		long:  map[string]optKind{"adjustment": optValue, "help": optOpaque, "version": optOpaque},
+		pre:   niceAdjustment,
+	},
+	"ionice": {
+		// -p, -P, -u act on running processes instead of a command.
+		short: shortOpts("c:n:p:P:u:thV", "pPuhV"),
+		long: map[string]optKind{
+			"class": optValue, "classdata": optValue, "pid": optOpaque, "pgid": optOpaque,
+			"ignore": optFlag, "uid": optOpaque, "help": optOpaque, "version": optOpaque,
+		},
+	},
+	"chrt": {
+		// -p acts on a running process; -m prints the priority ranges.
+		// PRIORITY is required, whatever the policy.
+		short: shortOpts("abdD:fimopP:rRT:vhV", "mphV"),
+		long: map[string]optKind{
+			"all-tasks": optFlag, "batch": optFlag, "deadline": optFlag, "fifo": optFlag,
+			"idle": optFlag, "other": optFlag, "rr": optFlag, "reset-on-fork": optFlag,
+			"sched-runtime": optValue, "sched-period": optValue, "sched-deadline": optValue,
+			"max": optOpaque, "pid": optOpaque, "verbose": optFlag, "help": optOpaque, "version": optOpaque,
+		},
+		operands: 1,
+		post:     skipDashDash,
+	},
+	"timeout": {
+		short: shortOpts("k:s:fpv", ""),
+		long: map[string]optKind{
+			"foreground": optFlag, "kill-after": optValue, "preserve-status": optFlag,
+			"signal": optValue, "verbose": optFlag, "help": optOpaque, "version": optOpaque,
+		},
+		operands: 1,
+	},
+	"nohup": {
+		long: map[string]optKind{"help": optOpaque, "version": optOpaque},
+	},
+	"unshare": {
+		// Short namespace flags take no value; only their long forms do.
+		short: shortOpts("fhVmuinpCTUrR:w:S:G:cl:", "hV"),
+		long: map[string]optKind{
+			"mount": optOptional, "uts": optOptional, "ipc": optOptional, "net": optOptional,
+			"pid": optOptional, "user": optOptional, "cgroup": optOptional, "time": optOptional,
+			"mount-proc": optOptional, "mount-binfmt": optOptional, "load-interp": optValue,
+			"propagation": optValue, "root": optValue, "wd": optValue, "setuid": optValue,
+			"setgid": optValue, "map-user": optValue, "map-group": optValue, "map-root-user": optFlag,
+			"map-current-user": optFlag, "map-auto": optFlag, "map-users": optValue, "map-groups": optValue,
+			"fork": optFlag, "kill-child": optOptional, "setgroups": optValue, "keep-caps": optFlag,
+			"monotonic": optValue, "boottime": optValue, "help": optOpaque, "version": optOpaque,
+		},
+	},
+	"setsid": {
+		short: shortOpts("cfwhV", "hV"),
+		long: map[string]optKind{
+			"ctty": optFlag, "fork": optFlag, "wait": optFlag, "help": optOpaque, "version": optOpaque,
+		},
+	},
+	"taskset": {
+		// -p acts on a running process; -c reads the operand as a CPU list.
+		short: shortOpts("apchV", "phV"),
+		long: map[string]optKind{
+			"all-tasks": optFlag, "pid": optOpaque, "cpu-list": optFlag, "help": optOpaque, "version": optOpaque,
+		},
+		operands: 1,
+	},
+	"stdbuf": {
+		short:   shortOpts("i:o:e:", ""),
+		long:    map[string]optKind{"input": optValue, "output": optValue, "error": optValue, "help": optOpaque, "version": optOpaque},
+		needOpt: true,
+	},
+}
+
+// loaderOpts is the dynamic loader's options. ld.so matches them exactly —
+// no "=value", no abbreviations — and reads anything else that doesn't start
+// with "--" (even "-x") as the program.
+var loaderOpts = map[string]optKind{
+	"--library-path": optValue, "--glibc-hwcaps-prepend": optValue, "--glibc-hwcaps-mask": optValue,
+	"--inhibit-rpath": optValue, "--audit": optValue, "--preload": optValue, "--argv0": optValue,
+	"--inhibit-cache": optFlag,
+}
+
+// wrapperFor returns the unwrapper for an argv[0] basename, nil when it isn't
+// a transparent wrapper. ld-linux* is matched by prefix because its filename
+// carries an ABI suffix ("ld-linux-x86-64.so.2", "ld-linux-aarch64.so.1", …).
+// The loader matters most: it maps the program itself rather than exec it, so
+// its trap is the only one the program gets.
+func wrapperFor(base string) func([]string) ([]string, bool) {
+	if strings.HasPrefix(base, "ld-linux") {
+		return unwrapLoader
+	}
+	if g, ok := transparentWrappers[base]; ok {
+		return g.unwrap
+	}
+	return nil
 }
 
 // unwrapCommand returns the effective argv after stripping any transparent
 // wrappers at the head. Recurses for chains like `sudo env FOO=bar rm`.
-// The loop terminates because it either returns early or strips ≥1 entry.
+// A wrapper whose command can't be named for sure — an unknown or malformed
+// option, one that turns it away from running a command, nothing left to
+// run — is kept as the command, so the caller still applies its rule against
+// the wrapper. The loop terminates because every pass shortens argv's total
+// length: env -S trades its option for the fields of its value.
 func unwrapCommand(argv []string) []string {
 	for len(argv) > 0 {
-		base := filepath.Base(argv[0])
-		if !isWrapper(base) {
+		unwrap := wrapperFor(filepath.Base(argv[0]))
+		if unwrap == nil {
 			return argv
 		}
-		i := 1
-		for i < len(argv) {
-			a := argv[i]
-			if a == "--" {
-				i++
-				break
-			}
-			if strings.HasPrefix(a, "-") {
-				i++
-				continue
-			}
-			if base == "env" && looksLikeEnvAssignment(a) {
-				i++
-				continue
-			}
-			break
-		}
-		if i >= len(argv) {
-			// Wrapper with no payload. Keep the wrapper as the command so
-			// the caller still applies its rule against the wrapper.
+		payload, ok := unwrap(argv)
+		if !ok {
 			return argv
 		}
-		argv = argv[i:]
+		argv = payload
 	}
 	return argv
 }
 
-// looksLikeEnvAssignment returns true for "KEY=val"-style tokens that precede
-// a command under env(1). The key must be a non-empty identifier composed of
-// [A-Za-z_][A-Za-z0-9_]* — otherwise we treat the token as the command.
-func looksLikeEnvAssignment(s string) bool {
-	eq := strings.Index(s, "=")
-	if eq <= 0 {
-		return false
-	}
-	key := s[:eq]
-	for i, r := range key {
-		if r == '_' || ('A' <= r && r <= 'Z') || ('a' <= r && r <= 'z') {
-			continue
+// unwrap returns the command a wrapper invocation runs; ok is false when it
+// can't be named for sure.
+func (g *wrapperGrammar) unwrap(argv []string) ([]string, bool) {
+	opts := 0
+	i := 1
+	for i < len(argv) {
+		if g.pre != nil {
+			if n := g.pre(argv, i); n > 0 {
+				i += n
+				continue
+			}
 		}
-		if i > 0 && '0' <= r && r <= '9' {
-			continue
+		tok := argv[i]
+		if tok == "--" {
+			i++
+			break
 		}
-		return false
+		if len(tok) < 2 || tok[0] != '-' {
+			break
+		}
+		kind, val, attached := g.option(tok)
+		n := 1
+		switch kind {
+		case optFlag, optOptional:
+		case optValue, optSplit:
+			if !attached {
+				if i+1 >= len(argv) {
+					return nil, false
+				}
+				val, n = argv[i+1], 2
+			}
+			if kind == optSplit {
+				fields, ok := envSplit(val)
+				if !ok {
+					return nil, false
+				}
+				// env reads the fields in the option's place, options
+				// included.
+				argv = slices.Concat(argv[:1], fields, argv[i+n:])
+				i, n = 1, 0
+			}
+		default:
+			return nil, false
+		}
+		opts++
+		i += n
 	}
-	return true
+	if g.needOpt && opts == 0 {
+		return nil, false
+	}
+	i += g.operands
+	if g.post != nil {
+		i = g.post(argv, i)
+	}
+	if i >= len(argv) {
+		return nil, false
+	}
+	return argv[i:], true
+}
+
+// option reads one option argument ("--name[=value]" or a "-abc" cluster).
+// It returns the kind of the option that decides how the argument ends — the
+// first one in a cluster that isn't a plain flag — and its attached value.
+// A flag given "=value" reads as unknown, as getopt rejects it.
+func (g *wrapperGrammar) option(tok string) (kind optKind, val string, attached bool) {
+	if tok[1] == '-' {
+		name, val, attached := strings.Cut(tok[2:], "=")
+		kind := g.longKind(name)
+		if attached && kind == optFlag {
+			return 0, "", false
+		}
+		return kind, val, attached
+	}
+	for j := 1; j < len(tok); j++ {
+		if kind = g.short[tok[j]]; kind != optFlag {
+			return kind, tok[j+1:], j+1 < len(tok)
+		}
+	}
+	return optFlag, "", false
+}
+
+// longKind resolves a long option name the way getopt_long does: an exact
+// match, else the one option it's a prefix of. Unknown and ambiguous names
+// yield 0.
+func (g *wrapperGrammar) longKind(name string) optKind {
+	if kind, ok := g.long[name]; ok {
+		return kind
+	}
+	var kind optKind
+	for full, k := range g.long {
+		if strings.HasPrefix(full, name) {
+			if kind != 0 {
+				return 0
+			}
+			kind = k
+		}
+	}
+	return kind
+}
+
+// envAssignments skips env's "-" (an empty environment) and its NAME=VALUE
+// arguments: env sets any argument holding a "=", even "=x" or "a/b=c".
+func envAssignments(argv []string, i int) int {
+	if i < len(argv) && argv[i] == "-" {
+		i++
+	}
+	for i < len(argv) && strings.Contains(argv[i], "=") {
+		i++
+	}
+	return i
+}
+
+// skipDashDash skips the "--" chrt allows between its PRIORITY and the
+// command.
+func skipDashDash(argv []string, i int) int {
+	if i < len(argv) && argv[i] == "--" {
+		i++
+	}
+	return i
+}
+
+// envSplit splits an env -S value into the arguments env reads from it. Only
+// plain blank-separated words are split; a value using env's quotes,
+// escapes, ${VAR} expansion or # comments is refused rather than guessed at.
+func envSplit(s string) ([]string, bool) {
+	if strings.ContainsAny(s, "\\'\"$#\v\f\r") {
+		return nil, false
+	}
+	return strings.FieldsFunc(s, func(r rune) bool { return r == ' ' || r == '\t' || r == '\n' }), true
+}
+
+// sudoPre consumes the arguments sudo reads between its options: "-h HOST"
+// (a lone -h followed by a host is no longer help) and NAME=VALUE pairs,
+// which sudo accepts anywhere before the command unless they start with
+// "/" or "=".
+func sudoPre(argv []string, i int) int {
+	if argv[i] == "-h" && i+1 < len(argv) && !strings.HasPrefix(argv[i+1], "-") && !isSudoEnvVar(argv[i+1]) {
+		return 2
+	}
+	if isSudoEnvVar(argv[i]) {
+		return 1
+	}
+	return 0
+}
+
+// isSudoEnvVar reports whether sudo reads s as a NAME=VALUE pair.
+func isSudoEnvVar(s string) bool {
+	return s != "" && !strings.ContainsRune("-/=", rune(s[0])) && strings.Contains(s, "=")
+}
+
+// niceAdjustment consumes nice's obsolescent "-N", "--N" and "-+N"
+// adjustments, which it reads before getopt sees them.
+func niceAdjustment(argv []string, i int) int {
+	s := argv[i]
+	k := 1
+	if len(s) > 1 && (s[1] == '-' || s[1] == '+') {
+		k = 2
+	}
+	if len(s) > k && s[0] == '-' && '0' <= s[k] && s[k] <= '9' {
+		return 1
+	}
+	return 0
+}
+
+// unwrapLoader returns the program a direct ld.so invocation runs.
+func unwrapLoader(argv []string) ([]string, bool) {
+	i := 1
+	for i < len(argv) {
+		tok := argv[i]
+		if tok == "--" {
+			i++
+			break
+		}
+		if !strings.HasPrefix(tok, "--") {
+			break
+		}
+		switch loaderOpts[tok] {
+		case optFlag:
+			i++
+		case optValue:
+			i += 2
+		default:
+			return nil, false
+		}
+	}
+	if i >= len(argv) {
+		return nil, false
+	}
+	return argv[i:], true
 }

@@ -152,6 +152,21 @@ func (p *Policy) MatchPath(path string) MatchResult {
 	return p.defaultResult()
 }
 
+// MatchSocket is MatchPath for connect(2): a rule also matches when its
+// pattern, resolved by canon, names the same file as canonical (the request
+// path resolved in the caller's view). Without this, "/run/x.sock",
+// "/var/run//x.sock" or a planted symlink reach a socket a rule for
+// "/var/run/x.sock" was meant to cover. Abstract ("@") patterns compare by
+// string only.
+func (p *Policy) MatchSocket(path, canonical string, canon func(string) string) MatchResult {
+	for i, r := range p.pathRules {
+		if r.pattern == path || (canonical != "" && canon != nil && filepath.IsAbs(r.pattern) && canon(r.pattern) == canonical) {
+			return MatchResult{Decision: r.decision, Message: r.message, RuleID: fmt.Sprintf("path[%d]", i)}
+		}
+	}
+	return p.defaultResult()
+}
+
 // MatchCommand evaluates execve(2) rules against argv[0] basename + joined argv[1:].
 func (p *Policy) MatchCommand(argv0 string, argvRest []string) MatchResult {
 	base := filepath.Base(argv0)

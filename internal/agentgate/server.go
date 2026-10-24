@@ -220,10 +220,25 @@ func (s *Server) dispatchConnect(ctx context.Context, trap Trap, tracee Tracee) 
 		// run the syscall.
 		return allowResp(trap.ID)
 	}
+	// Resolve pathname sockets in the caller's view so path rules see the
+	// socket the kernel will connect to, not just the spelling. A relative
+	// path whose cwd can't be read fails closed, like the file handlers.
+	var canonical string
+	var canon func(string) string
+	if path != "" && path[0] != '@' {
+		abs, err := absolutize(path, AtFDCWD, tracee)
+		if err != nil {
+			return denyResp(trap.ID, syscall.EPERM)
+		}
+		canon = func(p string) string { return resolveSymlinks(p, false, tracee) }
+		canonical = canon(abs)
+	}
 	out := s.Connect.Handle(ctx, ConnectRequest{
 		PID:       trap.PID,
 		ChannelID: s.ChannelID,
 		Path:      path,
+		Canonical: canonical,
+		Canon:     canon,
 	})
 	return decisionResp(trap.ID, out.Decision)
 }
