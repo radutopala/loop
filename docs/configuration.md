@@ -791,7 +791,7 @@ Symlinks in a project's `.loop` dir can't lead out of the project. Every read an
 - A project config write (Settings, a project shortcut or workflow, a learn proposal, a history restore) is refused with a `400` when `.loop` or `.loop/config.json` is a symlink out of the project, so it can't change another file, such as the global config, as the project's. The temp file a learn proposal is written through can't be redirected either.
 - A project config that leads out isn't read. Runs in the project fail with a `loading project config` error, as they do when the file is malformed, and the Settings, history and trust views show nothing of the file it points to.
 
-Links that stay inside the project work as before.
+Relative links that stay inside the project work as before. An absolute link is refused, even one to a file in the project: point it at the file with a relative path instead. `internal/osutil/within_spec_test.go` checks this on random trees of links (out of the project, to a parent, out and back in, chains, loops, dangling) and names (`.`, `..`, `//`, trailing slashes): nothing outside the project is read, created, changed or removed, and a relative link that stays inside still works.
 
 Trusted versions are kept in `loop/project-trust.json` under your OS user config dir (`~/Library/Application Support` on macOS, `~/.config` on Linux), next to the API token, where containers can't reach them. The API routes are [`GET` and `POST /api/config/project/trust`](api.md#get-apiconfigprojecttrust).
 
