@@ -361,6 +361,46 @@ func (s *ServerSuite) TestBodyRuleDenyBlocksForward() {
 	require.Equal(s.T(), "body[0]", e.BodyRuleID)
 }
 
+// Every spelling of the create path the daemon routes names the same
+// endpoint, so each must meet the same body rule. Spellings the daemon
+// doesn't serve ("/containers/create/", "//containers/create", case
+// variants: 404 or 301) are left out.
+func (s *ServerSuite) TestBodyRuleDenyAppliesToEverySpelling() {
+	sock, stop := upstreamUnix(s.T(), http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer stop()
+	policy, err := CompilePolicy(types.DecisionAllow, nil, []types.BodyRule{{
+		AppliesTo:    "POST ^/containers/create$",
+		ContentTypes: []string{"application/json"},
+		MaxBodyBytes: 8192,
+		JSONChecks:   []types.JSONCheck{{Path: "HostConfig.Privileged", Op: "equals", Values: []string{"true"}}},
+		Decision:     types.DecisionDeny,
+		Message:      "no privileged",
+	}})
+	require.NoError(s.T(), err)
+	srv := s.newServer(policy, &fakeApprover{}, sock, &capturingAuditor{})
+
+	for _, target := range []string{
+		"/containers/create",
+		"/v1.41/containers/create",
+		"/v1/containers/create",
+		"/v1.41.0/containers/create",
+		"/v1.4.1/containers/create",
+		"/v./containers/create",
+		"/%63ontainers/create",
+		"/v1.41/containers/create?name=x",
+	} {
+		s.Run(target, func() {
+			req := httptest.NewRequest(http.MethodPost, target, strings.NewReader(`{"HostConfig":{"Privileged":true}}`))
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+			srv.ServeHTTP(rr, req)
+			require.Equal(s.T(), http.StatusForbidden, rr.Code)
+		})
+	}
+}
+
 func (s *ServerSuite) TestBodyRuleBenignBodyFallsThrough() {
 	var receivedBody []byte
 	sock, stop := upstreamUnix(s.T(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -739,7 +779,11 @@ func (s *ServerSuite) TestStripAPIVersionPrefix() {
 		{"/v1/info", "/info"},
 		{"/containers/json", "/containers/json"},
 		{"/v1.41", "/"},
+		{"/v1.41.0/containers/create", "/containers/create"},
+		{"/v1.4.1/info", "/info"},
+		{"/v./info", "/info"},
 		{"/vX.Y/info", "/vX.Y/info"}, // non-numeric -> not stripped
+		{"/v1.41x/info", "/v1.41x/info"},
 	}
 	for _, c := range cases {
 		require.Equal(s.T(), c.want, stripAPIVersionPrefix(c.in), c.in)
