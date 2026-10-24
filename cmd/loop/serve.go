@@ -459,13 +459,14 @@ func (a *app) serve() error {
 		if writer := w.WriterDB(); writer != nil {
 			trust := config.NewTrustStoreIn(a.userConfigDir)
 			if err := a.fsMigrateRun(context.Background(), writer, &fsmigrate.Ctx{
-				Sys:                   a.sys,
-				LoopDir:               cfg.LoopDir,
-				Version:               a.version,
-				ProjectDirs:           projectDirs(context.Background(), store, logger),
-				ProjectSys:            func(dir string) fsmigrate.System { return osutil.RootFS{Root: dir} },
-				AdoptProjectConfig:    trust.Adopt,
-				AdoptProjectWorkflows: trust.AdoptWorkflows,
+				Sys:                        a.sys,
+				LoopDir:                    cfg.LoopDir,
+				Version:                    a.version,
+				ProjectDirs:                projectDirs(context.Background(), store, logger),
+				ProjectSys:                 func(dir string) fsmigrate.System { return osutil.RootFS{Root: dir} },
+				AdoptProjectConfig:         trust.Adopt,
+				AdoptProjectWorkflows:      trust.AdoptWorkflows,
+				AdoptProjectContainerImage: trust.AdoptContainerImage,
 			}); err != nil {
 				return fmt.Errorf("running fs migrations: %w", err)
 			}

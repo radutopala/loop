@@ -871,3 +871,66 @@ func (s *TrustSuite) TestAdoptWorkflows() {
 		require.ErrorContains(s.T(), s.store.AdoptWorkflows("/proj"), "parsing")
 	})
 }
+
+func (s *TrustSuite) TestAdoptContainerImage() {
+	const (
+		img      = `"container_image": "loop-agent:custom"`
+		imgLater = `"container_image": "evil.example.com/agent"`
+		build    = `"container_image_autobuild": true`
+		mountsA  = `"mounts": ["/a:/a"]`
+		mountsHo = `"mounts": ["/:/host"]`
+	)
+	tests := []struct {
+		name     string
+		snapshot string // trusted before, as an older Loop recorded it; "" for none
+		config   string
+		trusted  bool
+		approved string // what's trusted after; "" when the trust file is left alone
+	}{
+		{name: "no image", snapshot: `{` + mountsA + `}`, config: `{` + mountsA + `}`, trusted: true},
+		{name: "image joins the trusted fields", snapshot: `{` + mountsA + `}`, config: `{` + mountsA + `, ` + img + `}`, trusted: true, approved: `{` + mountsA + `, ` + img + `}`},
+		{name: "autobuild alone", snapshot: `{` + mountsA + `}`, config: `{` + mountsA + `, ` + build + `}`, trusted: true, approved: `{` + mountsA + `, ` + build + `}`},
+		{name: "image and autobuild", config: `{` + img + `, ` + build + `}`, trusted: true, approved: `{` + img + `, ` + build + `}`},
+		{name: "other changes still wait", snapshot: `{` + mountsA + `}`, config: `{` + mountsHo + `, ` + img + `}`, approved: `{` + mountsA + `, ` + img + `}`},
+		{name: "a trusted image is kept", snapshot: `{` + img + `}`, config: `{` + imgLater + `}`},
+		{name: "a trusted autobuild keeps the image untrusted", snapshot: `{` + build + `}`, config: `{` + imgLater + `, ` + build + `}`},
+		{name: "unreadable config is left for review", snapshot: `{` + mountsA + `}`, config: `{"container_image": 1}`},
+	}
+	canon := func(content string) []byte {
+		f, err := fieldsOfData([]byte(content))
+		require.NoError(s.T(), err)
+		return f.canonical()
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			if tt.snapshot != "" {
+				require.NoError(s.T(), s.store.record("/proj", canon(tt.snapshot)))
+			}
+			before := s.files[trustPath]
+			s.project(tt.config)
+			require.NoError(s.T(), s.store.AdoptContainerImage("/proj"))
+			if tt.approved == "" {
+				require.Equal(s.T(), before, s.files[trustPath], "the trust file is left alone")
+			} else {
+				got, ok, err := s.store.approved("/proj")
+				require.NoError(s.T(), err)
+				require.True(s.T(), ok)
+				require.Equal(s.T(), string(canon(tt.approved)), string(got.canonical()))
+			}
+			if tt.name == "unreadable config is left for review" {
+				return
+			}
+			st, err := s.store.Status("/proj")
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tt.trusted, st.Trusted)
+		})
+	}
+
+	s.Run("unreadable trust file", func() {
+		s.SetupTest()
+		s.project(`{` + img + `}`)
+		s.files[trustPath] = []byte("not json")
+		require.ErrorContains(s.T(), s.store.AdoptContainerImage("/proj"), "parsing")
+	})
+}

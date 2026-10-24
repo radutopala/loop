@@ -769,18 +769,19 @@ The project config lives in the workspace, so an agent can edit it. The fields t
 - `mounts`, `inherit_mounts`, `extra_dirs`, `copy_files`, `envs`
 - `permissions`, `gates`, `bash_shortcuts`
 - `workflows` (their bash nodes run on the host under `workflow_bash_local`, and a project workflow replaces the global one of the same name)
+- `container_image`, `container_image_autobuild` (the gate and the docker proxy run from inside the agent's image, and its container gets the host's docker socket)
 - `anthropic_base_url` (the global credentials are sent there)
 - `browser.mode`, `browser.host_cdp_port`, `browser.extensions`, `browser.cookie_import`
 - `memory.paths`
 - `github.mount_gh_config`, `gitlab.glab_config_dir`, `gitlab.mount_glab_config` (they hand the host's `gh`/`glab` credentials to the agent)
 
-Everything else (model, image, prompt shortcuts, MCP servers and so on) only shapes the agent's own container and applies as written.
+Everything else (model, prompt shortcuts, MCP servers and so on) only shapes the agent's own container and applies as written.
 
 When those fields differ from the version you last trusted, Loop keeps using that version: none of the fields apply for a project you never trusted, and a project whose config sets none of them needs no trust, unless you trusted a version that did: removing them, or the whole file, keeps the trusted values until you trust again. The project's row in the sidebar shows a `trust` pill, and its chats show a banner above the composer whose **Review** button opens **Settings → Project**. There, a *Project config changed* notice shows what changed as a diff from the last trusted version to the current one (from nothing, for a project you never trusted), with a **Trust this config** button. If the file changes again while you review it, trusting fails and the notice shows the new version.
 
 Your own edits stay trusted. Saving the project config in Settings, adding a project shortcut, applying a learn proposal and `loop onboard:local` all keep a trusted project trusted. An edit you make to a project that's waiting for review leaves it waiting, so it can't approve what an agent changed elsewhere in the file. Edits in a text editor count like an agent's: trust them in Settings afterwards.
 
-Projects you set up before Loop asked for trust keep working: the upgrade trusts the config of every project with a channel as it is at that moment, once. A project that already has a trusted version keeps it. Workflows joined the trusted fields later, with a second upgrade step that works the same way: it adds each project's workflows, as they are at that moment, to its trusted version, once, and leaves the project's other trusted fields as you approved them. A project whose trusted version already has workflows keeps them.
+Projects you set up before Loop asked for trust keep working: the upgrade trusts the config of every project with a channel as it is at that moment, once. A project that already has a trusted version keeps it. Workflows joined the trusted fields later, with a second upgrade step that works the same way: it adds each project's workflows, as they are at that moment, to its trusted version, once, and leaves the project's other trusted fields as you approved them. A project whose trusted version already has workflows keeps them. `container_image` and `container_image_autobuild` joined after that, with a third step that works the same way for them.
 
 A worktree's own `.loop/config.json` follows the same rule, except for the parent project dir Loop seeds into its `extra_dirs`, which always applies.
 

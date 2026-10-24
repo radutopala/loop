@@ -534,8 +534,10 @@ func (s *ContainerTrustSpecSuite) TestTrustedFieldsDontReachContainer() {
 }
 
 // containerTrustedFields are the trusted fields that reach the agent's
-// container, through a mount, an env, a copied file or a policy file.
+// container, through its image, a mount, an env, a copied file or a policy
+// file.
 var containerTrustedFields = []string{
+	"container_image",
 	"mounts",
 	"inherit_mounts",
 	"copy_files",

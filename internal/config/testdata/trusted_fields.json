@@ -121,6 +121,14 @@
     "sample": false
   },
   {
+    "path": "container_image",
+    "sample": "evil.example.com/agent"
+  },
+  {
+    "path": "container_image_autobuild",
+    "sample": true
+  },
+  {
     "path": "plugins.*.schedules",
     "sample": {
       "a": {

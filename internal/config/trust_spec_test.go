@@ -140,6 +140,8 @@ type trustView struct {
 	MemoryPaths      []string                   `json:"memory_paths"`
 	MountGHConfig    bool                       `json:"mount_gh_config"`
 	GitLab           GitLabConfig               `json:"gitlab"`
+	ContainerImage   string                     `json:"container_image"`
+	ImageAutobuild   bool                       `json:"container_image_autobuild"`
 	PluginsEnabled   bool                       `json:"plugins_enabled"`
 	GateBinary       string                     `json:"gate_binary"`
 	DailyRuns        int                        `json:"daily_runs"`
@@ -166,6 +168,8 @@ func viewOf(cfg *Config) string {
 		MemoryPaths:      cfg.Memory.Paths,
 		MountGHConfig:    cfg.GitHub.MountGHConfig,
 		GitLab:           cfg.GitLab,
+		ContainerImage:   cfg.ContainerImage,
+		ImageAutobuild:   cfg.ContainerImageAutobuild,
 		PluginsEnabled:   cfg.Plugins.Enabled,
 		GateBinary:       cfg.Plugins.GateBinary,
 		DailyRuns:        cfg.Plugins.DailyRuns,
@@ -318,6 +322,8 @@ var projectFieldClasses = []fieldClass{
 	{path: "gitlab.glab_config_dir", trusted: true, sample: `"/elsewhere"`},
 	{path: "gitlab.mount_glab_config", trusted: true, sample: `false`},
 	{path: "plugins.*.enabled", trusted: true, sample: `false`},
+	{path: "container_image", trusted: true, sample: `"evil.example.com/agent"`},
+	{path: "container_image_autobuild", trusted: true, sample: `true`},
 	{path: "plugins.*.schedules", trusted: true, sample: `{"a": {"type": "interval", "schedule": "1m"}}`},
 
 	{path: "proxies.http_proxy", sample: `"http://proxy:3128"`, reason: "the agent container's HTTP_PROXY, which the agent can set for itself"},
@@ -334,8 +340,6 @@ var projectFieldClasses = []fieldClass{
 	{path: "claude_retry.session_limit_auto_continue", sample: `true`, reason: "retries of the agent's own runs"},
 	{path: "claude_code_oauth_token", sample: `"own"`, reason: "the project's own credentials; they replace the global ones, never reveal them"},
 	{path: "anthropic_api_key", sample: `"own"`, reason: "the project's own credentials; they replace the global ones, never reveal them"},
-	{path: "container_image", sample: `"img"`, reason: "the agent's own image, run with the same mounts, gates and privileges"},
-	{path: "container_image_autobuild", sample: `true`, reason: "builds the agent's own image from the project"},
 	{path: "container_memory_mb", sample: `1`, reason: "the agent container's own limits"},
 	{path: "container_cpus", sample: `1`, reason: "the agent container's own limits"},
 	{path: "keep_mcp_configs", sample: `true`, reason: "keeps the channel's MCP config files in its own dir"},

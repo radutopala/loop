@@ -27,9 +27,14 @@ import (
 // that loop-dockerproxy listens in for containers the agent starts.
 const nestedProxyDir = "/run/loop-dproxy"
 
+// agentEntrypoint is the agent image's entrypoint (see image/Dockerfile).
+const agentEntrypoint = "/usr/local/bin/entrypoint.sh"
+
 // ContainerConfig holds settings for creating a container.
 type ContainerConfig struct {
-	Image       string
+	Image string
+	// Entrypoint, when set, replaces the image's entrypoint.
+	Entrypoint  []string
 	MemoryMB    int64
 	CPUs        float64
 	Env         []string
@@ -911,8 +916,13 @@ func (r *DockerRunner) createAndStartContainer(
 		capAdd = []string{"SYS_PTRACE"}
 	}
 
+	// The entrypoint is pinned rather than taken from the image: it starts
+	// the docker proxy and the gate. It is only as good as the image's copy
+	// of the script, so the trust on container_image is what holds; this
+	// stops an image from simply declaring another entrypoint.
 	containerCfg := &ContainerConfig{
 		Image:      cfg.ContainerImage,
+		Entrypoint: []string{agentEntrypoint},
 		MemoryMB:   cfg.ContainerMemoryMB,
 		CPUs:       cfg.ContainerCPUs,
 		Env:        env,

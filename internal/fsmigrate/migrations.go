@@ -321,31 +321,42 @@ var migrations = []Migration{
 		Description: "trust existing project workflows",
 		Apply:       adoptProjectWorkflows,
 	},
+	{
+		// container_image and container_image_autobuild now apply only once
+		// the owner trusts them: the image is where the gate and the docker
+		// proxy run from. Projects keep running in the image they had.
+		Description: "trust existing project container images",
+		Apply:       adoptProjectContainerImages,
+	},
 }
 
 // adoptProjectConfigs trusts the project config of every project checkout
 // Loop has a channel for, where none is trusted yet.
 func adoptProjectConfigs(_ context.Context, c *Ctx) error {
-	if c.AdoptProjectConfig == nil {
-		return nil
-	}
-	for _, dir := range c.ProjectDirs {
-		if err := c.AdoptProjectConfig(dir); err != nil {
-			return fmt.Errorf("trusting the project config of %s: %w", dir, err)
-		}
-	}
-	return nil
+	return adoptEach(c, c.AdoptProjectConfig, "config")
 }
 
 // adoptProjectWorkflows adds the workflows of every project checkout Loop
-// has a channel for to its trusted project config.
+// has a channel for to its trusted config.
 func adoptProjectWorkflows(_ context.Context, c *Ctx) error {
-	if c.AdoptProjectWorkflows == nil {
+	return adoptEach(c, c.AdoptProjectWorkflows, "workflows")
+}
+
+// adoptProjectContainerImages adds the container image settings of every
+// project checkout Loop has a channel for to its trusted config.
+func adoptProjectContainerImages(_ context.Context, c *Ctx) error {
+	return adoptEach(c, c.AdoptProjectContainerImage, "container image")
+}
+
+// adoptEach runs adopt on every project dir, stopping at the first error.
+// A nil adopt skips the migration.
+func adoptEach(c *Ctx, adopt func(dir string) error, what string) error {
+	if adopt == nil {
 		return nil
 	}
 	for _, dir := range c.ProjectDirs {
-		if err := c.AdoptProjectWorkflows(dir); err != nil {
-			return fmt.Errorf("trusting the project workflows of %s: %w", dir, err)
+		if err := adopt(dir); err != nil {
+			return fmt.Errorf("trusting the project %s of %s: %w", what, dir, err)
 		}
 	}
 	return nil

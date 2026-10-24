@@ -262,14 +262,16 @@ func (s *ClientSuite) TestOOMEvents() {
 func (s *ClientSuite) TestContainerCreate() {
 	ctx := context.Background()
 	cfg := &ContainerConfig{
-		Image:    "my-image:latest",
-		MemoryMB: 512,
-		CPUs:     1.5,
-		Env:      []string{"FOO=bar"},
+		Image:      "my-image:latest",
+		Entrypoint: []string{"/entry.sh"},
+		MemoryMB:   512,
+		CPUs:       1.5,
+		Env:        []string{"FOO=bar"},
 	}
 
 	expectedConfig := &containertypes.Config{
 		Image:        "my-image:latest",
+		Entrypoint:   []string{"/entry.sh"},
 		AttachStdout: true,
 		AttachStderr: true,
 		Labels:       map[string]string{"app": "loop-agent"},

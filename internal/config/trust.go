@@ -55,6 +55,13 @@ type trustedFields struct {
 	// reads them from.
 	GitHub *trustedGitHub `json:"github,omitempty"`
 	GitLab *trustedGitLab `json:"gitlab,omitempty"`
+	// ContainerImage and ContainerImageAutobuild pick the image the agent
+	// runs in, built from the project's .loop/container when autobuild is
+	// on. The gate and the docker proxy run from inside that image, and the
+	// container gets the host's docker socket for the proxy, so an image of
+	// the agent's choosing could start without them.
+	ContainerImage          string `json:"container_image,omitempty"`
+	ContainerImageAutobuild *bool  `json:"container_image_autobuild,omitempty"`
 }
 
 type trustedGitHub struct {
@@ -99,6 +106,7 @@ func trustedFieldsOf(pc *projectConfig) trustedFields {
 		Workflows:     pc.Workflows,
 	}
 	t.AnthropicBaseURL = pc.AnthropicBaseURL
+	t.ContainerImage, t.ContainerImageAutobuild = pc.ContainerImage, pc.ContainerImageAutobuild
 	if b := pc.Browser; b != nil && (b.Mode != "" || b.HostCDPPort != nil || b.Extensions != nil || b.CookieImport != nil) {
 		t.Browser = &trustedBrowser{Mode: b.Mode, HostCDPPort: b.HostCDPPort, CookieImport: b.CookieImport}
 		if ext := b.Extensions; ext != nil {
@@ -145,6 +153,7 @@ func (t trustedFields) apply(pc *projectConfig) {
 	pc.BashShortcuts = t.BashShortcuts
 	pc.Workflows = t.Workflows
 	pc.AnthropicBaseURL = t.AnthropicBaseURL
+	pc.ContainerImage, pc.ContainerImageAutobuild = t.ContainerImage, t.ContainerImageAutobuild
 	if pc.Browser != nil || t.Browser != nil {
 		if pc.Browser == nil {
 			pc.Browser = &jsonBrowserConfig{}
@@ -477,17 +486,37 @@ func (s *TrustStore) Adopt(dir string) error {
 // whose trusted version has workflows already keeps them, and a config
 // AdoptWorkflows can't read is left for the owner to review.
 func (s *TrustStore) AdoptWorkflows(dir string) error {
+	return s.adopt(dir,
+		func(t trustedFields) bool { return len(t.Workflows) > 0 },
+		func(dst *trustedFields, src trustedFields) { dst.Workflows = src.Workflows })
+}
+
+// AdoptContainerImage is AdoptWorkflows for container_image and
+// container_image_autobuild, so projects keep running in their image.
+func (s *TrustStore) AdoptContainerImage(dir string) error {
+	return s.adopt(dir,
+		func(t trustedFields) bool { return t.ContainerImage != "" || t.ContainerImageAutobuild != nil },
+		func(dst *trustedFields, src trustedFields) {
+			dst.ContainerImage, dst.ContainerImageAutobuild = src.ContainerImage, src.ContainerImageAutobuild
+		})
+}
+
+// adopt copies the fields set copies from the project config in dir into
+// what the owner trusts there, when the config has them (has) and the
+// trusted version doesn't yet. A config that can't be read is left for the
+// owner to review.
+func (s *TrustStore) adopt(dir string, has func(trustedFields) bool, set func(dst *trustedFields, src trustedFields)) error {
 	trustMu.Lock()
 	defer trustMu.Unlock()
 	cur, err := s.readProject(dir)
-	if err != nil || len(cur.Workflows) == 0 {
+	if err != nil || !has(cur) {
 		return nil
 	}
 	approved, _, err := s.approved(dir)
-	if err != nil || approved.Workflows != nil {
+	if err != nil || has(approved) {
 		return err
 	}
-	approved.Workflows = cur.Workflows
+	set(&approved, cur)
 	return s.record(dir, approved.canonical())
 }
 

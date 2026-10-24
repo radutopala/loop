@@ -169,6 +169,7 @@ func (c *Client) ContainerCreate(ctx context.Context, cfg *ContainerConfig, name
 
 	containerCfg := &containertypes.Config{
 		Image:        cfg.Image,
+		Entrypoint:   cfg.Entrypoint,
 		AttachStdout: true,
 		AttachStderr: true,
 		Labels:       labels,

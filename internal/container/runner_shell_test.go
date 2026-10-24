@@ -489,6 +489,7 @@ func (s *RunnerSuite) TestCreateShellContainerHappyPath() {
 
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
 		return cfg.Image == "loop-agent:latest" &&
+			slices.Equal(cfg.Entrypoint, []string{"/usr/local/bin/entrypoint.sh"}) &&
 			slices.Equal(cfg.Cmd, []string{"sleep", "infinity"}) &&
 			cfg.WorkingDir == "/home/testuser/.loop/ch-1/work" &&
 			cfg.Labels["loop-channel"] == "ch-1"

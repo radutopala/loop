@@ -47,6 +47,10 @@ type Ctx struct {
 	// AdoptProjectWorkflows adds the workflows of the project config in a
 	// dir to its trusted version. Nil skips the migration that uses it.
 	AdoptProjectWorkflows func(dir string) error
+	// AdoptProjectContainerImage adds the container image settings of the
+	// project config in a dir to its trusted version. Nil skips the
+	// migration that uses it.
+	AdoptProjectContainerImage func(dir string) error
 }
 
 // Migration is a single filesystem migration step.
