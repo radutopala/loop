@@ -255,6 +255,10 @@ func (s *AuthHandlerSuite) TestStartFailsClosed() {
 	srv := nilServer()
 	require.NoError(s.T(), srv.Start("127.0.0.1:0"))
 	defer func() { _ = srv.Stop(s.T().Context()) }()
+	// A pooling transport may dial a spare connection that never sends a
+	// request, and Shutdown waits 5s before it counts such a connection as
+	// idle. One connection per request, closed after it, leaves none behind.
+	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
 	base := "http://" + srv.listener.Addr().String()
 
 	get := func(path string, hdr ...string) int {
@@ -263,7 +267,7 @@ func (s *AuthHandlerSuite) TestStartFailsClosed() {
 		if len(hdr) > 0 {
 			req.Header.Set("Authorization", hdr[0])
 		}
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := client.Do(req)
 		require.NoError(s.T(), err)
 		_ = resp.Body.Close()
 		return resp.StatusCode
