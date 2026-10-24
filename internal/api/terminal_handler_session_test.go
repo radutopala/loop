@@ -45,7 +45,7 @@ func (s *TerminalHandlerSuite) TestAttachWithAgentIDEnablesAutoAccept() {
 	s.terminal.On("AttachSession", "sess-1").
 		Return((<-chan []byte)(outCh), history, (<-chan struct{})(doneCh), nil)
 	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
-	s.terminal.On("SendInput", "sess-1", []byte("\r")).Return(nil).Maybe()
+	sent := countSendInput(s.terminal, "sess-1", []byte("\r"), nil)
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -56,9 +56,8 @@ func (s *TerminalHandlerSuite) TestAttachWithAgentIDEnablesAutoAccept() {
 	msg := readStatusMsg(s.T(), conn)
 	require.Equal(s.T(), "attached", msg.Type)
 
-	// Wait for auto-accept to fire from history scan (first retry at 500ms).
-	time.Sleep(700 * time.Millisecond)
-	s.terminal.AssertCalled(s.T(), "SendInput", "sess-1", []byte("\r"))
+	// Auto-accept fires from the history scan.
+	require.Eventually(s.T(), func() bool { return sent.Load() > 0 }, 5*time.Second, time.Millisecond)
 
 	close(doneCh)
 }

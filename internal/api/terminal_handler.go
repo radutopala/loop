@@ -192,6 +192,25 @@ type terminalWSConn struct {
 	relaunchParentDir string
 	relaunchSessionID string // the session the pane resumed, "" when it forked or started fresh
 	relaunchAgentID   string
+
+	delays terminalDelays
+}
+
+// terminalDelays are how long a pane waits before it acts on its output.
+type terminalDelays struct {
+	// autoAccept are the waits before each Enter sent for a boot prompt;
+	// the TUI may not be ready for the first.
+	autoAccept []time.Duration
+	// relaunch is the wait before a Claude that exited abnormally is
+	// started again.
+	relaunch time.Duration
+}
+
+func defaultTerminalDelays() terminalDelays {
+	return terminalDelays{
+		autoAccept: []time.Duration{500 * time.Millisecond, time.Second, time.Second},
+		relaunch:   time.Second,
+	}
 }
 
 // maxClaudeRelaunches is the maximum number of times a terminal pane's Claude
@@ -210,7 +229,7 @@ func (t *terminalWSConn) activeManager() TerminalManager {
 	return t.manager
 }
 
-func newTerminalWSConn(conn *websocket.Conn, manager TerminalManager, hostManager TerminalManager, registry ContainerManager, cmdBuilder InteractiveCmdBuilder, store ChannelLister, loopDir string, logger *slog.Logger) *terminalWSConn {
+func newTerminalWSConn(conn *websocket.Conn, manager TerminalManager, hostManager TerminalManager, registry ContainerManager, cmdBuilder InteractiveCmdBuilder, store ChannelLister, loopDir string, delays terminalDelays, logger *slog.Logger) *terminalWSConn {
 	return &terminalWSConn{
 		conn:              conn,
 		connWriteMessage:  conn.WriteMessage,
@@ -220,6 +239,7 @@ func newTerminalWSConn(conn *websocket.Conn, manager TerminalManager, hostManage
 		cmdBuilder:        cmdBuilder,
 		store:             store,
 		loopDir:           loopDir,
+		delays:            delays,
 		logger:            logger,
 		stopCh:            make(chan struct{}),
 	}
@@ -393,8 +413,9 @@ func (t *terminalWSConn) scanAutoAccept(data []byte) {
 	t.autoAcceptMu.Unlock()
 
 	// Send Enter after a delay, retrying a few times in case the TUI isn't ready.
+	delays := t.delays.autoAccept
 	go func() {
-		for _, delay := range []time.Duration{500 * time.Millisecond, time.Second, time.Second} {
+		for _, delay := range delays {
 			time.Sleep(delay)
 			if err := t.manager.SendInput(sid, []byte("\r")); err != nil {
 				t.logger.Warn("terminal ws: auto-accept send failed", "session_id", sid, "error", err)
@@ -462,8 +483,9 @@ func (t *terminalWSConn) scanClaudeExit(data []byte) {
 	sid := t.sessionID
 	t.logger.Warn("terminal ws: claude exited abnormally, relaunching", "session_id", sid, "exit_code", code, "channel_id", channelID)
 
+	delay := t.delays.relaunch
 	go func() {
-		time.Sleep(time.Second)
+		time.Sleep(delay)
 		if t.getSessionID() != sid {
 			return // pane moved on (detached/stopped/closed) — don't relaunch into it
 		}
@@ -1068,7 +1090,7 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	tc := newTerminalWSConn(conn, s.termManager, s.hostTermManager, s.containerRegistry, s.cmdBuilder, s.store, s.loopDir, s.logger)
+	tc := newTerminalWSConn(conn, s.termManager, s.hostTermManager, s.containerRegistry, s.cmdBuilder, s.store, s.loopDir, s.termDelays, s.logger)
 	tc.rootDirs = s.allDirPaths
 	tc.releaseShell = s.releaseShell
 	tc.claimShell = s.claimShell
