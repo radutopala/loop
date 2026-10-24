@@ -1,0 +1,2 @@
+go test fuzz v1
+string("--- mkdir h\n--- write h/pre-commit\n#!/bin/sh\n@PROBE@\n--- mv h .git/hooks\n")

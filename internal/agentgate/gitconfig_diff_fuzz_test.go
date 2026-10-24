@@ -14,10 +14,7 @@ import (
 // A mismatch means the git guard could approve a change git interprets
 // differently. Skips when git is not installed.
 func FuzzParseGitConfigStrictMatchesGit(f *testing.F) {
-	git, err := exec.LookPath("git")
-	if err != nil {
-		f.Skip("git not installed")
-	}
+	git := specGit(f)
 	for _, seed := range []string{
 		"[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n",
 		"[remote \"origin\"]\n\turl = https://github.com/a/b\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n",
@@ -39,7 +36,8 @@ func FuzzParseGitConfigStrictMatchesGit(f *testing.F) {
 			t.Fatal(err)
 		}
 		cmd := exec.Command(git, "config", "--file", p, "--list", "--null")
-		cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "HOME="+dir)
+		// Outside any repo, so git's discovery from the package dir can't fail.
+		cmd.Dir, cmd.Env = dir, specGitEnv(dir)
 		out, err := cmd.Output()
 		if err != nil {
 			t.Fatalf("strict parser accepted %q but git rejects it: %v", b, err)

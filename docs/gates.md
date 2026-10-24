@@ -240,7 +240,8 @@ A repo's config and hooks make git run programs: `core.fsmonitor`, `core.sshComm
 - `.git/config` and `.git/config.worktree`;
 - `.git/commondir`;
 - `.git/hooks` and everything under it, except the `*.sample` files;
-- the same inside submodule and linked-worktree git dirs (`.git/modules/…`, `.git/worktrees/…`).
+- the same inside submodule and linked-worktree git dirs (`.git/modules/…`, `.git/worktrees/…`);
+- a `HEAD` outside any `.git` dir. Next to `objects/` and `refs/`, it makes its dir a git dir that git uses when run there, and that dir's `config` and `hooks` aren't named `.git`. Git writes one there only when it creates a bare repo or a `--separate-git-dir`.
 
 Components match case-insensitively, with Unicode folding, because the host filesystem behind a mount often is case-insensitive.
 
@@ -257,7 +258,9 @@ Components match case-insensitively, with Unicode folding, because the host file
 
 Because the gate writes the file itself, the agent can't swap the content between your click and the rename.
 
-**Whole trees can't be moved in.** A rename into a `.git` dir onto a path that isn't guarded itself (a ref, the index, an object) goes on to the file rules as usual, if its source is a regular file. A directory or symlink source is refused, and so is `RENAME_EXCHANGE` with either side inside a `.git` dir. Otherwise the agent could build a git dir elsewhere, with its own hooks and config, and move it in whole as `.git/modules/<name>` or `.git/worktrees/<name>`. Git itself doesn't move directories in there, except `git submodule absorbgitdirs`, which fails in the container.
+**Whole trees can't be moved in or out.** A rename into a `.git` dir onto a path that isn't guarded itself (a ref, the index, an object) goes on to the file rules as usual, if its source is a regular file. So does a rename out of a `.git` dir, or of a `.git` entry that is a `gitdir:` file. A directory or symlink source is refused, and so is `RENAME_EXCHANGE` with either side inside a `.git` dir. Otherwise the agent could build a git dir elsewhere, with its own hooks and config, and move it in whole as `.git/modules/<name>` or `.git/worktrees/<name>`; or move a git dir out under a name the guard doesn't know (`mv .git gd`), then rewrite its config, unguarded, and point `core.worktree` back at the repo. Git itself doesn't move directories in or out of there, except `git submodule absorbgitdirs`, which fails in the container.
+
+`gitguard_git_spec_test.go` checks the guard against real git: after any script of writes, moves and deletes the guard lets through without asking, `git status`, `diff`, `log -p`, `add`, `commit` and `checkout` in the repo, its worktree, its submodule and every touched dir must never run a probe program. `FuzzGitGuardMatchesGit` generates the scripts, seeded with one known route to each hook, driver, pointer and bare-repo trick; a guard that allows everything must fail on every seed.
 
 **Keys installed without asking**, which is what `git init`, `clone`, `remote add`, `fetch`, `branch --set-upstream-to`, `push -u`, `sparse-checkout`, `worktree` and `git config user.*` write:
 
@@ -283,7 +286,7 @@ The card's cache key includes a hash of the content: **Allow for session** cover
 **What the guard doesn't cover:**
 
 - `fchmod` on an already-open descriptor. A hook installed through the guard keeps the source's mode; making a non-executable hook executable later goes through `chmod(2)`, which the file rules see, but `fchmod(2)` on an open fd isn't trapped.
-- Bare repos and git dirs not named `.git` (`git clone --bare x.git`, the target of `--separate-git-dir`).
+- Bare repos and git dirs not named `.git` that already exist (`git clone --bare x.git`, the target of `--separate-git-dir`): their `config` and `hooks` are plain files. Making a new one goes through the guard, since it needs a `HEAD`.
 - The content of a pointer written in place: the card shows which process writes it, not what it writes.
 - A `core.hooksPath` that points into the worktree (husky, lefthook). Setting it asks, but the hook files it points at are ordinary workspace files.
 - The multi-threaded path race below: a sibling thread can change a path between the gate's read and the kernel's. The gate's own install isn't affected, since it opens its target directories with `RESOLVE_NO_SYMLINKS` and writes only bytes it already read.

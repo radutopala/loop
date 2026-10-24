@@ -1,0 +1,2 @@
+go test fuzz v1
+string("--- mkdir n\n--- write n/.git\ngitdir: @LURE@\n")

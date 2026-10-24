@@ -1,0 +1,2 @@
+go test fuzz v1
+string("--- write .git/config\n[core]\n\trepositoryformatversion = 0\n\tbare = false\n[remote \"origin\"]\n\turl = https://example.com/a/b.git\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n")
