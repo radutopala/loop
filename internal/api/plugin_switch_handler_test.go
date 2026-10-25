@@ -243,11 +243,20 @@ func (s *ServerSuite) TestListComposerSwitches() {
 	}
 }
 
+// With plugins off a chat has no switches: the list is empty, not an error
+// the app would keep retrying, while turning one is refused.
 func (s *ServerSuite) TestComposerSwitchesNotConfigured() {
 	s.mux.HandleFunc("GET /api/channels/{id}/composer-switches", s.srv.handleListComposerSwitches)
-	require.Equal(s.T(), http.StatusNotImplemented, s.testRequest("GET", "/api/channels/ch-1/composer-switches", "").Code)
+	s.mux.HandleFunc("PUT /api/channels/{id}/composer-switches/{plugin}/{switch}", s.srv.handleTurnComposerSwitch)
+	check := func() {
+		rec := s.testRequest("GET", "/api/channels/ch-1/composer-switches", "")
+		require.Equal(s.T(), http.StatusOK, rec.Code)
+		require.JSONEq(s.T(), `[]`, rec.Body.String())
+		require.Equal(s.T(), http.StatusNotImplemented, s.testRequest("PUT", "/api/channels/ch-1/composer-switches/echo/mode", `{"on":true}`).Code)
+	}
+	check()
 	s.srv.SetPluginManager(new(MockPluginManager))
-	require.Equal(s.T(), http.StatusNotImplemented, s.testRequest("GET", "/api/channels/ch-1/composer-switches", "").Code)
+	check()
 }
 
 func (s *ServerSuite) TestTurnComposerSwitch() {

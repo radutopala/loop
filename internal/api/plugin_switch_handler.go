@@ -198,8 +198,13 @@ func (s *Server) switchChat(w http.ResponseWriter, r *http.Request) (chat, root 
 }
 
 // handleListComposerSwitches lists the switches the plugins enabled in the
-// chat put in its composer, in plugin order, with their state there.
+// chat put in its composer, in plugin order, with their state there. With
+// plugins off there are none.
 func (s *Server) handleListComposerSwitches(w http.ResponseWriter, r *http.Request) {
+	if s.plugins == nil || s.switches == nil {
+		writeHTTPJSON(w, http.StatusOK, []composerSwitch{}, s.logger)
+		return
+	}
 	chat, root, ok := s.switchChat(w, r)
 	if !ok {
 		return
