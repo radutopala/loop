@@ -1295,33 +1295,60 @@ func (tc *TestContext) hoverInSidebar(text string) error {
 // restPointerInSidebar moves the real mouse to the middle of a sidebar row's
 // text, so the page sees the pointer enter it (and leave the last one).
 func (tc *TestContext) restPointerInSidebar(text string) error {
-	js := fmt.Sprintf(`(() => {
-		const el = document.evaluate(%q, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-		if (!el) return null;
-		const r = el.getBoundingClientRect();
-		return r.width > 0 ? [r.left + r.width / 2, r.top + r.height / 2] : null;
-	})()`, fmt.Sprintf(`(//*[@data-testid='sidebar']//*[contains(text(), '%s')])[1]`, text))
-	var at []float64
-	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Poll(js, &at, chromedp.WithPollingTimeout(10*time.Second))); err != nil {
-		return fmt.Errorf("sidebar row %q: %w", text, err)
-	}
-	return chromedp.Run(tc.chromeTab.ctx, chromedp.MouseEvent(input.MouseMoved, at[0], at[1]))
+	xpath := fmt.Sprintf(`(//*[@data-testid='sidebar']//*[contains(text(), '%s')])[1]`, text)
+	find := fmt.Sprintf(`document.evaluate(%q, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue`, xpath)
+	return tc.restPointer(find, fmt.Sprintf("sidebar row %q", text))
 }
 
 // restPointerOnElement moves the real mouse to the middle of the element the
 // CSS selector matches, so the page sees the pointer enter it.
 func (tc *TestContext) restPointerOnElement(selector string) error {
-	js := fmt.Sprintf(`(() => {
-		const el = document.querySelector(%q);
+	return tc.restPointer(fmt.Sprintf(`document.querySelector(%q)`, selector), fmt.Sprintf("element %q", selector))
+}
+
+// restPointer moves the real mouse to the middle of the element the find
+// expression returns, once it has stopped moving, and checks the pointer is
+// still on it a little later. Something that renders next to the element
+// after it shows (a footer button whose list loads late) can push it out from
+// under the pointer, which the page sees as the pointer leaving; then it moves
+// the pointer again.
+func (tc *TestContext) restPointer(find, what string) error {
+	// The middle of the element, once it's been in the same place for three
+	// polls in a row.
+	locate := fmt.Sprintf(`(() => {
+		const el = %s;
 		if (!el) return null;
 		const r = el.getBoundingClientRect();
-		return r.width > 0 ? [r.left + r.width / 2, r.top + r.height / 2] : null;
-	})()`, selector)
-	var at []float64
-	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Poll(js, &at, chromedp.WithPollingTimeout(10*time.Second))); err != nil {
-		return fmt.Errorf("element %q: %w", selector, err)
+		if (r.width === 0) return null;
+		const at = [r.left + r.width / 2, r.top + r.height / 2];
+		const key = at.join(",");
+		const seen = window.__bddRestAt;
+		window.__bddRestAt = { key, n: seen && seen.key === key ? seen.n + 1 : 1 };
+		return window.__bddRestAt.n >= 3 ? at : null;
+	})()`, find)
+	hovered := fmt.Sprintf(`(() => { const el = %s; return !!el && el.matches(":hover"); })()`, find)
+	for range 3 {
+		var at []float64
+		if err := chromedp.Run(tc.chromeTab.ctx,
+			chromedp.Evaluate(`window.__bddRestAt = null`, nil),
+			chromedp.Poll(locate, &at, chromedp.WithPollingTimeout(10*time.Second), chromedp.WithPollingInterval(100*time.Millisecond)),
+		); err != nil {
+			return fmt.Errorf("%s: %w", what, err)
+		}
+		// Long enough for a hover tip's show delay to run out.
+		var still bool
+		if err := chromedp.Run(tc.chromeTab.ctx,
+			chromedp.MouseEvent(input.MouseMoved, at[0], at[1]),
+			chromedp.Sleep(400*time.Millisecond),
+			chromedp.Evaluate(hovered, &still),
+		); err != nil {
+			return fmt.Errorf("%s: %w", what, err)
+		}
+		if still {
+			return nil
+		}
 	}
-	return chromedp.Run(tc.chromeTab.ctx, chromedp.MouseEvent(input.MouseMoved, at[0], at[1]))
+	return fmt.Errorf("%s: the pointer kept ending up off it", what)
 }
 
 // dragAcrossText selects text the way a person does: the real mouse presses
