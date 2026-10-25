@@ -86,13 +86,13 @@ The scheduler runs a polling loop at a configurable interval (default 30 seconds
 
 Each tick:
 1. Queries the database for tasks where `next_run_at <= now AND enabled = true AND running = 0`.
-2. Executes each due task sequentially.
+2. Starts each due task on its own goroutine, so a long run doesn't hold back the tasks due with it. `Stop` waits for the runs in progress.
 
-Tasks that are already executing (`running = 1`) are excluded from the query, preventing the scheduler from re-triggering a long-running task.
+Tasks that are already executing (`running = 1`) are excluded from the query, preventing the scheduler from re-triggering a long-running task. The scheduler also keeps each task it started in an in-flight set until its `next_run_at` has been updated: `running` clears just before that, and a tick in between would otherwise start the task again.
 
 #### Stale-running sweep on startup
 
-`TaskScheduler.Start` runs `Store.ResetStaleRunningTasks(ctx)` before the first poll tick (`internal/scheduler/scheduler.go:73`). The defer that clears `running = 0` after a run fires inside `executeAndLog`, so a process killed mid-run (OOM, SIGKILL, panic, daemon restart) leaves rows flagged `running = 1` that would otherwise be permanently invisible to `GetDueTasks`. The sweep clears those flags, logs the count at warn level (`reset stale running tasks from prior daemon run`), and lets the next tick pick the rows back up.
+`TaskScheduler.Start` runs `Store.ResetStaleRunningTasks(ctx)` before the first poll tick (`internal/scheduler/scheduler.go`). The defer that clears `running = 0` after a run fires inside `executeAndLog`, so a process killed mid-run (OOM, SIGKILL, panic, daemon restart) leaves rows flagged `running = 1` that would otherwise be permanently invisible to `GetDueTasks`. The sweep clears those flags, logs the count at warn level (`reset stale running tasks from prior daemon run`), and lets the next tick pick the rows back up.
 
 The orchestrator does the same thing for chat messages — `Store.ResetStaleRunningMessages(ctx)` is called from `serve.go` during daemon startup and broadcasts the cleared `msg_id`s on `messages.processed` so the chat UI clears any "processing" pills that would otherwise remain stuck after an unclean shutdown.
 
@@ -115,12 +115,12 @@ For each due task:
 
 ### 4. Update Next Run
 
-After execution, the next run is determined by task type:
+After execution, the next run is determined by task type. "Now" is when the run finished, not when it was due, and a failed run moves on the same as a successful one:
 
 | Type | Behavior |
 |---|---|
-| `cron` | `next_run_at` set to the next matching time via the cron parser. |
-| `interval` | `next_run_at` set to `now + duration`. |
+| `cron` | `next_run_at` set to the first matching time after the run finished, via the cron parser. Times that passed while the task waited or ran are skipped, not caught up. |
+| `interval` | `next_run_at` set to `now + duration`, so the schedule shifts by however long the run waited and ran. |
 | `once` | Task is disabled (`enabled = false`). No further runs. |
 
 ---
@@ -479,6 +479,7 @@ Shows all configured templates with their name, type, schedule, and description.
 The scheduler polls the database on a fixed interval, configured via `poll_interval_sec` (default: 30 seconds). This means:
 
 - Tasks may execute up to `poll_interval_sec` seconds after their scheduled time.
+- A task whose thread is busy with chat starts later still: it waits until the thread's queued messages are done (see [Scheduled Task Execution](orchestrator.md#scheduled-task-execution)). Other due tasks aren't held back by it.
 - Very short intervals (e.g. `5s`) increase database load.
 - The poll loop uses `time.NewTicker` and stops cleanly on context cancellation.
 
