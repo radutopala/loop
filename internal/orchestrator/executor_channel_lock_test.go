@@ -129,7 +129,7 @@ func (s *OrchestratorSuite) TestTaskWaitsForWholeChatQueue() {
 	orch := New(store, s.bot, s.runner, s.scheduler, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Config{}, nil)
 	orch.SetSynchronousDrain()
 	task := &threadLocks{locks: &orch.channelLocks, held: map[string]*sync.Mutex{}}
-	taskHolds := make(chan struct{})
+	taskHolds, taskReleased := make(chan struct{}), make(chan struct{})
 
 	// Each message's run ends early (no recent messages): enough to hold the
 	// drain on it. The first blocks until the task is waiting.
@@ -159,6 +159,7 @@ func (s *OrchestratorSuite) TestTaskWaitsForWholeChatQueue() {
 		task.hold("busy-ch")
 		close(taskHolds)
 		task.releaseAll()
+		close(taskReleased)
 	}()
 	select {
 	case <-taskHolds:
@@ -174,6 +175,7 @@ func (s *OrchestratorSuite) TestTaskWaitsForWholeChatQueue() {
 		s.T().Fatal("the task never got the thread after the queue emptied")
 	}
 	require.False(s.T(), heldDuringSecond, "the task waited for the second queued message too")
+	<-taskReleased
 	require.True(s.T(), threadLockFree(&orch.channelLocks, "busy-ch"))
 	store.AssertExpectations(s.T())
 }
