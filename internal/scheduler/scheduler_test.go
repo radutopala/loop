@@ -453,6 +453,73 @@ func (s *SchedulerSuite) TestPollLoopExecutorError() {
 	s.store.AssertExpectations(s.T())
 }
 
+// The next run counts from when a run finishes, not from when it was due: an
+// interval task drifts by the time it waited and ran, and a cron task skips
+// the slots that passed meanwhile. A failed run moves on all the same.
+func (s *SchedulerSuite) TestPollLoopNextRunCountsFromFinish() {
+	overdue := time.Now().UTC().Add(-3 * time.Hour)
+	tests := []struct {
+		name     string
+		taskType db.TaskType
+		schedule string
+		execErr  error
+		check    func(next, finished time.Time)
+	}{
+		{
+			name: "interval from finish", taskType: db.TaskTypeInterval, schedule: "1h",
+			check: func(next, finished time.Time) {
+				require.False(s.T(), next.Before(finished.Add(time.Hour)), "next %v is before finish+1h", next)
+				require.NotEqual(s.T(), overdue.Add(time.Hour), next)
+			},
+		},
+		{
+			name: "failed interval run still moves on", taskType: db.TaskTypeInterval, schedule: "1h", execErr: errors.New("exec failed"),
+			check: func(next, finished time.Time) {
+				require.False(s.T(), next.Before(finished.Add(time.Hour)), "next %v is before finish+1h", next)
+			},
+		},
+		{
+			name: "cron skips missed slots", taskType: db.TaskTypeCron, schedule: "0 * * * *",
+			check: func(next, finished time.Time) {
+				require.True(s.T(), next.After(finished), "next %v is not after finish", next)
+				require.LessOrEqual(s.T(), next.Sub(finished), time.Hour)
+				require.Zero(s.T(), next.Minute())
+			},
+		},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			store := new(testutil.MockStore)
+			executor := new(MockTaskExecutor)
+			task := &db.ScheduledTask{ID: 7, ChannelID: "ch1", Schedule: tt.schedule, Type: tt.taskType, Prompt: "p", Enabled: true, NextRunAt: overdue}
+			updated := make(chan time.Time, 1)
+			var finished time.Time
+
+			setupDueTasks(store, []*db.ScheduledTask{task})
+			store.On("InsertTaskRunLog", mock.Anything, mock.Anything).Return(int64(10), nil)
+			store.On("UpdateTaskRunLog", mock.Anything, mock.Anything).Return(nil)
+			store.On("UpdateScheduledTask", mock.Anything, mock.Anything).Return(nil).Run(func(args mock.Arguments) {
+				updated <- args.Get(1).(*db.ScheduledTask).NextRunAt
+			}).Once()
+			executor.On("ExecuteTask", mock.Anything, task).Return("done", tt.execErr).Run(func(mock.Arguments) {
+				time.Sleep(20 * time.Millisecond)
+				finished = time.Now().UTC()
+			})
+
+			ts := NewTaskScheduler(store, executor, 10*time.Millisecond, s.logger)
+			require.NoError(s.T(), ts.Start(context.Background()))
+			var next time.Time
+			select {
+			case next = <-updated:
+			case <-time.After(2 * time.Second):
+				s.T().Fatal("next_run_at was never updated")
+			}
+			require.NoError(s.T(), ts.Stop())
+			tt.check(next, finished)
+		})
+	}
+}
+
 func (s *SchedulerSuite) TestPollLoopOnceTaskDisabled() {
 	task := &db.ScheduledTask{
 		ID: 3, ChannelID: "ch1", Schedule: "2026-02-09T14:30:00Z",

@@ -1,6 +1,10 @@
 package orchestrator
 
 import (
+	"context"
+	"errors"
+	"io"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -9,7 +13,9 @@ import (
 
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/bot"
+	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/testutil"
 	"github.com/radutopala/loop/internal/types"
 )
 
@@ -107,6 +113,69 @@ func (s *TaskExecutorSuite) TestTaskRunHoldsLockOfThreadItCreates() {
 	require.True(s.T(), heldBeforeTurn, "the new thread is held before the first turn")
 	require.True(s.T(), heldAfterTurn, "the new thread stays held after the first turn")
 	require.True(s.T(), threadLockFree(locks, "new-thread"), "released after the run")
+}
+
+// A chat drain keeps the thread's lock until its queue is empty, so a task run
+// due meanwhile waits through every queued message, not just the current one.
+func (s *OrchestratorSuite) TestTaskWaitsForWholeChatQueue() {
+	store := new(testutil.MockStore)
+	first := &db.Message{ID: 1, ChannelID: "busy-ch", MsgID: "m-1", IsTriggered: true, AuthorID: "u", AuthorName: "u", Content: "one"}
+	second := &db.Message{ID: 2, ChannelID: "busy-ch", MsgID: "m-2", IsTriggered: true, AuthorID: "u", AuthorName: "u", Content: "two"}
+	store.On("ClaimNextPending", mock.Anything, "busy-ch").Return(first, nil).Once()
+	store.On("ClaimNextPending", mock.Anything, "busy-ch").Return(second, nil).Once()
+	store.On("ClaimNextPending", mock.Anything, "busy-ch").Return(nil, nil).Once()
+	store.On("ReleaseRunningMessage", mock.Anything, mock.Anything, true).Return(nil).Twice()
+
+	orch := New(store, s.bot, s.runner, s.scheduler, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Config{}, nil)
+	orch.SetSynchronousDrain()
+	task := &threadLocks{locks: &orch.channelLocks, held: map[string]*sync.Mutex{}}
+	taskHolds := make(chan struct{})
+
+	// Each message's run ends early (no recent messages): enough to hold the
+	// drain on it. The first blocks until the task is waiting.
+	firstRunning, finishFirst := make(chan struct{}), make(chan struct{})
+	heldDuringSecond := true
+	store.On("GetRecentMessages", mock.Anything, "busy-ch", mock.Anything).Return(nil, errors.New("stop")).Run(func(mock.Arguments) {
+		close(firstRunning)
+		<-finishFirst
+	}).Once()
+	store.On("GetRecentMessages", mock.Anything, "busy-ch", mock.Anything).Return(nil, errors.New("stop")).Run(func(mock.Arguments) {
+		select {
+		case <-taskHolds:
+		default:
+			heldDuringSecond = false
+		}
+	}).Once()
+
+	drained := make(chan struct{})
+	go func() {
+		orch.ResumeChannel(context.Background(), "busy-ch")
+		close(drained)
+	}()
+	<-firstRunning
+	// The task lets go once it has the thread, so a drain that wrongly
+	// let it in mid-queue fails below instead of hanging.
+	go func() {
+		task.hold("busy-ch")
+		close(taskHolds)
+		task.releaseAll()
+	}()
+	select {
+	case <-taskHolds:
+		s.T().Fatal("the task took the thread while a chat message ran")
+	case <-time.After(30 * time.Millisecond):
+	}
+	close(finishFirst)
+
+	<-drained
+	select {
+	case <-taskHolds:
+	case <-time.After(time.Second):
+		s.T().Fatal("the task never got the thread after the queue emptied")
+	}
+	require.False(s.T(), heldDuringSecond, "the task waited for the second queued message too")
+	require.True(s.T(), threadLockFree(&orch.channelLocks, "busy-ch"))
+	store.AssertExpectations(s.T())
 }
 
 func (s *TaskExecutorSuite) TestThreadLocksHold() {
