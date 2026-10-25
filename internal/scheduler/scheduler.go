@@ -57,6 +57,12 @@ type TaskScheduler struct {
 	logger       *slog.Logger
 	events       TaskEventBroadcaster
 
+	// inflight holds the IDs of tasks the poll loop is running, from start
+	// until next_run_at is advanced: the running flag clears before that, so
+	// a later tick would otherwise start the task again.
+	mu       sync.Mutex
+	inflight map[int64]struct{}
+
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 }
@@ -68,6 +74,7 @@ func NewTaskScheduler(store db.Store, executor TaskExecutor, pollInterval time.D
 		executor:     executor,
 		pollInterval: pollInterval,
 		logger:       logger,
+		inflight:     map[int64]struct{}{},
 	}
 }
 
@@ -229,9 +236,36 @@ func (s *TaskScheduler) processDueTasks(ctx context.Context) {
 		return
 	}
 
+	// Each due task runs on its own goroutine, so a long run doesn't hold
+	// back the tasks due after it.
 	for _, task := range tasks {
-		s.executeAndUpdate(ctx, task)
+		if !s.beginRun(task.ID) {
+			continue
+		}
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			defer s.endRun(task.ID)
+			s.executeAndUpdate(ctx, task)
+		}()
 	}
+}
+
+// beginRun marks a task in flight; false if it already is.
+func (s *TaskScheduler) beginRun(id int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.inflight[id]; ok {
+		return false
+	}
+	s.inflight[id] = struct{}{}
+	return true
+}
+
+func (s *TaskScheduler) endRun(id int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.inflight, id)
 }
 
 // RunNow immediately executes a task without updating its schedule.
