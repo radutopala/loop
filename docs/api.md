@@ -3543,9 +3543,9 @@ The [composer switches](plugins.md#composer-switches) of the plugins the chat's 
 [{"plugin_id": "demo", "switch_id": "mode", "label": "Mode", "icon": "data:image/svg+xml;base64,…", "default_title": "Mode is off", "on": true, "status": "ok", "title": "Mode is on"}]
 ```
 
-`icon` is the plugin's SVG as a data URL, `default_title` the manifest's tooltip for when the plugin set no `title`. The app follows the state with `plugin.composer_switch` events, and lists them again on `plugins.changed`.
+`icon` is the plugin's SVG as a data URL, `default_title` the manifest's tooltip for when the plugin set no `title`. The app follows the state with `plugin.composer_switch` events, and lists them again on `plugins.changed`. With plugins off the list is empty.
 
-**Errors:** `404` if the chat doesn't exist or is a side chat or hidden thread; `501` when plugins are off.
+**Errors:** `404` if the chat doesn't exist or is a side chat or hidden thread.
 
 ### `PUT /api/channels/{id}/composer-switches/{plugin}/{switch}`
 
