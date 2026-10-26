@@ -256,7 +256,8 @@ func (s *ServerSuite) TestProjectConfigReadsDontFollowSymlinksOut() {
 	require.NoError(s.T(), os.Symlink(host, filepath.Join(dir, ".loop", "config.json")))
 
 	rec := s.testRequest("GET", "/api/config/project?channel_id=ch-1", "")
-	require.Equal(s.T(), http.StatusOK, rec.Code)
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "project config leads outside the project")
 	require.NotContains(s.T(), rec.Body.String(), "HOST")
 
 	rec = s.testRequest("GET", "/api/config/project/trust?channel_id=ch-1", "")

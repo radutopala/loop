@@ -101,6 +101,7 @@ export function Settings({
   const [schema, setSchema] = useState<ConfigSchema | null>(null);
   const [globalConfig, setGlobalConfig] = useState<ConfigResponse | null>(null);
   const [projectConfig, setProjectConfig] = useState<ConfigResponse | null>(null);
+  const [projectConfigError, setProjectConfigError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [imageStatus, setImageStatus] = useState<ImageStatusResponse | null>(null);
   const [globalDirty, setGlobalDirty] = useState(false);
@@ -184,13 +185,17 @@ export function Settings({
 
   // Load project config when channelId changes.
   useEffect(() => {
+    setProjectConfigError(null);
     if (!open || !channelId) {
       setProjectConfig(null);
       return;
     }
     fetchProjectConfig(channelId)
       .then((c) => setProjectConfig(c))
-      .catch(() => setProjectConfig(null));
+      .catch((e: unknown) => {
+        setProjectConfig(null);
+        setProjectConfigError(e instanceof Error ? e.message : String(e));
+      });
   }, [open, channelId]);
 
   const handleRestart = async () => {
@@ -536,6 +541,12 @@ export function Settings({
 
               {activeSection === "__project_history__" && channelId && (
                 <ConfigHistory channelId={channelId} colors={colors} refreshKey={projectConfig} dirty={projectDirty} onRestored={handleProjectRestored} />
+              )}
+
+              {(activeSection === "__project_json__" || activeSection.startsWith("__proj_")) && projectConfigError && (
+                <div data-testid="project-config-error" style={{ fontSize: 12, color: colors.error, padding: "12px 0" }}>
+                  {projectConfigError}
+                </div>
               )}
 
               {activeSection === "__project_json__" && projectConfig && (

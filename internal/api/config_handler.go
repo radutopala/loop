@@ -79,8 +79,15 @@ func (s *Server) handleGetProjectConfig(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	// Read through the project dir: a symlink in .loop can't lead out.
-	path := filepath.Join(dirPath, ".loop", "config.json")
+	// Say why when a symlink leads it out, rather than show an empty config
+	// the owner would take for the real one.
+	path, err := projectConfigFile(dirPath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	// Read through the project dir: a link swapped in after the check
+	// still can't lead out.
 	resp := readConfigFile(func(p string) ([]byte, error) { return s.sys.ReadFileIn(dirPath, p) }, path)
 	writeHTTPJSON(w, http.StatusOK, resp, s.logger)
 }

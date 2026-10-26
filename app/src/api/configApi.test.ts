@@ -5,6 +5,7 @@ import {
   fetchConfigHistory,
   fetchConfigHistoryFiles,
   fetchConfigRevision,
+  fetchProjectConfig,
   fetchProjectTrust,
   ProjectTrustChangedError,
   restoreConfigRevision,
@@ -22,6 +23,25 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+describe("fetchProjectConfig", () => {
+  it("returns the channel's project config", async () => {
+    const cfg = { path: "/p/.loop/config.json", content: { mounts: [] }, raw: '{"mounts": []}' };
+    fetchMock.mockResolvedValue(new Response(JSON.stringify(cfg)));
+    await expect(fetchProjectConfig("ch 1")).resolves.toEqual(cfg);
+    expect(fetchMock.mock.calls[0]![0]).toBe("http://localhost:8222/api/config/project?channel_id=ch+1");
+  });
+
+  it("throws with the server's reason", async () => {
+    fetchMock.mockResolvedValue(new Response("project config leads outside the project: x\n", { status: 400, statusText: "Bad Request" }));
+    await expect(fetchProjectConfig("ch-1")).rejects.toThrow("project config leads outside the project: x");
+  });
+
+  it("falls back to the status text on an empty body", async () => {
+    fetchMock.mockResolvedValue(new Response("", { status: 500, statusText: "boom" }));
+    await expect(fetchProjectConfig("ch-1")).rejects.toThrow("Failed to fetch project config: boom");
+  });
 });
 
 describe("fetchProjectTrust", () => {
