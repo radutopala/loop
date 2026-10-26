@@ -22,7 +22,7 @@ func (s *UnidiffSuite) TestLines() {
 	}{
 		{"empty", "", nil},
 		{"final newline", "a\nb\n", []string{"a\n", "b\n"}},
-		{"no final newline", "a\nb", []string{"a\n", "b\n"}},
+		{"no final newline", "a\nb", []string{"a\n", "b\n\\ No newline at end of file\n"}},
 		{"blank line", "\n", []string{"\n"}},
 	}
 	for _, c := range cases {
@@ -43,6 +43,7 @@ func (s *UnidiffSuite) TestDiff() {
 		{"new file", "/dev/null", "", "a\nb\n", "--- /dev/null\n+++ g\n@@ -0,0 +1,2 @@\n+a\n+b\n"},
 		{"change", "f", "a\nb\n", "a\nc\n", "--- f\n+++ g\n@@ -1,2 +1,2 @@\n a\n-b\n+c\n"},
 		{"emptied", "f", "a\n", "", "--- f\n+++ g\n@@ -1 +0,0 @@\n-a\n"},
+		{"final newline added", "f", "a", "a\n", "--- f\n+++ g\n@@ -1 +1 @@\n-a\n\\ No newline at end of file\n+a\n"},
 	}
 	for _, c := range cases {
 		s.Run(c.name, func() {
