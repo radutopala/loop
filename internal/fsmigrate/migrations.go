@@ -1010,7 +1010,9 @@ func renameNoProxyHosts(_ context.Context, c *Ctx) error {
 // one per project checkout it has a channel for. A project's is reached
 // through c.ProjectSys, which keeps it, and the temp file beside it, in the
 // project: the agent may write the project's .loop. One that a symlink
-// leads out of the project isn't Loop's to migrate, and is skipped.
+// leads out of the project isn't Loop's to migrate, and is skipped, as is
+// one that isn't a readable JSON object: failing on it would keep the
+// daemon from starting over a file the agent can write.
 func eachConfig(c *Ctx, fn func(sys System, configPath string) error) error {
 	if err := fn(c.Sys, filepath.Join(c.LoopDir, "config.json")); err != nil {
 		return err
@@ -1020,11 +1022,26 @@ func eachConfig(c *Ctx, fn func(sys System, configPath string) error) error {
 		if c.ProjectSys != nil {
 			sys = c.ProjectSys(dir)
 		}
-		if err := fn(sys, filepath.Join(dir, ".loop", "config.json")); err != nil && !osutil.IsEscape(err) {
+		path := filepath.Join(dir, ".loop", "config.json")
+		if !isObjectConfig(sys, path) {
+			continue
+		}
+		if err := fn(sys, path); err != nil && !osutil.IsEscape(err) {
 			return err
 		}
 	}
 	return nil
+}
+
+// isObjectConfig reports whether configPath reads, through sys, as an
+// HJSON object.
+func isObjectConfig(sys System, configPath string) bool {
+	v, err := loadHJSONAt(sys, configPath)
+	if err != nil || v == nil {
+		return false
+	}
+	_, ok := v.Value.(*hujson.Object)
+	return ok
 }
 
 func renameNoProxyHostsAt(sys System, configPath string) error {
