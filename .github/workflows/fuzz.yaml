@@ -18,6 +18,10 @@ permissions:
 jobs:
   fuzz:
     runs-on: ubuntu-latest
+    # The agent image's base: some targets compare against the real git,
+    # env, timeout, chrt and loader there.
+    container:
+      image: golang:1.27
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -33,10 +37,6 @@ jobs:
           - { pkg: ./internal/agentgate, target: FuzzUnwrapCommandMatchesExec }
     steps:
       - uses: actions/checkout@v7
-
-      - uses: actions/setup-go@v7
-        with:
-          go-version: "1.27"
 
       - name: Locate the fuzz cache
         id: cache-dir
