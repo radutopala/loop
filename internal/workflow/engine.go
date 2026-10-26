@@ -20,6 +20,9 @@ import (
 // ErrRunNotFound is returned for a run that doesn't exist.
 var ErrRunNotFound = errors.New("workflow run not found")
 
+// ErrWorkflowNotFound is returned for a workflow the config doesn't define.
+var ErrWorkflowNotFound = errors.New("workflow not found")
+
 // Runner executes agent requests (prompt nodes) in Docker containers.
 type Runner interface {
 	Run(ctx context.Context, req *agent.AgentRequest) (*agent.AgentResponse, error)
@@ -378,7 +381,7 @@ func (e *defaultEngine) findWorkflow(name, dirPath, parentDirPath string) (*conf
 			return &wf, nil
 		}
 	}
-	return nil, fmt.Errorf("workflow not found: %s", name)
+	return nil, fmt.Errorf("%w: %s", ErrWorkflowNotFound, name)
 }
 
 // parentDirFor resolves the root project checkout for a run's channel: the

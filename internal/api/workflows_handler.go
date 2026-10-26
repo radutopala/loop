@@ -78,6 +78,20 @@ func (s *Server) handleStartWorkflowRun(w http.ResponseWriter, r *http.Request) 
 		ParentDirPath: parentDirPath,
 		Inputs:        req.Inputs,
 	})
+	if errors.Is(err, workflow.ErrWorkflowNotFound) {
+		msg := err.Error()
+		// Untrusted, a project's new workflows don't exist yet: say where
+		// to let them in. A worktree's trust is its root checkout's.
+		trustDir := req.DirPath
+		if parentDirPath != "" {
+			trustDir = parentDirPath
+		}
+		if trustDir != "" && s.projectTrustPending(trustDir) {
+			msg += " (the project config has changes waiting for your trust in Settings → Project)"
+		}
+		http.Error(w, msg, http.StatusNotFound)
+		return
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
