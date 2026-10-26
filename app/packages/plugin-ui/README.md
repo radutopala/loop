@@ -46,22 +46,22 @@ await bridge.ui.openFile("cmd/main.go", 12); // needs the ui.open_file capabilit
 await bridge.ui.copy("go test ./..."); // needs the ui.copy capability
 ```
 
-| | |
-|---|---|
-| `api.request(method, path, body?)` | `{status, body}` of `/x/{path}`; a body that isn't a string is sent as JSON |
-| `api.get/post/put/patch/delete` | the answer's body, or an `ApiError {status, body}` |
-| `context.get()` | where the panel is shown; in a card also its `card` and `data` |
-| `settings.get()`, `settings.onChange(cb)` | the plugin's settings in the channel's project |
+|                                                         |                                                                                                                     |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `api.request(method, path, body?)`                      | `{status, body}` of `/x/{path}`; a body that isn't a string is sent as JSON                                         |
+| `api.get/post/put/patch/delete`                         | the answer's body, or an `ApiError {status, body}`                                                                  |
+| `context.get()`                                         | where the panel is shown; in a card also its `card` and `data`                                                      |
+| `settings.get()`, `settings.onChange(cb)`               | the plugin's settings in the channel's project                                                                      |
 | `state.get()`, `state.set(value)`, `state.onChange(cb)` | small JSON UI state, kept per plugin, channel and panel; `onChange` hears what the same panel saves in another pane |
-| `events.on(cb)` | `{type, data}` the plugin's container sent with `POST /events` |
-| `ui.notification.notify(title, body?)` | keeps a notification in the channel's notification drawer |
-| `ui.openFile(path, line?)` | |
-| `ui.copy(text)` | puts text on the clipboard, at most 1 MB |
-| `ui.resize(height)` | a card's height in pixels, kept within 80 to 900 |
-| `ui.setTitle(title)` | names a panel's pane, at most 80 characters; `""` gives it back the panel's label |
-| `theme.get()`, `theme.onChange(cb)` | `{mode, vars}` |
-| `call(method, params?, timeoutMs?)` | any bridge method by name |
-| `close()` | fails the calls in flight and closes the port |
+| `events.on(cb)`                                         | `{type, data}` the plugin's container sent with `POST /events`                                                      |
+| `ui.notification.notify(title, body?)`                  | keeps a notification in the channel's notification drawer                                                           |
+| `ui.openFile(path, line?)`                              |                                                                                                                     |
+| `ui.copy(text)`                                         | puts text on the clipboard, at most 1 MB                                                                            |
+| `ui.resize(height)`                                     | a card's height in pixels, kept within 80 to 900                                                                    |
+| `ui.setTitle(title)`                                    | names a panel's pane, at most 80 characters; `""` gives it back the panel's label                                   |
+| `theme.get()`, `theme.onChange(cb)`                     | `{mode, vars}`                                                                                                      |
+| `call(method, params?, timeoutMs?)`                     | any bridge method by name                                                                                           |
+| `close()`                                               | fails the calls in flight and closes the port                                                                       |
 
 A failed call rejects with a `BridgeError {code, message}`; `ErrorCode` lists the codes. Calls
 time out after 10 s, `api` calls after 35 s (Loop gives the container 30 s); `connect` takes
