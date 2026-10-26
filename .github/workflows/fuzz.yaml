@@ -1,0 +1,66 @@
+name: Fuzz
+
+# `go test` in CI replays only the fuzz seeds and saved corpus. This runs the
+# fuzzing engine on every target, nightly, so it keeps looking for inputs
+# that break them.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      fuzztime:
+        description: How long to fuzz each target (a Go duration)
+        default: 10m
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { pkg: ./internal/config, target: FuzzProjectConfigTrust }
+          - { pkg: ./internal/container, target: FuzzContainerTrust }
+          - { pkg: ./internal/dockerproxy, target: FuzzDecodeBodyMatchesDaemon }
+          - { pkg: ./internal/osutil, target: FuzzHelpersStayInRoot }
+          - { pkg: ./internal/api, target: FuzzRequestRefsParity }
+          - { pkg: ./internal/agentgate, target: FuzzParseGitConfigStrictMatchesGit }
+          - { pkg: ./internal/agentgate, target: FuzzGitGuardMatchesGit }
+          - { pkg: ./internal/agentgate, target: FuzzUnwrapCommandMatchesExec }
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27"
+
+      - name: Locate the fuzz cache
+        id: cache-dir
+        run: echo "dir=$(go env GOCACHE)/fuzz" >> "$GITHUB_OUTPUT"
+
+      # The engine keeps the inputs that reached new code in GOCACHE/fuzz.
+      # Carrying them over lets each night start where the last one stopped.
+      - uses: actions/cache@v6
+        with:
+          path: ${{ steps.cache-dir.outputs.dir }}
+          key: fuzz-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-${{ matrix.target }}-
+
+      - name: Fuzz ${{ matrix.target }}
+        env:
+          FUZZTIME: ${{ inputs.fuzztime || '10m' }}
+        run: go test -run='^$' -fuzz='^${{ matrix.target }}$' -fuzztime="$FUZZTIME" ${{ matrix.pkg }}
+
+      # A failing input lands in testdata/fuzz/<target>/. Commit it there to
+      # replay it in every `go test` run.
+      - name: Upload the failing input
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-${{ matrix.target }}
+          path: ${{ matrix.pkg }}/testdata/fuzz/${{ matrix.target }}/
+          if-no-files-found: ignore
