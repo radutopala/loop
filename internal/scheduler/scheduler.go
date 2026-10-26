@@ -417,7 +417,12 @@ func NextRun(taskType db.TaskType, schedule string, now time.Time) time.Time {
 	return t
 }
 
+// calculateNextRun gives when a task of taskType on schedule first runs
+// after now, in UTC. Spec: nextrun_spec_test.go.
 func calculateNextRun(taskType db.TaskType, schedule string, now time.Time) (time.Time, error) {
+	// The store compares next_run_at against a UTC now as TEXT (see the once
+	// case), and a cron schedule without CRON_TZ= reads in now's zone.
+	now = now.UTC()
 	switch taskType {
 	case db.TaskTypeCron:
 		parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
@@ -425,7 +430,13 @@ func calculateNextRun(taskType db.TaskType, schedule string, now time.Time) (tim
 		if err != nil {
 			return time.Time{}, fmt.Errorf("%w: cron schedule %q: %w", ErrInvalidSchedule, schedule, err)
 		}
-		return sched.Next(now), nil
+		// Next gives the zero time, so a run every poll, when it finds no
+		// run in five years: Feb 30 parses but never comes.
+		next := sched.Next(now)
+		if next.IsZero() {
+			return time.Time{}, fmt.Errorf("%w: cron schedule %q never runs", ErrInvalidSchedule, schedule)
+		}
+		return next, nil
 	case db.TaskTypeInterval:
 		d, err := time.ParseDuration(schedule)
 		if err != nil {
