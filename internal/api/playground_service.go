@@ -208,7 +208,8 @@ func (s *playgroundService) projectPlaygroundDir(ctx context.Context, channelID 
 	}
 	if ch.DirPath == "" {
 		if s.deps.loopDir != "" {
-			return filepath.Join(s.deps.loopDir, channelID, "work"), nil
+			// The stored ID, not the one asked for, names the dir.
+			return filepath.Join(s.deps.loopDir, ch.ChannelID, "work"), nil
 		}
 		return "", fmt.Errorf("channel %s has no dir_path", channelID)
 	}
