@@ -33,7 +33,7 @@ install: ## Install loop to GOPATH/bin
 
 test: ## Run all tests
 	go generate ./internal/readme/
-	go test -race -count=1 -timeout 90s ./...
+	go test -race -count=1 -timeout 3m ./...
 	cd pluginsdk && go test -race -count=1 -timeout 90s ./...
 
 test-integration: ## Run integration tests (requires tokens in ~/.loop/config.integration.json)
@@ -213,8 +213,10 @@ coverage: ## Generate HTML coverage report
 	@echo "Coverage report: coverage.html"
 
 _coverage-check-run:
+	@# The timeout catches a hung test, not a slow package: internal/api's
+	@# spec tests build a fresh SQLite world per route, which -race slows.
 	go generate ./internal/readme/
-	go test -race -count=1 -timeout 90s -coverpkg=./... -coverprofile=coverage.out ./...
+	go test -race -count=1 -timeout 3m -coverpkg=./... -coverprofile=coverage.out ./...
 	@# The plugin SDK is its own module, so it has its own profile.
 	cd pluginsdk && go test -race -count=1 -timeout 90s -coverpkg=./... -coverprofile=../coverage-pluginsdk.out ./...
 	@# Counted from the raw profile: `go tool cover -func` rounds its total to
