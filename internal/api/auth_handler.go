@@ -2,7 +2,6 @@ package api
 
 import (
 	"net/http"
-	"path/filepath"
 	"strconv"
 	"time"
 
@@ -153,7 +152,7 @@ func (s *Server) handleContentCap(w http.ResponseWriter, r *http.Request) {
 		r2.SetPathValue("path", rel)
 		s.handleRawFile(w, r2)
 	case capKindPlayground:
-		pgDir, err := s.playground.playgroundDirFor(r, c.ChannelID, c.Scope)
+		loc, err := s.playground.playgroundDirFor(r, c.ChannelID, c.Scope)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -163,11 +162,7 @@ func (s *Server) handleContentCap(w http.ResponseWriter, r *http.Request) {
 		// read its stored token. The console bridge uses postMessage, which
 		// works across origins.
 		w.Header().Set("Content-Security-Policy", playgroundCSP)
-		if rel == "" {
-			s.playground.renderPlaygroundIndex(w, pgDir, "/c/"+tok+"/")
-			return
-		}
-		s.playground.servePlaygroundFile(w, pgDir, rel)
+		s.playground.servePlayground(w, loc, rel, "/c/"+tok+"/", http.StatusBadRequest)
 	case capKindPlugin:
 		s.servePluginUI(w, r, tok, c.Scope, rel)
 	default:
@@ -175,15 +170,11 @@ func (s *Server) handleContentCap(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// playgroundDirFor returns the dir of playground name: a project playground
-// of channelID, or a global one when channelID is empty.
-func (s *playgroundService) playgroundDirFor(r *http.Request, channelID, name string) (string, error) {
+// playgroundDirFor locates playground name: a project playground of
+// channelID, or a global one when channelID is empty.
+func (s *playgroundService) playgroundDirFor(r *http.Request, channelID, name string) (playgroundLoc, error) {
 	if channelID == "" {
 		return s.validatePlaygroundDir(name)
 	}
-	dirPath, err := s.projectPlaygroundDir(r.Context(), channelID)
-	if err != nil {
-		return "", err
-	}
-	return s.playgroundDirIn(filepath.Join(dirPath, ".loop", "playground"), name)
+	return s.projectPlayground(r.Context(), channelID, name)
 }

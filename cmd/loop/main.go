@@ -92,6 +92,11 @@ type appSystem interface {
 	Chmod(name string, mode os.FileMode) error
 	Rename(oldpath, newpath string) error
 	CreateTemp(dir, pattern string) (*os.File, error)
+	// The *In methods reach name, under root, without leaving root through a
+	// symlink; see osutil.WriteFileIn.
+	ReadFileIn(root, name string) ([]byte, error)
+	WriteFileIn(root, name string, data []byte, perm os.FileMode) error
+	MkdirAllIn(root, name string, perm os.FileMode) error
 }
 
 // app holds all injectable dependencies for the CLI, replacing package-level

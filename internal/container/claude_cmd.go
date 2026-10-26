@@ -312,8 +312,9 @@ type ClaudeCmdBuilder struct {
 	configLoad                func() (*config.Config, error)
 	loadProjectConfig         func(string, *config.Config) (*config.Config, error)
 	loadWorktreeProjectConfig func(string, string, *config.Config) (*config.Config, error)
-	writeFile                 func(string, []byte, os.FileMode) error
-	mkdirAll                  func(string, os.FileMode) error
+	// writeFileIn and mkdirAllIn write under a root, as osutil.WriteFileIn.
+	writeFileIn func(root, name string, data []byte, perm os.FileMode) error
+	mkdirAllIn  func(root, name string, perm os.FileMode) error
 	// transcriptMissing reports whether Claude Code has no transcript on
 	// disk for a (workDir, sessionID) pair. Injectable for tests.
 	transcriptMissing func(workDir, sessionID string) bool
@@ -325,8 +326,8 @@ func NewClaudeCmdBuilder(cfg *config.Config, configLoad func() (*config.Config, 
 		configLoad:                configLoad,
 		loadProjectConfig:         config.LoadProjectConfig,
 		loadWorktreeProjectConfig: config.LoadWorktreeProjectConfig,
-		writeFile:                 os.WriteFile,
-		mkdirAll:                  os.MkdirAll,
+		writeFileIn:               osutil.WriteFileIn,
+		mkdirAllIn:                osutil.MkdirAllIn,
 		transcriptMissing: func(workDir, sessionID string) bool {
 			return claudeTranscriptMissing(os.Stat, os.UserHomeDir, workDir, sessionID)
 		},
@@ -406,15 +407,16 @@ func (b *ClaudeCmdBuilder) resolveCmdConfig(channelID, dirPath, parentDirPath, a
 	return cfg, workDir
 }
 
-// writeAgentMCPConfig writes a per-agent MCP config file with --agent-id.
+// writeAgentMCPConfig writes a per-agent MCP config file with --agent-id. It
+// stays in workDir, where a symlink the agent planted can't redirect it.
 func (b *ClaudeCmdBuilder) writeAgentMCPConfig(cfg *config.Config, workDir, channelID, agentID string) {
 	apiURL := AgentAPIBase(cfg)
 	loopDir := filepath.Join(workDir, ".loop")
-	_ = b.mkdirAll(loopDir, 0o755)
+	_ = b.mkdirAllIn(workDir, loopDir, 0o755)
 	mcpCfg := buildMCPConfig(channelID, apiURL, workDir, "", agentID, nil, cfg.Memory.Enabled, cfg.Browser.Enabled, cfg.MCPServers)
 	data, _ := json.MarshalIndent(mcpCfg, "", "  ")
 	configPath := mcpConfigPathForAgent(workDir, channelID, agentID)
-	_ = b.writeFile(configPath, data, 0o644)
+	_ = b.writeFileIn(workDir, configPath, data, 0o644)
 }
 
 // monitorTool is the CLI's Monitor tool. A one-shot run denies it: the run

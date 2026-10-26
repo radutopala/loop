@@ -95,10 +95,10 @@ Both layers feed into the same `agentgate.Manager` for `approve` decisions, so a
 
 | Package | Role |
 |---|---|
-| `internal/agentgate/bpf.go` | Hand-assembled BPF: arch check (x86_64 + aarch64, kill-on-mismatch), 12 trap syscalls (`connect`, `execve`, `execveat`, `openat`, `openat2`, `renameat2`, `unlinkat`, `linkat`, `symlinkat`, `fchmodat`, `fchownat`, `mkdirat`), 3 deny syscalls (`io_uring_setup` / `_enter` / `_register` → `EPERM`) |
+| `internal/agentgate/bpf.go` | Hand-assembled BPF: arch check (x86_64 + aarch64, kill-on-mismatch), 12 trap syscalls (`connect`, `execve`, `execveat`, `openat`, `openat2`, `renameat2`, `unlinkat`, `linkat`, `symlinkat`, `fchmodat`, `fchownat`, `mkdirat`), 3 deny syscalls (`io_uring_setup` / `_enter` / `_register` → `EPERM`); on x86_64, every x32-ABI syscall number (bit 30 set) → `ENOSYS`, since those report the native arch but match no native trap number. `make prove-seccomp` proves the emitted program against this spec (see [Verifying the filter](#verifying-the-filter)) |
 | `internal/agentgate/server.go` | Seccomp notify loop; dispatches by syscall nr to connect / execve / file handlers. Runs in-container inside the `loop syscallwrap` parent process |
 | `internal/agentgate/connect.go` | Parses `AF_UNIX` sockaddr; abstract sockets rendered as `@name` |
-| `internal/agentgate/execve.go` | Reads argv via `ProcessVMReadv`; transparent-wrapper unwrap (`env`, `sudo`, `nice`, `ionice`, `chrt`, `timeout`, `nohup`, `unshare`, `setsid`, `taskset`, `stdbuf`, `script`, `ld-linux*`); `execveat`+`AT_EMPTY_PATH` resolves fd and denies `memfd:` unconditionally |
+| `internal/agentgate/execve.go` | Reads argv via `ProcessVMReadv`; transparent-wrapper unwrap (`env`, `sudo`, `nice`, `ionice`, `chrt`, `timeout`, `nohup`, `unshare`, `setsid`, `taskset`, `stdbuf`, `ld-linux*`), each parsed with its own option grammar; `execveat`+`AT_EMPTY_PATH` resolves fd and denies `memfd:` unconditionally |
 | `internal/agentgate/file.go`, `file_syscalls.go` | Per-syscall arg-layout dispatcher; dirfd resolution via `/proc/<pid>/fd/<N>`; `AT_FDCWD` via `/proc/<pid>/cwd`; mandatory `filepath.EvalSymlinks`; FIFO decision cache (1024 entries) |
 | `internal/agentgate/handshake.go` | `ReceiveHandshake` / `SendAck` — `[4-byte BE length][channel-id][SCM_RIGHTS fd]`. Shared code path for the in-container socketpair handshake |
 | `internal/agentgate/policy.go` | `PathRule` / `CommandRule` / `FileRule` compilation: doublestar for paths, `regexp` for argv, `filepath.Match` for command basenames |
@@ -110,15 +110,29 @@ Both layers feed into the same `agentgate.Manager` for `approve` decisions, so a
 | `internal/container/image/entrypoint.sh` | Branches on `$LOOP_DOCKERPROXY_ENABLED=1` (starts `loop dockerproxy` as root before dropping privileges) and `$LOOP_GATE_ENABLED=1` (execs `loop syscallwrap -- "$@"` as root, which drops its child to `$AGENT_USER`). When neither is set, falls back to plain `gosu "$AGENT_USER" "$@"` |
 | `internal/dockerproxy/fold.go` | Case-insensitive key lookup and the ambiguous-key check shared by body rules, approval details and the socket rewrite |
 | `internal/dockerproxy/nested.go` | Rewrites docker socket mounts in container creates to the nested proxy socket; looks up the nested volume's name |
-| `internal/dockerproxy/server.go` | HTTP handler + reverse proxy to the upstream socket (`/var/run/docker.sock.host` in production); hijack on `POST /containers/*/attach` and `POST /exec/*/start`; `FlushInterval: 100ms` for streaming; strips API version prefix before rule match |
+| `internal/dockerproxy/server.go` | HTTP handler + reverse proxy to the upstream socket (`/var/run/docker.sock.host` in production); hijack on `POST /containers/*/attach` and `POST /exec/*/start`; `FlushInterval: 100ms` for streaming; strips the API version prefix before rule match the way the daemon's router reads it (`/v` and any run of digits and dots, so `/v1.41.0/...` too) |
 | `internal/dockerproxy/policy.go` | `HTTPServiceRule` compile + `MatchHTTP` (first-match + default); `CheckBody` |
-| `internal/dockerproxy/bodyrule.go` | JSONPath-lite evaluator: `present`, `empty_array`, `equals`, `contains_any`, `starts_with_any`, `not_in`, `capability_not_in` (normalises names as the daemon does), `source_path_in` (with an optional `except` list), `source_path_not_in` (with an optional `read_only_values` list, which counts as inside only for read-only binds; on a whole mount object it reads `Source` and `ReadOnly`), `path_in` (like `source_path_in`, but never fires on a path it can't resolve). The source ops resolve symlinks and clean `..` first; only `HostConfig.Binds[*]`-style strings are split on `:`, so a long-form `Source` or a `device` option is read whole. Keys match case-insensitively, and a body naming one key twice is rejected. Keys match case-insensitively |
+| `internal/dockerproxy/bodyrule.go` | JSONPath-lite evaluator: `present`, `empty_array`, `equals`, `contains_any`, `starts_with_any`, `not_in`, `capability_not_in` (normalises names as the daemon does), `source_path_in` (with an optional `except` list), `source_path_not_in` (with an optional `read_only_values` list, which counts as inside only for read-only binds; on a whole mount object it reads `Source` and `ReadOnly`), `path_in` (like `source_path_in`, but never fires on a path it can't resolve). The source ops resolve symlinks and clean `..` first; only `HostConfig.Binds[*]`-style strings are split on `:`, so a long-form `Source` or a `device` option is read whole. Keys match case-insensitively with the daemon's Unicode folding (`ſ` matches `s`), and a body naming one key twice, or two keys that fold to one, is rejected. `bind_alias_spec_test.go` checks every spelling of a forbidden source (extra slashes, `.`/`..`, symlinks to it or a parent) is refused; `FuzzDecodeBodyMatchesDaemon` checks the fields the rules read against the daemon's own decoding of a create body. |
 | `internal/orchestrator/gate_adapter.go` | Maps `agentgate.ApprovalRequest` to `bot.ApprovalPrompt`; same adapter for all three platforms |
 | `internal/api/gate_handler.go` | Three handlers: `GET /api/gate/approvals` (snapshot of every Manager's pending requests — used by the renderer on WS reconnect to reconcile its local map and the electron dock-bouncer), `POST /api/gate/approvals/{id}` (bot-click resolve — 204 / 400 / 404), and `POST /api/gate/container-approval` (in-container call-in — bearer-token auth → `ByToken` → `mgr.Request` → `{decision, actor, reason}`, 200 / 401 / 503) |
 | `internal/types/gate.go` | Shared rule types (`Decision`, `PathRule`, `CommandRule`, `FileRule`, `HTTPServiceRule`, `BodyRule`, `JSONCheck`, `RateLimits`, `AuditConfig`) — leaf package to avoid config↔agentgate cycles |
 | `internal/config/defaults_gate.go` | Baseline rule factories: `DefaultGatePathRules` / `CommandRules` / `FileRules` / `DefaultDockerProxyHTTPRules` / `BodyRules` — each returns a fresh slice per call |
 
 ---
+
+### Verifying the filter
+
+`make prove-seccomp` checks the seccomp program `buildFilter` emits, not a model of it. `TestSeccompProofSuite` (`internal/agentgate/bpf_proof_test.go`) renders the program as one SMT-LIB bit-vector term, the verdict for a symbolic syscall number and audit arch, and has the [z3](https://github.com/Z3Prover/z3) SMT solver look for any input that breaks each property below. Finding none proves it for all 2^32 syscall numbers. The target runs the suite as amd64 and as arm64 (the other arch under emulation), in the test-runner image, which ships z3; CI runs it in the `prove-seccomp` job. Plain `go test` skips the suite when z3 isn't installed.
+
+| Property | Claim |
+|---|---|
+| P1 | A wrong audit arch always ends in `KILL_PROCESS` |
+| P2 | On the native arch, every number gets exactly its trap / deny / allow verdict (x32 numbers `ENOSYS` on x86_64) |
+| P2' | x86_64: no x32-ABI number is allowed |
+| P3 | No number is both trapped and denied |
+| P4 | x86_64: every number the kernel dispatches to a trapped syscall is stopped, with the x32 ABI off and on |
+
+`TestFilterPropertiesCanFail` checks that the proof can fail: a filter without the x32 guard, or with a trap entry dropped, is refuted. The trusted base is the cBPF semantics in `smtVerdict`, the property statements, z3 and the x32 dispatch table in `x32Numbers`. P4 checks the filter against the gate's own trap list; it doesn't claim that list covers every way to reach a file or socket.
 
 ## Default policy
 
@@ -134,7 +148,7 @@ The default posture is **default-allow with targeted exceptions**: the agent can
 
 ### Connect (`PathRule`, 2 rules, first-match-wins)
 
-Covers `connect(2)` on `AF_UNIX` paths.
+Covers `connect(2)` on `AF_UNIX` paths. A rule names a socket, not a spelling: the requested path and each rule's pattern are resolved in the agent's view (cwd, `.`, `..`, duplicate slashes, symlinks) before comparing, so `/run/docker.sock.host` (via the `/var/run` → `/run` link) or a symlink in `/tmp` still hits rule 1. A relative path whose cwd can't be read is denied.
 
 | # | Pattern | Decision | Why |
 |---|---|---|---|
@@ -143,7 +157,7 @@ Covers `connect(2)` on `AF_UNIX` paths.
 
 ### Exec (`CommandRule`, 1 static rule + 1 dynamic workspace rule, first-match-wins)
 
-Seccomp catches `execve` / `execveat`; transparent wrappers (`env`, `sudo`, `nice`, `timeout`, …) are unwrapped so the rule matches the real target.
+Seccomp catches `execve` / `execveat`. The command is the file the kernel runs, not `argv[0]`, which the caller picks (`exec -a ls git push` is `git push`); the name it's run by still counts, so a link or a copy of `git` named `ls` matches as `ls`. An exec [file rule](#file-ops-filerule-9-static-rules-first-match-wins-plus-three-injected-rules) matches the resolved path instead. Transparent wrappers (`env`, `sudo`, `nice`, `timeout`, …) are unwrapped so the rule matches the real target. Each wrapper is read with its real option grammar — option values (`sudo -u root`, `nice -n 5`, `env -u X`) and operands (`timeout`'s DURATION, `taskset`'s MASK, `chrt`'s PRIORITY) are skipped, so `timeout 5 git push` matches a `git push` rule. When the command can't be named for sure — an unknown or malformed option, a mode that doesn't run it as given (`sudo -s`/`-i`/`-e`/`-l`, `taskset -p`, `--help`), or an `env -S` string that uses quotes, escapes or `${VAR}` — the wrapper itself stays the command. That never hides one: every wrapper but the loader execs its command, which traps again on its own. `script` isn't unwrapped; it runs `$SHELL -c CMD`, which traps with the shell named. `internal/agentgate/execve_unwrap_linux_test.go` checks the grammar against the installed wrapper binaries. `FuzzUnwrapCommandMatchesExec` (`internal/agentgate/execve_unwrap_diff_fuzz_test.go`) checks that the command the gate judges is the one the wrapper actually execs: it builds argvs from the wrappers' options (attached and separate values, clustered flags, long-option prefixes, `--`, `NAME=VALUE`, `env -S` strings, chained wrappers, the loader), runs them through the real binaries with recording probes on `PATH`, and compares each recorded exec with what `unwrapCommand` named one step earlier.
 
 | # | Command | Args regex | Decision | Why |
 |---|---|---|---|---|
@@ -194,6 +208,8 @@ Order matters: the pinned policy self-deny, then the pinned project-config appro
 
 Anything that doesn't match falls through to `gates.agentgate.default_decision` (`"allow"` by default).
 
+A rule names a file, not a spelling: the path is resolved in the agent's view (cwd or dirfd, `.`, `..`, duplicate slashes, symlinks) before matching. A file that doesn't exist yet resolves to where the create puts it, so `/tmp/s/rc` with `/tmp/s` linked to `~/.ssh`, or a dangling link to `~/.ssh/rc`, still hits rule 4. `file_alias_spec_test.go` checks every spelling against rule 4's operations. Patterns are matched as written, so write them in resolved form: under a `/var/run` → `/run` link, a rule on `/var/run/x` matches nothing.
+
 #### Exec file rules
 
 A file rule whose operations list `exec` also covers the file an `execve` / `execveat` runs, matched on its absolute, symlink-resolved path: a relative name resolves against the cwd, or the dirfd for `execveat`, since the kernel doesn't search `$PATH`. Only rules that list `exec` count. A rule with no operations doesn't, and neither does `default_decision`, so a policy without one runs as before. A `deny` refuses the exec whatever the command rules say; `allow` and `approve` leave it to them. None of the defaults use it; [plugin containers](plugins.md#agentgate) deny running files from the dirs they can write.
@@ -224,7 +240,8 @@ A repo's config and hooks make git run programs: `core.fsmonitor`, `core.sshComm
 - `.git/config` and `.git/config.worktree`;
 - `.git/commondir`;
 - `.git/hooks` and everything under it, except the `*.sample` files;
-- the same inside submodule and linked-worktree git dirs (`.git/modules/…`, `.git/worktrees/…`).
+- the same inside submodule and linked-worktree git dirs (`.git/modules/…`, `.git/worktrees/…`);
+- a `HEAD` outside any `.git` dir. Next to `objects/` and `refs/`, it makes its dir a git dir that git uses when run there, and that dir's `config` and `hooks` aren't named `.git`. Git writes one there only when it creates a bare repo or a `--separate-git-dir`.
 
 Components match case-insensitively, with Unicode folding, because the host filesystem behind a mount often is case-insensitive.
 
@@ -241,7 +258,9 @@ Components match case-insensitively, with Unicode folding, because the host file
 
 Because the gate writes the file itself, the agent can't swap the content between your click and the rename.
 
-**Whole trees can't be moved in.** A rename into a `.git` dir onto a path that isn't guarded itself (a ref, the index, an object) goes on to the file rules as usual, if its source is a regular file. A directory or symlink source is refused, and so is `RENAME_EXCHANGE` with either side inside a `.git` dir. Otherwise the agent could build a git dir elsewhere, with its own hooks and config, and move it in whole as `.git/modules/<name>` or `.git/worktrees/<name>`. Git itself doesn't move directories in there, except `git submodule absorbgitdirs`, which fails in the container.
+**Whole trees can't be moved in or out.** A rename into a `.git` dir onto a path that isn't guarded itself (a ref, the index, an object) goes on to the file rules as usual, if its source is a regular file. So does a rename out of a `.git` dir, or of a `.git` entry that is a `gitdir:` file. A directory or symlink source is refused, and so is `RENAME_EXCHANGE` with either side inside a `.git` dir. Otherwise the agent could build a git dir elsewhere, with its own hooks and config, and move it in whole as `.git/modules/<name>` or `.git/worktrees/<name>`; or move a git dir out under a name the guard doesn't know (`mv .git gd`), then rewrite its config, unguarded, and point `core.worktree` back at the repo. Git itself doesn't move directories in or out of there, except `git submodule absorbgitdirs`, which fails in the container.
+
+`gitguard_git_spec_test.go` checks the guard against real git: after any script of writes, moves and deletes the guard lets through without asking, `git status`, `diff`, `log -p`, `add`, `commit` and `checkout` in the repo, its worktree, its submodule and every touched dir must never run a probe program. `FuzzGitGuardMatchesGit` generates the scripts, seeded with one known route to each hook, driver, pointer and bare-repo trick; a guard that allows everything must fail on every seed.
 
 **Keys installed without asking**, which is what `git init`, `clone`, `remote add`, `fetch`, `branch --set-upstream-to`, `push -u`, `sparse-checkout`, `worktree` and `git config user.*` write:
 
@@ -267,7 +286,7 @@ The card's cache key includes a hash of the content: **Allow for session** cover
 **What the guard doesn't cover:**
 
 - `fchmod` on an already-open descriptor. A hook installed through the guard keeps the source's mode; making a non-executable hook executable later goes through `chmod(2)`, which the file rules see, but `fchmod(2)` on an open fd isn't trapped.
-- Bare repos and git dirs not named `.git` (`git clone --bare x.git`, the target of `--separate-git-dir`).
+- Bare repos and git dirs not named `.git` that already exist (`git clone --bare x.git`, the target of `--separate-git-dir`): their `config` and `hooks` are plain files. Making a new one goes through the guard, since it needs a `HEAD`.
 - The content of a pointer written in place: the card shows which process writes it, not what it writes.
 - A `core.hooksPath` that points into the worktree (husky, lefthook). Setting it asks, but the hook files it points at are ordinary workspace files.
 - The multi-threaded path race below: a sibling thread can change a path between the gate's read and the kernel's. The gate's own install isn't affected, since it opens its target directories with `RESOLVE_NO_SYMLINKS` and writes only bytes it already read.

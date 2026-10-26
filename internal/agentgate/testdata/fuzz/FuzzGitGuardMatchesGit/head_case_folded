@@ -1,0 +1,2 @@
+go test fuzz v1
+string("--- mkdir evil/objects\n--- mkdir evil/refs\n--- write evil/head\nref: refs/heads/main\n--- write evil/config\n[core]\n\trepositoryformatversion = 0\n\tbare = false\n\tworktree = ..\n\tfsmonitor = @PROBE@\n")

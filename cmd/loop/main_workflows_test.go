@@ -11,6 +11,16 @@ import (
 	"github.com/radutopala/loop/internal/quality/rules"
 )
 
+// workflowLoader returns a project loader over the suite's trust store,
+// with the config in each of dirs trusted as it is now.
+func (s *MainSuite) workflowLoader(dirs ...string) *config.Loader {
+	trust := config.NewTrustStoreIn(s.app.userConfigDir)
+	for _, dir := range dirs {
+		require.NoError(s.T(), trust.Trust(dir, ""))
+	}
+	return config.NewProjectLoader(trust)
+}
+
 func (s *MainSuite) TestWorkflowsFromConfigReloadSuccess() {
 	cfg := &config.Config{
 		Workflows: []config.WorkflowDef{{Name: "initial"}},
@@ -21,7 +31,7 @@ func (s *MainSuite) TestWorkflowsFromConfigReloadSuccess() {
 		}, nil
 	}
 
-	fn := workflowsFromConfig(cfg, reload)
+	fn := workflowsFromConfig(cfg, reload, s.workflowLoader())
 	wfs := fn("", "")
 	require.Len(s.T(), wfs, 1)
 	require.Equal(s.T(), "reloaded", wfs[0].Name)
@@ -35,7 +45,7 @@ func (s *MainSuite) TestWorkflowsFromConfigReloadError() {
 		return nil, errors.New("config error")
 	}
 
-	fn := workflowsFromConfig(cfg, reload)
+	fn := workflowsFromConfig(cfg, reload, s.workflowLoader())
 	wfs := fn("", "")
 	require.Len(s.T(), wfs, 1)
 	require.Equal(s.T(), "fallback", wfs[0].Name)
@@ -58,7 +68,7 @@ func (s *MainSuite) TestWorkflowsFromConfigWithDirPath() {
 		return cfg, nil
 	}
 
-	fn := workflowsFromConfig(cfg, reload)
+	fn := workflowsFromConfig(cfg, reload, s.workflowLoader(tmpDir))
 
 	wfs := fn("", "")
 	require.Len(s.T(), wfs, 1)
@@ -91,8 +101,13 @@ func (s *MainSuite) TestWorkflowsFromConfigDirPathOverridesGlobal() {
 		return cfg, nil
 	}
 
-	fn := workflowsFromConfig(cfg, reload)
-	wfs := fn(tmpDir, "")
+	// Project workflows run bash nodes on the host, so they wait for trust.
+	wfs := workflowsFromConfig(cfg, reload, s.workflowLoader())(tmpDir, "")
+	require.Len(s.T(), wfs, 1)
+	require.Equal(s.T(), "global validate", wfs[0].Description)
+
+	fn := workflowsFromConfig(cfg, reload, s.workflowLoader(tmpDir))
+	wfs = fn(tmpDir, "")
 	require.Len(s.T(), wfs, 1)
 	require.Equal(s.T(), "validate", wfs[0].Name)
 	require.Equal(s.T(), "project validate", wfs[0].Description)
@@ -126,7 +141,7 @@ func (s *MainSuite) TestWorkflowsFromConfigWorktreeThreeLayerMerge() {
 		return cfg, nil
 	}
 
-	fn := workflowsFromConfig(cfg, reload)
+	fn := workflowsFromConfig(cfg, reload, s.workflowLoader(parentDir, worktreeDir))
 
 	wfs := fn(worktreeDir, parentDir)
 	names := map[string]string{}

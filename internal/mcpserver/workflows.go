@@ -326,7 +326,7 @@ type schemaWorkflowDef struct {
 type saveWorkflowInput struct {
 	Action   string            `json:"action" jsonschema:"required,Action: 'add' (create new) or 'update' (modify existing)"`
 	Workflow schemaWorkflowDef `json:"workflow" jsonschema:"required,Full workflow definition with name, description, inputs, and nodes"`
-	Scope    string            `json:"scope,omitempty" jsonschema:"Storage scope: 'global' (default) or 'project'. Requires channel context for project scope."`
+	Scope    string            `json:"scope,omitempty" jsonschema:"Storage scope: 'global' (default) or 'project'. Requires channel context for project scope. Agents can only change project workflows, which wait for the user to trust the project config."`
 }
 
 func (s *Server) handleSaveWorkflow(_ context.Context, _ *mcp.CallToolRequest, input saveWorkflowInput) (*mcp.CallToolResult, any, error) {
@@ -381,7 +381,7 @@ func (s *Server) handleSaveWorkflow(_ context.Context, _ *mcp.CallToolRequest, i
 
 type deleteWorkflowInput struct {
 	Name  string `json:"name" jsonschema:"required,Name of the workflow to delete"`
-	Scope string `json:"scope,omitempty" jsonschema:"Storage scope: 'global' (default) or 'project'. Requires channel context for project scope."`
+	Scope string `json:"scope,omitempty" jsonschema:"Storage scope: 'global' (default) or 'project'. Requires channel context for project scope. Agents can only change project workflows, which wait for the user to trust the project config."`
 }
 
 func (s *Server) handleDeleteWorkflow(_ context.Context, _ *mcp.CallToolRequest, input deleteWorkflowInput) (*mcp.CallToolResult, any, error) {

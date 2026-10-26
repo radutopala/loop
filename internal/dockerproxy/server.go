@@ -170,26 +170,20 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	return s, nil
 }
 
-// apiVersionRe matches a Docker API version prefix at the start of the path
-// followed by '/' (e.g. "/v1.41/containers/json" — captures "/v1.41"). We also
-// handle the degenerate case of just "/v1.41" with no trailing slash.
-var apiVersionRe = regexp.MustCompile(`^/v\d+(\.\d+)?(/|$)`)
+// apiVersionRe matches a Docker API version prefix the way the daemon's
+// router does ("/v{version:[0-9.]+}"): any run of digits and dots, so
+// "/v1.41.0/containers/create" is the same endpoint as "/v1.41/..." and must
+// be judged as one. Also matches a bare "/v1.41" with no trailing slash.
+var apiVersionRe = regexp.MustCompile(`^/v[0-9.]+(/|$)`)
 
-// stripAPIVersionPrefix returns the canonical path (with any /vN.M prefix removed).
-// Rules operate against canonical paths so a client pinning v1.41 sees the same
-// rule as an un-versioned client.
+// stripAPIVersionPrefix returns the canonical path (with any version prefix
+// removed). Rules operate against canonical paths so a client pinning a
+// version sees the same rule as an un-versioned client.
 func stripAPIVersionPrefix(path string) string {
-	m := apiVersionRe.FindStringSubmatch(path)
-	if m == nil {
-		return path
+	if m := apiVersionRe.FindString(path); m != "" {
+		return "/" + path[len(m):]
 	}
-	// m[0] is the matched prefix including the trailing '/' (or nothing at EOS).
-	// We want to keep the '/' (if present) so "/v1.41/containers" becomes "/containers".
-	rest := path[len(m[0]):]
-	if m[2] == "/" {
-		return "/" + rest
-	}
-	return "/" + rest
+	return path
 }
 
 // ServeHTTP is the handler entry point. On deny: 403 + message. On approve:
@@ -517,17 +511,27 @@ func (s *Server) evaluateBody(r *http.Request, canonicalPath string) (BodyCheckR
 	if ct != "application/json" {
 		return BodyCheckResult{Skipped: "not-json"}, nil, nil
 	}
-	var decoded any
-	if err := json.Unmarshal(buf, &decoded); err != nil {
-		return BodyCheckResult{}, nil, fmt.Errorf("parse body: %w", err)
-	}
-	if hasDuplicateKeys(buf) {
-		return BodyCheckResult{}, nil, errDuplicateKeys
-	}
-	if hasFoldDuplicates(decoded, s.foldNames) {
-		return BodyCheckResult{}, nil, errAmbiguousKeys
+	decoded, err := decodeBody(buf, s.foldNames)
+	if err != nil {
+		return BodyCheckResult{}, nil, err
 	}
 	return s.policy.CheckBody(r.Method, canonicalPath, r.Header.Get("Content-Type"), decoded), decoded, nil
+}
+
+// decodeBody parses a JSON request body for the body rules, refusing one
+// whose keys the daemon could read differently (see fold.go).
+func decodeBody(buf []byte, foldNames map[string]bool) (any, error) {
+	var decoded any
+	if err := json.Unmarshal(buf, &decoded); err != nil {
+		return nil, fmt.Errorf("parse body: %w", err)
+	}
+	if hasDuplicateKeys(buf) {
+		return nil, errDuplicateKeys
+	}
+	if hasFoldDuplicates(decoded, foldNames) {
+		return nil, errAmbiguousKeys
+	}
+	return decoded, nil
 }
 
 // normalizeCachePath collapses dynamic URL segments (image IDs, exec IDs) so

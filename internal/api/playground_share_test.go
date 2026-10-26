@@ -79,15 +79,15 @@ func (s *ServerSuite) enableShare() (dir string, ft *fakeTunnel) {
 
 func (s *ServerSuite) TestShareTokenOpaqueAndStable() {
 	st := newShareStore()
-	t1 := st.add("demo", "global", "", "/abs/demo")
+	t1 := st.add("demo", "global", "", playgroundLoc{base: "/abs", name: "demo"})
 	require.Len(s.T(), t1, 32)
 	require.NotContains(s.T(), t1, "demo")
 	// Re-adding the same dir returns the same token.
-	t2 := st.add("demo", "global", "", "/abs/demo")
+	t2 := st.add("demo", "global", "", playgroundLoc{base: "/abs", name: "demo"})
 	require.Equal(s.T(), t1, t2)
 	require.Equal(s.T(), 1, st.count())
 	// A different dir gets a different token.
-	t3 := st.add("other", "global", "", "/abs/other")
+	t3 := st.add("other", "global", "", playgroundLoc{base: "/abs", name: "other"})
 	require.NotEqual(s.T(), t1, t3)
 	require.Equal(s.T(), 2, st.count())
 }
@@ -96,19 +96,19 @@ func (s *ServerSuite) TestShareIdempotentByDirAcrossChannels() {
 	// The same project playground shared from two different channels/threads
 	// that resolve to the same dir must collapse to one token — not two.
 	st := newShareStore()
-	t1 := st.add("foo", "project", "chanA", "/proj/.loop/playground/foo")
-	t2 := st.add("foo", "project", "chanB", "/proj/.loop/playground/foo")
+	t1 := st.add("foo", "project", "chanA", playgroundLoc{base: "/proj/.loop/playground", name: "foo"})
+	t2 := st.add("foo", "project", "chanB", playgroundLoc{base: "/proj/.loop/playground", name: "foo"})
 	require.Equal(s.T(), t1, t2)
 	require.Equal(s.T(), 1, st.count())
 	// A worktree thread resolves to a distinct dir → separate share.
-	t3 := st.add("foo", "project", "chanC", "/proj/.worktrees/x/.loop/playground/foo")
+	t3 := st.add("foo", "project", "chanC", playgroundLoc{base: "/proj/.worktrees/x/.loop/playground", name: "foo"})
 	require.NotEqual(s.T(), t1, t3)
 	require.Equal(s.T(), 2, st.count())
 }
 
 func (s *ServerSuite) TestShareStoreLookupAndRemove() {
 	st := newShareStore()
-	tok := st.add("demo", "global", "", "/abs/demo")
+	tok := st.add("demo", "global", "", playgroundLoc{base: "/abs", name: "demo"})
 	e, ok := st.lookup(tok)
 	require.True(s.T(), ok)
 	require.Equal(s.T(), "/abs/demo", e.AbsDir)
@@ -220,7 +220,7 @@ func (s *ServerSuite) TestShareListURLNoTunnel() {
 	// A lingering share with no tunnel manager yields an empty URL.
 	s.setPlaygroundDir()
 	s.srv.playground.tunnel = nil
-	s.srv.playground.shares.add("demo", "global", "", "/abs/demo")
+	s.srv.playground.shares.add("demo", "global", "", playgroundLoc{base: "/abs", name: "demo"})
 	rec := s.testRequest("GET", "/api/playground/share", "")
 	var resp map[string][]map[string]string
 	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
@@ -231,7 +231,7 @@ func (s *ServerSuite) TestShareListURLTunnelDown() {
 	// Tunnel present but not started (empty PublicURL) → empty URL.
 	s.setPlaygroundDir()
 	s.srv.playground.setTunnel(&fakeTunnel{})
-	s.srv.playground.shares.add("demo", "global", "", "/abs/demo")
+	s.srv.playground.shares.add("demo", "global", "", playgroundLoc{base: "/abs", name: "demo"})
 	rec := s.testRequest("GET", "/api/playground/share", "")
 	var resp map[string][]map[string]string
 	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))

@@ -60,6 +60,8 @@ On the routes it may call, an agent is held to its own project. Every channel, t
 
 On the UI bridge, an agent's command must start with `select_channel` to a channel of its project, and every `select_channel` in it must name a channel of the project. `GET /api/ui/state` leaves out the `state` of windows showing a channel outside it. The UI WebSocket stays owner-only.
 
+Listings an agent makes, such as a channel's sessions with the ids imported into other channels, name only its project's items, and a refusal names what the request named: another project's task or run is refused by its id, not its channel. `agent_scope_spec_test.go` checks this over a daemon serving two projects: every agent route, with each of the other project's ids in each place a handler reads one, shows and changes nothing of the other project's (`GET /api/channels` lists every channel by design).
+
 ### Public routes
 
 | Route | Why |
@@ -2082,7 +2084,7 @@ Persist an image pasted into the chat input. The desktop app calls this from `Ch
 The returned `path` is **absolute**, so the agent's built-in `Read` tool (which requires absolute paths) can pick the file up directly. The renderer inserts the path at the caret position in the chat input.
 
 **Behavior notes:**
-- The file is written under `<workspace>/.loop/pastes/`; the directory is created with `MkdirAll` on first paste. `.loop/` should be gitignored.
+- The file is written under `<workspace>/.loop/pastes/`; the directory is created with `MkdirAll` on first paste. `.loop/` should be gitignored. Both are opened within the workspace: a `.loop` or `pastes` symlink leading out of it fails the paste with `500`.
 - Filename format: `paste-<YYYYMMDD>-<HHMMSS>-<8-hex>.<ext>` (UTC timestamp, 4-byte random suffix). Collisions within the same second are avoided by the random suffix.
 - Extension is derived from `media_type` — `.jpg` for `image/jpeg`, `.png`/`.gif`/`.webp` otherwise.
 - Request body is limited to **5 MB** of raw image bytes after base64 decoding. Larger payloads return `413`.
@@ -3908,7 +3910,7 @@ Add, update, or delete a prompt shortcut in the global or project config file.
 **Response:** `204 No Content` on success.
 
 **Errors:**
-- `400` — missing name, invalid action, missing prompt, mutually exclusive fields, or missing channel_id for project scope
+- `400` — missing name, invalid action, missing prompt, mutually exclusive fields, missing channel_id for project scope, or a project `.loop` or `.loop/config.json` that is a symlink outside the project
 - `404` — shortcut not found (update/delete)
 - `409` — duplicate name (add)
 
@@ -3964,7 +3966,7 @@ Add, update, or delete a bash shortcut in the global or project config file.
 **Response:** `204 No Content` on success.
 
 **Errors:**
-- `400` — missing name, invalid action, missing command, mutually exclusive fields, or missing channel_id for project scope
+- `400` — missing name, invalid action, missing command, mutually exclusive fields, missing channel_id for project scope, or a project `.loop` or `.loop/config.json` that is a symlink outside the project
 - `404` — shortcut not found (update/delete)
 - `409` — duplicate name (add)
 
@@ -3991,7 +3993,7 @@ Save project config for a channel. Owner-only.
 
 Creates the `.loop/` directory and config file if they don't exist. A project config that was trusted stays trusted (see [`GET /api/config/project/trust`](#get-apiconfigprojecttrust)).
 
-**Errors:** `400` if `channel_id` is missing, the channel isn't found, or the HJSON is invalid.
+**Errors:** `400` if `channel_id` is missing, the channel isn't found, the HJSON is invalid, or `.loop` or `.loop/config.json` is a symlink outside the project.
 
 ---
 
@@ -4169,7 +4171,7 @@ Write a revision's content back to its file. Owner-only. The restore is recorded
 
 **Response:** `204 No Content`
 
-**Errors:** `400` for an invalid id, or a revision of a file that's no longer one of the files above. `404` if there's no such revision. `500` if the loop directory isn't configured or the file can't be written. `501` if config history isn't configured.
+**Errors:** `400` for an invalid id, or a revision of a file that's no longer one of the files above. `404` if there's no such revision. `500` if the loop directory isn't configured or the file can't be written, which includes a project file that a symlink leads outside the project. `501` if config history isn't configured.
 
 ---
 
@@ -4269,6 +4271,8 @@ Canonical names per kind:
 The playground stores named HTML/CSS/JS items and broadcasts updates for live rendering in the desktop app's Playground panel. Items can be stored globally (`~/.loop/playground/{name}/`) or per-project (`.loop/playground/{name}/` in the channel's working directory).
 
 All playground endpoints accept optional `scope` and `channel_id` query parameters to target project-scoped items. Without these, operations default to global scope.
+
+A playground's files are opened within its own directory, so a symlink an agent plants there is followed only while it stays inside: one to a host file or another playground gets `400`, or `404` on the serve routes. Deleting a link removes the link, never its target. A project's `.loop/playground` must be a real directory, not a symlink.
 
 ### `PUT /api/playground?name=...`
 
@@ -4713,7 +4717,7 @@ List all available workflow definitions from the merged config.
 
 ### `POST /api/workflows`
 
-Add, update, or delete a workflow definition in the global or project config file.
+Add, update, or delete a workflow definition in the global or project config file. An agent token can only change project workflows (`403` otherwise); `workflows` needs [project config trust](configuration.md#project-config-trust), so an agent's change waits for the user, and the user's own change keeps a trusted project trusted.
 
 **Request Body:**
 
@@ -4727,7 +4731,7 @@ Add, update, or delete a workflow definition in the global or project config fil
 
 **Response:** `204 No Content`
 
-**Errors:** `400` invalid request or workflow definition (for example a `plugin` node without exactly one of `action` and `tool`), `404` workflow not found (update/delete), `409` duplicate name (add).
+**Errors:** `400` invalid request or workflow definition (for example a `plugin` node without exactly one of `action` and `tool`), or a project config that a symlink leads outside the project, `403` an agent writing outside project scope, `404` workflow not found (update/delete), `409` duplicate name (add).
 
 ### `POST /api/workflows/runs`
 

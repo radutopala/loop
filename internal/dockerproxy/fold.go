@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"unicode"
 )
 
 // The daemon decodes request bodies with encoding/json, which matches
@@ -44,8 +45,25 @@ func foldString(m map[string]any, key string) string {
 	return s
 }
 
+// foldName returns the form encoding/json compares keys in: each rune
+// replaced by the smallest rune of its case-fold set, so foldName(x) ==
+// foldName(y) exactly when strings.EqualFold(x, y). Lower-casing isn't
+// enough: "ſ" (long s) and "K" (Kelvin sign) match "s" and "k" without
+// lower-casing to them.
+func foldName(s string) string {
+	return strings.Map(func(r rune) rune {
+		for {
+			r2 := unicode.SimpleFold(r)
+			if r2 <= r {
+				return r2
+			}
+			r = r2
+		}
+	}, s)
+}
+
 // hasFoldDuplicates reports whether any object in v holds two keys that
-// differ only in case and fold to one of names (lower-cased). Only those
+// differ only in case and fold to one of names (see foldName). Only those
 // keys matter: free-form maps such as Labels may legitimately hold "foo"
 // and "FOO".
 func hasFoldDuplicates(v any, names map[string]bool) bool {
@@ -53,7 +71,7 @@ func hasFoldDuplicates(v any, names map[string]bool) bool {
 	case map[string]any:
 		seen := make(map[string]bool, len(t))
 		for k, child := range t {
-			lk := strings.ToLower(k)
+			lk := foldName(k)
 			if names[lk] && seen[lk] {
 				return true
 			}
@@ -72,10 +90,10 @@ func hasFoldDuplicates(v any, names map[string]bool) bool {
 	return false
 }
 
-// addFoldNames adds the lower-cased names to set.
+// addFoldNames adds the folded names to set.
 func addFoldNames(set map[string]bool, names ...string) {
 	for _, n := range names {
-		set[strings.ToLower(n)] = true
+		set[foldName(n)] = true
 	}
 }
 

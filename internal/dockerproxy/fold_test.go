@@ -101,7 +101,8 @@ func (s *FoldSuite) TestApprovalDetailsAnyCase() {
 }
 
 func (s *FoldSuite) TestHasFoldDuplicates() {
-	names := map[string]bool{"hostconfig": true, "binds": true}
+	names := map[string]bool{}
+	addFoldNames(names, "HostConfig", "Binds")
 	cases := []struct {
 		name string
 		v    any
@@ -111,12 +112,26 @@ func (s *FoldSuite) TestHasFoldDuplicates() {
 		{name: "top level", v: map[string]any{"HostConfig": 1, "hostconfig": 2}, want: true},
 		{name: "nested", v: map[string]any{"HostConfig": map[string]any{"Binds": 1, "BINDS": 2}}, want: true},
 		{name: "inside array", v: []any{map[string]any{"binds": 1, "Binds": 2}}, want: true},
+		{name: "long s folds to s", v: map[string]any{"HostConfig": map[string]any{"Binds": 1, "Bindſ": 2}}, want: true},
 		{name: "unwatched name", v: map[string]any{"Labels": 1, "labels": 2}, want: false},
 		{name: "scalar", v: "x", want: false},
 	}
 	for _, tc := range cases {
 		s.Run(tc.name, func() {
 			require.Equal(s.T(), tc.want, hasFoldDuplicates(tc.v, names))
+		})
+	}
+}
+
+// foldName must agree with strings.EqualFold, which is how encoding/json
+// matches keys to struct fields.
+func (s *FoldSuite) TestFoldNameMatchesEqualFold() {
+	for _, pair := range [][2]string{
+		{"Binds", "binds"}, {"Binds", "BINDS"}, {"Binds", "Bindſ"},
+		{"Kernel", "\u212aernel"}, {"Binds", "Bind"}, {"Σ", "ς"}, {"İ", "i"},
+	} {
+		s.Run(pair[0]+"/"+pair[1], func() {
+			require.Equal(s.T(), strings.EqualFold(pair[0], pair[1]), foldName(pair[0]) == foldName(pair[1]))
 		})
 	}
 }

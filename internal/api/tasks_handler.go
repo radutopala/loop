@@ -165,8 +165,12 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	shows := s.listingShows(r, channelID)
 	resp := make([]taskResponse, 0, len(tasks))
 	for _, t := range tasks {
+		if !shows(t.ChannelID) {
+			continue
+		}
 		tr := toTaskResponse(t)
 		if ch := threads[t.ChannelID]; ch != nil {
 			tr.ChannelName, tr.DirPath, tr.ChannelWorktree = ch.Name, ch.DirPath, ch.Worktree

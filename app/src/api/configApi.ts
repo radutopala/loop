@@ -64,7 +64,8 @@ export async function saveGlobalConfig(content: string): Promise<void> {
 export async function fetchProjectConfig(channelId: string): Promise<ConfigResponse> {
   const params = new URLSearchParams({ channel_id: channelId });
   const res = await apiFetch(`${getApiUrl()}/api/config/project?${params}`);
-  if (!res.ok) throw new Error(`Failed to fetch project config: ${res.statusText}`);
+  // The body says why, e.g. a config that links outside the project.
+  if (!res.ok) throw new Error((await res.text()).trim() || `Failed to fetch project config: ${res.statusText}`);
   return res.json();
 }
 

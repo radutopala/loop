@@ -111,99 +111,6 @@ func (s *ExecveSuite) TestExecveBurstKey() {
 	s.Require().NotEqual(execveBurstKey([]string{"git", "push origin"}), execveBurstKey([]string{"git", "push", "origin"}), "argument boundaries count")
 }
 
-// --- isWrapper ---
-
-func (s *ExecveSuite) TestIsWrapperKnownNames() {
-	for _, name := range []string{"env", "sudo", "nice", "ionice", "chrt", "timeout", "nohup", "unshare", "setsid", "taskset", "stdbuf", "script"} {
-		s.Require().Truef(isWrapper(name), "%q should be a wrapper", name)
-	}
-}
-
-func (s *ExecveSuite) TestIsWrapperLdLinuxPrefix() {
-	s.Require().True(isWrapper("ld-linux-x86-64.so.2"))
-	s.Require().True(isWrapper("ld-linux-aarch64.so.1"))
-}
-
-func (s *ExecveSuite) TestIsWrapperRejectsUnknown() {
-	s.Require().False(isWrapper("bash"))
-	s.Require().False(isWrapper("eatmydata"))
-}
-
-// --- looksLikeEnvAssignment ---
-
-func (s *ExecveSuite) TestLooksLikeEnvAssignmentAccepts() {
-	s.Require().True(looksLikeEnvAssignment("FOO=bar"))
-	s.Require().True(looksLikeEnvAssignment("foo_bar=baz"))
-	s.Require().True(looksLikeEnvAssignment("HOME="))
-	s.Require().True(looksLikeEnvAssignment("X1=1"))
-}
-
-func (s *ExecveSuite) TestLooksLikeEnvAssignmentRejects() {
-	s.Require().False(looksLikeEnvAssignment("noeq"))
-	s.Require().False(looksLikeEnvAssignment("=val"))            // empty key
-	s.Require().False(looksLikeEnvAssignment("1FOO=bar"))        // leading digit
-	s.Require().False(looksLikeEnvAssignment("FOO-BAR=baz"))     // dash in key
-	s.Require().False(looksLikeEnvAssignment("a b=c"))           // space in key
-	s.Require().False(looksLikeEnvAssignment("/usr/bin/env=no")) // path-shaped
-}
-
-// --- unwrapCommand ---
-
-func (s *ExecveSuite) TestUnwrapCommandEmpty() {
-	s.Require().Empty(unwrapCommand(nil))
-}
-
-func (s *ExecveSuite) TestUnwrapCommandNonWrapperReturnsAsIs() {
-	argv := []string{"/bin/ls", "-al"}
-	s.Require().Equal(argv, unwrapCommand(argv))
-}
-
-func (s *ExecveSuite) TestUnwrapCommandEnvStripsAssignments() {
-	argv := []string{"env", "FOO=bar", "HOME=/tmp", "/bin/rm", "-rf", "/data"}
-	s.Require().Equal([]string{"/bin/rm", "-rf", "/data"}, unwrapCommand(argv))
-}
-
-func (s *ExecveSuite) TestUnwrapCommandSudoSkipsFlags() {
-	argv := []string{"sudo", "-E", "-u", "nobody", "/bin/rm"}
-	// sudo takes flags (starting with '-') then the command. We skip any
-	// arg starting with '-' — the "-u" plus its value both get skipped
-	// because "nobody" is neither a flag nor an env assignment.
-	got := unwrapCommand(argv)
-	// First non-dash arg after sudo is "nobody" (not a flag). We can't
-	// distinguish "flag value" from "payload" without a per-tool table, so
-	// the payload becomes ["nobody", "/bin/rm"]. That's a documented
-	// best-effort outcome — the rule ends up seeing "nobody" as argv[0].
-	s.Require().Equal([]string{"nobody", "/bin/rm"}, got)
-}
-
-func (s *ExecveSuite) TestUnwrapCommandDoubleDashTerminator() {
-	argv := []string{"sudo", "--", "-weird-cmd", "arg"}
-	s.Require().Equal([]string{"-weird-cmd", "arg"}, unwrapCommand(argv))
-}
-
-func (s *ExecveSuite) TestUnwrapCommandChainedWrappers() {
-	argv := []string{"sudo", "env", "FOO=bar", "/bin/rm", "-rf"}
-	s.Require().Equal([]string{"/bin/rm", "-rf"}, unwrapCommand(argv))
-}
-
-func (s *ExecveSuite) TestUnwrapCommandLdLinuxLoader() {
-	// ld-linux* is a wrapper by prefix — the loader flags get skipped just
-	// like any other wrapper.
-	argv := []string{"/lib/ld-linux-aarch64.so.1", "--library-path", "/x", "/bin/bash", "-c", "exit 0"}
-	// "--library-path" is a flag; "/x" is not a flag, not an env assign,
-	// so payload starts there. The loader case is best-effort; we end up
-	// with ["/x", "/bin/bash", …].
-	got := unwrapCommand(argv)
-	s.Require().Equal([]string{"/x", "/bin/bash", "-c", "exit 0"}, got)
-}
-
-func (s *ExecveSuite) TestUnwrapCommandWrapperOnlyKeepsWrapper() {
-	// `sudo` with no payload (no non-flag args) is kept so the policy still
-	// applies a rule against "sudo" itself.
-	argv := []string{"sudo", "-h"}
-	s.Require().Equal(argv, unwrapCommand(argv))
-}
-
 // --- NewExecveHandler ---
 
 func (s *ExecveSuite) TestNewExecveHandlerStoresFields() {
@@ -542,4 +449,54 @@ func (s *ExecveSuite) TestHandleUnwrapsBeforeMatch() {
 		Argv:     []string{"/usr/bin/env", "FOO=bar", "/bin/rm", "-rf", "/data"},
 	})
 	s.Require().Equal(types.DecisionDeny, out.Decision)
+}
+
+func (s *ExecveSuite) TestHandleUnwrapsWrapperOperands() {
+	// timeout's DURATION and nice's -n value aren't the command: a deny on
+	// `git push` still matches behind them.
+	policy := s.mustPolicy(types.DecisionAllow, types.CommandRule{
+		Commands:     []string{"git"},
+		ArgsPatterns: []string{`^push\b`},
+		Decision:     types.DecisionDeny,
+	})
+	h := NewExecveHandler(policy, nil)
+	for _, argv := range [][]string{
+		{"/usr/bin/timeout", "5", "git", "push"},
+		{"/usr/bin/nice", "-n", "5", "timeout", "-s", "KILL", "5", "git", "push", "origin"},
+	} {
+		out := h.Handle(context.Background(), ExecveRequest{Filename: argv[0], Argv: argv})
+		s.Require().Equalf(types.DecisionDeny, out.Decision, "%q", argv)
+	}
+}
+
+func (s *ExecveSuite) TestHandleJudgesTheProgramThatRuns() {
+	// argv[0] is the caller's to choose (bash's exec -a, env -a, execve
+	// itself), so the command is the file the kernel runs: a git push
+	// passed as ls, or as a wrapper, is still git push.
+	policy := s.mustPolicy(types.DecisionAllow, types.CommandRule{
+		Commands:     []string{"git"},
+		ArgsPatterns: []string{`^push\b`},
+		Decision:     types.DecisionDeny,
+	})
+	h := NewExecveHandler(policy, nil)
+	tests := []struct {
+		name     string
+		filename string
+		argv     []string
+		want     types.Decision
+	}{
+		{"named as another command", "/usr/bin/git", []string{"ls", "push"}, types.DecisionDeny},
+		{"named as a wrapper", "/usr/bin/git", []string{"env", "push"}, types.DecisionDeny},
+		{"a wrapper named as the command", "/usr/bin/env", []string{"git", "ls", "push"}, types.DecisionAllow},
+		{"a wrapper named as another wrapper", "/usr/bin/env", []string{"nice", "git", "push"}, types.DecisionDeny},
+		{"named as itself", "/usr/bin/git", []string{"git", "push"}, types.DecisionDeny},
+		{"a relative filename", "./git", []string{"ls", "push"}, types.DecisionDeny},
+		{"a login shell's dash", "/bin/bash", []string{"-bash", "-c", "true"}, types.DecisionAllow},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			out := h.Handle(context.Background(), ExecveRequest{Filename: tc.filename, Argv: tc.argv})
+			s.Require().Equal(tc.want, out.Decision)
+		})
+	}
 }

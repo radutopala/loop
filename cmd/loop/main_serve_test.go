@@ -29,6 +29,7 @@ import (
 	"github.com/radutopala/loop/internal/fsmigrate"
 	"github.com/radutopala/loop/internal/local"
 	"github.com/radutopala/loop/internal/orchestrator"
+	"github.com/radutopala/loop/internal/osutil"
 	"github.com/radutopala/loop/internal/quality/parser"
 	"github.com/radutopala/loop/internal/scheduler"
 	"github.com/radutopala/loop/internal/testutil"
@@ -190,6 +191,9 @@ func (s *MainSuite) TestServeFSMigrationProjectDirs() {
 			s.app.fsMigrateRun = func(_ context.Context, _ *sql.DB, c *fsmigrate.Ctx) error {
 				got = c.ProjectDirs
 				require.NotNil(s.T(), c.AdoptProjectConfig)
+				require.NotNil(s.T(), c.AdoptProjectWorkflows)
+				require.NotNil(s.T(), c.AdoptProjectContainerImage)
+				require.Equal(s.T(), osutil.RootFS{Root: "/x"}, c.ProjectSys("/x"))
 				// Stop serve() here: the dirs are all this test is after.
 				return errors.New("stop")
 			}

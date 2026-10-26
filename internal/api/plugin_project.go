@@ -38,7 +38,7 @@ func (s *Server) pluginProject(ctx context.Context, ch *db.Channel) (pluginProje
 		return pluginProject{}, errors.New("loading config failed")
 	}
 	p := pluginProject{merged: merged, global: global.Plugins, trusted: true}
-	data, err := s.sys.ReadFile(filepath.Join(dir, ".loop", "config.json"))
+	data, err := s.sys.ReadFileIn(dir, filepath.Join(dir, ".loop", "config.json"))
 	switch {
 	case os.IsNotExist(err):
 	case err != nil:

@@ -14,6 +14,7 @@ import (
 	"github.com/tailscale/hujson"
 
 	containerimage "github.com/radutopala/loop/internal/container/image"
+	"github.com/radutopala/loop/internal/osutil"
 )
 
 // migrations holds all filesystem migrations in order. Position in the slice
@@ -311,17 +312,51 @@ var migrations = []Migration{
 		Description: "patch review-loop/review-fix-loop to verify the comments once, at the end",
 		Apply:       patchReviewLoopFinalCheck,
 	},
+	{
+		// Project workflows now apply only once the owner trusts them: a
+		// workflow's bash nodes can run on the host, and a project workflow
+		// replaces the global one of the same name. Projects that had
+		// workflows keep running them: the workflows as they are at the
+		// upgrade join each project's trusted config.
+		Description: "trust existing project workflows",
+		Apply:       adoptProjectWorkflows,
+	},
+	{
+		// container_image and container_image_autobuild now apply only once
+		// the owner trusts them: the image is where the gate and the docker
+		// proxy run from. Projects keep running in the image they had.
+		Description: "trust existing project container images",
+		Apply:       adoptProjectContainerImages,
+	},
 }
 
 // adoptProjectConfigs trusts the project config of every project checkout
 // Loop has a channel for, where none is trusted yet.
 func adoptProjectConfigs(_ context.Context, c *Ctx) error {
-	if c.AdoptProjectConfig == nil {
+	return adoptEach(c, c.AdoptProjectConfig, "config")
+}
+
+// adoptProjectWorkflows adds the workflows of every project checkout Loop
+// has a channel for to its trusted config.
+func adoptProjectWorkflows(_ context.Context, c *Ctx) error {
+	return adoptEach(c, c.AdoptProjectWorkflows, "workflows")
+}
+
+// adoptProjectContainerImages adds the container image settings of every
+// project checkout Loop has a channel for to its trusted config.
+func adoptProjectContainerImages(_ context.Context, c *Ctx) error {
+	return adoptEach(c, c.AdoptProjectContainerImage, "container image")
+}
+
+// adoptEach runs adopt on every project dir, stopping at the first error.
+// A nil adopt skips the migration.
+func adoptEach(c *Ctx, adopt func(dir string) error, what string) error {
+	if adopt == nil {
 		return nil
 	}
 	for _, dir := range c.ProjectDirs {
-		if err := c.AdoptProjectConfig(dir); err != nil {
-			return fmt.Errorf("trusting the project config of %s: %w", dir, err)
+		if err := adopt(dir); err != nil {
+			return fmt.Errorf("trusting the project %s of %s: %w", what, dir, err)
 		}
 	}
 	return nil
@@ -967,22 +1002,28 @@ type workflowInputValue struct {
 // the old key is absent, or when either key holds something that is not an
 // array.
 func renameNoProxyHosts(_ context.Context, c *Ctx) error {
-	for _, configPath := range configPaths(c) {
-		if err := renameNoProxyHostsAt(c.Sys, configPath); err != nil {
+	return eachConfig(c, renameNoProxyHostsAt)
+}
+
+// eachConfig runs fn on every config file Loop owns: the global one, then
+// one per project checkout it has a channel for. A project's is reached
+// through c.ProjectSys, which keeps it, and the temp file beside it, in the
+// project: the agent may write the project's .loop. One that a symlink
+// leads out of the project isn't Loop's to migrate, and is skipped.
+func eachConfig(c *Ctx, fn func(sys System, configPath string) error) error {
+	if err := fn(c.Sys, filepath.Join(c.LoopDir, "config.json")); err != nil {
+		return err
+	}
+	for _, dir := range c.ProjectDirs {
+		sys := c.Sys
+		if c.ProjectSys != nil {
+			sys = c.ProjectSys(dir)
+		}
+		if err := fn(sys, filepath.Join(dir, ".loop", "config.json")); err != nil && !osutil.IsEscape(err) {
 			return err
 		}
 	}
 	return nil
-}
-
-// configPaths returns every config file Loop owns: the global one, then one per
-// project checkout it has a channel for.
-func configPaths(c *Ctx) []string {
-	paths := []string{filepath.Join(c.LoopDir, "config.json")}
-	for _, dir := range c.ProjectDirs {
-		paths = append(paths, filepath.Join(dir, ".loop", "config.json"))
-	}
-	return paths
 }
 
 func renameNoProxyHostsAt(sys System, configPath string) error {
@@ -1023,12 +1064,7 @@ func renameNoProxyHostsAt(sys System, configPath string) error {
 var legacyProxyKeys = []string{"http_proxy", "https_proxy", "no_proxy"}
 
 func moveProxiesIntoBlock(_ context.Context, c *Ctx) error {
-	for _, configPath := range configPaths(c) {
-		if err := moveProxiesIntoBlockAt(c.Sys, configPath); err != nil {
-			return err
-		}
-	}
-	return nil
+	return eachConfig(c, moveProxiesIntoBlockAt)
 }
 
 // moveProxiesIntoBlockAt moves the legacy top-level proxy keys into a proxies
@@ -1123,12 +1159,7 @@ func moveProxiesIntoBlockAt(sys System, configPath string) error {
 const devChannelsKey = "claude_dangerously_load_development_channels"
 
 func dropDevChannelsKey(_ context.Context, c *Ctx) error {
-	for _, configPath := range configPaths(c) {
-		if err := dropDevChannelsKeyAt(c.Sys, configPath); err != nil {
-			return err
-		}
-	}
-	return nil
+	return eachConfig(c, dropDevChannelsKeyAt)
 }
 
 // dropDevChannelsKeyAt removes devChannelsKey from the top level of a config,

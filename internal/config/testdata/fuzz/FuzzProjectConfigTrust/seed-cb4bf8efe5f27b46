@@ -1,0 +1,3 @@
+go test fuzz v1
+string("{\"browser\": {\"cookie_import\": {\"domains\": []}}}")
+string("{\"browser\": {\"cookie_import\": {\"domains\": null}}}")

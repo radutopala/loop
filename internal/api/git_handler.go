@@ -667,15 +667,17 @@ func (s *Server) handleImportWorktree(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Seed worktree config with extra_dirs pointing at the parent project.
+	// The writes stay in the worktree, whose .loop the agent may have filled
+	// with symlinks.
 	wtLoopDir := filepath.Join(req.WorktreePath, ".loop")
-	if err := s.sys.MkdirAll(wtLoopDir, 0755); err != nil {
+	if err := s.sys.MkdirAllIn(req.WorktreePath, wtLoopDir, 0755); err != nil {
 		s.logger.Warn("creating worktree .loop dir", "error", err)
 	} else {
 		cfgPath := filepath.Join(wtLoopDir, "config.json")
 		// Only write if the config doesn't already exist (don't overwrite user edits).
 		if _, err := s.sys.Stat(cfgPath); errors.Is(err, fs.ErrNotExist) {
 			wtCfg := fmt.Sprintf("{\n  \"extra_dirs\": [\n    %q\n  ]\n}\n", parent.DirPath)
-			if err := s.sys.WriteFile(cfgPath, []byte(wtCfg), 0644); err != nil {
+			if err := s.sys.WriteFileIn(req.WorktreePath, cfgPath, []byte(wtCfg), 0644); err != nil {
 				s.logger.Warn("writing worktree config", "error", err)
 			}
 		}

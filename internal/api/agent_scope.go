@@ -158,6 +158,15 @@ type requestRefs struct {
 	WorkflowName   string `json:"workflow_name"`
 }
 
+// decodeRequestRefs reads what body names. A type error still leaves the
+// other fields decoded, and the handler would use them, so they're checked
+// either way.
+func decodeRequestRefs(body []byte) requestRefs {
+	var refs requestRefs
+	_ = json.NewDecoder(bytes.NewReader(body)).Decode(&refs)
+	return refs
+}
+
 // agentGuard holds an agent to its own project. Every channel, thread,
 // task, workflow run and dir an agent request names, in the path, the query
 // or the JSON body, must belong to the project of the agent's own channel.
@@ -194,6 +203,10 @@ func (s *Server) agentRefusal(r *http.Request, pattern string) string {
 
 	var channels, dirs []string
 	if id := r.PathValue("id"); id != "" {
+		// A task or run is refused by its own id: naming its channel would
+		// show the agent another project's channel it didn't name. One that
+		// belongs to no project the agent can be matched to, such as a run
+		// the owner started on a dir alone, is refused too.
 		switch {
 		case strings.Contains(pattern, "/api/channels/{id}"), strings.Contains(pattern, "/api/threads/{id}"):
 			channels = append(channels, id)
@@ -202,13 +215,24 @@ func (s *Server) agentRefusal(r *http.Request, pattern string) string {
 			if !ok {
 				return "unknown task"
 			}
-			channels = append(channels, ch)
+			if ch == "" || !s.agentOwnsChannel(ctx, p, ch) {
+				return "task " + id + " is outside this agent's project"
+			}
 		case strings.Contains(pattern, "/api/workflows/runs/{id}"):
-			ch, ok := s.workflowRunChannel(ctx, id)
+			ch, dir, ok := s.workflowRunOwner(ctx, id)
 			if !ok {
 				return "unknown workflow run"
 			}
-			channels = append(channels, ch)
+			owned := false
+			switch {
+			case ch != "":
+				owned = s.agentOwnsChannel(ctx, p, ch)
+			case dir != "":
+				owned = s.agentOwnsDir(ctx, p, dir)
+			}
+			if !owned {
+				return "workflow run " + id + " is outside this agent's project"
+			}
 		}
 	}
 	q := r.URL.Query()
@@ -223,9 +247,7 @@ func (s *Server) agentRefusal(r *http.Request, pattern string) string {
 			return "request body too large"
 		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
-		// A type error still leaves the other fields decoded, and the
-		// handler would use them, so they're checked either way.
-		_ = json.NewDecoder(bytes.NewReader(body)).Decode(&refs)
+		refs = decodeRequestRefs(body)
 	}
 	channels = append(channels, refs.LearnChannelID, refs.ThreadID)
 	// Agents post to any channel, the way they did before API tokens: the
@@ -252,6 +274,11 @@ func (s *Server) agentRefusal(r *http.Request, pattern string) string {
 	if pattern == "POST /api/bash-shortcuts" && refs.Scope != "project" {
 		return "agents can only change project bash shortcuts"
 	}
+	// Workflow bash nodes run on the host under workflow_bash_local, and
+	// project workflows wait for the user's trust like bash shortcuts.
+	if pattern == "POST /api/workflows" && refs.Scope != "project" {
+		return "agents can only change project workflows"
+	}
 	// With workflow_bash_local, workflow bash nodes run on the host.
 	if s.workflowBashLocal && startsWorkflow(pattern, refs) {
 		return "agents can't start workflows while workflow bash runs on the host"
@@ -270,6 +297,26 @@ func startsWorkflow(pattern string, refs requestRefs) bool {
 	return false
 }
 
+// listingShows returns whether a listing may show an item of a channel to
+// the caller of r. A listing filtered to a named channel was checked by the
+// guard, and an owner sees every channel's items; an agent's listing of every
+// channel shows its project's, the ones the guard would let it fetch by id.
+func (s *Server) listingShows(r *http.Request, named string) func(channelID string) bool {
+	if named != "" || !isAgentRequest(r) {
+		return func(string) bool { return true }
+	}
+	p, _ := apiauth.PrincipalFrom(r.Context())
+	owns := map[string]bool{}
+	return func(channelID string) bool {
+		ok, seen := owns[channelID]
+		if !seen {
+			ok = s.agentOwnsChannel(r.Context(), p, channelID)
+			owns[channelID] = ok
+		}
+		return ok
+	}
+}
+
 // taskChannel returns the channel a scheduled task belongs to.
 func (s *Server) taskChannel(ctx context.Context, id string) (string, bool) {
 	taskID, err := strconv.ParseInt(id, 10, 64)
@@ -283,16 +330,17 @@ func (s *Server) taskChannel(ctx context.Context, id string) (string, bool) {
 	return task.ChannelID, true
 }
 
-// workflowRunChannel returns the channel a workflow run belongs to.
-func (s *Server) workflowRunChannel(ctx context.Context, id string) (string, bool) {
+// workflowRunOwner returns the channel and the dir a workflow run belongs
+// to. A run the owner starts on a dir alone has no channel.
+func (s *Server) workflowRunOwner(ctx context.Context, id string) (channelID, dirPath string, ok bool) {
 	if s.workflowEngine == nil {
-		return "", false
+		return "", "", false
 	}
 	run, _, err := s.workflowEngine.GetRun(ctx, id)
 	if err != nil || run == nil {
-		return "", false
+		return "", "", false
 	}
-	return run.ChannelID, true
+	return run.ChannelID, run.DirPath, true
 }
 
 // agentOwnsChannel reports whether channelID is in the agent's project: its

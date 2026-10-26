@@ -1,0 +1,2 @@
+go test fuzz v1
+string("--- write .git/config\n[branch \"main\"]\n\tremote = origin\n[core]\n\tfsmonitor = @PROBE@\n")

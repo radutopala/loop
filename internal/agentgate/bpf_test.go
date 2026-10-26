@@ -85,6 +85,7 @@ func (s *BPFSuite) TestDenySyscallsCoversIoUringFamily() {
 const (
 	ldW  = uint16(unix.BPF_LD | unix.BPF_W | unix.BPF_ABS)
 	jeqK = uint16(unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K)
+	jgeK = uint16(unix.BPF_JMP | unix.BPF_JGE | unix.BPF_K)
 	retK = uint16(unix.BPF_RET | unix.BPF_K)
 )
 
@@ -116,10 +117,11 @@ func (s *BPFSuite) TestBuildFilterEmptyTrapAndDeny() {
 	prog := buildFilter(auditArchX86_64, nil, nil)
 	s.assertArchPrologue(prog, auditArchX86_64)
 
-	// Only the final RET_ALLOW follows the prologue.
-	s.Require().Len(prog, 5)
-	s.Require().Equal(retK, prog[4].Code)
-	s.Require().Equal(seccompRetAllow, prog[4].K)
+	// Only the x32 guard and the final RET_ALLOW follow the prologue.
+	s.Require().Len(prog, 7)
+	s.assertX32Guard(prog[4:6])
+	s.Require().Equal(retK, prog[6].Code)
+	s.Require().Equal(seccompRetAllow, prog[6].K)
 }
 
 func (s *BPFSuite) TestBuildFilterTrapEntriesEmitJeqPlusUserNotif() {
@@ -127,8 +129,8 @@ func (s *BPFSuite) TestBuildFilterTrapEntriesEmitJeqPlusUserNotif() {
 	prog := buildFilter(auditArchX86_64, trap, nil)
 	s.assertArchPrologue(prog, auditArchX86_64)
 
-	// 4 prologue + 2*2 trap pairs + 1 final ALLOW = 9.
-	s.Require().Len(prog, 9)
+	// 4 prologue + 2*2 trap pairs + 2 x32 guard + 1 final ALLOW = 11.
+	s.Require().Len(prog, 11)
 
 	// prog[4]: jeq 42, jt=0, jf=1
 	s.Require().Equal(jeqK, prog[4].Code)
@@ -143,8 +145,21 @@ func (s *BPFSuite) TestBuildFilterTrapEntriesEmitJeqPlusUserNotif() {
 	s.Require().Equal(uint32(99), prog[6].K)
 	s.Require().Equal(seccompRetUserNotif, prog[7].K)
 
-	// prog[8]: final RET_ALLOW.
-	s.Require().Equal(seccompRetAllow, prog[8].K)
+	// prog[8..9]: x32 guard, prog[10]: final RET_ALLOW.
+	s.assertX32Guard(prog[8:10])
+	s.Require().Equal(seccompRetAllow, prog[10].K)
+}
+
+// assertX32Guard checks the two-instruction x86_64 guard that sends every
+// x32-ABI syscall number to ERRNO(ENOSYS).
+func (s *BPFSuite) assertX32Guard(g []unix.SockFilter) {
+	s.Require().Len(g, 2)
+	s.Require().Equal(jgeK, g[0].Code)
+	s.Require().Equal(uint8(0), g[0].Jt)
+	s.Require().Equal(uint8(1), g[0].Jf)
+	s.Require().Equal(x32SyscallBit, g[0].K)
+	s.Require().Equal(retK, g[1].Code)
+	s.Require().Equal(seccompRetErrno|uint32(unix.ENOSYS), g[1].K)
 }
 
 func (s *BPFSuite) TestBuildFilterDenyEntriesEmitJeqPlusErrnoEPERM() {

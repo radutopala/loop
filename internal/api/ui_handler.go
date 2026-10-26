@@ -155,8 +155,9 @@ func (s *Server) handleRunUICommand(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	asked := slices.Clone(steps)
 	s.uiSideChatsToParents(r.Context(), &req, steps)
-	if msg := s.uiAgentRefusal(r, steps); msg != "" {
+	if msg := s.uiAgentRefusal(r, asked, steps); msg != "" {
 		http.Error(w, msg, http.StatusForbidden)
 		return
 	}
@@ -181,7 +182,34 @@ func parseUICommand(w http.ResponseWriter, r *http.Request) (uiCommandRequest, [
 			return req, nil, false
 		}
 	}
+	if msg := uiStepKeysRespelled(req.Steps); msg != "" {
+		http.Error(w, msg, http.StatusBadRequest)
+		return req, nil, false
+	}
 	return req, steps, true
+}
+
+// uiStepKeys are the keys of a step the daemon reads, uiStep's.
+var uiStepKeys = []string{"op", "pane", "panel", "channel_id"}
+
+// uiStepKeysRespelled returns why steps spell a key the daemon reads some
+// other way, or "" when they don't. encoding/json matches a key to uiStep
+// case-insensitively, keeping the last match, but the window reads the key
+// as written: {"channel_id":"other","Channel_ID":"own"} would have the daemon
+// check one channel and the window open the other.
+func uiStepKeysRespelled(steps json.RawMessage) string {
+	var raw []map[string]json.RawMessage
+	_ = json.Unmarshal(steps, &raw) // parseUICommand read them as objects
+	for _, step := range raw {
+		for k := range step {
+			for _, key := range uiStepKeys {
+				if k != key && strings.EqualFold(k, key) {
+					return fmt.Sprintf("step key %q must be written %q", k, key)
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // uiSideChatsToParents has a select_channel to a side chat open the side
@@ -294,8 +322,10 @@ func paneRef(pane string) (int, bool) {
 
 // uiAgentRefusal returns why an agent may not run steps, or "" when it may.
 // An agent drives a window only in its own project: its command opens one of
-// the project's channels first, and opens no other.
-func (s *Server) uiAgentRefusal(r *http.Request, steps []uiStep) string {
+// the project's channels first, and opens no other. steps are judged as they
+// will run, side chats moved to their parents; a refusal names the channel
+// as asked, so it shows nothing of another project's the agent didn't name.
+func (s *Server) uiAgentRefusal(r *http.Request, asked, steps []uiStep) string {
 	if !isAgentRequest(r) {
 		return ""
 	}
@@ -303,13 +333,13 @@ func (s *Server) uiAgentRefusal(r *http.Request, steps []uiStep) string {
 	if steps[0].Op != "select_channel" {
 		return "an agent's command starts with select_channel, to a channel of its project"
 	}
-	for _, step := range steps {
+	for i, step := range steps {
 		switch {
 		case step.Op != "select_channel":
 		case step.ChannelID == "":
 			return "an agent's select_channel needs a channel_id"
 		case !s.agentOwnsChannel(r.Context(), p, step.ChannelID):
-			return "channel " + step.ChannelID + " is outside this agent's project"
+			return "channel " + asked[i].ChannelID + " is outside this agent's project"
 		}
 	}
 	return ""

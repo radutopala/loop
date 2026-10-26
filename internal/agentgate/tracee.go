@@ -33,8 +33,9 @@ type Tracee interface {
 	// /proc/<pid>/fd, so the caller can treat vanished tracees as deny-closed.
 	ResolveDirfd(dirfd int32) (string, error)
 
-	// EvalSymlinks returns the fully-dereferenced path. On error (broken
-	// symlink, permission, loop), returns (path, err) — the caller denies.
+	// EvalSymlinks returns the fully-dereferenced path. A missing last
+	// component resolves to where a create would put it. On error (missing
+	// parent, permission, loop), returns (path, err).
 	EvalSymlinks(path string) (string, error)
 
 	// Creds returns the tracee's filesystem uid and gid — the ids the

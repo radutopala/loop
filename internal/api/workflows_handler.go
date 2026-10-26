@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -77,6 +78,20 @@ func (s *Server) handleStartWorkflowRun(w http.ResponseWriter, r *http.Request) 
 		ParentDirPath: parentDirPath,
 		Inputs:        req.Inputs,
 	})
+	if errors.Is(err, workflow.ErrWorkflowNotFound) {
+		msg := err.Error()
+		// Untrusted, a project's new workflows don't exist yet: say where
+		// to let them in. A worktree's trust is its root checkout's.
+		trustDir := req.DirPath
+		if parentDirPath != "" {
+			trustDir = parentDirPath
+		}
+		if trustDir != "" && s.projectTrustPending(trustDir) {
+			msg += " (the project config has changes waiting for your trust in Settings → Project)"
+		}
+		http.Error(w, msg, http.StatusNotFound)
+		return
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -186,8 +201,12 @@ func (s *Server) handleListWorkflowRuns(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	shows := s.listingShows(r, channelID)
 	resp := make([]workflowRunResponse, 0, len(runs))
 	for _, run := range runs {
+		if !shows(run.ChannelID) {
+			continue
+		}
 		var ch *db.Channel
 		if channelMap != nil {
 			ch = resolveNamedChannel(channelMap, run.ChannelID)
@@ -420,7 +439,7 @@ func (s *Server) handleModifyWorkflow(w http.ResponseWriter, r *http.Request) {
 	defer s.lockConfig(configPath, "workflows")()
 
 	// Read existing config.
-	configData, err := s.sys.ReadFile(configPath)
+	configData, err := s.readScopedConfig(req.Scope, configPath)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			http.Error(w, "failed to read config file", http.StatusInternalServerError)
@@ -501,9 +520,15 @@ func (s *Server) handleModifyWorkflow(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to serialize config", http.StatusInternalServerError)
 		return
 	}
-	if err := s.sys.WriteFile(configPath, append(out, '\n'), 0644); err != nil {
+	out = append(out, '\n')
+	if err := s.writeScopedConfig(req.Scope, configPath, out); err != nil {
 		http.Error(w, "failed to write config file", http.StatusInternalServerError)
 		return
+	}
+	// Project workflows need trust: the owner's own change keeps a trusted
+	// project trusted, an agent's waits for the owner.
+	if req.Scope == "project" && s.projectTrust != nil && !isAgentRequest(r) {
+		s.keepProjectTrust(filepath.Dir(filepath.Dir(configPath)), configData, out)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

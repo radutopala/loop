@@ -626,6 +626,19 @@ func (s *ServerSuite) TestApplyLearnProposalConfigErrors() {
 		require.Equal(s.T(), db.LearnFailed, status)
 		require.Equal(s.T(), "loading config failed", errText)
 	})
+	s.Run("rename fails", func() {
+		s.SetupTest()
+		dir := s.T().TempDir()
+		path := filepath.Join(dir, ".loop", "config.json")
+		s.srv.sys = s.sys
+		s.sys.Override("ReadFile", path).Return(nil, os.ErrNotExist)
+		s.sys.On("Rename", path+".tmp", path).Return(os.ErrPermission)
+		s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: dir}, nil)
+		status, errText := s.applyProposal(db.LearnKindMount, `{"mount":"a:b"}`)
+		require.Equal(s.T(), db.LearnFailed, status)
+		require.Contains(s.T(), errText, "replacing "+path)
+		s.sys.AssertCalled(s.T(), "Remove", path+".tmp")
+	})
 }
 
 // TestPreviewLearnProposal shows the edit apply would make as a diff, and
@@ -747,6 +760,15 @@ func (g *gatedReadSystem) ReadFile(name string) ([]byte, error) {
 		<-g.release
 	}
 	return g.serverSystem.ReadFile(name)
+}
+
+// ReadFileIn is how the edit reads the project config.
+func (g *gatedReadSystem) ReadFileIn(root, name string) ([]byte, error) {
+	if name == g.path {
+		g.reads <- struct{}{}
+		<-g.release
+	}
+	return g.serverSystem.ReadFileIn(root, name)
 }
 
 // TestApplyLearnConfigConcurrent applies two proposals to the same config

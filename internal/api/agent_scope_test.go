@@ -65,9 +65,13 @@ func (s *AgentScopeSuite) SetupTest() {
 	s.scheduler.On("GetTask", mock.Anything, int64(5)).Return(&db.ScheduledTask{ChannelID: "ch1"}, nil).Maybe()
 	s.scheduler.On("GetTask", mock.Anything, int64(6)).Return(&db.ScheduledTask{ChannelID: "ch3"}, nil).Maybe()
 	s.scheduler.On("GetTask", mock.Anything, int64(7)).Return(nil, errors.New("no task")).Maybe()
+	s.scheduler.On("GetTask", mock.Anything, int64(8)).Return(&db.ScheduledTask{}, nil).Maybe()
 
 	s.workflows.On("GetRun", mock.Anything, "r1").Return(&db.WorkflowRun{ChannelID: "ch2"}, nil, nil).Maybe()
 	s.workflows.On("GetRun", mock.Anything, "r3").Return(&db.WorkflowRun{ChannelID: "ch3"}, nil, nil).Maybe()
+	s.workflows.On("GetRun", mock.Anything, "dir-own").Return(&db.WorkflowRun{DirPath: "/proj/sub"}, nil, nil).Maybe()
+	s.workflows.On("GetRun", mock.Anything, "dir-other").Return(&db.WorkflowRun{DirPath: "/home/u"}, nil, nil).Maybe()
+	s.workflows.On("GetRun", mock.Anything, "nowhere").Return(&db.WorkflowRun{}, nil, nil).Maybe()
 	s.workflows.On("GetRun", mock.Anything, mock.Anything).Return(nil, nil, errors.New("no run")).Maybe()
 
 	s.sys.On("EvalSymlinks", "/proj/link").Return("/etc", nil).Maybe()
@@ -118,10 +122,16 @@ func (s *AgentScopeSuite) TestGuard() {
 		{name: "other project task", tok: "agent", method: "DELETE", target: "/api/tasks/6", want: 403},
 		{name: "task lookup fails", tok: "agent", method: "GET", target: "/api/tasks/7", want: 403, wantMsg: "unknown task"},
 		{name: "task id not a number", tok: "agent", method: "GET", target: "/api/tasks/abc", want: 403, wantMsg: "unknown task"},
+		{name: "task with no channel", tok: "agent", method: "DELETE", target: "/api/tasks/8", want: 403, wantMsg: "task 8 is outside"},
 
 		{name: "own run", tok: "agent", method: "GET", target: "/api/workflows/runs/r1", want: 200},
 		{name: "other project run", tok: "agent", method: "POST", target: "/api/workflows/runs/r3/cancel", want: 403},
 		{name: "unknown run", tok: "agent", method: "GET", target: "/api/workflows/runs/nope", want: 403, wantMsg: "unknown workflow run"},
+		// A run the owner started on a dir alone has no channel: its dir
+		// decides, and one with neither is no agent's.
+		{name: "run on a dir in the project", tok: "agent", method: "GET", target: "/api/workflows/runs/dir-own", want: 200},
+		{name: "run on another dir", tok: "agent", method: "POST", target: "/api/workflows/runs/dir-other/cancel", want: 403, wantMsg: "workflow run dir-other is outside"},
+		{name: "run with no channel or dir", tok: "agent", method: "DELETE", target: "/api/workflows/runs/nowhere", want: 403, wantMsg: "workflow run nowhere is outside"},
 
 		{name: "query channel", tok: "agent", method: "GET", target: "/api/workflows/runs?channel_id=ch3", want: 403},
 		{name: "query dir in project", tok: "agent", method: "GET", target: "/api/channels?dir_path=/proj/sub", want: 200},
@@ -144,6 +154,10 @@ func (s *AgentScopeSuite) TestGuard() {
 
 		{name: "project bash shortcut", tok: "agent", method: "POST", target: "/api/bash-shortcuts", body: `{"scope":"project","channel_id":"ch1"}`, want: 200},
 		{name: "global bash shortcut", tok: "agent", method: "POST", target: "/api/bash-shortcuts", body: `{"scope":"global"}`, want: 403, wantMsg: "project bash shortcuts"},
+		{name: "project workflow", tok: "agent", method: "POST", target: "/api/workflows", body: `{"scope":"project","channel_id":"ch1"}`, want: 200},
+		{name: "global workflow", tok: "agent", method: "POST", target: "/api/workflows", body: `{"scope":"global"}`, want: 403, wantMsg: "project workflows"},
+		{name: "workflow without scope", tok: "agent", method: "POST", target: "/api/workflows", body: `{}`, want: 403, wantMsg: "project workflows"},
+		{name: "owner global workflow", tok: "owner", method: "POST", target: "/api/workflows", body: `{"scope":"global"}`, want: 200},
 		{name: "workflow run", tok: "agent", method: "POST", target: "/api/workflows/runs", body: `{"channel_id":"ch1"}`, want: 200},
 
 		// Changing review comments, on the PR too, is held to the agent's own

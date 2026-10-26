@@ -1779,6 +1779,16 @@ func (s *ReviewHandlerSuite) waitFor(cond func() bool) {
 	require.True(s.T(), cond(), "condition never satisfied")
 }
 
+// runDone reports whether channelID has no review run in flight. A run
+// marks its session ready before it unregisters, so a test that starts
+// another run waits for both, or the next one coalesces into this one.
+func (s *ReviewHandlerSuite) runDone(channelID string) bool {
+	s.srv.review.mu.Lock()
+	defer s.srv.review.mu.Unlock()
+	_, ok := s.srv.review.active[channelID]
+	return !ok
+}
+
 func (s *ReviewHandlerSuite) wireReadySession() {
 	s.rs.Put("ch1", &review.Session{
 		PR: &githubapi.PRInfo{
@@ -2009,7 +2019,7 @@ func (s *ReviewHandlerSuite) TestRunAttachesTranscriptToItsFindings() {
 		s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
 		require.Equal(s.T(), http.StatusAccepted, w.Code)
 		<-runner.done
-		s.waitFor(func() bool { return s.rs.Get("ch1").Status == review.StatusReady })
+		s.waitFor(func() bool { return s.rs.Get("ch1").Status == review.StatusReady && s.runDone("ch1") })
 	}
 	// Keyed by the run's CWD — the worktree, not the channel's dir — because
 	// that is where Claude actually wrote the transcripts.
@@ -2053,7 +2063,7 @@ func (s *ReviewHandlerSuite) TestRunTranscriptEdgeCases() {
 			s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
 			require.Equal(s.T(), http.StatusAccepted, w.Code)
 			<-runner.done
-			s.waitFor(func() bool { return s.rs.Get("ch1").Status == tc.status })
+			s.waitFor(func() bool { return s.rs.Get("ch1").Status == tc.status && s.runDone("ch1") })
 			c, _ := s.rs.FindComment("ch1", "f1")
 			require.Equal(s.T(), tc.want, c.Transcripts)
 		})

@@ -123,10 +123,59 @@ func (s *ServerSuite) TestStartWorkflowRun_EngineError() {
 	s.srv.SetWorkflowEngine(wfe)
 	defer func() { s.srv.workflowEngine = nil }()
 
-	wfe.On("StartRun", mock.Anything, mock.Anything).Return("", errors.New("workflow not found: nope"))
+	wfe.On("StartRun", mock.Anything, mock.Anything).Return("", errors.New("boom"))
 
 	rec := s.testRequest("POST", "/api/workflows/runs", `{"workflow_name":"nope"}`)
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+}
+
+func (s *ServerSuite) TestStartWorkflowRun_NotFound() {
+	notFound := fmt.Errorf("%w: nope", workflow.ErrWorkflowNotFound)
+	hint := "waiting for your trust in Settings → Project"
+	worktree := func() {
+		s.store.On("GetChannel", mock.Anything, "wt-1").Return(&db.Channel{
+			ChannelID: "wt-1", DirPath: "/worktrees/wt-1", Worktree: true, ParentID: "ch-1",
+		}, nil)
+	}
+	tests := []struct {
+		name   string
+		config string // the project's config; "" for none
+		setup  func()
+		body   string
+		hinted bool
+	}{
+		{name: "no project", body: `{"workflow_name":"nope"}`},
+		{name: "trusted project", body: `{"workflow_name":"nope","channel_id":"ch-1"}`},
+		{name: "untrusted project", config: `{"workflows": [{"name": "nope"}]}`, body: `{"workflow_name":"nope","channel_id":"ch-1"}`, hinted: true},
+		{name: "worktree of an untrusted project", config: `{"workflows": [{"name": "nope"}]}`, setup: worktree, body: `{"workflow_name":"nope","channel_id":"wt-1"}`, hinted: true},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.store.ExpectedCalls = nil
+			dir, cfgDir := s.T().TempDir(), s.T().TempDir()
+			s.srv.projectTrust = config.NewTrustStoreIn(func() (string, error) { return cfgDir, nil })
+			if tt.config != "" {
+				s.writeProject(dir, tt.config)
+			}
+			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: dir}, nil)
+			if tt.setup != nil {
+				tt.setup()
+			}
+			wfe := new(MockWorkflowEngine)
+			s.srv.SetWorkflowEngine(wfe)
+			defer func() { s.srv.workflowEngine = nil }()
+			wfe.On("StartRun", mock.Anything, mock.Anything).Return("", notFound)
+
+			rec := s.testRequest("POST", "/api/workflows/runs", tt.body)
+			require.Equal(s.T(), http.StatusNotFound, rec.Code)
+			require.Contains(s.T(), rec.Body.String(), "workflow not found: nope")
+			if tt.hinted {
+				require.Contains(s.T(), rec.Body.String(), hint)
+			} else {
+				require.NotContains(s.T(), rec.Body.String(), hint)
+			}
+		})
+	}
 }
 
 func (s *ServerSuite) TestGetWorkflowRun_Success() {

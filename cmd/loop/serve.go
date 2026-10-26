@@ -457,12 +457,16 @@ func (a *app) serve() error {
 	// tracked in the fs_migrations table alongside schema_migrations.
 	if w, ok := store.(interface{ WriterDB() *sql.DB }); ok {
 		if writer := w.WriterDB(); writer != nil {
+			trust := config.NewTrustStoreIn(a.userConfigDir)
 			if err := a.fsMigrateRun(context.Background(), writer, &fsmigrate.Ctx{
-				Sys:                a.sys,
-				LoopDir:            cfg.LoopDir,
-				Version:            a.version,
-				ProjectDirs:        projectDirs(context.Background(), store, logger),
-				AdoptProjectConfig: config.NewTrustStoreIn(a.userConfigDir).Adopt,
+				Sys:                        a.sys,
+				LoopDir:                    cfg.LoopDir,
+				Version:                    a.version,
+				ProjectDirs:                projectDirs(context.Background(), store, logger),
+				ProjectSys:                 func(dir string) fsmigrate.System { return osutil.RootFS{Root: dir} },
+				AdoptProjectConfig:         trust.Adopt,
+				AdoptProjectWorkflows:      trust.AdoptWorkflows,
+				AdoptProjectContainerImage: trust.AdoptContainerImage,
 			}); err != nil {
 				return fmt.Errorf("running fs migrations: %w", err)
 			}
@@ -807,6 +811,7 @@ func (a *app) serve() error {
 	listChildProjects := childProjectsLister(store, cfg, config.LoadProjectConfig)
 	childImages := container.NewChildImageManager(dockerClient, cfg.ContainerImage,
 		listChildProjects, lifecycleMgr.BeginBuild, logger)
+	childImages.SetBuildTrust(config.NewTrustStoreIn(a.userConfigDir))
 	lifecycleMgr.SetReclaimScope(reclaimScope(store, cfg, listChildProjects))
 	lifecycleMgr.SetChildRebuilder(childImages.RebuildStale)
 	runner.SetImageGate(lifecycleMgr, a.version, cfg.ContainerImage)
@@ -845,7 +850,7 @@ func (a *app) serve() error {
 	if plug != nil {
 		wfOpts = append(wfOpts, workflow.WithPlugins(workflowPlugins{svc: plug.service}))
 	}
-	wfEngine := workflow.NewEngine(store, runner, bashRunner, eventsHub, workflowsFromConfig(cfg, reloadConfig), cfg.LoopDir, cfg.WorkflowConcurrency, logger, wfOpts...)
+	wfEngine := workflow.NewEngine(store, runner, bashRunner, eventsHub, workflowsFromConfig(cfg, reloadConfig, config.NewProjectLoader(config.NewTrustStoreIn(a.userConfigDir))), cfg.LoopDir, cfg.WorkflowConcurrency, logger, wfOpts...)
 	if err := wfEngine.RecoverRuns(ctx); err != nil {
 		logger.Error("failed to recover workflow runs", "error", err)
 	}
@@ -1152,9 +1157,10 @@ func qualityMetricsLoader(cfg *config.Config, reload func() (*config.Config, err
 // workflowsFromConfig returns a function that loads workflows from the
 // latest config, merging project-level config when dirPath is provided.
 // When parentDirPath is set (worktree channels), uses three-layer merging:
-// global → parent project → worktree project.
+// global → parent project → worktree project. Project workflows apply
+// once loader's trust store trusts them.
 // Falls back to the initial config on reload error.
-func workflowsFromConfig(cfg *config.Config, reload func() (*config.Config, error)) func(dirPath, parentDirPath string) []config.WorkflowDef {
+func workflowsFromConfig(cfg *config.Config, reload func() (*config.Config, error), loader *config.Loader) func(dirPath, parentDirPath string) []config.WorkflowDef {
 	return func(dirPath, parentDirPath string) []config.WorkflowDef {
 		base := cfg
 		if fresh, err := reload(); err == nil {
@@ -1162,12 +1168,12 @@ func workflowsFromConfig(cfg *config.Config, reload func() (*config.Config, erro
 		}
 		if parentDirPath != "" && dirPath != "" {
 			// Worktree channel: global → parent project → worktree project
-			if merged, err := config.LoadWorktreeProjectConfig(dirPath, parentDirPath, base); err == nil {
+			if merged, err := loader.LoadWorktreeProject(dirPath, parentDirPath, base); err == nil {
 				return merged.Workflows
 			}
 		} else if dirPath != "" {
 			// Regular channel/thread: global → project
-			if merged, err := config.LoadProjectConfig(dirPath, base); err == nil {
+			if merged, err := loader.LoadProject(dirPath, base); err == nil {
 				return merged.Workflows
 			}
 		}

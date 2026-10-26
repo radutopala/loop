@@ -662,18 +662,22 @@ func localhostToDockerHost(v string) string {
 }
 
 // writeMCPConfig creates host directories and writes the per-channel MCP
-// config file. Returns the config file path.
+// config file. Returns the config file path. The .loop dir and the file stay
+// in workDir: the agent writes there, and a symlink it planted can't turn
+// the write onto a host file.
 func (r *DockerRunner) writeMCPConfig(workDir, channelID, apiURL, authorID, agentID string, mcpArgs []string, cfg *config.Config) (string, error) {
-	for _, dir := range []string{workDir, filepath.Join(workDir, ".loop")} {
-		if err := r.sys.MkdirAll(dir, 0o755); err != nil {
-			return "", fmt.Errorf("creating host directory %s: %w", dir, err)
-		}
+	if err := r.sys.MkdirAll(workDir, 0o755); err != nil {
+		return "", fmt.Errorf("creating host directory %s: %w", workDir, err)
+	}
+	loopDir := filepath.Join(workDir, ".loop")
+	if err := r.sys.MkdirAllIn(workDir, loopDir, 0o755); err != nil {
+		return "", fmt.Errorf("creating host directory %s: %w", loopDir, err)
 	}
 
 	mcpConfigPath := mcpConfigPathForAgent(workDir, channelID, agentID)
 	mcpCfg := buildMCPConfig(channelID, apiURL, workDir, authorID, agentID, mcpArgs, cfg.Memory.Enabled, cfg.Browser.Enabled, cfg.MCPServers)
 	mcpJSON, _ := json.MarshalIndent(mcpCfg, "", "  ")
-	if err := r.sys.WriteFile(mcpConfigPath, mcpJSON, 0o644); err != nil {
+	if err := r.sys.WriteFileIn(workDir, mcpConfigPath, mcpJSON, 0o644); err != nil {
 		return "", fmt.Errorf("writing mcp config: %w", err)
 	}
 	return mcpConfigPath, nil

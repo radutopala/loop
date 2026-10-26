@@ -29,6 +29,8 @@ func (s *ConfigSuite) SetupTest() {
 		},
 		readFile: os.ReadFile,
 	}
+	// Project reads go through readFile, which the tests swap in.
+	s.loader.readIn = func(_, path string) ([]byte, error) { return s.loader.readFile(path) }
 }
 
 func (s *ConfigSuite) minimalJSON() []byte {

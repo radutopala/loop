@@ -1,0 +1,2 @@
+go test fuzz v1
+string("--- write evil.cfg\n[core]\n\tfsmonitor = @PROBE@\n--- mv evil.cfg .git/config\n")

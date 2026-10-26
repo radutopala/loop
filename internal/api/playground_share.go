@@ -23,7 +23,9 @@ type shareEntry struct {
 	Name      string `json:"name"`
 	Scope     string `json:"scope"`
 	ChannelID string `json:"channel_id"`
-	AbsDir    string `json:"-"` // resolved absolute dir; never serialized to clients
+	AbsDir    string `json:"-"` // the playground's dir, its identity; never serialized to clients
+
+	loc playgroundLoc // where it's served from, reopened per request
 }
 
 // shareStore holds the active shares, keyed by opaque token. Safe for
@@ -37,14 +39,15 @@ func newShareStore() *shareStore {
 	return &shareStore{shares: map[string]shareEntry{}}
 }
 
-// add registers (or returns the existing) share for a playground and returns
-// its token. Idempotent per resolved absolute dir (absDir): the same physical
+// add registers (or returns the existing) share for the playground at loc and
+// returns its token. Idempotent per dir (loc.dir()): the same physical
 // playground shared from different channels/threads/panels — including a
 // project playground shared from multiple threads of the same project, which
 // all resolve to the same dir — returns the same token rather than stacking
 // duplicate tunnels. (Global playgrounds always resolve to one dir; worktree
 // threads resolve to distinct dirs, so those remain separate shares.)
-func (st *shareStore) add(name, scope, channelID, absDir string) string {
+func (st *shareStore) add(name, scope, channelID string, loc playgroundLoc) string {
+	absDir := loc.dir()
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	for tok, e := range st.shares {
@@ -53,7 +56,7 @@ func (st *shareStore) add(name, scope, channelID, absDir string) string {
 		}
 	}
 	tok := newShareToken(name, scope)
-	st.shares[tok] = shareEntry{Token: tok, Name: name, Scope: scope, ChannelID: channelID, AbsDir: absDir}
+	st.shares[tok] = shareEntry{Token: tok, Name: name, Scope: scope, ChannelID: channelID, AbsDir: absDir, loc: loc}
 	return tok
 }
 
@@ -130,20 +133,29 @@ func (s *playgroundService) handlePlaygroundShare(w http.ResponseWriter, r *http
 		http.Error(w, "name is required", http.StatusBadRequest)
 		return
 	}
-	pgDir, err := s.resolvePlaygroundDir(r, name)
+	loc, err := s.resolvePlaygroundDir(r, name)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// Refuse up front a playground that leads outside its base; the serve
+	// routes reopen it on every request and would refuse it anyway.
+	pg, ok := openPlayground(w, loc, http.StatusBadRequest)
+	if !ok {
+		return
+	}
+	if pg != nil {
+		pg.Close()
+	}
 	scope, channelID := playgroundScopeFromRequest(r)
 
-	token := s.shares.add(name, scope, channelID, pgDir)
+	token := s.shares.add(name, scope, channelID, loc)
 
 	publicURL, err := s.ensureShareInfra(r.Context())
 	if err != nil {
 		// Roll back the share so a failed tunnel start doesn't leave a
 		// dangling entry that blocks teardown.
-		s.shares.removeByDir(pgDir)
+		s.shares.removeByDir(loc.dir())
 		http.Error(w, "starting tunnel: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -165,13 +177,13 @@ func (s *playgroundService) handlePlaygroundUnshare(w http.ResponseWriter, r *ht
 		http.Error(w, "name is required", http.StatusBadRequest)
 		return
 	}
-	pgDir, err := s.resolvePlaygroundDir(r, name)
+	loc, err := s.resolvePlaygroundDir(r, name)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	scope, channelID := playgroundScopeFromRequest(r)
-	s.shares.removeByDir(pgDir)
+	s.shares.removeByDir(loc.dir())
 	s.maybeStopShareInfra()
 	s.broadcastShareUpdate(name, scope, channelID, "")
 	w.WriteHeader(http.StatusNoContent)
@@ -204,13 +216,13 @@ func (s *playgroundService) handlePlaygroundShareList(w http.ResponseWriter, r *
 // and its public URL, resolving the dir so the answer is identical for every
 // channel/thread that maps to the same playground.
 func (s *playgroundService) handlePlaygroundShareStatus(w http.ResponseWriter, r *http.Request, name string) {
-	pgDir, err := s.resolvePlaygroundDir(r, name)
+	loc, err := s.resolvePlaygroundDir(r, name)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	url := ""
-	if e, ok := s.shares.lookupByDir(pgDir); ok {
+	if e, ok := s.shares.lookupByDir(loc.dir()); ok {
 		url = s.shareURL(e.Token)
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -227,37 +239,25 @@ func noStore(h http.Handler) http.Handler {
 }
 
 // handleSharedPlaygroundServe serves a shared playground's index by token.
+// The playground is reopened through its base on every request, so a dir
+// or file swapped for a symlink since it was shared can't publish anything
+// from outside it: that is a 404.
 func (s *playgroundService) handleSharedPlaygroundServe(w http.ResponseWriter, r *http.Request) {
 	e, ok := s.shares.lookup(r.PathValue("token"))
 	if !ok {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	if !s.shareDirIntact(e) {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-	s.renderPlaygroundIndex(w, e.AbsDir, "/p/"+e.Token+"/")
+	s.servePlayground(w, e.loc, "", "/p/"+e.Token+"/", http.StatusNotFound)
 }
 
-// shareDirIntact reports whether a shared playground's dir still resolves to
-// itself. AbsDir was symlink-resolved when shared, so a mismatch means a
-// component was swapped for a symlink since then.
-func (s *playgroundService) shareDirIntact(e shareEntry) bool {
-	real, err := s.realPath(e.AbsDir)
-	return err == nil && real == e.AbsDir
-}
-
-// handleSharedPlaygroundServeFile serves a shared playground's asset by token.
+// handleSharedPlaygroundServeFile serves a shared playground's asset by
+// token, the same way.
 func (s *playgroundService) handleSharedPlaygroundServeFile(w http.ResponseWriter, r *http.Request) {
 	e, ok := s.shares.lookup(r.PathValue("token"))
 	if !ok {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	if !s.shareDirIntact(e) {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-	s.servePlaygroundFile(w, e.AbsDir, r.PathValue("path"))
+	s.servePlayground(w, e.loc, r.PathValue("path"), "", http.StatusNotFound)
 }

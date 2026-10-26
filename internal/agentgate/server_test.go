@@ -1226,7 +1226,8 @@ func (s *ServerSuite) TestDispatchGuardUnguardedRenamesUsePolicy() {
 	for _, c := range cases {
 		s.Run(c.name, func() {
 			tr := &FakeTracee{Strings: map[uintptr]string{0x100: c.src, 0x200: c.dst}}
-			fs := &fakeGuardFS{}
+			// A file moved out of a git dir must be a regular file.
+			fs := &fakeGuardFS{regular: map[string]bool{c.src: true}}
 			got := s.guardedServer(tr, fs, &collectAuditor{}).Dispatch(context.Background(), Trap{
 				ID: 64, Syscall: syscallRenameat2,
 				Args: [6]uint64{atFdcwd, 0x100, atFdcwd, 0x200, c.flags},
@@ -1261,6 +1262,16 @@ func (s *ServerSuite) TestDispatchGuardTreeRenames() {
 			src:  "/w/.git/refs/heads/main.lock", dst: "/w/.git/refs/heads/main", regular: true,
 			policy: []types.FileRule{{Paths: []string{"/w/.git/refs/**"}, Operations: []string{OpCreate}, Decision: types.DecisionDeny}},
 			want:   TrapResponse{ID: 67, ErrorNum: int32(syscall.EPERM)},
+		},
+		{
+			name: "the git dir moved to a plain name is refused",
+			src:  "/w/.git", dst: "/w/gd",
+			want: TrapResponse{ID: 67, ErrorNum: int32(syscall.EPERM)},
+		},
+		{
+			name: "a submodule git dir moved out is refused",
+			src:  "/w/.git/modules/foo", dst: "/w/foo",
+			want: TrapResponse{ID: 67, ErrorNum: int32(syscall.EPERM)},
 		},
 		{
 			name: "exchange of a git dir entry is refused",

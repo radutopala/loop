@@ -464,7 +464,7 @@ func (s *ServerSuite) TestReadConfigFileWithHJSON() {
 }`
 	sys.On("ReadFile", "/some/config.json").Return([]byte(hjsonContent), nil)
 
-	resp := readConfigFile(sys, "/some/config.json")
+	resp := readConfigFile(sys.ReadFile, "/some/config.json")
 	require.Equal(s.T(), "/some/config.json", resp.Path)
 	require.Equal(s.T(), "claude-opus-4-6", resp.Content["claude_model"])
 	require.Equal(s.T(), hjsonContent, resp.Raw)
@@ -475,7 +475,7 @@ func (s *ServerSuite) TestReadConfigFileWithPlainJSON() {
 	content := `{"key":"value"}`
 	sys.On("ReadFile", "/some/config.json").Return([]byte(content), nil)
 
-	resp := readConfigFile(sys, "/some/config.json")
+	resp := readConfigFile(sys.ReadFile, "/some/config.json")
 	require.Equal(s.T(), "/some/config.json", resp.Path)
 	require.Equal(s.T(), "value", resp.Content["key"])
 	require.Equal(s.T(), content, resp.Raw)
@@ -485,7 +485,7 @@ func (s *ServerSuite) TestReadConfigFileNotFound() {
 	sys := new(testutil.MockSystem)
 	sys.On("ReadFile", "/missing/config.json").Return(nil, os.ErrNotExist)
 
-	resp := readConfigFile(sys, "/missing/config.json")
+	resp := readConfigFile(sys.ReadFile, "/missing/config.json")
 	require.Equal(s.T(), "/missing/config.json", resp.Path)
 	require.Nil(s.T(), resp.Content)
 	require.Empty(s.T(), resp.Raw)
@@ -495,7 +495,7 @@ func (s *ServerSuite) TestReadConfigFileReadError() {
 	sys := new(testutil.MockSystem)
 	sys.On("ReadFile", "/bad/config.json").Return(nil, errors.New("I/O error"))
 
-	resp := readConfigFile(sys, "/bad/config.json")
+	resp := readConfigFile(sys.ReadFile, "/bad/config.json")
 	require.Equal(s.T(), "/bad/config.json", resp.Path)
 	require.Nil(s.T(), resp.Content)
 	require.Empty(s.T(), resp.Raw)
@@ -505,7 +505,7 @@ func (s *ServerSuite) TestReadConfigFileInvalidHJSON() {
 	sys := new(testutil.MockSystem)
 	sys.On("ReadFile", "/bad/config.json").Return([]byte(`{not valid hjson at all`), nil)
 
-	resp := readConfigFile(sys, "/bad/config.json")
+	resp := readConfigFile(sys.ReadFile, "/bad/config.json")
 	require.Equal(s.T(), "/bad/config.json", resp.Path)
 	require.Nil(s.T(), resp.Content)
 	require.Equal(s.T(), `{not valid hjson at all`, resp.Raw)
@@ -517,7 +517,7 @@ func (s *ServerSuite) TestReadConfigFileInvalidJSONAfterStandardize() {
 	sys := new(testutil.MockSystem)
 	sys.On("ReadFile", "/bare/config.json").Return([]byte(`"just a string"`), nil)
 
-	resp := readConfigFile(sys, "/bare/config.json")
+	resp := readConfigFile(sys.ReadFile, "/bare/config.json")
 	require.Equal(s.T(), "/bare/config.json", resp.Path)
 	// json.Unmarshal into map[string]any fails for a bare string, so content is nil.
 	require.Nil(s.T(), resp.Content)

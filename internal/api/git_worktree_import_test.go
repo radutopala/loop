@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/osutil"
 	"github.com/radutopala/loop/internal/testutil"
 )
 
@@ -55,6 +56,31 @@ func (s *ServerSuite) TestImportWorktree_Success() {
 	ch := upsertCall.Arguments[1].(*db.Channel)
 	require.True(s.T(), ch.Worktree)
 	require.Equal(s.T(), wtPath, ch.DirPath)
+}
+
+// The worktree's .loop/config.json may be a dangling symlink out of it:
+// seeding the config doesn't create the file it points to.
+func (s *ServerSuite) TestImportWorktree_SeedStaysInTheWorktree() {
+	dir := initGitRepo(s.T())
+	wtPath := filepath.Join(dir, ".worktrees", "imp-wt")
+	cmd := exec.Command("git", "worktree", "add", "-b", "feature/import-link", wtPath)
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+	host := filepath.Join(s.T().TempDir(), "file")
+	require.NoError(s.T(), os.Mkdir(filepath.Join(wtPath, ".loop"), 0o755))
+	require.NoError(s.T(), os.Symlink(host, filepath.Join(wtPath, ".loop", "config.json")))
+
+	s.srv.sys = osutil.RealSystem{}
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: dir}, nil)
+	s.store.On("ListChannels", mock.Anything).Return(([]*db.Channel)(nil), nil)
+	s.threads.On("CreateThread", mock.Anything, "ch1", mock.Anything, "", "").Return("imp-thread-1", nil)
+	s.store.On("GetChannel", mock.Anything, "imp-thread-1").Return(&db.Channel{ChannelID: "imp-thread-1", ParentID: "ch1"}, nil)
+	s.store.On("UpsertChannel", mock.Anything, mock.Anything).Return(nil)
+
+	rec := s.testRequest("POST", "/api/worktrees/import", `{"channel_id":"ch1","worktree_path":"`+wtPath+`"}`)
+
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
+	require.NoFileExists(s.T(), host)
 }
 
 func (s *ServerSuite) TestImportWorktree_AlreadyImported() {

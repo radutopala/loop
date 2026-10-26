@@ -87,8 +87,11 @@ func (s *Server) handlePasteImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The agent can write the project's .loop, so the dir and the file are
+	// reached through the project dir as a root: a symlink planted at .loop
+	// or .loop/pastes can't send the image outside the project.
 	pastesDir := filepath.Join(dirPath, ".loop", "pastes")
-	if err := s.sys.MkdirAll(pastesDir, 0o755); err != nil {
+	if err := s.sys.MkdirAllIn(dirPath, pastesDir, 0o755); err != nil {
 		http.Error(w, "failed to create pastes directory", http.StatusInternalServerError)
 		return
 	}
@@ -96,7 +99,7 @@ func (s *Server) handlePasteImage(w http.ResponseWriter, r *http.Request) {
 	name := pasteFilename(ext)
 	absPath := filepath.Join(pastesDir, name)
 
-	if err := s.sys.WriteFile(absPath, data, 0o644); err != nil {
+	if err := s.sys.WriteFileIn(dirPath, absPath, data, 0o644); err != nil {
 		http.Error(w, "failed to write image", http.StatusInternalServerError)
 		return
 	}

@@ -129,13 +129,13 @@ func (l *Loader) loadWorktreeProjectConfig(worktreeDir, parentDir string, mainCo
 		}
 	}
 	// Then layer worktree-specific overrides on top (global → parent → worktree).
-	data, err := l.readFile(filepath.Join(worktreeDir, ".loop", "config.json"))
-	if os.IsNotExist(err) {
-		return parentMerged, nil
-	}
 	worktreeMerged, err := l.loadProjectConfig(worktreeDir, parentMerged)
 	if err != nil {
 		return nil, err
+	}
+	if worktreeMerged == parentMerged {
+		// No worktree config, nor a trusted version of one that was deleted.
+		return parentMerged, nil
 	}
 	// extra_dirs use replace semantics in loadProjectConfig, but a worktree's
 	// seeded config sets extra_dirs to the parent project dir — which would
@@ -146,6 +146,7 @@ func (l *Loader) loadWorktreeProjectConfig(worktreeDir, parentDir string, mainCo
 	// The seeded parent dir is the project the worktree belongs to, so it
 	// needs no trust: worktree configs seeded before trust existed, or
 	// rewritten by an agent, keep it.
+	data, _ := l.readIn(worktreeDir, filepath.Join(worktreeDir, ".loop", "config.json"))
 	if parentDir != "" && seedsParentDir(data, parentDir) {
 		worktreeMerged.ExtraDirs = unionExtraDirs(worktreeMerged.ExtraDirs, []string{parentDir})
 	}
@@ -222,27 +223,31 @@ func unionExtraDirs(a, b []string) []string {
 func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config, error) {
 	projectConfigPath := filepath.Join(workDir, ".loop", "config.json")
 
-	data, err := l.readFile(projectConfigPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			// No project config, use main config as-is
-			return mainConfig, nil
-		}
+	data, err := l.readIn(workDir, projectConfigPath)
+	missing := os.IsNotExist(err)
+	if err != nil && !missing {
 		return nil, fmt.Errorf("reading project config file: %w", err)
 	}
 
-	pc, err := parseProjectConfig(data)
-	if err != nil {
-		return nil, err
+	pc := &projectConfig{}
+	if !missing {
+		if pc, err = parseProjectConfig(data); err != nil {
+			return nil, err
+		}
 	}
 	// Until the owner trusts them, the fields that reach past the container
 	// keep their last trusted values. Gate rules go above the overridable
-	// built-in denies only once the owner trusts the file as it is.
+	// built-in denies only once the owner trusts the file as it is. A
+	// deleted file is a change too: the version the owner trusted stays.
 	trusted := false
 	if l.trust != nil {
 		var fields trustedFields
 		fields, trusted = l.trust.resolve(workDir, pc)
 		fields.apply(pc)
+	}
+	if missing && string(trustedFieldsOf(pc).canonical()) == "{}" {
+		// No project config, use main config as-is
+		return mainConfig, nil
 	}
 
 	// Create a copy of main config to avoid mutating it

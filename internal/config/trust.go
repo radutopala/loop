@@ -10,11 +10,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/radutopala/loop/internal/buildctx"
+	"github.com/radutopala/loop/internal/osutil"
 	"github.com/radutopala/loop/internal/unidiff"
 	"github.com/tailscale/hujson"
 )
@@ -36,8 +40,11 @@ type trustedFields struct {
 	Permissions   *jsonPermissionsConfig `json:"permissions,omitempty"`
 	Gates         *jsonGatesConfig       `json:"gates,omitempty"`
 	BashShortcuts []BashShortcut         `json:"bash_shortcuts,omitempty"`
-	Browser       *trustedBrowser        `json:"browser,omitempty"`
-	Memory        *trustedMemory         `json:"memory,omitempty"`
+	// Workflows run bash nodes on the host under workflow_bash_local, and a
+	// project workflow replaces the global one of the same name.
+	Workflows []WorkflowDef   `json:"workflows,omitempty"`
+	Browser   *trustedBrowser `json:"browser,omitempty"`
+	Memory    *trustedMemory  `json:"memory,omitempty"`
 	// AnthropicBaseURL is where the global credentials are sent.
 	AnthropicBaseURL string `json:"anthropic_base_url,omitempty"`
 	// Plugins is which plugins the project turns on or off: a plugin runs
@@ -51,6 +58,18 @@ type trustedFields struct {
 	// reads them from.
 	GitHub *trustedGitHub `json:"github,omitempty"`
 	GitLab *trustedGitLab `json:"gitlab,omitempty"`
+	// ContainerImage and ContainerImageAutobuild pick the image the agent
+	// runs in, built from the project's .loop/container when autobuild is
+	// on. The gate and the docker proxy run from inside that image, and the
+	// container gets the host's docker socket for the proxy, so an image of
+	// the agent's choosing could start without them.
+	ContainerImage          string `json:"container_image,omitempty"`
+	ContainerImageAutobuild *bool  `json:"container_image_autobuild,omitempty"`
+	// ContainerBuild is the fingerprint of the files in .loop/container,
+	// the build context of the project image. It isn't in the config file:
+	// it's read from the project dir along with it, and the image is only
+	// built from the trusted version (see ChildImageManager).
+	ContainerBuild buildctx.Files `json:"container_build,omitempty"`
 }
 
 type trustedGitHub struct {
@@ -66,9 +85,12 @@ type trustedGitLab struct {
 // driving the user's own Chrome, loading extensions from host paths, and
 // importing the host browser's cookies.
 type trustedBrowser struct {
-	Mode         string                  `json:"mode,omitempty"`
-	HostCDPPort  *int                    `json:"host_cdp_port,omitempty"`
-	Extensions   []string                `json:"extensions,omitempty"`
+	Mode        string `json:"mode,omitempty"`
+	HostCDPPort *int   `json:"host_cdp_port,omitempty"`
+	// Extensions is a pointer so an empty list, which replaces the global
+	// one and runs Chrome without extensions, stays apart from an unset one
+	// in canonical(): omitempty drops both alike.
+	Extensions   *[]string               `json:"extensions,omitempty"`
 	CookieImport *jsonCookieImportConfig `json:"cookie_import,omitempty"`
 }
 
@@ -89,10 +111,15 @@ func trustedFieldsOf(pc *projectConfig) trustedFields {
 		Permissions:   pc.Permissions,
 		Gates:         pc.Gates,
 		BashShortcuts: pc.BashShortcuts,
+		Workflows:     pc.Workflows,
 	}
 	t.AnthropicBaseURL = pc.AnthropicBaseURL
+	t.ContainerImage, t.ContainerImageAutobuild = pc.ContainerImage, pc.ContainerImageAutobuild
 	if b := pc.Browser; b != nil && (b.Mode != "" || b.HostCDPPort != nil || b.Extensions != nil || b.CookieImport != nil) {
-		t.Browser = &trustedBrowser{Mode: b.Mode, HostCDPPort: b.HostCDPPort, Extensions: b.Extensions, CookieImport: b.CookieImport}
+		t.Browser = &trustedBrowser{Mode: b.Mode, HostCDPPort: b.HostCDPPort, CookieImport: b.CookieImport}
+		if ext := b.Extensions; ext != nil {
+			t.Browser.Extensions = &ext
+		}
 	}
 	if m := pc.Memory; m != nil && len(m.Paths) > 0 {
 		t.Memory = &trustedMemory{Paths: m.Paths}
@@ -132,7 +159,9 @@ func (t trustedFields) apply(pc *projectConfig) {
 	pc.Permissions = t.Permissions
 	pc.Gates = t.Gates
 	pc.BashShortcuts = t.BashShortcuts
+	pc.Workflows = t.Workflows
 	pc.AnthropicBaseURL = t.AnthropicBaseURL
+	pc.ContainerImage, pc.ContainerImageAutobuild = t.ContainerImage, t.ContainerImageAutobuild
 	if pc.Browser != nil || t.Browser != nil {
 		if pc.Browser == nil {
 			pc.Browser = &jsonBrowserConfig{}
@@ -141,7 +170,10 @@ func (t trustedFields) apply(pc *projectConfig) {
 		if b == nil {
 			b = &trustedBrowser{}
 		}
-		pc.Browser.Mode, pc.Browser.HostCDPPort, pc.Browser.Extensions, pc.Browser.CookieImport = b.Mode, b.HostCDPPort, b.Extensions, b.CookieImport
+		pc.Browser.Mode, pc.Browser.HostCDPPort, pc.Browser.Extensions, pc.Browser.CookieImport = b.Mode, b.HostCDPPort, nil, b.CookieImport
+		if b.Extensions != nil {
+			pc.Browser.Extensions = *b.Extensions
+		}
 	}
 	if pc.Memory != nil || t.Memory != nil {
 		if pc.Memory == nil {
@@ -231,10 +263,16 @@ var trustMu sync.Mutex
 type TrustStore struct {
 	userConfigDir func() (string, error)
 	readFile      func(string) ([]byte, error)
-	writeFile     func(string, []byte, os.FileMode) error
-	mkdirAll      func(string, os.FileMode) error
-	rename        func(string, string) error
-	now           func() time.Time
+	// readIn reads a project config without following a symlink out of
+	// the project.
+	readIn func(root, path string) ([]byte, error)
+	// buildFiles fingerprints the build context of the project in dir,
+	// nil when it has none.
+	buildFiles func(dir string) (buildctx.Files, error)
+	writeFile  func(string, []byte, os.FileMode) error
+	mkdirAll   func(string, os.FileMode) error
+	rename     func(string, string) error
+	now        func() time.Time
 }
 
 // NewTrustStore returns the TrustStore of this machine's user.
@@ -248,6 +286,8 @@ func NewTrustStoreIn(userConfigDir func() (string, error)) *TrustStore {
 	return &TrustStore{
 		userConfigDir: userConfigDir,
 		readFile:      os.ReadFile,
+		readIn:        osutil.ReadFileIn,
+		buildFiles:    projectBuildFiles,
 		writeFile:     os.WriteFile,
 		mkdirAll:      os.MkdirAll,
 		rename:        os.Rename,
@@ -318,21 +358,33 @@ func (s *TrustStore) approved(dir string) (trustedFields, bool, error) {
 	return t, true, nil
 }
 
+// trustedAs reports whether a project config whose trusted fields are
+// canon is trusted as it is: they're the ones the owner last trusted
+// (approved, when ok), or the owner never trusted any and there are none.
+// Taking the fields out is a change like any other: what an agent takes out
+// can be a limit the owner put there, such as mount_gh_config: false.
+func trustedAs(canon []byte, approved trustedFields, ok bool) bool {
+	if !ok {
+		return string(canon) == "{}"
+	}
+	return bytes.Equal(approved.canonical(), canon)
+}
+
 // resolve returns the fields of pc that apply for the project in dir: pc's
 // own when they're trusted, else the last trusted ones, else none, and
 // whether pc's own apply. A project with nothing that needs trust is trusted
-// as is. An unreadable trust file trusts nothing.
+// as is, unless the owner trusted a version that had some. An unreadable
+// trust file trusts nothing.
 func (s *TrustStore) resolve(dir string, pc *projectConfig) (trustedFields, bool) {
 	cur := trustedFieldsOf(pc)
-	canon := cur.canonical()
-	if string(canon) == "{}" {
-		return cur, true
-	}
 	approved, ok, err := s.approved(dir)
-	if err != nil || !ok {
+	if err != nil {
 		return trustedFields{}, false
 	}
-	if bytes.Equal(approved.canonical(), canon) {
+	// The build context doesn't shape the config: the image builder checks
+	// it against the trusted version itself, before every build.
+	cur.ContainerBuild = approved.ContainerBuild
+	if trustedAs(cur.canonical(), approved, ok) {
 		return cur, true
 	}
 	return approved, false
@@ -341,20 +393,52 @@ func (s *TrustStore) resolve(dir string, pc *projectConfig) (trustedFields, bool
 // readProject returns the trusted fields of the project config in dir, as
 // the file has them now. A missing file has none.
 func (s *TrustStore) readProject(dir string) (trustedFields, error) {
-	data, err := s.readFile(filepath.Join(dir, ".loop", "config.json"))
-	if os.IsNotExist(err) {
-		return trustedFields{}, nil
-	}
-	if err != nil {
+	data, err := s.readIn(dir, filepath.Join(dir, ".loop", "config.json"))
+	if err != nil && !os.IsNotExist(err) {
 		return trustedFields{}, fmt.Errorf("reading project config file: %w", err)
 	}
-	return fieldsOfData(data)
+	f, err := fieldsOfData(data)
+	if err != nil {
+		return trustedFields{}, err
+	}
+	return f, s.withBuild(dir, &f)
+}
+
+// withBuild sets f's ContainerBuild to the build context in dir as it is.
+func (s *TrustStore) withBuild(dir string, f *trustedFields) error {
+	files, err := s.buildFiles(dir)
+	if err != nil {
+		return fmt.Errorf("reading the project's %s: %w", buildContextRel, err)
+	}
+	f.ContainerBuild = files
+	return nil
+}
+
+// buildContextRel is the project image's build context, in the project dir.
+var buildContextRel = filepath.Join(".loop", "container")
+
+// projectBuildFiles fingerprints the build context of the project in dir,
+// without following a link out of it. A project without one has none.
+func projectBuildFiles(dir string) (buildctx.Files, error) {
+	r, err := osutil.OpenRootIn(dir, filepath.Join(dir, buildContextRel))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	files, err := buildctx.Digest(r)
+	if len(files) == 0 {
+		return nil, err
+	}
+	return files, err
 }
 
 // MemoryPaths returns the project's memory paths that apply: the trusted
 // ones. An unreadable project config has none.
 func (s *TrustStore) MemoryPaths(dir string) []string {
-	data, err := s.readFile(filepath.Join(dir, ".loop", "config.json"))
+	data, err := s.readIn(dir, filepath.Join(dir, ".loop", "config.json"))
 	if err != nil {
 		return nil
 	}
@@ -382,7 +466,7 @@ func (s *TrustStore) Status(dir string) (TrustStatus, error) {
 	st := TrustStatus{
 		Current: indentJSON(canon),
 		Hash:    hashFields(canon),
-		Trusted: string(canon) == "{}" || (ok && bytes.Equal(approved.canonical(), canon)),
+		Trusted: trustedAs(canon, approved, ok),
 	}
 	if ok {
 		st.Approved = indentJSON(approved.canonical())
@@ -442,6 +526,86 @@ func (s *TrustStore) Adopt(dir string) error {
 	return s.record(dir, canon)
 }
 
+// AdoptWorkflows adds the workflows of the project config in dir, as they
+// are now, to what the owner trusts there: the one-time upgrade for when
+// workflows began to need trust, so projects that had them keep running
+// them. The other trusted fields stay as the owner approved them. A dir
+// whose trusted version has workflows already keeps them, and a config
+// AdoptWorkflows can't read is left for the owner to review.
+func (s *TrustStore) AdoptWorkflows(dir string) error {
+	return s.adopt(dir,
+		func(t trustedFields) bool { return len(t.Workflows) > 0 },
+		func(dst *trustedFields, src trustedFields) { dst.Workflows = src.Workflows })
+}
+
+// AdoptContainerImage is AdoptWorkflows for container_image,
+// container_image_autobuild and the build context in .loop/container, so
+// projects keep running in, and building, their image.
+func (s *TrustStore) AdoptContainerImage(dir string) error {
+	return s.adopt(dir,
+		func(t trustedFields) bool {
+			return t.ContainerImage != "" || t.ContainerImageAutobuild != nil || t.ContainerBuild != nil
+		},
+		func(dst *trustedFields, src trustedFields) {
+			dst.ContainerImage, dst.ContainerImageAutobuild = src.ContainerImage, src.ContainerImageAutobuild
+			dst.ContainerBuild = src.ContainerBuild
+		})
+}
+
+// TrustedBuild returns the build context of the project in dir as the
+// owner last trusted it, nil when that had none.
+func (s *TrustStore) TrustedBuild(dir string) (buildctx.Files, error) {
+	approved, _, err := s.approved(dir)
+	return approved.ContainerBuild, err
+}
+
+// KeepBuild keeps the project in dir trusted across Loop writing the file
+// rel of its build context with data and mode: when the project as it is
+// now is the trusted version plus just that file (or, never trusted, just
+// that file), the file joins the trusted version. Anything else that
+// changed leaves the project for the owner to review, the file included.
+func (s *TrustStore) KeepBuild(dir, rel string, data []byte, mode fs.FileMode) error {
+	trustMu.Lock()
+	defer trustMu.Unlock()
+	cur, err := s.readProject(dir)
+	if err != nil {
+		return err
+	}
+	approved, _, err := s.approved(dir)
+	if err != nil {
+		return err
+	}
+	want := maps.Clone(approved.ContainerBuild)
+	if want == nil {
+		want = buildctx.Files{}
+	}
+	want[filepath.ToSlash(rel)] = buildctx.FileDigest(data, mode)
+	approved.ContainerBuild = want
+	if !bytes.Equal(approved.canonical(), cur.canonical()) {
+		return nil
+	}
+	return s.record(dir, cur.canonical())
+}
+
+// adopt copies the fields set copies from the project config in dir into
+// what the owner trusts there, when the config has them (has) and the
+// trusted version doesn't yet. A config that can't be read is left for the
+// owner to review.
+func (s *TrustStore) adopt(dir string, has func(trustedFields) bool, set func(dst *trustedFields, src trustedFields)) error {
+	trustMu.Lock()
+	defer trustMu.Unlock()
+	cur, err := s.readProject(dir)
+	if err != nil || !has(cur) {
+		return nil
+	}
+	approved, _, err := s.approved(dir)
+	if err != nil || has(approved) {
+		return err
+	}
+	set(&approved, cur)
+	return s.record(dir, approved.canonical())
+}
+
 // Keep records an owner's change to the project config in dir, from the
 // file content before to after (nil when there was no file), and keeps the
 // project trusted when before was. The owner wrote the change, so it needs
@@ -463,15 +627,18 @@ func (s *TrustStore) Keep(dir string, before, after []byte) error {
 	if err != nil {
 		return err
 	}
-	canon := prev.canonical()
-	if string(canon) != "{}" {
-		approved, ok, err := s.approved(dir)
-		if err != nil {
-			return err
-		}
-		if !ok || !bytes.Equal(approved.canonical(), canon) {
-			return nil
-		}
+	// The owner's edit is to the config file; the build context is as it
+	// is on both sides.
+	if err := s.withBuild(dir, &prev); err != nil {
+		return err
+	}
+	next.ContainerBuild = prev.ContainerBuild
+	approved, ok, err := s.approved(dir)
+	if err != nil {
+		return err
+	}
+	if !trustedAs(prev.canonical(), approved, ok) {
+		return nil
 	}
 	return s.record(dir, next.canonical())
 }

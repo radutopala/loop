@@ -45,7 +45,8 @@ func (s *RunnerSuite) TestRunHappyPath() {
 		hasTZ := slices.ContainsFunc(cfg.Env, func(e string) bool {
 			return len(e) > 3 && e[:3] == "TZ="
 		})
-		return hasResume && hasBinds && hasHome && hasHostUser && hasHostUID && hasHostGID && hasTZ
+		pinned := slices.Equal(cfg.Entrypoint, []string{"/usr/local/bin/entrypoint.sh"})
+		return hasResume && hasBinds && hasHome && hasHostUser && hasHostUID && hasHostGID && hasTZ && pinned
 	}), testContainerName, `{"type":"result","result":"Hello! How can I help?","session_id":"sess-new-1","is_error":false}`)
 
 	resp, err := s.runner.Run(ctx, req)

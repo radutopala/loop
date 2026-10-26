@@ -1,0 +1,2 @@
+go test fuzz v1
+string("--- write README\nhello\n--- mkdir docs\n--- write docs/x.md\nx\n--- rm b.txt\n")

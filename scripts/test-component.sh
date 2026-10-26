@@ -79,6 +79,14 @@ fi
 LOOP_HOME="$TMPDIR"
 LOOP_DIR="$LOOP_HOME/.loop"
 mkdir -p "$LOOP_DIR"
+# The database stays off the shared dir: no sibling container needs it, and
+# over a host bind mount (Docker Desktop's VirtioFS) SQLite's WAL index isn't
+# shared between the daemon and the steps that seed rows into it, so the
+# daemon misses those rows and then fails with disk I/O errors (522).
+DB_DIR="$LOOP_DIR"
+if [ -f /.dockerenv ] && [ -S /var/run/docker.sock ]; then
+    DB_DIR=$(mktemp -d)
+fi
 
 # Docs-capture: make agent containers run live Claude. Reuse the real OAuth
 # token + TLS-relaxing envs (corporate MITM), seed the onboarding marker, and
@@ -178,7 +186,7 @@ cat > "$LOOP_DIR/config.json" <<EOF
 {
   "platforms": ["local"],
   $DOCS_AUTH
-  "db_path": "$LOOP_DIR/loop.db",
+  "db_path": "$DB_DIR/loop.db",
   "api_addr": ":8222",
   $AGENT_API_BLOCK
   "log_level": "warn",
@@ -303,7 +311,7 @@ TEST_RC=0
 LOOP_BASE_URL="http://localhost:8222" \
 LOOP_APP_URL="${LOOP_APP_URL:-http://localhost:5173}" \
 LOOP_PID="$LOOP_PID" \
-LOOP_DB_PATH="$LOOP_DIR/loop.db" \
+LOOP_DB_PATH="$DB_DIR/loop.db" \
 LOOP_API_TOKEN_FILE="$LOOP_API_TOKEN_FILE" \
 CHROME_CDP_URL="${CHROME_CDP_URL:-}" \
 GODOG_CONCURRENCY="${GODOG_CONCURRENCY:-1}" \

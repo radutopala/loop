@@ -489,6 +489,7 @@ func (s *RunnerSuite) TestCreateShellContainerHappyPath() {
 
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
 		return cfg.Image == "loop-agent:latest" &&
+			slices.Equal(cfg.Entrypoint, []string{"/usr/local/bin/entrypoint.sh"}) &&
 			slices.Equal(cfg.Cmd, []string{"sleep", "infinity"}) &&
 			cfg.WorkingDir == "/home/testuser/.loop/ch-1/work" &&
 			cfg.Labels["loop-channel"] == "ch-1"
@@ -1144,6 +1145,37 @@ func (s *RunnerSuite) TestClaudeCmdBuilderWritesAgentMCPConfig() {
 	require.Contains(s.T(), string(data), "agent-0")
 }
 
+// The agent can plant a symlink where loop writes a run's MCP config, or
+// make .loop one: neither write reaches the host file it points to.
+func (s *RunnerSuite) TestMCPConfigWritesStayInTheWorkDir() {
+	host := filepath.Join(s.T().TempDir(), "file")
+	require.NoError(s.T(), os.WriteFile(host, []byte("host"), 0o644))
+	cfg := &config.Config{ClaudeBinPath: "claude", LoopDir: "/home/user/.loop", APIAddr: ":8222"}
+	linked := func(at, to string) string {
+		dir := s.T().TempDir()
+		require.NoError(s.T(), os.MkdirAll(filepath.Join(dir, ".loop"), 0o755))
+		require.NoError(s.T(), os.Symlink(to, filepath.Join(dir, ".loop", at)))
+		return dir
+	}
+
+	s.runner.sys = osutil.RealSystem{}
+	_, err := s.runner.writeMCPConfig(linked("mcp-ch-1.json", host), "ch-1", "http://x", "", "", nil, cfg)
+	require.True(s.T(), osutil.IsEscape(err), "%v", err)
+
+	loopLinked := s.T().TempDir()
+	require.NoError(s.T(), os.Symlink(filepath.Dir(host), filepath.Join(loopLinked, ".loop")))
+	_, err = s.runner.writeMCPConfig(loopLinked, "ch-1", "http://x", "", "", nil, cfg)
+	require.ErrorContains(s.T(), err, "creating host directory")
+
+	builder := NewClaudeCmdBuilder(cfg, nil)
+	builder.BuildInteractiveCmd("ch-1", linked("mcp-ch-1-agent-0.json", host), "", "", "agent-0", false)
+
+	data, err := os.ReadFile(host)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "host", string(data))
+	require.NoFileExists(s.T(), filepath.Join(filepath.Dir(host), "mcp-ch-1.json"))
+}
+
 func (s *RunnerSuite) TestClaudeCmdBuilderNoAgentSkipsMCPWrite() {
 	cfg := &config.Config{
 		ClaudeBinPath: "claude",
@@ -1151,7 +1183,7 @@ func (s *RunnerSuite) TestClaudeCmdBuilderNoAgentSkipsMCPWrite() {
 	}
 	var writeCalled bool
 	builder := NewClaudeCmdBuilder(cfg, nil)
-	builder.writeFile = func(name string, data []byte, perm os.FileMode) error {
+	builder.writeFileIn = func(_, name string, data []byte, perm os.FileMode) error {
 		writeCalled = true
 		return nil
 	}

@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/radutopala/loop/internal/buildctx"
 	"github.com/radutopala/loop/internal/types"
 )
 
@@ -37,9 +38,18 @@ func (s *TrustSuite) SetupTest() {
 			}
 			return nil, os.ErrNotExist
 		},
+		readIn: func(_, p string) ([]byte, error) {
+			if b, ok := s.files[p]; ok {
+				return b, nil
+			}
+			return nil, os.ErrNotExist
+		},
 		writeFile: func(p string, b []byte, _ os.FileMode) error {
 			s.files[p] = b
 			return nil
+		},
+		buildFiles: func(dir string) (buildctx.Files, error) {
+			return memBuildFiles(s.files, dir), nil
 		},
 		mkdirAll: func(string, os.FileMode) error { return nil },
 		rename: func(from, to string) error {
@@ -56,7 +66,7 @@ func (s *TrustSuite) project(content string) {
 }
 
 func (s *TrustSuite) loader() *Loader {
-	return &Loader{readFile: s.store.readFile, trust: s.store}
+	return &Loader{readFile: s.store.readFile, readIn: s.store.readIn, trust: s.store}
 }
 
 func (s *TrustSuite) TestNothingToTrust() {
@@ -238,7 +248,14 @@ func (s *TrustSuite) TestKeep() {
 	require.NoError(s.T(), s.store.Keep("/proj", []byte(`{not hjson`), []byte(`{"mounts": ["/d:/d"]}`)))
 	require.False(s.T(), trusted())
 
-	// Nothing that needs trust before: the owner's write is trusted.
+	// Nothing that needs trust before, after the owner trusted fields that
+	// were taken out since: it was waiting for review, so it stays waiting.
+	require.NoError(s.T(), s.store.Keep("/proj", []byte(`{"claude_model": "opus"}`), []byte(`{"mounts": ["/d:/d"]}`)))
+	require.False(s.T(), trusted())
+
+	// Nothing that needs trust before, never trusted: the owner's write is
+	// trusted.
+	delete(s.files, trustPath)
 	require.NoError(s.T(), s.store.Keep("/proj", []byte(`{"claude_model": "opus"}`), []byte(`{"mounts": ["/d:/d"]}`)))
 	require.True(s.T(), trusted())
 }
@@ -320,7 +337,7 @@ func (s *TrustSuite) TestErrors() {
 	require.ErrorContains(s.T(), err, "parsing project config file")
 	s.SetupTest()
 
-	s.store.readFile = func(string) ([]byte, error) { return nil, boom }
+	s.store.readIn = func(string, string) ([]byte, error) { return nil, boom }
 	_, err = s.store.Status("/proj")
 	require.ErrorContains(s.T(), err, "reading project config file")
 	require.ErrorContains(s.T(), s.store.Trust("/proj", ""), "reading project config file")
@@ -391,6 +408,8 @@ func (s *TrustSuite) TestNewTrustStore() {
 	st := NewTrustStore()
 	require.NotNil(s.T(), st.userConfigDir)
 	require.NotNil(s.T(), st.readFile)
+	require.NotNil(s.T(), st.readIn)
+	require.NotNil(s.T(), st.buildFiles)
 	require.NotNil(s.T(), st.writeFile)
 	require.NotNil(s.T(), st.mkdirAll)
 	require.NotNil(s.T(), st.rename)
@@ -739,4 +758,194 @@ func (s *TrustSuite) TestMergeCLIConfigsOffDropsGlobalMounts() {
 	merged, err = s.loader().loadProjectConfig("/proj", main)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), global, merged.Mounts)
+}
+
+// TestProjectConfigSymlinkOut: the agent may write the project's .loop, so
+// a config.json there that a symlink leads outside the project is refused,
+// not read; one that stays inside the project still loads.
+func (s *TrustSuite) TestProjectConfigSymlinkOut() {
+	outside := filepath.Join(s.T().TempDir(), "host.json")
+	require.NoError(s.T(), os.WriteFile(outside, []byte(`{"extra_dirs": ["/host"], "memory": {"paths": ["/host"]}}`), 0o644))
+	cfgDir := s.T().TempDir()
+	newProject := func(link func(dir string) string) string {
+		dir := s.T().TempDir()
+		require.NoError(s.T(), os.MkdirAll(filepath.Join(dir, ".loop"), 0o755))
+		require.NoError(s.T(), os.Symlink(link(dir), filepath.Join(dir, ".loop", "config.json")))
+		return dir
+	}
+	tests := []struct {
+		name string
+		link func(dir string) string
+		want []string
+	}{
+		{"absolute link out", func(string) string { return outside }, nil},
+		{"relative link out", func(dir string) string {
+			rel, err := filepath.Rel(filepath.Join(dir, ".loop"), outside)
+			require.NoError(s.T(), err)
+			return rel
+		}, nil},
+		{"link inside", func(dir string) string {
+			require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "cfg.json"), []byte(`{"extra_dirs": ["/in"], "memory": {"paths": ["/in"]}}`), 0o644))
+			return "../cfg.json"
+		}, []string{"/in"}},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			dir := newProject(tc.link)
+			store := NewTrustStoreIn(func() (string, error) { return cfgDir, nil })
+			l := NewProjectLoader(nil)
+			merged, err := l.LoadProject(dir, &Config{})
+			st, statusErr := store.Status(dir)
+			if tc.want == nil {
+				require.ErrorContains(s.T(), err, "reading project config file")
+				_, err = l.LoadWorktreeProject(dir, "", &Config{})
+				require.ErrorContains(s.T(), err, "reading project config file")
+				require.ErrorContains(s.T(), statusErr, "reading project config file")
+				require.Error(s.T(), store.Trust(dir, ""))
+				require.Nil(s.T(), store.MemoryPaths(dir))
+				return
+			}
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tc.want, merged.ExtraDirs)
+			require.NoError(s.T(), statusErr)
+			require.False(s.T(), st.Trusted)
+			require.NoError(s.T(), store.Trust(dir, ""))
+			require.Equal(s.T(), tc.want, store.MemoryPaths(dir))
+		})
+	}
+}
+
+// TestAdoptWorkflows: the upgrade to workflow trust adds the workflows a
+// project has to what was trusted there before, and nothing else.
+func (s *TrustSuite) TestAdoptWorkflows() {
+	const (
+		wf       = `"workflows": [{"name": "w", "nodes": [{"id": "b", "type": "bash", "script": "id"}]}]`
+		wfLater  = `"workflows": [{"name": "w", "nodes": [{"id": "b", "type": "bash", "script": "curl x"}]}]`
+		mountsA  = `"mounts": ["/a:/a"]`
+		mountsHo = `"mounts": ["/:/host"]`
+	)
+	tests := []struct {
+		name     string
+		snapshot string // trusted before, as an older Loop recorded it; "" for none
+		config   string
+		trusted  bool
+		approved string // what's trusted after; "" when the trust file is left alone
+	}{
+		{name: "no workflows", snapshot: `{` + mountsA + `}`, config: `{` + mountsA + `}`, trusted: true},
+		{name: "workflows join the trusted fields", snapshot: `{` + mountsA + `}`, config: `{` + mountsA + `, ` + wf + `}`, trusted: true, approved: `{` + mountsA + `, ` + wf + `}`},
+		{name: "never trusted", config: `{` + wf + `}`, trusted: true, approved: `{` + wf + `}`},
+		{name: "other changes still wait", snapshot: `{` + mountsA + `}`, config: `{` + mountsHo + `, ` + wf + `}`, approved: `{` + mountsA + `, ` + wf + `}`},
+		{name: "trusted workflows are kept", snapshot: `{` + wf + `}`, config: `{` + wfLater + `}`},
+		{name: "unreadable config is left for review", snapshot: `{` + mountsA + `}`, config: `{"workflows": "not a list"}`},
+	}
+	canon := func(content string) []byte {
+		f, err := fieldsOfData([]byte(content))
+		require.NoError(s.T(), err)
+		return f.canonical()
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			if tt.snapshot != "" {
+				require.NoError(s.T(), s.store.record("/proj", canon(tt.snapshot)))
+			}
+			before := s.files[trustPath]
+			s.project(tt.config)
+			require.NoError(s.T(), s.store.AdoptWorkflows("/proj"))
+			if tt.approved == "" {
+				require.Equal(s.T(), before, s.files[trustPath], "the trust file is left alone")
+			} else {
+				got, ok, err := s.store.approved("/proj")
+				require.NoError(s.T(), err)
+				require.True(s.T(), ok)
+				require.Equal(s.T(), string(canon(tt.approved)), string(got.canonical()))
+			}
+			if tt.name == "unreadable config is left for review" {
+				return
+			}
+			st, err := s.store.Status("/proj")
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tt.trusted, st.Trusted)
+		})
+	}
+
+	s.Run("unreadable trust file", func() {
+		s.SetupTest()
+		s.project(`{` + wf + `}`)
+		s.files[trustPath] = []byte("not json")
+		require.ErrorContains(s.T(), s.store.AdoptWorkflows("/proj"), "parsing")
+	})
+}
+
+func (s *TrustSuite) TestAdoptContainerImage() {
+	const (
+		img      = `"container_image": "loop-agent:custom"`
+		imgLater = `"container_image": "evil.example.com/agent"`
+		build    = `"container_image_autobuild": true`
+		mountsA  = `"mounts": ["/a:/a"]`
+		mountsHo = `"mounts": ["/:/host"]`
+	)
+	tests := []struct {
+		name     string
+		snapshot string // trusted before, as an older Loop recorded it; "" for none
+		config   string
+		trusted  bool
+		approved string // what's trusted after; "" when the trust file is left alone
+		build    string // the project's .loop/container/Dockerfile; "" for none
+	}{
+		{name: "no image", snapshot: `{` + mountsA + `}`, config: `{` + mountsA + `}`, trusted: true},
+		{name: "image joins the trusted fields", snapshot: `{` + mountsA + `}`, config: `{` + mountsA + `, ` + img + `}`, trusted: true, approved: `{` + mountsA + `, ` + img + `}`},
+		{name: "autobuild alone", snapshot: `{` + mountsA + `}`, config: `{` + mountsA + `, ` + build + `}`, trusted: true, approved: `{` + mountsA + `, ` + build + `}`},
+		{name: "image and autobuild", config: `{` + img + `, ` + build + `}`, trusted: true, approved: `{` + img + `, ` + build + `}`},
+		{name: "other changes still wait", snapshot: `{` + mountsA + `}`, config: `{` + mountsHo + `, ` + img + `}`, approved: `{` + mountsA + `, ` + img + `}`},
+		{name: "a trusted image is kept", snapshot: `{` + img + `}`, config: `{` + imgLater + `}`},
+		{name: "a trusted autobuild keeps the image untrusted", snapshot: `{` + build + `}`, config: `{` + imgLater + `, ` + build + `}`},
+		{name: "unreadable config is left for review", snapshot: `{` + mountsA + `}`, config: `{"container_image": 1}`},
+		{name: "the build context joins", snapshot: `{` + mountsA + `}`, config: `{` + mountsA + `, ` + img + `}`, build: "FROM loop-agent\n", trusted: true, approved: `{` + mountsA + `, ` + img + `}`},
+	}
+	canon := func(content string) []byte {
+		f, err := fieldsOfData([]byte(content))
+		require.NoError(s.T(), err)
+		return f.canonical()
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			if tt.snapshot != "" {
+				require.NoError(s.T(), s.store.record("/proj", canon(tt.snapshot)))
+			}
+			before := s.files[trustPath]
+			s.project(tt.config)
+			if tt.build != "" {
+				s.files[dockerfilePath] = []byte(tt.build)
+			}
+			require.NoError(s.T(), s.store.AdoptContainerImage("/proj"))
+			if tt.approved == "" {
+				require.Equal(s.T(), before, s.files[trustPath], "the trust file is left alone")
+			} else {
+				got, ok, err := s.store.approved("/proj")
+				require.NoError(s.T(), err)
+				require.True(s.T(), ok)
+				want, err := fieldsOfData([]byte(tt.approved))
+				require.NoError(s.T(), err)
+				if tt.build != "" {
+					want.ContainerBuild = buildctx.Files{"Dockerfile": buildctx.FileDigest([]byte(tt.build), 0o644)}
+				}
+				require.Equal(s.T(), string(want.canonical()), string(got.canonical()))
+			}
+			if tt.name == "unreadable config is left for review" {
+				return
+			}
+			st, err := s.store.Status("/proj")
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tt.trusted, st.Trusted)
+		})
+	}
+
+	s.Run("unreadable trust file", func() {
+		s.SetupTest()
+		s.project(`{` + img + `}`)
+		s.files[trustPath] = []byte("not json")
+		require.ErrorContains(s.T(), s.store.AdoptContainerImage("/proj"), "parsing")
+	})
 }

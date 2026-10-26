@@ -6,8 +6,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/radutopala/loop/internal/config"
+	"github.com/radutopala/loop/internal/osutil"
 	"github.com/tailscale/hujson"
 )
 
@@ -16,6 +18,55 @@ var (
 	jsonUnmarshalFn   = json.Unmarshal
 	jsonMarshalIndent = json.MarshalIndent
 )
+
+// projectConfigFile returns dirPath's .loop/config.json for a write. The
+// .loop dir is the agent's to write, so a config.json or .loop that a
+// symlink leads outside the project is refused: written through, it would
+// change another file, such as the global config, as the project's.
+func projectConfigFile(dirPath string) (string, error) {
+	path := filepath.Join(dirPath, ".loop", "config.json")
+	if err := osutil.CheckIn(dirPath, path); err != nil {
+		return "", fmt.Errorf("project config leads outside the project: %w", err)
+	}
+	return path, nil
+}
+
+// readScopedConfig and writeScopedConfig reach a project config file, which
+// resolveConfigPath returned, through its project dir: a symlink swapped
+// into .loop after the check still can't lead them out of the project. The
+// global config is the owner's own.
+func (s *Server) readScopedConfig(scope, path string) ([]byte, error) {
+	if scope == "project" {
+		return s.sys.ReadFileIn(filepath.Dir(filepath.Dir(path)), path)
+	}
+	return s.sys.ReadFile(path)
+}
+
+// projectFS is the hjsonedit.FS of an edit of a project config: every path
+// it reaches, its temp file included, stays under the project dir root.
+type projectFS struct {
+	sys  serverSystem
+	root string
+}
+
+func (f projectFS) ReadFile(name string) ([]byte, error) { return f.sys.ReadFileIn(f.root, name) }
+func (f projectFS) WriteFile(name string, data []byte, perm os.FileMode) error {
+	return f.sys.WriteFileIn(f.root, name, data, perm)
+}
+func (f projectFS) Rename(oldpath, newpath string) error {
+	return f.sys.RenameIn(f.root, oldpath, newpath)
+}
+func (f projectFS) Remove(name string) error { return f.sys.RemoveIn(f.root, name) }
+func (f projectFS) MkdirAll(path string, perm os.FileMode) error {
+	return f.sys.MkdirAllIn(f.root, path, perm)
+}
+
+func (s *Server) writeScopedConfig(scope, path string, data []byte) error {
+	if scope == "project" {
+		return s.sys.WriteFileIn(filepath.Dir(filepath.Dir(path)), path, data, 0644)
+	}
+	return s.sys.WriteFile(path, data, 0644)
+}
 
 // resolveConfigPath returns the config file path for the given scope and
 // channel. It writes an HTTP error and returns ("", false) on failure.
@@ -31,12 +82,16 @@ func (s *Server) resolveConfigPath(w http.ResponseWriter, r *http.Request, scope
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return "", false
 		}
-		loopDir := filepath.Join(dirPath, ".loop")
-		if err := s.sys.MkdirAll(loopDir, 0755); err != nil {
+		configPath, err := projectConfigFile(dirPath)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return "", false
+		}
+		if err := s.sys.MkdirAllIn(dirPath, filepath.Dir(configPath), 0755); err != nil {
 			http.Error(w, "failed to create .loop directory", http.StatusInternalServerError)
 			return "", false
 		}
-		return filepath.Join(loopDir, "config.json"), true
+		return configPath, true
 	case "global", "":
 		home, err := s.sys.UserHomeDir()
 		if err != nil {
@@ -111,16 +166,32 @@ func (s *Server) resolveShortcutContext(w http.ResponseWriter, r *http.Request) 
 		loopDir = filepath.Join(home, ".loop")
 	}
 
-	rf := s.readFile
-	if rf == nil {
-		rf = os.ReadFile
-	}
-
 	dirs := []string{loopDir}
 	if dirPath != "" {
 		dirs = []string{filepath.Join(dirPath, ".loop"), loopDir}
 	}
+	rf := s.readFile
+	if rf == nil {
+		rf = projectFileReader(dirPath)
+	}
 	return c, projectOnly, dirs, rf, true
+}
+
+// projectFileReader reads the files a shortcut or component points at. Those
+// under the project's .loop dir, which the agent may write, are read without
+// leaving the project, so a symlink there can't serve a host file; the
+// global ~/.loop is the user's own and is read as is.
+func projectFileReader(dirPath string) func(string) ([]byte, error) {
+	if dirPath == "" {
+		return os.ReadFile
+	}
+	projectLoopDir := filepath.Join(dirPath, ".loop") + string(filepath.Separator)
+	return func(path string) ([]byte, error) {
+		if strings.HasPrefix(path, projectLoopDir) {
+			return osutil.ReadFileIn(dirPath, path)
+		}
+		return os.ReadFile(path)
+	}
 }
 
 // listShortcutItems is the generic resolution + collection loop used by both
@@ -277,7 +348,7 @@ func (s *Server) modifyShortcutEntry(w http.ResponseWriter, r *http.Request, req
 	}
 	defer s.lockConfig(configPath, "shortcuts")()
 
-	configData, err := s.sys.ReadFile(configPath)
+	configData, err := s.readScopedConfig(req.Scope, configPath)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			http.Error(w, "failed to read config file", http.StatusInternalServerError)
@@ -376,7 +447,7 @@ func (s *Server) modifyShortcutEntry(w http.ResponseWriter, r *http.Request, req
 		return
 	}
 	out = append(out, '\n')
-	if err := s.sys.WriteFile(configPath, out, 0644); err != nil {
+	if err := s.writeScopedConfig(req.Scope, configPath, out); err != nil {
 		http.Error(w, "failed to write config file", http.StatusInternalServerError)
 		return
 	}
