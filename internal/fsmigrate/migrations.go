@@ -20,7 +20,8 @@ import (
 // migrations holds all filesystem migrations in order. Position in the slice
 // is the version number (index 0 is the bootstrap placeholder, never executed).
 // Append a new entry to ship a new filesystem change; never reorder or delete
-// existing entries.
+// existing entries. fsmigrate_spec_test.go checks each one is idempotent and
+// stays inside the dirs it is handed.
 var migrations = []Migration{
 	{Description: "bootstrap"},
 	{
@@ -1036,21 +1037,24 @@ func renameNoProxyHostsAt(sys System, configPath string) error {
 		return fmt.Errorf("parsing %s: expected JSON object at top level", configPath)
 	}
 
-	legacy := objectMemberIndex(rootObj, "no_proxy_hosts")
-	if legacy < 0 {
-		return nil
-	}
-
-	if current := findObjectMember(rootObj, "no_proxy"); current != nil {
-		from, fromOK := arrayValue(&rootObj.Members[legacy].Value)
-		into, intoOK := arrayValue(current)
-		if !fromOK || !intoOK {
-			return nil
+	// A key given twice is renamed, then joined, like any other pair.
+	changed := false
+	for legacy := objectMemberIndex(rootObj, "no_proxy_hosts"); legacy >= 0; legacy = objectMemberIndex(rootObj, "no_proxy_hosts") {
+		if current := findObjectMember(rootObj, "no_proxy"); current != nil {
+			from, fromOK := arrayValue(&rootObj.Members[legacy].Value)
+			into, intoOK := arrayValue(current)
+			if !fromOK || !intoOK {
+				break
+			}
+			into.Elements = append(into.Elements, from.Elements...)
+			rootObj.Members = slices.Delete(rootObj.Members, legacy, legacy+1)
+		} else {
+			rootObj.Members[legacy].Name.Value = hujson.String("no_proxy")
 		}
-		into.Elements = append(into.Elements, from.Elements...)
-		rootObj.Members = slices.Delete(rootObj.Members, legacy, legacy+1)
-	} else {
-		rootObj.Members[legacy].Name.Value = hujson.String("no_proxy")
+		changed = true
+	}
+	if !changed {
+		return nil
 	}
 
 	if err := atomicWriteConfig(sys, configPath, v.Pack(), 0644); err != nil {
@@ -1132,7 +1136,9 @@ func moveProxiesIntoBlockAt(sys System, configPath string) error {
 		}
 		rootObj.Members = slices.Insert(rootObj.Members, first, member)
 	} else {
-		obj := block.Value.(*hujson.Object)
+		// The members moved out of the root shifted the block's slot, so it
+		// is found again rather than read through the old pointer.
+		obj := findObjectMember(rootObj, "proxies").Value.(*hujson.Object)
 		for _, m := range moved {
 			name := m.Name.Value.(hujson.Literal).String()
 			existing := findObjectMember(obj, name)
@@ -1177,7 +1183,7 @@ func dropDevChannelsKeyAt(sys System, configPath string) error {
 	}
 
 	changed := false
-	if i := objectMemberIndex(rootObj, devChannelsKey); i >= 0 {
+	for i := objectMemberIndex(rootObj, devChannelsKey); i >= 0; i = objectMemberIndex(rootObj, devChannelsKey) {
 		// The key's leading extra loses the indent of its own line; what
 		// follows it loses the rest of that line, the key's comment.
 		head := string(rootObj.Members[i].Name.BeforeExtra)

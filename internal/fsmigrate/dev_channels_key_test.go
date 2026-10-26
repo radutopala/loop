@@ -32,6 +32,11 @@ func (s *FSMigrateSuite) TestDropDevChannelsKey() {
 }`,
 		},
 		{
+			name:     "key given twice",
+			config:   `{"claude_dangerously_load_development_channels": true, "api_addr": ":8222", "claude_dangerously_load_development_channels": false}`,
+			expected: `{ "api_addr": ":8222"}`,
+		},
+		{
 			name: "comments above the key stay",
 			config: `{
   "claude_model": "claude-opus-5-5",

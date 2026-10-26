@@ -84,6 +84,16 @@ func (s *FSMigrateSuite) TestMoveProxiesIntoBlock() {
 }`,
 		},
 		{
+			name:     "a key above the block joins the block",
+			config:   `{"http_proxy": "http://old:1", "proxies": {}}`,
+			expected: `{ "proxies": {"http_proxy": "http://old:1"}}`,
+		},
+		{
+			name:     "a key above the block joins it, not the member after it",
+			config:   `{"no_proxy": ["cache"], "proxies": {"no_proxy": ["db"]}, "mounts": {}}`,
+			expected: `{ "proxies": {"no_proxy": ["db","cache"]}, "mounts": {}}`,
+		},
+		{
 			name:     "no_proxy that cannot be joined keeps the block's value",
 			config:   `{"proxies": {"no_proxy": "db"}, "no_proxy": ["cache"]}`,
 			expected: `{"proxies": {"no_proxy": "db"}}`,
