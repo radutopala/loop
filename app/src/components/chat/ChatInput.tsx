@@ -1068,7 +1068,9 @@ export function ChatInput({
       )}
       {trustPending && (
         <div data-testid="project-trust-banner" style={bannerStyle}>
-          <span style={{ flex: 1, color: colors.warning }}>Project config changed: its new mounts, extra dirs, gates and envs don't apply until you trust them</span>
+          <span style={{ flex: 1, color: colors.warning }}>
+            Project config changed: its new mounts, gates, envs, workflows, image and the other fields that reach your machine don't apply until you trust them
+          </span>
           {onReviewTrust && (
             <button data-testid="project-trust-review" onClick={onReviewTrust} style={{ ...bannerButtonStyle, color: colors.textLight }} title="Review in Settings → Project">
               Review
