@@ -6,6 +6,7 @@ import (
 
 // RingBuffer is a fixed-size circular byte buffer that is safe for
 // concurrent use. When full, new writes overwrite the oldest data.
+// Spec: output_spec_test.go.
 type RingBuffer struct {
 	mu   sync.Mutex
 	buf  []byte

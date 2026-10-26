@@ -36,6 +36,7 @@ jobs:
           - { pkg: ./internal/agentgate, target: FuzzGitGuardMatchesGit }
           - { pkg: ./internal/agentgate, target: FuzzUnwrapCommandMatchesExec }
           - { pkg: ./internal/unidiff, target: FuzzDiffAppliesWithGit }
+          - { pkg: ./internal/terminal, target: FuzzRingBufferHistory }
     steps:
       - uses: actions/checkout@v7
 

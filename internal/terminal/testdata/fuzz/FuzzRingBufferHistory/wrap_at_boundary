@@ -1,0 +1,5 @@
+go test fuzz v1
+byte('\x04')
+[]byte("abcdefghijkl")
+[]byte("\x04\x08\x0a")
+bool(false)
