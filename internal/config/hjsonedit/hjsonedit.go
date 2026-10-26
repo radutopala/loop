@@ -1,6 +1,8 @@
 // Package hjsonedit makes small edits to an HJSON config file in place: the
 // user's comments, key order and formatting survive, unlike a round trip
 // through encoding/json.
+//
+// hjsonedit_spec_test.go states and checks what an edit keeps and changes.
 package hjsonedit
 
 import (
@@ -122,12 +124,11 @@ type patchOp struct {
 // rest of path built around the new array.
 func appendOp(v *hujson.Value, path []string, item any) (patchOp, error) {
 	cur := v
-	for i, key := range path {
-		obj, ok := cur.Value.(*hujson.Object)
-		if !ok {
-			return patchOp{}, fmt.Errorf("%s is not an object", describe(path[:i]))
+	for i := range path {
+		member, err := pathMember(cur, path, i)
+		if err != nil {
+			return patchOp{}, err
 		}
-		member := findMember(obj, key)
 		if member == nil {
 			var value any = []any{item}
 			for j := len(path) - 1; j > i; j-- {
@@ -148,12 +149,11 @@ func appendOp(v *hujson.Value, path []string, item any) (patchOp, error) {
 // around value.
 func setOp(v *hujson.Value, path []string, value any) (patchOp, error) {
 	cur := v
-	for i, key := range path {
-		obj, ok := cur.Value.(*hujson.Object)
-		if !ok {
-			return patchOp{}, fmt.Errorf("%s is not an object", describe(path[:i]))
+	for i := range path {
+		member, err := pathMember(cur, path, i)
+		if err != nil {
+			return patchOp{}, err
 		}
-		member := findMember(obj, key)
 		if member == nil {
 			for j := len(path) - 1; j > i; j-- {
 				value = map[string]any{path[j]: value}
@@ -169,7 +169,7 @@ func setOp(v *hujson.Value, path []string, value any) (patchOp, error) {
 func indentAdded(v *hujson.Value, path []string, op patchOp, rootLines bool) {
 	unit := indentUnit(v)
 	switch {
-	case strings.HasSuffix(op.Path, "/-"):
+	case op.Path == pointer(path)+"/-":
 		arr := v.Find(pointer(path)).Value.(*hujson.Array)
 		placeLast(arr.Elements, &arr.AfterExtra, lineIndent(v, path), unit, rootLines, func(e *hujson.Value) *hujson.Value { return e })
 	default:
@@ -193,13 +193,17 @@ func placeLast[T any](children []T, closing *hujson.Extra, indent, unit string, 
 		return
 	}
 	child := indent + unit
-	before := string(h.BeforeExtra)
-	if i := strings.LastIndexByte(before, '\n'); i >= 0 {
-		before = before[:i]
-	}
+	// Drop the child's own line break and indentation, but no comment
+	// (a block comment can hold a newline).
+	before := strings.TrimSuffix(strings.TrimRight(string(h.BeforeExtra), " \t"), "\n")
 	h.BeforeExtra = hujson.Extra(before + "\n" + child)
 	if len(children) == 1 {
-		*closing = hujson.Extra("\n" + indent)
+		// The container was empty: keep any comment it held.
+		kept := strings.TrimSpace(string(*closing))
+		if kept != "" {
+			kept = " " + kept
+		}
+		*closing = hujson.Extra(kept + "\n" + indent)
 	}
 	value := h
 	if m, ok := any(last).(*hujson.ObjectMember); ok {
@@ -262,9 +266,8 @@ func lineIndent(v *hujson.Value, path []string) string {
 	for _, key := range path {
 		obj := cur.Value.(*hujson.Object)
 		i := memberIndex(obj, key)
-		before := string(obj.Members[i].Name.BeforeExtra)
-		if j := strings.LastIndexByte(before, '\n'); j >= 0 {
-			indent = before[j+1:]
+		if ws, ok := lastLineIndent(obj.Members[i].Name.BeforeExtra); ok {
+			indent = ws
 		}
 		cur = &obj.Members[i].Value
 	}
@@ -276,13 +279,24 @@ func lineIndent(v *hujson.Value, path []string) string {
 func indentUnit(v *hujson.Value) string {
 	if obj, ok := v.Value.(*hujson.Object); ok {
 		for _, m := range obj.Members {
-			before := string(m.Name.BeforeExtra)
-			if i := strings.LastIndexByte(before, '\n'); i >= 0 && i < len(before)-1 {
-				return before[i+1:]
+			if ws, _ := lastLineIndent(m.Name.BeforeExtra); ws != "" {
+				return ws
 			}
 		}
 	}
 	return "  "
+}
+
+// lastLineIndent returns the whitespace that starts the last line of e (a
+// comment there isn't indentation), and whether e has a newline at all.
+func lastLineIndent(e hujson.Extra) (string, bool) {
+	s := string(e)
+	i := strings.LastIndexByte(s, '\n')
+	if i < 0 {
+		return "", false
+	}
+	line := s[i+1:]
+	return line[:len(line)-len(strings.TrimLeft(line, " \t"))], true
 }
 
 // memberIndex returns the index of the named member in obj, or -1.
@@ -295,12 +309,23 @@ func memberIndex(obj *hujson.Object, name string) int {
 	return -1
 }
 
-// findMember returns the named member's value in obj, or nil.
-func findMember(obj *hujson.Object, name string) *hujson.Value {
-	if i := memberIndex(obj, name); i >= 0 {
-		return &obj.Members[i].Value
+// pathMember returns the value of path[i] in cur, the value at path[:i], or
+// nil when it has none. cur must be an object, and path[i] in it once: an
+// edit goes to the first of two members with one name, but a config load
+// reads the last.
+func pathMember(cur *hujson.Value, path []string, i int) (*hujson.Value, error) {
+	obj, ok := cur.Value.(*hujson.Object)
+	if !ok {
+		return nil, fmt.Errorf("%s is not an object", describe(path[:i]))
 	}
-	return nil
+	j := memberIndex(obj, path[i])
+	if j < 0 {
+		return nil, nil
+	}
+	if memberIndex(&hujson.Object{Members: obj.Members[j+1:]}, path[i]) >= 0 {
+		return nil, fmt.Errorf("%s is set more than once", describe(path[:i+1]))
+	}
+	return &obj.Members[j].Value, nil
 }
 
 // pointer is the RFC 6901 JSON pointer for path ("" for the top level). The

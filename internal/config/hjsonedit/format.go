@@ -180,7 +180,7 @@ func commentEnd(s string, i int) int {
 	if strings.HasPrefix(s[i:], "//") {
 		return i + strings.IndexByte(s[i:], '\n')
 	}
-	return i + strings.Index(s[i:], "*/") + len("*/")
+	return i + len("/*") + strings.Index(s[i+len("/*"):], "*/") + len("*/")
 }
 
 // hasComment reports whether e holds a comment.

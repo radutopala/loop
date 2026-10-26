@@ -1,0 +1,6 @@
+go test fuzz v1
+string("SetData")
+string("")
+bool(true)
+string("backup.recipient")
+string("\"age1example\"")

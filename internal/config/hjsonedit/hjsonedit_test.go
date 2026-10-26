@@ -168,6 +168,34 @@ func (s *HJSONEditSuite) TestAppend() {
 			item:    map[string]any{"args": []string{}, "env": map[string]any{}},
 			want:    "{\n  \"tasks\": [\n    {},\n    {\n      \"args\": [],\n      \"env\": {}\n    }\n  ]\n}\n",
 		},
+		{
+			name:    "a comment in an empty array stays",
+			initial: "{\n  \"mounts\": [ /* none yet */ ]\n}\n",
+			path:    []string{"mounts"},
+			item:    "a:b",
+			want:    "{\n  \"mounts\": [\n    \"a:b\" /* none yet */\n  ]\n}\n",
+		},
+		{
+			name:    "a comment before a member isn't indentation",
+			initial: "{\n  /* note */ \"a\": 1\n}\n",
+			path:    []string{"mounts"},
+			item:    "a:b",
+			want:    "{\n  /* note */ \"a\": 1,\n  \"mounts\": [\n    \"a:b\"\n  ]\n}\n",
+		},
+		{
+			name:    "a block comment holding a newline stays whole",
+			initial: "{/* one\ntwo */\n\n}",
+			path:    []string{"mounts"},
+			item:    "a:b",
+			want:    "{/* one\ntwo */\n  \"mounts\": [\n    \"a:b\"\n  ]\n}",
+		},
+		{
+			name:    "a key named -",
+			initial: "{}",
+			path:    []string{"-"},
+			item:    "a:b",
+			want:    "{\n  \"-\": [\n    \"a:b\"\n  ]\n}",
+		},
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
@@ -299,6 +327,7 @@ func (s *HJSONEditSuite) TestSetDataErrors() {
 	}{
 		{"empty path", "{}", osutil.RealSystem{}, nil, "empty path"},
 		{"parent not an object", `{"plugins": []}`, osutil.RealSystem{}, []string{"plugins", "echo"}, "plugins is not an object"},
+		{"key set twice", `{"plugins": {}, "plugins": {}}`, osutil.RealSystem{}, []string{"plugins", "echo"}, "plugins is set more than once"},
 		{"write error", "{}", failFS{writeErr: boom}, []string{"plugins"}, "writing"},
 	}
 	for _, tc := range tests {

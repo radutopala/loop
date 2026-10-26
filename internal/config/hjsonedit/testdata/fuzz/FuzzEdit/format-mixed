@@ -1,0 +1,6 @@
+go test fuzz v1
+string("Format")
+string("{\n// c\n\"a\": [1,2], \"b\": {\n\"c\": 1}, /* d */\n}\n")
+bool(false)
+string("")
+string("null")
