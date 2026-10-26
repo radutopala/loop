@@ -53,7 +53,8 @@ describe("nextRunLabel", () => {
 
   it("formats upcoming minutes, hours, and days", () => {
     expect(nextRunLabel(shifted(5 * 60_000))).toBe("in 5m");
-    expect(nextRunLabel(shifted(90 * 60_000))).toBe("in 1h");
+    expect(nextRunLabel(shifted(90 * 60_000))).toBe("in 1h 30m");
+    expect(nextRunLabel(shifted(2 * 3_600_000 + 30_000))).toBe("in 2h");
     expect(nextRunLabel(shifted(48 * 3_600_000))).toBe("in 2d");
   });
 });

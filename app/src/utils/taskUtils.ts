@@ -27,7 +27,7 @@ export function nextRunLabel(dateStr: string): string {
   const mins = Math.floor(diff / 60000);
   if (mins < 60) return `in ${mins}m`;
   const hours = Math.floor(mins / 60);
-  if (hours < 24) return `in ${hours}h`;
+  if (hours < 24) return mins % 60 ? `in ${hours}h ${mins % 60}m` : `in ${hours}h`;
   const days = Math.floor(hours / 24);
   return `in ${days}d`;
 }
