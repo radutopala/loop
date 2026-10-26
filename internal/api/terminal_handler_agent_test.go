@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"errors"
 	"log/slog"
 	"sync/atomic"
@@ -474,4 +475,59 @@ func (s *TerminalHandlerSuite) TestScanClaudeExitOverflowingCodeIsNoop() {
 
 	s.terminal.AssertNotCalled(s.T(), "SendInput", mock.Anything, mock.Anything)
 	builder.AssertNotCalled(s.T(), "BuildContinueCmd", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+// TestOutputScanFindsSplitMarkersOnce cuts output holding both markers,
+// wrapped in escape sequences, at every pair of points: each marker is found
+// exactly once however the reads split it.
+func (s *TerminalHandlerSuite) TestOutputScanFindsSplitMarkersOnce() {
+	stream := []byte("trust? \x1b[1mEnter\x1b[0mto\x1b[2Cconfirm ok\r\n" +
+		"\x1b[?1000l\x1b[?1006l\n__LOOP_CLAUDE_EXIT:137\r\n$ ")
+	// find mirrors the two scanners, counting what each finds.
+	find := func(text []byte, triggers, exits *int) int {
+		end := -1
+		if i := bytes.Index(text, []byte(autoAcceptTrigger)); i >= 0 {
+			*triggers++
+			end = i + len(autoAcceptTrigger)
+		}
+		if m := claudeExitMarkerRe.FindSubmatchIndex(text); m != nil {
+			*exits++
+			require.Equal(s.T(), "137", string(text[m[2]:m[3]]))
+			end = max(end, m[1])
+		}
+		return end
+	}
+	for i := 0; i <= len(stream); i++ {
+		for j := i; j <= len(stream); j++ {
+			var scan outputScan
+			triggers, exits := 0, 0
+			for _, read := range [][]byte{stream[:i], stream[i:j], stream[j:]} {
+				text := scan.next(read)
+				scan.consumed(text, find(text, &triggers, &exits))
+			}
+			require.Equal(s.T(), 1, triggers, "cut at %d and %d", i, j)
+			require.Equal(s.T(), 1, exits, "cut at %d and %d", i, j)
+		}
+	}
+}
+
+// TestOutputScanBounds checks what outputScan holds back between reads:
+// an unfinished escape sequence, but not one longer than maxEscapeCarry, and
+// at most scanTail bytes of text.
+func (s *TerminalHandlerSuite) TestOutputScanBounds() {
+	var scan outputScan
+	require.Equal(s.T(), "a", string(scan.next([]byte("a\x1b[1"))))
+	require.Equal(s.T(), "\x1b[1", string(scan.carry))
+	scan.consumed([]byte("a"), -1)
+	require.Equal(s.T(), "ab", string(scan.next([]byte("mb"))))
+	require.Nil(s.T(), scan.carry)
+
+	long := append([]byte("x\x1b]0;"), bytes.Repeat([]byte("t"), maxEscapeCarry)...)
+	text := scan.next(long)
+	require.Nil(s.T(), scan.carry)
+	scan.consumed(text, -1)
+	require.Len(s.T(), scan.tail, scanTail)
+
+	scan.consumed([]byte("abc"), 2)
+	require.Equal(s.T(), "c", string(scan.tail))
 }

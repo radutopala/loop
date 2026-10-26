@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -271,6 +272,7 @@ func (t *terminalWSConn) sendError(message, code string) {
 // streamOutput forwards terminal output to the WebSocket client.
 // It also scans for auto-accept trigger strings and sends Enter when matched.
 func (t *terminalWSConn) streamOutput(output <-chan []byte, done <-chan struct{}) {
+	var scan outputScan
 	for {
 		select {
 		case data, ok := <-output:
@@ -279,8 +281,8 @@ func (t *terminalWSConn) streamOutput(output <-chan []byte, done <-chan struct{}
 				return
 			}
 			t.writeBinary(data)
-			t.scanAutoAccept(data)
-			t.scanClaudeExit(data)
+			text := scan.next(data)
+			scan.consumed(text, max(t.scanAutoAccept(text), t.scanClaudeExit(text)))
 		case <-done:
 			t.writeJSON(wsStatusMessage{Type: wsStatusClosed})
 			return
@@ -396,17 +398,59 @@ func stripANSI(data []byte) []byte {
 	return ansiEscapeRe.ReplaceAll(data, nil)
 }
 
-// scanAutoAccept checks terminal output for the trigger string and sends Enter.
-func (t *terminalWSConn) scanAutoAccept(data []byte) {
+// scanTail is how much of the text after the last marker outputScan keeps
+// to scan with the next read: enough to finish either marker, too little
+// to hold a whole one.
+const scanTail = len(container.ClaudeExitMarkerPrefix) + 20
+
+// maxEscapeCarry caps the escape sequence cut off at the end of a read that
+// outputScan holds back for the next one.
+const maxEscapeCarry = 256
+
+// unfinishedEscapeRe matches an escape sequence the end of a read cuts off:
+// a CSI before its final byte, an OSC before its terminator, or a charset
+// designation before its charset.
+var unfinishedEscapeRe = regexp.MustCompile(`\x1b(?:\[[\x20-\x3f]*|\][^\x07\x1b]*\x1b?|[()])?$`)
+
+// outputScan joins each read of live output, with its escape sequences
+// stripped, to the end of the text before it, so a marker split across reads
+// is still found, and found once.
+type outputScan struct {
+	carry []byte // an escape sequence cut off at the end of the last read
+	tail  []byte // text after the last marker, at most scanTail bytes
+}
+
+// next returns the text to scan for data: the tail of the text before it,
+// then data with its escape sequences stripped.
+func (s *outputScan) next(data []byte) []byte {
+	raw := slices.Concat(s.carry, data)
+	s.carry = nil
+	from := max(len(raw)-maxEscapeCarry, 0)
+	if m := unfinishedEscapeRe.FindIndex(raw[from:]); m != nil {
+		s.carry, raw = raw[from+m[0]:], raw[:from+m[0]]
+	}
+	return slices.Concat(s.tail, stripANSI(raw))
+}
+
+// consumed keeps the end of text past end, where the last marker found in
+// it ended (-1 for none), to scan with the next read.
+func (s *outputScan) consumed(text []byte, end int) {
+	rest := text[max(end, 0):]
+	s.tail = slices.Clone(rest[max(len(rest)-scanTail, 0):])
+}
+
+// scanAutoAccept checks clean terminal output for the trigger string and
+// sends Enter. It returns where the trigger ends in text, or -1.
+func (t *terminalWSConn) scanAutoAccept(text []byte) int {
+	i := bytes.Index(text, []byte(autoAcceptTrigger))
+	if i < 0 {
+		return -1
+	}
+	end := i + len(autoAcceptTrigger)
 	t.autoAcceptMu.Lock()
 	if t.autoAcceptRemaining <= 0 {
 		t.autoAcceptMu.Unlock()
-		return
-	}
-	clean := stripANSI(data)
-	if !bytes.Contains(clean, []byte(autoAcceptTrigger)) {
-		t.autoAcceptMu.Unlock()
-		return
+		return end
 	}
 	t.autoAcceptRemaining--
 	sid := t.sessionID
@@ -424,6 +468,7 @@ func (t *terminalWSConn) scanAutoAccept(data []byte) {
 			t.logger.Info("terminal ws: auto-accept sent Enter", "session_id", sid, "trigger", autoAcceptTrigger)
 		}
 	}()
+	return end
 }
 
 // claudeExitMarkerRe matches the exit-code line an interactive Claude command
@@ -443,38 +488,40 @@ func (t *terminalWSConn) getSessionID() string {
 	return v
 }
 
-var claudeExitMarkerRe = regexp.MustCompile(regexp.QuoteMeta(container.ClaudeExitMarkerPrefix) + `(\d+)`)
+// The line break after the code shows it is whole.
+var claudeExitMarkerRe = regexp.MustCompile(regexp.QuoteMeta(container.ClaudeExitMarkerPrefix) + `(\d+)\r?\n`)
 
 // scanClaudeExit checks live terminal output for a Claude exit marker and, on
 // an abnormal (non-zero) exit with relaunch budget remaining, resends the
 // interactive Claude command (see BuildContinueCmd) so a process that died
 // unexpectedly (e.g. OOM-killed) comes back automatically. An exit code of 0
 // means the user quit deliberately, so relaunching is disabled for the rest
-// of the session's lifetime.
-func (t *terminalWSConn) scanClaudeExit(data []byte) {
-	clean := stripANSI(data)
-	m := claudeExitMarkerRe.FindSubmatch(clean)
+// of the session's lifetime. text is clean output; it returns where the
+// marker ends in it, or -1.
+func (t *terminalWSConn) scanClaudeExit(text []byte) int {
+	m := claudeExitMarkerRe.FindSubmatchIndex(text)
 	if m == nil {
-		return
+		return -1
 	}
-	code, err := strconv.Atoi(string(m[1]))
+	end := m[1]
+	code, err := strconv.Atoi(string(text[m[2]:m[3]]))
 	if err != nil {
-		return
+		return end
 	}
 
 	t.relaunchMu.Lock()
 	if !t.relaunchEnabled {
 		t.relaunchMu.Unlock()
-		return
+		return end
 	}
 	if code == 0 {
 		t.relaunchRemaining = 0
 		t.relaunchMu.Unlock()
-		return
+		return end
 	}
 	if t.relaunchRemaining <= 0 {
 		t.relaunchMu.Unlock()
-		return
+		return end
 	}
 	t.relaunchRemaining--
 	channelID, dirPath, parentDirPath, sessionID, agentID := t.relaunchChannelID, t.relaunchDirPath, t.relaunchParentDir, t.relaunchSessionID, t.relaunchAgentID
@@ -494,6 +541,7 @@ func (t *terminalWSConn) scanClaudeExit(data []byte) {
 			t.logger.Warn("terminal ws: claude relaunch send failed", "session_id", sid, "error", err)
 		}
 	}()
+	return end
 }
 
 // startSession attaches to a session and begins streaming output.
@@ -504,7 +552,7 @@ func (t *terminalWSConn) startSession(sessionID string, output <-chan []byte, hi
 	if len(history) > 0 {
 		t.writeBinary(history)
 		// Scan history for auto-accept triggers (handles reattach to a stuck prompt).
-		t.scanAutoAccept(history)
+		t.scanAutoAccept(stripANSI(history))
 	}
 	go t.streamOutput(output, done)
 }
