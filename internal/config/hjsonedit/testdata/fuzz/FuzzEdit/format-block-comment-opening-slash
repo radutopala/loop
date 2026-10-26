@@ -1,0 +1,6 @@
+go test fuzz v1
+string("Format")
+string("{\n  /*/ // */ \"a\": 1\n}\n")
+bool(false)
+string("")
+string("null")

@@ -1,0 +1,5 @@
+go test fuzz v1
+byte('\x00')
+[]byte("ab")
+[]byte("\x01\x01")
+bool(false)

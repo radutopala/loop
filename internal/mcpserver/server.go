@@ -59,7 +59,9 @@ func WithWorkflowAPI() MemoryOption {
 // DirPath returns the project directory used for memory lookups.
 func (s *Server) DirPath() string { return s.dirPath }
 
-// New creates a new MCP server with scheduler tools.
+// New creates a new MCP server with scheduler tools. Every request a tool
+// sends is checked against the API's routes and handlers by
+// internal/api/mcp_parity_spec_test.go.
 func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog.Logger, opts ...MemoryOption) *Server {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))

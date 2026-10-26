@@ -1,0 +1,6 @@
+go test fuzz v1
+string("Appended")
+string("{\n  // mounts\n  \"mounts\": [\n    \"/a:/a\", // first\n  ],\n  \"b\": {\"c\": 1}\n}\n")
+bool(false)
+string("mounts")
+string("\"/b:/b\"")

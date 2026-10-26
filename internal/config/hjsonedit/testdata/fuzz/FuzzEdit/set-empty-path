@@ -1,0 +1,6 @@
+go test fuzz v1
+string("SetData")
+string("{}\n")
+bool(false)
+string("")
+string("1")

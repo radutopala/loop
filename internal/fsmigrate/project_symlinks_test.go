@@ -72,6 +72,39 @@ func (s *FSMigrateSuite) TestProjectConfigMigrationErrors() {
 	require.ErrorIs(s.T(), dropDevChannelsKey(context.Background(), c), boom)
 }
 
+// A project config that isn't a readable JSON object is the agent's to
+// break: the migrations of the project configs skip it, migrate the rest,
+// and don't stop the daemon from starting.
+func (s *FSMigrateSuite) TestProjectConfigMigrationsSkipMalformed() {
+	tests := []struct {
+		name    string
+		migrate func(context.Context, *Ctx) error
+		config  string
+	}{
+		{"rename no_proxy_hosts", renameNoProxyHosts, `{"no_proxy_hosts": ["a"]}`},
+		{"move proxies into a block", moveProxiesIntoBlock, `{"no_proxy": ["a"]}`},
+		{"drop dev channels key", dropDevChannelsKey, `{"claude_dangerously_load_development_channels": true}`},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			sys := newFakeSystem()
+			sys.files["/p/text/.loop/config.json"] = []byte(`not json`)
+			sys.files["/p/array/.loop/config.json"] = []byte(`["a"]`)
+			sys.readErr["/p/dir/.loop/config.json"] = errors.New("is a directory")
+			sys.files["/p/good/.loop/config.json"] = []byte(tc.config)
+			c := &Ctx{
+				Sys:         sys,
+				LoopDir:     "/loop",
+				ProjectDirs: []string{"/p/text", "/p/array", "/p/dir", "/p/good"},
+			}
+			require.NoError(s.T(), tc.migrate(context.Background(), c))
+			require.Equal(s.T(), `not json`, string(sys.files["/p/text/.loop/config.json"]))
+			require.Equal(s.T(), `["a"]`, string(sys.files["/p/array/.loop/config.json"]))
+			require.NotEqual(s.T(), tc.config, string(sys.files["/p/good/.loop/config.json"]))
+		})
+	}
+}
+
 type failingWrites struct {
 	System
 	err error

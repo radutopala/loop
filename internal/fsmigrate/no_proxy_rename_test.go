@@ -59,6 +59,11 @@ func (s *FSMigrateSuite) TestRenameNoProxyHosts() {
 }`,
 			expected: []string{"artifacts.internal", "my-service"},
 		},
+		{
+			name:     "a legacy key given twice is renamed, then joined",
+			config:   `{"no_proxy_hosts": ["my-service"], "no_proxy_hosts": ["my-cache"]}`,
+			expected: []string{"my-service", "my-cache"},
+		},
 	}
 
 	for _, tt := range tests {

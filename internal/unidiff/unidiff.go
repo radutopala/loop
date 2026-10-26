@@ -10,7 +10,7 @@ import (
 
 // Diff renders a unified diff of a against b with three lines of context,
 // labelled from and to. from is "/dev/null" when a didn't exist. Equal
-// content gives "".
+// content gives "". Spec: unidiff_spec_test.go (git apply turns a into b).
 func Diff(from, to, a, b string) string {
 	diff, _ := difflib.GetUnifiedDiffString(difflib.UnifiedDiff{
 		A:        lines(a),
@@ -24,7 +24,9 @@ func Diff(from, to, a, b string) string {
 
 // lines splits s into newline-terminated lines. difflib.SplitLines would
 // add a newline to the last element, turning a file's own final newline
-// into an extra empty line and an empty file into one empty line.
+// into an extra empty line and an empty file into one empty line. A last
+// line without a newline carries git's noNewline marker instead, so it
+// differs from the same line with one and the diff shows the change.
 func lines(s string) []string {
 	if s == "" {
 		return nil
@@ -33,9 +35,12 @@ func lines(s string) []string {
 	if out[len(out)-1] == "" {
 		return out[:len(out)-1]
 	}
-	out[len(out)-1] += "\n"
+	out[len(out)-1] += "\n" + noNewline
 	return out
 }
+
+// noNewline follows a last line that has no newline, as in git's diffs.
+const noNewline = "\\ No newline at end of file\n"
 
 // Count returns how many lines Diff shows as added and removed going from
 // a to b.

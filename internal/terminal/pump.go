@@ -16,6 +16,7 @@ import (
 // the cap, the oldest entries are evicted with a "slow consumer" warning,
 // matching the prior contract for genuinely stuck clients while tolerating
 // transient bursts that previously truncated tails of command output.
+// Spec: output_spec_test.go.
 type outputPump struct {
 	out      chan []byte
 	wake     chan struct{}

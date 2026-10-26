@@ -72,10 +72,8 @@ type projectConfig struct {
 }
 
 // LoadProjectConfig loads project-specific config from {workDir}/.loop/config.json
-// and merges it with the main config. Only mounts, mcp_servers, and claude_model
-// are loaded from the project config for security reasons.
-//
-// Merge behavior:
+// and merges it with the main config. Each field has its own merge rule, which
+// merge_spec_test.go lists and checks. Among them:
 //   - Mounts: Project mounts are added to the global ones, a project mount
 //     replacing a global one at the same container path; inherit_mounts: false
 //     makes them replace the global list instead. A project that turns
@@ -281,8 +279,10 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 
 	// Appended, not replaced: a project declares the sibling names its own
 	// compose stack uses, on top of whatever the global config bypasses.
+	// Into a new slice: appending in place would write into the global
+	// config's spare capacity, which the next project's merge overwrites.
 	if len(pc.Proxies.NoProxy) > 0 {
-		merged.Proxies.NoProxy = append(merged.Proxies.NoProxy, pc.Proxies.NoProxy...)
+		merged.Proxies.NoProxy = slices.Concat(merged.Proxies.NoProxy, pc.Proxies.NoProxy)
 	}
 
 	// CopyFiles: project replaces global when set.
@@ -445,7 +445,7 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 	// Merge memory config: project paths appended, project embeddings override
 	if pc.Memory != nil {
 		if len(pc.Memory.Paths) > 0 {
-			merged.Memory.Paths = append(merged.Memory.Paths, pc.Memory.Paths...)
+			merged.Memory.Paths = slices.Concat(merged.Memory.Paths, pc.Memory.Paths)
 		}
 		if pc.Memory.MaxChunkChars > 0 {
 			merged.Memory.MaxChunkChars = pc.Memory.MaxChunkChars

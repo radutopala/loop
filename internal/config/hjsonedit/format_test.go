@@ -29,6 +29,11 @@ func (s *FormatSuite) TestFormat() {
 			want: "{\n  \"a\": 1,\n  \"b\": \"x\"\n}\n",
 		},
 		{
+			name: "a block comment opening with a slash",
+			in:   "{\n/*/ // */ \"a\": 1}",
+			want: "{\n  /*/ // */\n  \"a\": 1\n}\n",
+		},
+		{
 			name: "re-indents with two spaces",
 			in:   "{\n\t\"a\": {\n\t\t\"b\": [\n\t\t\t1,\n\t\t\t2\n\t\t]\n\t}\n}\n",
 			want: "{\n  \"a\": {\n    \"b\": [\n      1,\n      2\n    ]\n  }\n}\n",
