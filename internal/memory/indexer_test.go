@@ -560,13 +560,34 @@ func (s *IndexerSuite) TestSearchRankedResults() {
 		{FilePath: "/memory/b.md", Content: "Slack stuff", Embedding: embeddings.SerializeFloat32([]float32{0.1, 0.9})},
 	}, nil)
 
-	results, err := s.indexer.Search(ctx, "/memory", "docker cleanup", 5)
+	results, err := s.indexer.Search(ctx, []string{"/memory"}, "docker cleanup", 5)
 	require.NoError(s.T(), err)
 	require.Len(s.T(), results, 2)
 	require.Equal(s.T(), "/memory/a.md", results[0].FilePath)
 	require.Equal(s.T(), "Docker stuff", results[0].Content)
 	require.Equal(s.T(), 0, results[0].ChunkIndex)
 	require.Greater(s.T(), results[0].Score, results[1].Score)
+}
+
+func (s *IndexerSuite) TestSearchSeveralScopes() {
+	ctx := context.Background()
+	vec := embeddings.SerializeFloat32([]float32{0.5, 0.5})
+	global := &db.MemoryFile{FilePath: "/home/CLAUDE.md", Embedding: vec}
+	s.embedder.On("Embed", ctx, []string{"query"}).Return([][]float32{{0.5, 0.5}}, nil)
+	s.store.On("GetMemoryFilesByDirPath", ctx, "/repo/.worktrees/wt").Return([]*db.MemoryFile{
+		global, {FilePath: "/wt/notes.md", DirPath: "/repo/.worktrees/wt", Embedding: vec},
+	}, nil)
+	s.store.On("GetMemoryFilesByDirPath", ctx, "/repo").Return([]*db.MemoryFile{
+		global, {FilePath: "/repo/notes.md", DirPath: "/repo", Embedding: vec},
+	}, nil)
+
+	results, err := s.indexer.Search(ctx, []string{"/repo/.worktrees/wt", "/repo"}, "query", 5)
+	require.NoError(s.T(), err)
+	var paths []string
+	for _, r := range results {
+		paths = append(paths, r.FilePath)
+	}
+	require.ElementsMatch(s.T(), []string{"/home/CLAUDE.md", "/wt/notes.md", "/repo/notes.md"}, paths)
 }
 
 func (s *IndexerSuite) TestSearchChunkedResultIncludesContent() {
@@ -577,7 +598,7 @@ func (s *IndexerSuite) TestSearchChunkedResultIncludesContent() {
 		{FilePath: "/memory/large.md", ChunkIndex: 2, Content: "Chunk 2 content", Embedding: embeddings.SerializeFloat32([]float32{0.1, 0.9})},
 	}, nil)
 
-	results, err := s.indexer.Search(ctx, "/memory", "query", 5)
+	results, err := s.indexer.Search(ctx, []string{"/memory"}, "query", 5)
 	require.NoError(s.T(), err)
 	require.Len(s.T(), results, 2)
 	// Chunk results include content.
@@ -596,7 +617,7 @@ func (s *IndexerSuite) TestSearchTopKLimit() {
 		{FilePath: "/memory/c.md", Content: "c", Embedding: embeddings.SerializeFloat32([]float32{0.5, 0.5})},
 	}, nil)
 
-	results, err := s.indexer.Search(ctx, "/memory", "query", 1)
+	results, err := s.indexer.Search(ctx, []string{"/memory"}, "query", 1)
 	require.NoError(s.T(), err)
 	require.Len(s.T(), results, 1)
 }
@@ -606,7 +627,7 @@ func (s *IndexerSuite) TestSearchDefaultTopK() {
 	s.embedder.On("Embed", ctx, []string{"query"}).Return([][]float32{{0.5}}, nil)
 	s.store.On("GetMemoryFilesByDirPath", ctx, "/memory").Return([]*db.MemoryFile{}, nil)
 
-	results, err := s.indexer.Search(ctx, "/memory", "query", 0)
+	results, err := s.indexer.Search(ctx, []string{"/memory"}, "query", 0)
 	require.NoError(s.T(), err)
 	require.Empty(s.T(), results)
 }
@@ -615,7 +636,7 @@ func (s *IndexerSuite) TestSearchEmbedError() {
 	ctx := context.Background()
 	s.embedder.On("Embed", ctx, []string{"query"}).Return([][]float32(nil), errors.New("api error"))
 
-	_, err := s.indexer.Search(ctx, "/memory", "query", 5)
+	_, err := s.indexer.Search(ctx, []string{"/memory"}, "query", 5)
 	require.ErrorContains(s.T(), err, "embedding query")
 }
 
@@ -624,7 +645,7 @@ func (s *IndexerSuite) TestSearchGetFilesError() {
 	s.embedder.On("Embed", ctx, []string{"query"}).Return([][]float32{{0.5}}, nil)
 	s.store.On("GetMemoryFilesByDirPath", ctx, "/memory").Return(([]*db.MemoryFile)(nil), errors.New("db error"))
 
-	_, err := s.indexer.Search(ctx, "/memory", "query", 5)
+	_, err := s.indexer.Search(ctx, []string{"/memory"}, "query", 5)
 	require.ErrorContains(s.T(), err, "loading files")
 }
 
@@ -635,7 +656,7 @@ func (s *IndexerSuite) TestSearchSkipsEmptyEmbedding() {
 		{FilePath: "a.md", Content: "a", Embedding: []byte{1, 2, 3}}, // invalid, len%4 != 0
 	}, nil)
 
-	results, err := s.indexer.Search(ctx, "/memory", "query", 5)
+	results, err := s.indexer.Search(ctx, []string{"/memory"}, "query", 5)
 	require.NoError(s.T(), err)
 	require.Empty(s.T(), results)
 }

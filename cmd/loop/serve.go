@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -218,12 +219,27 @@ func (a *app) defaultNewEmbedder(cfg *config.Config) (embeddings.Embedder, error
 
 type memIndexer interface {
 	Index(ctx context.Context, memoryPath, dirPath string, excludePaths []string) (int, error)
-	Search(ctx context.Context, dirPath, query string, topK int) ([]memory.SearchResult, error)
+	Search(ctx context.Context, dirPaths []string, query string, topK int) ([]memory.SearchResult, error)
 }
 
 type memoryPathEntry struct {
 	path   string
 	global bool
+	// scope, when set, indexes the path under that dir instead of the
+	// channel's, so the channels of that dir share the rows.
+	scope string
+}
+
+// scopeFor returns the dir the entry's rows are indexed under for a channel
+// of dirPath: none for a global entry.
+func (e memoryPathEntry) scopeFor(dirPath string) string {
+	switch {
+	case e.global:
+		return ""
+	case e.scope != "":
+		return e.scope
+	}
+	return dirPath
 }
 
 type multiDirIndexer struct {
@@ -231,31 +247,32 @@ type multiDirIndexer struct {
 	logger            *slog.Logger
 	globalMemoryPaths []string
 	app               *app
+	// channels finds the root checkout of a worktree channel's dir: a
+	// worktree's agents read the root's auto-memory too, so it is indexed
+	// once under the root and searched alongside the worktree's own.
+	channels worktreeStore
 }
 
 func (m *multiDirIndexer) Search(ctx context.Context, dirPath, query string, topK int) ([]memory.SearchResult, error) {
-	entries, excludePaths := m.resolveMemoryPaths(dirPath)
+	entries, excludePaths := m.resolveMemoryPaths(ctx, dirPath)
+	scopes := []string{dirPath}
 	for _, e := range entries {
-		scope := dirPath
-		if e.global {
-			scope = ""
-		}
+		scope := e.scopeFor(dirPath)
 		if _, err := m.indexer.Index(ctx, e.path, scope, excludePaths); err != nil {
 			m.logger.Warn("memory index error", "path", e.path, "error", err)
 		}
+		if scope != "" && !slices.Contains(scopes, scope) {
+			scopes = append(scopes, scope)
+		}
 	}
-	return m.indexer.Search(ctx, dirPath, query, topK)
+	return m.indexer.Search(ctx, scopes, query, topK)
 }
 
 func (m *multiDirIndexer) Index(ctx context.Context, dirPath string) (int, error) {
-	entries, excludePaths := m.resolveMemoryPaths(dirPath)
+	entries, excludePaths := m.resolveMemoryPaths(ctx, dirPath)
 	total := 0
 	for _, e := range entries {
-		scope := dirPath
-		if e.global {
-			scope = ""
-		}
-		n, err := m.indexer.Index(ctx, e.path, scope, excludePaths)
+		n, err := m.indexer.Index(ctx, e.path, e.scopeFor(dirPath), excludePaths)
 		if err != nil {
 			m.logger.Warn("memory index error", "path", e.path, "error", err)
 			continue
@@ -312,7 +329,7 @@ func (m *multiDirIndexer) reindexLoop(ctx context.Context, store channelLister, 
 	}
 }
 
-func (m *multiDirIndexer) resolveMemoryPaths(dirPath string) ([]memoryPathEntry, []string) {
+func (m *multiDirIndexer) resolveMemoryPaths(ctx context.Context, dirPath string) ([]memoryPathEntry, []string) {
 	var entries []memoryPathEntry
 	var excludePaths []string
 
@@ -328,8 +345,18 @@ func (m *multiDirIndexer) resolveMemoryPaths(dirPath string) ([]memoryPathEntry,
 		})
 	}
 
-	if memDir, err := m.app.memoryDir(dirPath); err == nil {
-		entries = append(entries, memoryPathEntry{path: memDir, global: false})
+	// A worktree's root auto-memory is indexed once, under the root.
+	memoryDirs := []memoryPathEntry{{path: dirPath}}
+	if m.channels != nil {
+		if root := worktreeRootDir(ctx, m.channels, dirPath); root != "" {
+			memoryDirs = append(memoryDirs, memoryPathEntry{path: root, scope: root})
+		}
+	}
+	for _, d := range memoryDirs {
+		if memDir, err := m.app.memoryDir(d.path); err == nil {
+			d.path = memDir
+			entries = append(entries, d)
+		}
 	}
 
 	// Index Claude Code CLAUDE.md files so agents can search project context.
@@ -376,6 +403,31 @@ func resolveRelativePath(dirPath, p string) string {
 // what it indexed.
 func (a *app) defaultLoadProjectMemoryPaths(dirPath string) []string {
 	return config.NewTrustStoreIn(a.userConfigDir).MemoryPaths(dirPath)
+}
+
+// worktreeStore is what worktreeRootDir reads channels through.
+type worktreeStore interface {
+	channelLister
+	db.ChannelGetter
+}
+
+// worktreeRootDir returns the root checkout of the worktree channel working
+// in dirPath, or "" when no worktree channel does. The root comes from the
+// channels' parent chain, not from the worktree's .git file, which the
+// agent can rewrite.
+func worktreeRootDir(ctx context.Context, store worktreeStore, dirPath string) string {
+	channels, err := store.ListChannels(ctx)
+	if err != nil {
+		return ""
+	}
+	for _, ch := range channels {
+		if ch.Worktree && ch.DirPath == dirPath {
+			if root := db.WorktreeRootDirPath(ctx, store, ch); root != "" {
+				return root
+			}
+		}
+	}
+	return ""
 }
 
 func (a *app) memoryDir(dirPath string) (string, error) {
@@ -744,7 +796,7 @@ func (a *app) serve() error {
 			logger.Warn("skipping embeddings", "error", embErr)
 		} else {
 			indexer := memory.NewIndexer(emb, store, logger, cfg.Memory.MaxChunkChars)
-			mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: cfg.Memory.Paths, app: a}
+			mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: cfg.Memory.Paths, app: a, channels: store}
 			apiSrv.SetMemoryIndexer(mdi)
 			if ollamaEmb, ok := emb.(*embeddings.OllamaEmbedder); ok {
 				go ollamaEmb.RunIdleMonitor(ctx)

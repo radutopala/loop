@@ -267,8 +267,8 @@ func splitChunks(content string, maxChars int) []string {
 }
 
 // Search embeds the query and returns the top-K results ranked by cosine similarity.
-// Results are scoped to the given dirPath (project-scoped) plus global files (dir_path = ”).
-func (idx *Indexer) Search(ctx context.Context, dirPath, query string, topK int) ([]SearchResult, error) {
+// Results are scoped to the given dirPaths (project-scoped) plus global files (dir_path = ”).
+func (idx *Indexer) Search(ctx context.Context, dirPaths []string, query string, topK int) ([]SearchResult, error) {
 	if topK <= 0 {
 		topK = 5
 	}
@@ -280,10 +280,26 @@ func (idx *Indexer) Search(ctx context.Context, dirPath, query string, topK int)
 	}
 	queryVec := queryVecs[0]
 
-	// Load files scoped to dirPath (plus global).
-	dbFiles, err := idx.store.GetMemoryFilesByDirPath(ctx, dirPath)
-	if err != nil {
-		return nil, fmt.Errorf("loading files: %w", err)
+	// Load files scoped to each dirPath (plus global, which every scope
+	// returns once more).
+	type rowKey struct {
+		filePath, dirPath string
+		chunk             int
+	}
+	var dbFiles []*db.MemoryFile
+	seen := make(map[rowKey]bool)
+	for _, dirPath := range dirPaths {
+		files, err := idx.store.GetMemoryFilesByDirPath(ctx, dirPath)
+		if err != nil {
+			return nil, fmt.Errorf("loading files: %w", err)
+		}
+		for _, f := range files {
+			k := rowKey{f.FilePath, f.DirPath, f.ChunkIndex}
+			if !seen[k] {
+				seen[k] = true
+				dbFiles = append(dbFiles, f)
+			}
+		}
 	}
 
 	// Score each file.
