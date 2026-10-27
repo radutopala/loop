@@ -33,7 +33,10 @@ jobs:
           - { pkg: ./internal/osutil, target: FuzzHelpersStayInRoot }
           - { pkg: ./internal/api, target: FuzzRequestRefsParity }
           - { pkg: ./internal/agentgate, target: FuzzParseGitConfigStrictMatchesGit }
-          - { pkg: ./internal/agentgate, target: FuzzGitGuardMatchesGit }
+          # Each input runs git about ten times: a minimization bounded
+          # by time runs into the limit, and the engine then kills and
+          # restarts the worker, setup and all.
+          - { pkg: ./internal/agentgate, target: FuzzGitGuardMatchesGit, minimize: 200x }
           - { pkg: ./internal/agentgate, target: FuzzUnwrapCommandMatchesExec }
           - { pkg: ./internal/unidiff, target: FuzzDiffAppliesWithGit }
           - { pkg: ./internal/terminal, target: FuzzRingBufferHistory }
@@ -55,7 +58,7 @@ jobs:
       - name: Fuzz ${{ matrix.target }}
         env:
           FUZZTIME: ${{ inputs.fuzztime || '10m' }}
-        run: go test -run='^$' -fuzz='^${{ matrix.target }}$' -fuzztime="$FUZZTIME" ${{ matrix.pkg }}
+        run: go test -run='^$' -fuzz='^${{ matrix.target }}$' -fuzztime="$FUZZTIME" -fuzzminimizetime=${{ matrix.minimize || '60s' }} ${{ matrix.pkg }}
 
       # A failing input lands in testdata/fuzz/<target>/. Commit it there to
       # replay it in every `go test` run.
