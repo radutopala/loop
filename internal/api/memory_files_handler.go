@@ -1,10 +1,12 @@
 package api
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/radutopala/loop/internal/db"
@@ -12,6 +14,35 @@ import (
 
 type memoryFilesResponse struct {
 	Files []db.MemoryFileInfo `json:"files"`
+}
+
+// listMemoryFiles lists the memory files indexed for dirPath and, for a
+// worktree channel, the ones indexed for its root checkout: the root's
+// auto-memory, which the worktree's agents read too, is indexed once there.
+func (s *Server) listMemoryFiles(ctx context.Context, dirPath, channelID string) ([]db.MemoryFileInfo, error) {
+	files, err := s.store.ListDistinctMemoryFilePaths(ctx, dirPath)
+	if err != nil {
+		return nil, err
+	}
+	root := s.workspace.resolveParentDirPath(ctx, channelID)
+	if root == "" || root == dirPath {
+		return files, nil
+	}
+	rootFiles, err := s.store.ListDistinctMemoryFilePaths(ctx, root)
+	if err != nil {
+		return nil, err
+	}
+	listed := make(map[string]bool, len(files))
+	for _, f := range files {
+		listed[f.FilePath] = true
+	}
+	for _, f := range rootFiles {
+		if !listed[f.FilePath] {
+			files = append(files, f)
+		}
+	}
+	slices.SortFunc(files, func(a, b db.MemoryFileInfo) int { return strings.Compare(a.FilePath, b.FilePath) })
+	return files, nil
 }
 
 func (s *Server) handleListMemoryFiles(w http.ResponseWriter, r *http.Request) {
@@ -28,7 +59,7 @@ func (s *Server) handleListMemoryFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	files, err := s.store.ListDistinctMemoryFilePaths(r.Context(), dirPath)
+	files, err := s.listMemoryFiles(r.Context(), dirPath, channelID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -59,7 +90,7 @@ func (s *Server) handleSearchMemoryFiles(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	files, err := s.store.ListDistinctMemoryFilePaths(r.Context(), dirPath)
+	files, err := s.listMemoryFiles(r.Context(), dirPath, channelID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -114,7 +145,7 @@ func (s *Server) validateMemoryFilePath(w http.ResponseWriter, r *http.Request, 
 		return false
 	}
 
-	files, err := s.store.ListDistinctMemoryFilePaths(r.Context(), dirPath)
+	files, err := s.listMemoryFiles(r.Context(), dirPath, channelID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return false

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -42,6 +43,62 @@ func (s *ServerSuite) TestListMemoryFiles_Success() {
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 	require.Contains(s.T(), rec.Body.String(), "a.md")
 	require.Contains(s.T(), rec.Body.String(), "b.md")
+}
+
+func (s *ServerSuite) TestListMemoryFiles_Worktree() {
+	tmpDir := s.T().TempDir()
+	wtDir := filepath.Join(tmpDir, ".worktrees", "wt")
+	shared := filepath.Join(tmpDir, "CLAUDE.md")
+	wtNote := filepath.Join(tmpDir, "b-wt.md")
+	rootNote := filepath.Join(tmpDir, "a-root.md")
+	for _, p := range []string{shared, wtNote, rootNote} {
+		require.NoError(s.T(), os.WriteFile(p, []byte("x"), 0o644))
+	}
+
+	tests := []struct {
+		name     string
+		rootErr  error
+		wantCode int
+		wantBody string
+	}{
+		{name: "lists the root's files too", wantCode: http.StatusOK, wantBody: `{"files":[` +
+			`{"file_path":"` + shared + `","dir_path":""},` +
+			`{"file_path":"` + rootNote + `","dir_path":"` + tmpDir + `"},` +
+			`{"file_path":"` + wtNote + `","dir_path":"` + wtDir + `"}]}`},
+		{name: "root listing fails", rootErr: errors.New("db error"), wantCode: http.StatusInternalServerError, wantBody: "db error"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			s.store.On("GetChannel", mock.Anything, "wt").Return(&db.Channel{ChannelID: "wt", DirPath: wtDir, ParentID: "root", Worktree: true}, nil)
+			s.store.On("GetChannel", mock.Anything, "root").Return(&db.Channel{ChannelID: "root", DirPath: tmpDir}, nil)
+			s.store.On("ListDistinctMemoryFilePaths", mock.Anything, wtDir).Return([]db.MemoryFileInfo{
+				{FilePath: shared}, {FilePath: wtNote, DirPath: wtDir},
+			}, nil)
+			s.store.On("ListDistinctMemoryFilePaths", mock.Anything, tmpDir).Return([]db.MemoryFileInfo{
+				{FilePath: rootNote, DirPath: tmpDir}, {FilePath: shared},
+			}, tt.rootErr)
+
+			rec := s.testRequest("GET", "/api/memory/files?channel_id=wt", "")
+			require.Equal(s.T(), tt.wantCode, rec.Code)
+			require.Contains(s.T(), rec.Body.String(), tt.wantBody)
+		})
+	}
+}
+
+func (s *ServerSuite) TestReadMemoryFile_WorktreeReadsRootFile() {
+	tmpDir := s.T().TempDir()
+	wtDir := filepath.Join(tmpDir, ".worktrees", "wt")
+	rootNote := filepath.Join(tmpDir, "root.md")
+	require.NoError(s.T(), os.WriteFile(rootNote, []byte("root memory"), 0o644))
+	s.store.On("GetChannel", mock.Anything, "wt").Return(&db.Channel{ChannelID: "wt", DirPath: wtDir, ParentID: "root", Worktree: true}, nil)
+	s.store.On("GetChannel", mock.Anything, "root").Return(&db.Channel{ChannelID: "root", DirPath: tmpDir}, nil)
+	s.store.On("ListDistinctMemoryFilePaths", mock.Anything, wtDir).Return([]db.MemoryFileInfo(nil), nil)
+	s.store.On("ListDistinctMemoryFilePaths", mock.Anything, tmpDir).Return([]db.MemoryFileInfo{{FilePath: rootNote, DirPath: tmpDir}}, nil)
+
+	rec := s.testRequest("GET", "/api/memory/file?channel_id=wt&path="+rootNote, "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	require.Equal(s.T(), "root memory", rec.Body.String())
 }
 
 func (s *ServerSuite) TestListMemoryFiles_FiltersNonExisting() {

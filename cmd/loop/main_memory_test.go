@@ -61,8 +61,8 @@ func (m *mockMemIndexer) Index(ctx context.Context, memoryPath, dirPath string, 
 	return args.Int(0), args.Error(1)
 }
 
-func (m *mockMemIndexer) Search(ctx context.Context, dirPath, query string, topK int) ([]memory.SearchResult, error) {
-	args := m.Called(ctx, dirPath, query, topK)
+func (m *mockMemIndexer) Search(ctx context.Context, dirPaths []string, query string, topK int) ([]memory.SearchResult, error) {
+	args := m.Called(ctx, dirPaths, query, topK)
 	return args.Get(0).([]memory.SearchResult), args.Error(1)
 }
 
@@ -88,7 +88,7 @@ func (s *MainSuite) TestMultiDirIndexerResolveMemoryPaths() {
 	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
 	mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: []string{"./memory"}, app: s.app}
 
-	entries, excludePaths := mdi.resolveMemoryPaths("/home/user/project")
+	entries, excludePaths := mdi.resolveMemoryPaths(context.Background(), "/home/user/project")
 	require.Len(s.T(), entries, 5)
 	require.Empty(s.T(), excludePaths)
 	require.Contains(s.T(), entries[0].path, ".claude/projects")
@@ -114,7 +114,7 @@ func (s *MainSuite) TestMultiDirIndexerResolveMemoryPathsHomeDirError() {
 	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
 	mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: []string{"./memory"}, app: s.app}
 
-	entries, excludePaths := mdi.resolveMemoryPaths("/path")
+	entries, excludePaths := mdi.resolveMemoryPaths(context.Background(), "/path")
 	require.Len(s.T(), entries, 3)
 	require.Empty(s.T(), excludePaths)
 	// No auto-memory or global CLAUDE.md when home dir fails.
@@ -142,7 +142,7 @@ func (s *MainSuite) TestMultiDirIndexerResolveMemoryPathsWithGlobalAndProject() 
 		app:               s.app,
 	}
 
-	entries, excludePaths := mdi.resolveMemoryPaths("/home/user/project")
+	entries, excludePaths := mdi.resolveMemoryPaths(context.Background(), "/home/user/project")
 	require.Len(s.T(), entries, 6)
 	require.Empty(s.T(), excludePaths)
 	require.Contains(s.T(), entries[0].path, ".claude/projects")
@@ -179,7 +179,7 @@ func (s *MainSuite) TestMultiDirIndexerResolveMemoryPathsDedup() {
 		app:               s.app,
 	}
 
-	entries, excludePaths := mdi.resolveMemoryPaths("/home/user/project")
+	entries, excludePaths := mdi.resolveMemoryPaths(context.Background(), "/home/user/project")
 	// Should be deduplicated: auto-memory, CLAUDE.md x3, project/memory, /shared/knowledge — no duplicates.
 	require.Len(s.T(), entries, 6)
 	require.Empty(s.T(), excludePaths)
@@ -190,6 +190,101 @@ func (s *MainSuite) TestMultiDirIndexerResolveMemoryPathsDedup() {
 	require.Equal(s.T(), "/home/user/project/memory", entries[4].path)
 	require.Equal(s.T(), "/shared/knowledge", entries[5].path)
 	require.True(s.T(), entries[5].global)
+}
+
+func (s *MainSuite) TestMultiDirIndexerResolveMemoryPathsWorktree() {
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return("/home/test", nil)
+
+	tests := []struct {
+		name    string
+		dirPath string
+		want    []memoryPathEntry
+	}{
+		{name: "worktree adds the root's memory under the root", dirPath: "/repo/.worktrees/wt", want: []memoryPathEntry{
+			{path: "/home/test/.claude/projects/-repo--worktrees-wt/memory"},
+			{path: "/home/test/.claude/projects/-repo/memory", scope: "/repo"},
+		}},
+		{name: "root has its own only", dirPath: "/repo", want: []memoryPathEntry{
+			{path: "/home/test/.claude/projects/-repo/memory"},
+		}},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			store := new(testutil.MockStore)
+			store.On("ListChannels", mock.Anything).Return([]*db.Channel{
+				{ChannelID: "root", DirPath: "/repo"},
+				{ChannelID: "wt", DirPath: "/repo/.worktrees/wt", ParentID: "root", Worktree: true},
+			}, nil)
+			store.On("GetChannel", mock.Anything, "root").Return(&db.Channel{ChannelID: "root", DirPath: "/repo"}, nil).Maybe()
+			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+			mdi := &multiDirIndexer{indexer: memory.NewIndexer(&fakeEmbedder{}, store, logger, 0), logger: logger, app: s.app, channels: store}
+
+			entries, _ := mdi.resolveMemoryPaths(context.Background(), tt.dirPath)
+			var memDirs []memoryPathEntry
+			for _, e := range entries {
+				if filepath.Base(e.path) == "memory" {
+					memDirs = append(memDirs, e)
+				}
+			}
+			require.Equal(s.T(), tt.want, memDirs)
+		})
+	}
+}
+
+func (s *MainSuite) TestMultiDirIndexerSearchWorktree() {
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return("/home/test", nil)
+
+	store := new(testutil.MockStore)
+	store.On("ListChannels", mock.Anything).Return([]*db.Channel{
+		{ChannelID: "wt", DirPath: "/repo/.worktrees/wt", ParentID: "root", Worktree: true},
+	}, nil)
+	store.On("GetChannel", mock.Anything, "root").Return(&db.Channel{ChannelID: "root", DirPath: "/repo"}, nil)
+	mi := new(mockMemIndexer)
+	mi.On("Index", mock.Anything, "/home/test/.claude/projects/-repo/memory", "/repo", mock.Anything).Return(0, nil).Once()
+	mi.On("Index", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(0, nil)
+	mi.On("Search", mock.Anything, []string{"/repo/.worktrees/wt", "/repo"}, "test", 5).Return([]memory.SearchResult{}, nil)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	mdi := &multiDirIndexer{indexer: mi, logger: logger, app: s.app, channels: store}
+
+	_, err := mdi.Search(context.Background(), "/repo/.worktrees/wt", "test", 5)
+	require.NoError(s.T(), err)
+	mi.AssertExpectations(s.T())
+}
+
+func (s *MainSuite) TestWorktreeRootDir() {
+	wt := &db.Channel{ChannelID: "wt", DirPath: "/repo/.worktrees/wt", ParentID: "root", Worktree: true}
+	tests := []struct {
+		name  string
+		setup func(store *testutil.MockStore)
+		want  string
+	}{
+		{name: "worktree channel", setup: func(store *testutil.MockStore) {
+			store.On("ListChannels", mock.Anything).Return([]*db.Channel{{ChannelID: "other", DirPath: "/repo/.worktrees/wt"}, wt}, nil)
+			store.On("GetChannel", mock.Anything, "root").Return(&db.Channel{ChannelID: "root", DirPath: "/repo"}, nil)
+		}, want: "/repo"},
+		{name: "parent gone", setup: func(store *testutil.MockStore) {
+			store.On("ListChannels", mock.Anything).Return([]*db.Channel{wt}, nil)
+			store.On("GetChannel", mock.Anything, "root").Return(nil, nil)
+		}},
+		{name: "no worktree channel", setup: func(store *testutil.MockStore) {
+			store.On("ListChannels", mock.Anything).Return([]*db.Channel{{ChannelID: "root", DirPath: "/repo"}}, nil)
+		}},
+		{name: "listing fails", setup: func(store *testutil.MockStore) {
+			store.On("ListChannels", mock.Anything).Return(nil, errors.New("db error"))
+		}},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			store := new(testutil.MockStore)
+			tt.setup(store)
+			require.Equal(s.T(), tt.want, worktreeRootDir(context.Background(), store, "/repo/.worktrees/wt"))
+			store.AssertExpectations(s.T())
+		})
+	}
 }
 
 func (s *MainSuite) TestResolveMemoryPathsWithExclusions() {
@@ -207,7 +302,7 @@ func (s *MainSuite) TestResolveMemoryPathsWithExclusions() {
 		app:               s.app,
 	}
 
-	entries, excludePaths := mdi.resolveMemoryPaths("/home/user/project")
+	entries, excludePaths := mdi.resolveMemoryPaths(context.Background(), "/home/user/project")
 	require.Len(s.T(), entries, 5) // auto-memory + CLAUDE.md x3 + ./memory
 	require.Len(s.T(), excludePaths, 1)
 	require.Equal(s.T(), "/home/user/project/memory/drafts", excludePaths[0])
@@ -228,7 +323,7 @@ func (s *MainSuite) TestResolveMemoryPathsAbsoluteExclusion() {
 		app:               s.app,
 	}
 
-	entries, excludePaths := mdi.resolveMemoryPaths("/home/user/project")
+	entries, excludePaths := mdi.resolveMemoryPaths(context.Background(), "/home/user/project")
 	require.Len(s.T(), entries, 5) // auto-memory + CLAUDE.md x3 + ./memory
 	require.Len(s.T(), excludePaths, 1)
 	require.Equal(s.T(), "/shared/secret", excludePaths[0])
@@ -247,7 +342,7 @@ func (s *MainSuite) TestResolveMemoryPathsProjectExclusion() {
 	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
 	mdi := &multiDirIndexer{indexer: indexer, logger: logger, app: s.app}
 
-	entries, excludePaths := mdi.resolveMemoryPaths("/home/user/project")
+	entries, excludePaths := mdi.resolveMemoryPaths(context.Background(), "/home/user/project")
 	require.Len(s.T(), entries, 5) // auto-memory + CLAUDE.md x3 + ./docs
 	require.Len(s.T(), excludePaths, 1)
 	require.Equal(s.T(), "/home/user/project/docs/wip", excludePaths[0])
@@ -459,7 +554,7 @@ func (s *MainSuite) TestMultiDirIndexerSearchWithGlobalPath() {
 	mi.On("Index", mock.Anything, mock.Anything, "/some/project", mock.Anything).Return(0, nil)
 	// Global paths (global CLAUDE.md + absolute config path, scope = "")
 	mi.On("Index", mock.Anything, mock.Anything, "", mock.Anything).Return(0, nil)
-	mi.On("Search", mock.Anything, "/some/project", "test", 5).Return([]memory.SearchResult{}, nil)
+	mi.On("Search", mock.Anything, []string{"/some/project"}, "test", 5).Return([]memory.SearchResult{}, nil)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	mdi := &multiDirIndexer{indexer: mi, logger: logger, globalMemoryPaths: []string{"/shared/knowledge"}, app: s.app}
@@ -479,7 +574,7 @@ func (s *MainSuite) TestMultiDirIndexerSearchWithIndexError() {
 	mi := new(mockMemIndexer)
 	// Auto-memory path fails
 	mi.On("Index", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(0, errors.New("index error"))
-	mi.On("Search", mock.Anything, "/some/project", "test", 5).Return([]memory.SearchResult{}, nil)
+	mi.On("Search", mock.Anything, []string{"/some/project"}, "test", 5).Return([]memory.SearchResult{}, nil)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	mdi := &multiDirIndexer{indexer: mi, logger: logger, app: s.app}
