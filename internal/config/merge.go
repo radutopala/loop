@@ -41,6 +41,7 @@ type projectConfig struct {
 	ClaudeEffort               string                     `json:"claude_effort"`
 	ClaudeBinPath              string                     `json:"claude_bin_path"`
 	ClaudeBatchDisallowedTools []string                   `json:"claude_batch_disallowed_tools"`
+	ClaudePromptSuggestions    *bool                      `json:"claude_prompt_suggestions"`
 	ClaudeRetry                *jsonAgentRetryConfig      `json:"claude_retry"`
 	ClaudeCodeOAuthToken       string                     `json:"claude_code_oauth_token"`
 	AnthropicAPIKey            string                     `json:"anthropic_api_key"`
@@ -315,6 +316,10 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 
 	if len(pc.ClaudeBatchDisallowedTools) > 0 {
 		merged.ClaudeBatchDisallowedTools = pc.ClaudeBatchDisallowedTools
+	}
+
+	if pc.ClaudePromptSuggestions != nil {
+		merged.ClaudePromptSuggestions = *pc.ClaudePromptSuggestions
 	}
 
 	if pc.ClaudeRetry != nil {

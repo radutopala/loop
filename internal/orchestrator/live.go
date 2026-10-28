@@ -321,6 +321,11 @@ func (o *Orchestrator) liveHooks(channelID string) agent.LiveHooks {
 				o.liveSystem(channelID, subtype, event)
 			}
 		},
+		Suggestion: func(text string) {
+			if o.events != nil {
+				o.events.BroadcastPromptSuggestion(channelID, events.PromptSuggestionEventData{Suggestion: text})
+			}
+		},
 		Prompt: func(text string) {
 			msgID := storeUserPrompt(context.Background(), o.store, o.events, channelID, liveAuthorID, "remote", text)
 			// The turn it starts answers it.

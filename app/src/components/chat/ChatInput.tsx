@@ -19,6 +19,7 @@ import { composerHeight, composerMaxHeight } from "./composerHeight";
 import { ExplainToggle } from "./ExplainToggle";
 import { HoverTip } from "./HoverTip";
 import { LearnToggle } from "./LearnToggle";
+import { composerPlaceholder } from "./promptSuggestion";
 import { chooseSendRoute, normalizeSendMode, type SendMode } from "./sendRouting";
 
 function buildInputStyles(colors: ColorPalette): Record<string, React.CSSProperties> {
@@ -248,6 +249,9 @@ export interface ChatInputProps {
   // shown above the composer until trusted, since they don't apply till then.
   trustPending?: boolean;
   onReviewTrust?: () => void;
+  // The next prompt the agent predicts, shown in the empty composer; Tab
+  // takes it.
+  suggestion?: string | null;
 }
 
 function buildQuotePrefix(msg: Message): string {
@@ -282,6 +286,7 @@ export function ChatInput({
   onReviewTrust,
   editNotice,
   onDismissEditNotice,
+  suggestion,
 }: ChatInputProps) {
   const { colors } = useTheme();
   const styles = buildInputStyles(colors);
@@ -944,6 +949,12 @@ export function ChatInput({
         setShowMention(false);
         return;
       }
+      if (e.key === "Tab" && !e.shiftKey && suggestion && !text) {
+        e.preventDefault();
+        setText(suggestion);
+        draftText.set(channelId, suggestion);
+        return;
+      }
       if (e.key === "Escape" && editingQueued) {
         e.preventDefault();
         cancelEdit();
@@ -1027,6 +1038,7 @@ export function ChatInput({
       acceptFile,
       editingQueued,
       cancelEdit,
+      suggestion,
     ],
   );
 
@@ -1207,7 +1219,10 @@ export function ChatInput({
         onChange={handleChange}
         onKeyDown={handleKeyDown}
         onPaste={handlePaste}
-        placeholder={`Ask Loop anything, / for commands, @ for files${shortcuts.length > 0 ? ", # for shortcuts" : ""} — ${navigator.platform.includes("Mac") ? "⌘" : "Ctrl+"}Enter to ${sendMode === "steer" ? "queue" : "steer"}`}
+        placeholder={composerPlaceholder(
+          suggestion,
+          `Ask Loop anything, / for commands, @ for files${shortcuts.length > 0 ? ", # for shortcuts" : ""} — ${navigator.platform.includes("Mac") ? "⌘" : "Ctrl+"}Enter to ${sendMode === "steer" ? "queue" : "steer"}`,
+        )}
         rows={3}
         disabled={sending}
       />

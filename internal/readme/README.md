@@ -329,6 +329,7 @@ On startup, `loop serve` keeps the versioned container files (`Dockerfile`, `ent
 | `claude_model` | `"claude-sonnet-5-5"` | Claude model (e.g. `"claude-opus-5-5"`, `"claude-sonnet-5-5"`, `"claude-fable-5-1"`, `"claude-opus-4-8"`, `"claude-haiku-5-5"`; append `[1m]` for the 1M-token context window). Overridable per channel from the chat composer |
 | `claude_effort` | `""` | Reasoning effort passed as `--effort` (`low`…`max`); empty uses the model default. Overridable per channel from the chat composer |
 | `claude_bin_path` | `"claude"` | Path to Claude Code binary |
+| `claude_prompt_suggestions` | `true` | After each chat turn, offer Claude's predicted next prompt in the composer (Tab accepts) |
 | `mounts` | `[]` | Host directories to mount into containers |
 | `copy_files` | `["~/.claude.json"]` | Files copied (not mounted) into each container |
 | `proxies.http_proxy` | `""` | Proxy for `http://` traffic in containers, image builds and the daemon's own connections. Empty inherits the daemon's own environment — which is fixed when the daemon starts, while this is re-read per run |

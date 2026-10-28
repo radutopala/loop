@@ -518,6 +518,9 @@ func (o *Orchestrator) prepareAgentRequest(ctx context.Context, msg *bot.Incomin
 		req.Prompt = dirHint + "\n\n" + req.Prompt
 	}
 	req.Live = o.useLive(req, msg, channel)
+	// Only the app's composer offers a suggestion; a hidden thread's,
+	// read-only or review run isn't one the user answers.
+	req.Suggest = channel.Platform == types.PlatformLocal && !db.IsHiddenKind(channel.Kind) && !req.ReadOnly && !req.ReviewMode
 
 	return req, recent, channel, nil
 }
@@ -707,6 +710,11 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 		}
 		req.OnBackgroundTasks = func(tasks []agent.BackgroundTask) {
 			o.events.BroadcastAgentActivity(msg.ChannelID, backgroundData(tasks))
+		}
+		if req.Suggest {
+			req.OnSuggestion = func(text string) {
+				o.events.BroadcastPromptSuggestion(msg.ChannelID, events.PromptSuggestionEventData{Suggestion: text})
+			}
 		}
 	}
 

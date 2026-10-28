@@ -359,6 +359,7 @@ var projectFieldClasses = []fieldClass{
 	{path: "claude_effort", sample: `"high"`, reason: "the agent's effort"},
 	{path: "claude_bin_path", sample: `"/usr/bin/claude"`, reason: "a path inside the agent container"},
 	{path: "claude_batch_disallowed_tools", sample: `["Bash"]`, reason: "Claude's tools inside the container"},
+	{path: "claude_prompt_suggestions", sample: `false`, reason: "whether the agent's chat runs predict a next prompt for the composer"},
 	{path: "claude_retry.max_attempts", sample: `3`, reason: "retries of the agent's own runs"},
 	{path: "claude_retry.backoff_base_sec", sample: `3`, reason: "retries of the agent's own runs"},
 	{path: "claude_retry.backoff_max_sec", sample: `3`, reason: "retries of the agent's own runs"},

@@ -292,6 +292,7 @@ var mergeFields = []mergeField{
 	{path: "claude_model", kind: mergeReplace, field: func(c *Config) any { return &c.ClaudeModel }, global: `"g"`, project: `"p"`, worktree: `"w"`},
 	{path: "claude_effort", kind: mergeReplace, field: func(c *Config) any { return &c.ClaudeEffort }, global: `"g"`, project: `"p"`, worktree: `"w"`},
 	{path: "claude_bin_path", kind: mergeReplace, field: func(c *Config) any { return &c.ClaudeBinPath }, global: `"/g"`, project: `"/p"`, worktree: `"/w"`},
+	{path: "claude_prompt_suggestions", kind: mergeReplace, field: func(c *Config) any { return &c.ClaudePromptSuggestions }, global: `false`, project: `true`, worktree: `false`},
 	{path: "claude_batch_disallowed_tools", kind: mergeReplace, field: func(c *Config) any { return &c.ClaudeBatchDisallowedTools }, global: `["G"]`, project: `["P"]`, worktree: `["W"]`},
 	{path: "claude_retry.max_attempts", kind: mergeReplace, field: func(c *Config) any { return &c.AgentRetry.MaxAttempts }, global: `1`, project: `2`, worktree: `3`},
 	{path: "claude_retry.backoff_base_sec", kind: mergeReplace, field: func(c *Config) any { return &c.AgentRetry.BackoffBase }, global: `1`, project: `2`, worktree: `3`, conv: seconds},

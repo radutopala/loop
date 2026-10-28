@@ -732,6 +732,20 @@ A turn the session starts on its own, after a background task wakes it, runs wit
 
 ---
 
+### `agent.prompt_suggestion`
+
+The agent predicted the next prompt the user will send, after a chat turn's result. Only app chats ask for one, and only while [`claude_prompt_suggestions`](configuration.md) is on; see [prompt suggestions](chat.md#prompt-suggestions). Unlike `agent.activity`, it isn't a sign that a run is going: it arrives after the turn ended.
+
+**Payload schema:**
+
+```json
+{ "suggestion": "run the tests" }
+```
+
+**Scope:** Channel.
+
+---
+
 ### `monitor.started` / `monitor.finished`
 
 A [monitor](api.md#post-apichannelsidmonitors) started or ended in the channel. `monitor.started` carries the monitor, shaped as in [`GET /api/channels/{id}/monitors`](api.md#get-apichannelsidmonitors); `monitor.finished` carries how it ended. The chat lists running monitors above the composer from these.

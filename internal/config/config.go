@@ -58,6 +58,7 @@ type jsonConfig struct {
 	ClaudeEffort               string                     `json:"claude_effort"`
 	ClaudeBinPath              string                     `json:"claude_bin_path"`
 	ClaudeBatchDisallowedTools []string                   `json:"claude_batch_disallowed_tools"`
+	ClaudePromptSuggestions    *bool                      `json:"claude_prompt_suggestions"`
 	ClaudeRetry                *jsonAgentRetryConfig      `json:"claude_retry"`
 	KeepMCPConfigs             *bool                      `json:"keep_mcp_configs"`
 	WorkflowBashLocal          *bool                      `json:"workflow_bash_local"`
@@ -314,6 +315,7 @@ func (l *Loader) parse() (*Config, error) {
 		ClaudeModel:                stringDefault(jc.ClaudeModel, "claude-sonnet-5-5"),
 		ClaudeEffort:               jc.ClaudeEffort,
 		ClaudeBatchDisallowedTools: sliceDefault(jc.ClaudeBatchDisallowedTools, DefaultBatchDisallowedTools()),
+		ClaudePromptSuggestions:    ptrDefault(jc.ClaudePromptSuggestions, true),
 		KeepMCPConfigs:             ptrDefault(jc.KeepMCPConfigs, false),
 		WorkflowBashLocal:          ptrDefault(jc.WorkflowBashLocal, false),
 	}

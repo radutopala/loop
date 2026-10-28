@@ -12,6 +12,7 @@ import (
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/events"
+	"github.com/radutopala/loop/internal/types"
 )
 
 // --- Streaming tests ---
@@ -907,4 +908,69 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingOnThinkingAndToolResultBro
 	eb.AssertNumberOfCalls(s.T(), "BroadcastAgentThinking", 1)
 	eb.AssertNumberOfCalls(s.T(), "BroadcastToolResult", 2)
 	eb.AssertExpectations(s.T())
+}
+
+// Only an app chat asks the agent for a predicted next prompt, and the
+// prediction is broadcast to the channel's composer.
+func (s *OrchestratorSuite) TestHandleMessageStreamingPromptSuggestion() {
+	tests := []struct {
+		name     string
+		platform types.Platform
+		want     bool
+	}{
+		{name: "app chat", platform: types.PlatformLocal, want: true},
+		{name: "discord channel", platform: types.PlatformDiscord},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			eb := new(MockEventBroadcaster)
+			s.orch.SetEventBroadcaster(eb)
+
+			msg := &bot.IncomingMessage{
+				ChannelID:    "ch1",
+				AuthorID:     "user1",
+				AuthorName:   "Alice",
+				Content:      "hello",
+				MessageID:    "msg1",
+				IsBotMention: true,
+				Timestamp:    time.Now().UTC(),
+			}
+
+			s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+			s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true, Platform: tt.platform}, nil)
+			s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+			s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+			s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+
+			s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+				if (req.OnSuggestion != nil) != tt.want {
+					return false
+				}
+				req.OnTurn("done", agent.TurnRef{})
+				if req.OnSuggestion != nil {
+					req.OnSuggestion("run the tests")
+				}
+				return true
+			})).Return(&agent.AgentResponse{Response: "done", SessionID: "sess-sug"}, nil)
+
+			s.store.On("UpdateSessionID", s.ctx, "ch1", "sess-sug").Return(nil)
+			s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+			s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+
+			eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return()
+			eb.On("BroadcastAgentStatus", "ch1", mock.Anything).Return()
+			if tt.want {
+				eb.On("BroadcastPromptSuggestion", "ch1", events.PromptSuggestionEventData{Suggestion: "run the tests"}).Once()
+			}
+
+			s.orch.HandleMessage(s.ctx, msg)
+
+			s.runner.AssertExpectations(s.T())
+			eb.AssertExpectations(s.T())
+			if !tt.want {
+				eb.AssertNotCalled(s.T(), "BroadcastPromptSuggestion", mock.Anything, mock.Anything)
+			}
+		})
+	}
 }

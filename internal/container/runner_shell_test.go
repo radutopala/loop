@@ -111,6 +111,7 @@ func (s *RunnerSuite) TestStreamCallbacksAny() {
 		{"onToolResult", streamCallbacks{onToolResult: func(_, _ string, _ bool) {}}, true},
 		{"onSession", streamCallbacks{onSession: func(string) {}}, true},
 		{"onPrompt", streamCallbacks{onPrompt: func(string) {}}, true},
+		{"onSuggestion", streamCallbacks{onSuggestion: func(string) {}}, true},
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
@@ -697,6 +698,34 @@ func (s *RunnerSuite) TestBuildClaudeCmdPlanMode() {
 // propagate --append-system-prompt into Task-tool subagents. Omitted
 // entirely when empty, so a first review run (nothing to dedup against)
 // doesn't pass a bare flag.
+// Only a run that takes a suggestion asks for one, and only while the
+// config allows it.
+func (s *RunnerSuite) TestBuildClaudeCmdPromptSuggestions() {
+	tests := []struct {
+		name    string
+		enabled bool
+		suggest bool
+		want    bool
+	}{
+		{"enabled and asked", true, true, true},
+		{"enabled, not asked", true, false, false},
+		{"disabled", false, true, false},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			cfg := &config.Config{ClaudeBinPath: "claude", ClaudePromptSuggestions: tt.enabled}
+			req := &agent.AgentRequest{
+				ChannelID: "ch-1",
+				Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
+				Suggest:   tt.suggest,
+			}
+			cmd := buildClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", req)
+			require.Equal(s.T(), tt.want, slices.Contains(cmd, "--prompt-suggestions"))
+			require.Equal(s.T(), "user: hello\n", cmd[len(cmd)-1])
+		})
+	}
+}
+
 func (s *RunnerSuite) TestBuildClaudeCmdSubagentSystemPrompt() {
 	cfg := &config.Config{ClaudeBinPath: "claude"}
 	req := &agent.AgentRequest{

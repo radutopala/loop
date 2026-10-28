@@ -25,6 +25,7 @@ const (
 	EventToolResult                = "tool.result"
 	EventAgentThinking             = "agent.thinking"
 	EventAgentActivity             = "agent.activity"
+	EventPromptSuggestion          = "agent.prompt_suggestion"
 	EventAskUser                   = "agent.ask_user"
 	EventAskResolved               = "agent.ask_resolved"
 	EventExitPlan                  = "agent.exit_plan"
@@ -507,6 +508,16 @@ func (h *EventsHub) BroadcastToolUse(channelID string, data events.ToolUseEventD
 func (h *EventsHub) BroadcastAgentActivity(channelID string, data events.AgentActivityEventData) {
 	h.Broadcast(Event{
 		Type:      EventAgentActivity,
+		ChannelID: channelID,
+		Data:      data,
+	})
+}
+
+// BroadcastPromptSuggestion sends an agent.prompt_suggestion event with the
+// next prompt the agent predicts after a turn.
+func (h *EventsHub) BroadcastPromptSuggestion(channelID string, data events.PromptSuggestionEventData) {
+	h.Broadcast(Event{
+		Type:      EventPromptSuggestion,
 		ChannelID: channelID,
 		Data:      data,
 	})

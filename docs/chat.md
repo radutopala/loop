@@ -387,6 +387,12 @@ This keeps the message body plain text — no multimodal payload is sent over th
 
 Clicking a quote button on a bot message stages it as a reply target above the input. The next send prepends the bot's content as block-quoted lines (`> …`) before the new prompt, then clears the quote. The staged quote can be dismissed without sending via the `×` button next to the preview.
 
+### Prompt Suggestions
+
+After a chat turn, the agent predicts the prompt you're likely to send next, and the empty composer shows it in place of its placeholder, followed by `⇥ Tab`. `Tab` puts it in the composer to send or edit; `Enter` on an empty composer still sends nothing. It stays while the composer is empty and goes when the next run starts or you switch chats.
+
+The Claude CLI writes the prediction after the turn's result (`--prompt-suggestions`), and the daemon forwards it as the [`agent.prompt_suggestion`](events.md#agentprompt_suggestion) event. The CLI doesn't predict one after every turn. Only app chats ask; scheduled tasks, reviews, learn and explain runs, and Discord or Slack channels don't. Turn it off with [`claude_prompt_suggestions`](configuration.md): each suggestion is one small extra request.
+
 ---
 
 ## Command Autocomplete

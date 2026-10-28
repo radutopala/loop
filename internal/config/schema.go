@@ -116,6 +116,14 @@ func buildSchema(goos string) *ConfigSchema {
 				XOrder:       3,
 				XPlaceholder: "claude",
 			},
+			"claude_prompt_suggestions": {
+				Type:        "boolean",
+				Title:       "Prompt Suggestions",
+				Description: "After each chat turn, ask Claude for a predicted next prompt and offer it in the composer (Tab accepts). Costs one small extra request per turn.",
+				Default:     true,
+				XSection:    "Claude",
+				XOrder:      4,
+			},
 			"claude_batch_disallowed_tools": {
 				Type:        "array",
 				Title:       "Batch Disallowed Tools",
