@@ -1,6 +1,6 @@
 import { Fragment, type ReactNode, type RefObject, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useChannelPR } from "../../hooks/useChannelPR";
+import { useChannelPR, useChannelPRStatus } from "../../hooks/useChannelPR";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { Channel } from "../../types";
@@ -28,7 +28,9 @@ export function RowInfoPopup({ channel, anchorRef, hovered }: RowInfoPopupProps)
   const title = sessionName(channel);
   // Looked up only while the popup shows, not for every row in the sidebar.
   const pr = useChannelPR(channel.id, channel.branch, hovered);
-  const lines = rowInfoLines(channel, pr);
+  // The watcher's status, only for a row with a PR/MR pill to explain.
+  const status = useChannelPRStatus(channel.id, hovered && (!!channel.pr_attention || (channel.unresolved_threads ?? 0) > 0));
+  const lines = rowInfoLines(channel, pr, status);
   const description = channel.description?.trim();
 
   // A layout effect, so the popup shows in the same frame as the row's
@@ -64,7 +66,7 @@ export function RowInfoPopup({ channel, anchorRef, hovered }: RowInfoPopupProps)
     const h = el.getBoundingClientRect().height;
     const top = Math.round(Math.max(8, Math.min(pos.rowMid - h / 2, window.innerHeight - 8 - h)));
     if (top !== pos.top) setPos({ ...pos, top });
-  }, [pos, pr]);
+  }, [pos, pr, status]);
 
   if (!pos) return null;
   // A step lighter than anything under it on dark themes, so it stands out
@@ -197,6 +199,19 @@ const ICONS: Record<RowInfoLine["key"], ReactNode> = {
       <path d="M6 9v12M13 6h3a2 2 0 0 1 2 2v7" />
     </>
   ),
+  ci: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M15 9l-6 6M9 9l6 6" />
+    </>
+  ),
+  conflict: (
+    <>
+      <path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
+      <path d="M12 9v4M12 17h.01" />
+    </>
+  ),
+  cmt: <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />,
   sync: <path d="M7 20V4M3 8l4-4 4 4M17 4v16M13 16l4 4 4-4" />,
   model: <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" />,
   status: <path d="M22 12h-4l-3 9L9 3l-3 9H2" />,

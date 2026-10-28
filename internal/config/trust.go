@@ -61,7 +61,7 @@ type trustedFields struct {
 	// CI decides whether a failing check sends the agent a prompt, which
 	// starts a run unattended, and how the owner's "merge when ready"
 	// merges.
-	CI *jsonCIConfig `json:"ci,omitempty"`
+	PR *jsonPRConfig `json:"pr,omitempty"`
 	// ContainerImage and ContainerImageAutobuild pick the image the agent
 	// runs in, built from the project's .loop/container when autobuild is
 	// on. The gate and the docker proxy run from inside that image, and the
@@ -134,8 +134,8 @@ func trustedFieldsOf(pc *projectConfig) trustedFields {
 	if g := pc.GitLab; g != nil && (g.GlabConfigDir != "" || g.MountGlabConfig != nil) {
 		t.GitLab = &trustedGitLab{GlabConfigDir: g.GlabConfigDir, MountGlabConfig: g.MountGlabConfig}
 	}
-	if c := pc.CI; c != nil && *c != (jsonCIConfig{}) {
-		t.CI = c
+	if c := pc.PR; c != nil && *c != (jsonPRConfig{}) {
+		t.PR = c
 	}
 	if pc.Plugins != nil {
 		for id, c := range pc.Plugins.ByID {
@@ -207,7 +207,7 @@ func (t trustedFields) apply(pc *projectConfig) {
 		}
 		pc.GitLab = &projectGitLabConfig{GlabConfigDir: g.GlabConfigDir, MountGlabConfig: g.MountGlabConfig}
 	}
-	pc.CI = t.CI
+	pc.PR = t.PR
 	if pc.Plugins != nil || t.Plugins != nil || t.PluginSchedules != nil {
 		if pc.Plugins == nil {
 			pc.Plugins = &PluginsConfig{}
@@ -558,6 +558,41 @@ func (s *TrustStore) AdoptContainerImage(dir string) error {
 			dst.ContainerImage, dst.ContainerImageAutobuild = src.ContainerImage, src.ContainerImageAutobuild
 			dst.ContainerBuild = src.ContainerBuild
 		})
+}
+
+// RenameField renames the trusted field from to to in every project's
+// trusted version, for a config key Loop renames: the project config's key
+// is renamed too, and the trust it had carries over. A trusted version that
+// has both keeps to's. The trust file is untouched when none has from.
+func (s *TrustStore) RenameField(from, to string) error {
+	trustMu.Lock()
+	defer trustMu.Unlock()
+	all, err := s.readAll()
+	if err != nil {
+		return err
+	}
+	changed := false
+	for dir, e := range all {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(e.Fields, &fields); err != nil {
+			return fmt.Errorf("parsing the trusted config of %s: %w", dir, err)
+		}
+		v, ok := fields[from]
+		if !ok {
+			continue
+		}
+		if _, ok := fields[to]; !ok {
+			fields[to] = v
+		}
+		delete(fields, from)
+		e.Fields, _ = json.Marshal(fields) // a map of raw JSON always encodes
+		all[dir] = e
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return s.writeAll(all)
 }
 
 // TrustedBuild returns the build context of the project in dir as the

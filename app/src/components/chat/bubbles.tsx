@@ -3,9 +3,9 @@ import { resolveAsk, resolvePlan } from "../../api/channels";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { AgentActivityData, AskUserOption, AskUserQuestion, ExitPlanModeData, Message, TaskItem, TimelineItem } from "../../types";
-import { isCIMessage } from "../../utils/ciState";
 import { writeClipboard } from "../../utils/copyToClipboard";
 import { messageLink } from "../../utils/messageLinks";
+import { isPRMessage } from "../../utils/prStatus";
 import { Chevron } from "../shared/Chevron";
 import type { MenuItem } from "../shared/ContextMenu";
 import { ContextMenu } from "../shared/ContextMenu";
@@ -239,13 +239,13 @@ export function MessageBubble({
         {isUser && (
           <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 6, marginTop: 4 }}>
             {message.not_before ? <DelayCountdown notBefore={message.not_before} /> : null}
-            {isCIMessage(message) && (
+            {isPRMessage(message) && (
               <span
-                data-testid="ci-message-badge"
-                title="Sent by Loop's CI watcher: a failure on the agent's commit"
+                data-testid="pr-message-badge"
+                title="Sent by Loop's PR watcher: a failure on the agent's commit"
                 style={{ fontSize: 10, color: colors.error, border: `1px solid ${colors.error}`, borderRadius: 4, padding: "1px 6px", fontWeight: 500, letterSpacing: 0.3 }}
               >
-                CI
+                PR
               </span>
             )}
             {showQueued && (

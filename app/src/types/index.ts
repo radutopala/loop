@@ -1,3 +1,5 @@
+import type { PRAttention } from "../api/pr";
+
 export type { PanelType } from "./panels";
 export { EXCLUSIVE_PANELS, SINGLETON_PANELS } from "./panels";
 
@@ -53,8 +55,10 @@ export interface Channel {
   trust_pending?: boolean;
   /** The badges plugins show on the row, by plugin id. */
   plugin_badges?: PluginBadge[];
-  /** The PR/MR's CI: "failed" needs you, "fixing" is with the agent; unset when neither. */
-  ci_attention?: "failed" | "fixing";
+  /** The PR/MR's CI failure or merge conflict: "failed"/"conflict" need you, "fixing" is with the agent; unset when none. */
+  pr_attention?: PRAttention;
+  /** The PR/MR's unresolved review threads; unset when none. */
+  unresolved_threads?: number;
 }
 
 /** A plugin's badge on a sidebar row: a short label and its tooltip. */

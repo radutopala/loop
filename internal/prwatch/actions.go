@@ -1,4 +1,4 @@
-package ciwatch
+package prwatch
 
 import (
 	"context"
@@ -89,7 +89,7 @@ func (w *Watcher) recordSHA(ctx context.Context, channelID, sha string) {
 	defer e.lock.Unlock()
 	st, err := w.load(ctx, channelID)
 	if err != nil {
-		w.Logger.Warn("ci: loading CI state", "channel_id", channelID, "error", err)
+		w.Logger.Warn("pr: loading PR state", "channel_id", channelID, "error", err)
 		return
 	}
 	if slices.Contains(st.AgentSHAs, sha) {
@@ -104,7 +104,7 @@ func (w *Watcher) recordSHA(ctx context.Context, channelID, sha string) {
 
 // Status returns what the thread's PR/MR CI was last seen as, polling it
 // first when it wasn't seen yet. nil when the thread has no PR/MR.
-func (w *Watcher) Status(ctx context.Context, channelID string) *events.CIEventData {
+func (w *Watcher) Status(ctx context.Context, channelID string) *events.PREventData {
 	e := w.entry(channelID)
 	w.mu.Lock()
 	last := e.last
@@ -124,17 +124,17 @@ func (w *Watcher) Status(ctx context.Context, channelID string) *events.CIEventD
 	return &d
 }
 
-// Attention returns each thread's CI attention, for the threads that have
-// one.
-func (w *Watcher) Attention(ctx context.Context) (map[string]string, error) {
-	states, err := w.Store.ListCIStates(ctx)
+// Flags returns what each thread's sidebar pills show of its PR/MR, for the
+// threads with something to show.
+func (w *Watcher) Flags(ctx context.Context) (map[string]events.PRFlags, error) {
+	states, err := w.Store.ListPRStates(ctx)
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]string{}
+	out := map[string]events.PRFlags{}
 	for _, st := range states {
-		if st.Attention != "" {
-			out[st.ChannelID] = st.Attention
+		if fl := (events.PRFlags{Attention: st.Attention, UnresolvedThreads: len(st.Threads)}); fl != (events.PRFlags{}) {
+			out[st.ChannelID] = fl
 		}
 	}
 	return out, nil
@@ -151,7 +151,7 @@ func (w *Watcher) SetAutoFix(ctx context.Context, channelID string, on *bool) er
 		return err
 	}
 	st.AutoFix = on
-	if err := w.Store.SaveCIState(ctx, st); err != nil {
+	if err := w.Store.SavePRState(ctx, st); err != nil {
 		return err
 	}
 	w.mu.Lock()
@@ -161,8 +161,8 @@ func (w *Watcher) SetAutoFix(ctx context.Context, channelID string, on *bool) er
 	return nil
 }
 
-// FixNow sends the PR/MR's current failure to the thread's agent, whoever
-// made the commit and whatever the guards say: the owner asked.
+// FixNow sends the PR/MR's current failure to the thread's agent, whoever made the commit and whatever the guards say: the
+// owner asked.
 func (w *Watcher) FixNow(ctx context.Context, channelID string) error {
 	e := w.entry(channelID)
 	e.lock.Lock()
@@ -175,7 +175,7 @@ func (w *Watcher) FixNow(ctx context.Context, channelID string) error {
 	if err != nil {
 		return err
 	}
-	ci, err := f.CI(ctx, t.Ref)
+	ci, err := f.Status(ctx, t.Ref)
 	if err != nil {
 		return err
 	}
@@ -188,8 +188,8 @@ func (w *Watcher) FixNow(ctx context.Context, channelID string) error {
 	}
 	st.Failed = fcs
 	prompt, hash := w.prompt(ctx, f, t, ci.HeadSHA, fcs)
-	w.sendFix(ctx, e, st, ci.HeadSHA, hash, prompt, events.CIReasonFixAsked)
-	if err := w.Store.SaveCIState(ctx, st); err != nil {
+	w.sendFix(ctx, e, st, ci.HeadSHA, hash, prompt, events.PRReasonFixAsked)
+	if err := w.Store.SavePRState(ctx, st); err != nil {
 		return err
 	}
 	w.publish(e, w.eventData(ctx, t, f, st, ci))
@@ -273,7 +273,7 @@ func (w *Watcher) Arm(ctx context.Context, channelID, method string) error {
 	if err != nil {
 		return err
 	}
-	ci, err := f.CI(ctx, t.Ref)
+	ci, err := f.Status(ctx, t.Ref)
 	if err != nil {
 		return err
 	}
@@ -289,7 +289,7 @@ func (w *Watcher) Arm(ctx context.Context, channelID, method string) error {
 	}
 	st.MergeArmed, st.MergeVia, st.ArmedSHA = method, via, ci.HeadSHA
 	st.Watching = true
-	if err := w.Store.SaveCIState(ctx, st); err != nil {
+	if err := w.Store.SavePRState(ctx, st); err != nil {
 		return err
 	}
 	w.Kick(channelID)
@@ -315,7 +315,7 @@ func (w *Watcher) CancelMerge(ctx context.Context, channelID string) error {
 		}
 	}
 	st.MergeArmed, st.MergeVia, st.ArmedSHA = "", "", ""
-	if err := w.Store.SaveCIState(ctx, st); err != nil {
+	if err := w.Store.SavePRState(ctx, st); err != nil {
 		return err
 	}
 	w.Kick(channelID)
@@ -355,7 +355,7 @@ func pickMethod(ctx context.Context, f forge.Forge, t *Target, method string) (s
 		return "", settings, err
 	}
 	if method == "" {
-		method = t.CI.MergeMethod
+		method = t.PR.MergeMethod
 	}
 	method, err = forge.PickMethod(method, settings)
 	return method, settings, err

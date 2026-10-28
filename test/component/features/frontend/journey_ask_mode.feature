@@ -48,16 +48,15 @@ Feature: Ask user question card
   Scenario: Sidebar lights the ask pill while the channel is parked on AskUserQuestion
     # agent.ask_user → applyEvent sets state.askUserQuestions → refreshAskUserMembership
     # adds the channel ID to askUserChannelIdsRef → ChannelItem renders
-    # <StatusPill label="ask" title="Agent is asking a question">. Clicking
-    # Send Answers fires clearAskUser() → clearAskUserPill(channelId) → set
-    # delete → pill disappears.
+    # <StatusPill label="ask">. Clicking Send Answers fires clearAskUser() →
+    # clearAskUserPill(channelId) → set delete → pill disappears.
     When I inject an ask_user event with question "Pick one" and options "yes,no"
     Then I wait for text "CLAUDE HAS QUESTIONS" to appear
-    And the element "[data-testid='sidebar'] [title='Agent is asking a question']" should be visible
+    And the element "[data-testid='sidebar'] [data-pill='ask']" should be visible
     When I click on the button with text "yes"
     And I click on the button with text "Send Answers"
     Then I wait for text "CLAUDE HAS QUESTIONS" to disappear
-    And the element "[data-testid='sidebar'] [title='Agent is asking a question']" should not exist
+    And the element "[data-testid='sidebar'] [data-pill='ask']" should not exist
 
   Scenario: A /loop command leaves a still-pending ask card up
     # The composer used to dismiss the ask/plan cards after every send, so a
@@ -101,4 +100,4 @@ Feature: Ask user question card
     And I wait for text "CLAUDE HAS QUESTIONS" to appear
     And I click on the button with text "Skip"
     Then I wait for text "CLAUDE HAS QUESTIONS" to disappear
-    And the element "[data-testid='sidebar'] [title='Agent is asking a question']" should not exist
+    And the element "[data-testid='sidebar'] [data-pill='ask']" should not exist

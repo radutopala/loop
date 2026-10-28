@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PRInfo } from "../../api/git";
+import type { PRStatus } from "../../api/pr";
 import type { Channel } from "../../types";
 import { rowInfoLines } from "./rowInfo";
 
@@ -135,5 +136,75 @@ describe("rowInfoLines with a PR", () => {
     ],
   ])("shows %s", (_, p, want) => {
     expect(rowInfoLines({ ...base, branch: "feat", commit: "abc1234def" }, p)).toEqual(want);
+  });
+});
+
+describe("rowInfoLines with lit PR/MR pills", () => {
+  const status: PRStatus = {
+    channel_id: "ch",
+    kind: "pr",
+    number: 12,
+    head_sha: "abc",
+    base_ref: "main",
+    checks: { total: 4, passed: 2, failed: 2, pending: 0 },
+    failed: [
+      { id: "1", name: "lint" },
+      { id: "2", name: "test" },
+    ],
+    merge_state: "blocked",
+    auto_merge: false,
+    pr_attention: "failed",
+    auto_fix: true,
+    auto_fix_default: true,
+    attempts: 0,
+    max_attempts: 3,
+    reason: "not_agent_commit",
+  };
+  it.each<[string, Partial<Channel>, PRStatus | null, ReturnType<typeof rowInfoLines>]>([
+    [
+      "a failure and its reason",
+      { pr_attention: "failed" },
+      status,
+      [{ key: "ci", value: "✗ 2 failing", detail: "(lint, test) The head commit isn't one this thread's agent made, so auto-fix leaves it to you." }],
+    ],
+    ["a failure before the status loads", { pr_attention: "failed" }, null, [{ key: "ci", value: "failed" }]],
+    [
+      "an agent fixing it",
+      { pr_attention: "fixing" },
+      { ...status, failed: [], reason: "fix_sent" },
+      [{ key: "ci", value: "✗ 2 failing · agent fixing", detail: "Auto-fix sent the failure to the agent." }],
+    ],
+    [
+      "a fix once the checks re-run",
+      { pr_attention: "fixing" },
+      { ...status, checks: { total: 4, passed: 2, failed: 0, pending: 2 }, failed: [], reason: undefined },
+      [{ key: "ci", value: "agent fixing" }],
+    ],
+    ["a fix before the status loads", { pr_attention: "fixing" }, null, [{ key: "ci", value: "agent fixing" }]],
+    [
+      "a failed status with nothing failing",
+      { pr_attention: "failed" },
+      { ...status, checks: { total: 0, passed: 0, failed: 0, pending: 0 }, failed: undefined, reason: undefined },
+      [{ key: "ci", value: "failed" }],
+    ],
+    [
+      "a merge conflict with its base",
+      { pr_attention: "conflict" },
+      { ...status, merge_state: "conflict", pr_attention: "conflict" },
+      [{ key: "conflict", value: "with main", detail: "yours to resolve" }],
+    ],
+    ["a merge conflict before the status loads", { pr_attention: "conflict" }, null, [{ key: "conflict", value: "with its base", detail: "yours to resolve" }]],
+    ["one review thread", { unresolved_threads: 1 }, null, [{ key: "cmt", value: "1 unresolved review thread" }]],
+    [
+      "a conflict and review threads",
+      { pr_attention: "conflict", unresolved_threads: 3 },
+      null,
+      [
+        { key: "conflict", value: "with its base", detail: "yours to resolve" },
+        { key: "cmt", value: "3 unresolved review threads" },
+      ],
+    ],
+  ])("shows %s", (_, overrides, s, want) => {
+    expect(rowInfoLines({ ...base, ...overrides }, null, s)).toEqual(want);
   });
 });

@@ -637,7 +637,7 @@ type Config struct {
 	GitLab                     GitLabConfig
 	Review                     ReviewConfig
 	PlaygroundShare            PlaygroundShareConfig
-	CI                         CIConfig
+	PR                         PRConfig
 	Backup                     BackupConfig
 	Learn                      LearnConfig
 	Explain                    ExplainConfig

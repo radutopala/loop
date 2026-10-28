@@ -240,8 +240,8 @@ func loopNotification(evt Event) *db.Notification {
 		return runNotification(evt.ChannelID, d)
 	case events.TaskRunEventData:
 		return taskRunNotification(d)
-	case events.CIEventData:
-		return ciNotification(d)
+	case events.PREventData:
+		return prNotification(d)
 	}
 	return nil
 }
@@ -264,9 +264,9 @@ func runNotification(channelID string, d events.AgentStatusEventData) *db.Notifi
 	return &db.Notification{Kind: db.NotificationRun, ChannelID: channelID, Title: "Run failed", Body: d.Error}
 }
 
-// ciNotification is the notification of a PR/MR CI failure that needs the
-// owner.
-func ciNotification(d events.CIEventData) *db.Notification {
+// prNotification is the notification of a PR/MR CI failure that needs
+// the owner.
+func prNotification(d events.PREventData) *db.Notification {
 	if d.Alert == "" {
 		return nil
 	}

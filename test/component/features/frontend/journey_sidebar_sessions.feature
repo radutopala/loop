@@ -26,7 +26,7 @@ Feature: Recent sessions in the sidebar
 
     # Waiting on an approval: it stays in Recent and shows the gate pill.
     When I inject a gate.approval_requested event with req_id "bdd-sessions-gate", source "chat", and target "/tmp/bdd-sessions.txt"
-    Then I wait up to "5s" for "[data-testid='sidebar-recent'] [title='Approval needed']" to be visible
+    Then I wait up to "5s" for "[data-testid='sidebar-recent'] [data-pill='gate']" to be visible
     When I inject a gate.approval_resolved event with req_id "bdd-sessions-gate"
     Then the element "[data-testid='sidebar-recent']" should contain text "bdd-sessions"
 
@@ -69,14 +69,14 @@ Feature: Recent sessions in the sidebar
     When I click on "[data-testid='sidebar-tab-recent']"
     Then I wait for "[data-testid='sidebar-recent']" to be visible
     And the element "[data-testid='sidebar-recent'] [data-testid='sidebar-session-row']" should contain text "bdd-sessions-review"
-    And the element "[data-testid='sidebar-recent'] [title='Review in progress']" should be visible
+    And the element "[data-testid='sidebar-recent'] [data-pill='rev…']" should be visible
 
     # The review is done: the session stays in Recent, without the pill.
     When I inject a "review.status" event for the channel with data:
       """
       {"status": "ready"}
       """
-    Then I wait up to "5s" for "[data-testid='sidebar-recent'] [title='Review in progress']" to disappear
+    Then I wait up to "5s" for "[data-testid='sidebar-recent'] [data-pill='rev…']" to disappear
     And the element "[data-testid='sidebar-recent']" should contain text "bdd-sessions-review"
 
   Scenario: The tree's lines scroll behind the Recent/Tree tabs

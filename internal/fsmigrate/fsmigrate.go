@@ -51,6 +51,10 @@ type Ctx struct {
 	// project config in a dir to its trusted version. Nil skips the
 	// migration that uses it.
 	AdoptProjectContainerImage func(dir string) error
+	// RenameTrustedField renames a field in every project's trusted config,
+	// so a key Loop renames keeps the trust it had. Nil leaves the trusted
+	// configs as they are.
+	RenameTrustedField func(from, to string) error
 }
 
 // Migration is a single filesystem migration step.

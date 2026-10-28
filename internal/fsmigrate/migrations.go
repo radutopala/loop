@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -328,6 +329,13 @@ var migrations = []Migration{
 		// proxy run from. Projects keep running in the image they had.
 		Description: "trust existing project container images",
 		Apply:       adoptProjectContainerImages,
+	},
+	{
+		// The ci block is the pr block now: it watches the PR/MR's merge
+		// conflicts and review threads too, beyond its CI. The trust a
+		// project's ci block had carries over to its pr block.
+		Description: "rename the ci config block to pr",
+		Apply:       renameCIBlock,
 	},
 }
 
@@ -1201,29 +1209,7 @@ func dropDevChannelsKeyAt(sys System, configPath string) error {
 
 	changed := false
 	for i := objectMemberIndex(rootObj, devChannelsKey); i >= 0; i = objectMemberIndex(rootObj, devChannelsKey) {
-		// The key's leading extra loses the indent of its own line; what
-		// follows it loses the rest of that line, the key's comment.
-		head := string(rootObj.Members[i].Name.BeforeExtra)
-		if j := strings.LastIndex(head, "\n"); j >= 0 {
-			head = head[:j]
-		} else {
-			head = ""
-		}
-		next := &rootObj.AfterExtra
-		if i+1 < len(rootObj.Members) {
-			next = &rootObj.Members[i+1].Name.BeforeExtra
-		} else if i > 0 {
-			prev := &rootObj.Members[i-1].Value
-			if strings.TrimSpace(string(prev.AfterExtra)) == "" {
-				prev.AfterExtra = nil // no trailing comma on the new last member
-			}
-		}
-		tail := string(*next)
-		if j := strings.Index(tail, "\n"); j >= 0 {
-			tail = tail[j:]
-		}
-		*next = hujson.Extra(head + tail)
-		rootObj.Members = slices.Delete(rootObj.Members, i, i+1)
+		deleteMember(rootObj, i)
 		changed = true
 	}
 
@@ -1244,6 +1230,34 @@ func dropDevChannelsKeyAt(sys System, configPath string) error {
 		return fmt.Errorf("writing %s: %w", configPath, err)
 	}
 	return nil
+}
+
+// deleteMember removes the member at i from obj with the comment on its
+// line. The comments above it stay.
+func deleteMember(obj *hujson.Object, i int) {
+	// The key's leading extra loses the indent of its own line; what
+	// follows it loses the rest of that line, the key's comment.
+	head := string(obj.Members[i].Name.BeforeExtra)
+	if j := strings.LastIndex(head, "\n"); j >= 0 {
+		head = head[:j]
+	} else {
+		head = ""
+	}
+	next := &obj.AfterExtra
+	if i+1 < len(obj.Members) {
+		next = &obj.Members[i+1].Name.BeforeExtra
+	} else if i > 0 {
+		prev := &obj.Members[i-1].Value
+		if strings.TrimSpace(string(prev.AfterExtra)) == "" {
+			prev.AfterExtra = nil // no trailing comma on the new last member
+		}
+	}
+	tail := string(*next)
+	if j := strings.Index(tail, "\n"); j >= 0 {
+		tail = tail[j:]
+	}
+	*next = hujson.Extra(head + tail)
+	obj.Members = slices.Delete(obj.Members, i, i+1)
 }
 
 // dropCommentLinesNaming removes from e the // comment lines that name key as
@@ -1850,4 +1864,62 @@ func forEachReviewFixLoopBodyChildWithPath(rootObj *hujson.Object, fn func(*hujs
 			}
 		}
 	}
+}
+
+func renameCIBlock(_ context.Context, c *Ctx) error {
+	if err := eachConfig(c, renameCIBlockAt); err != nil {
+		return err
+	}
+	if c.RenameTrustedField == nil {
+		return nil
+	}
+	return c.RenameTrustedField("ci", "pr")
+}
+
+// commentedCIKey matches a comment line that starts a commented-out ci
+// block, as the example config has.
+var commentedCIKey = regexp.MustCompile(`(?m)^(\s*//\s*)"ci"(\s*:)`)
+
+// renameCIBlockAt renames the top-level ci key of a config to pr, and the
+// commented-out copy the example config has. A config that sets pr already
+// keeps it and loses ci. The file is untouched when there is nothing to
+// rename.
+func renameCIBlockAt(sys System, configPath string) error {
+	v, err := loadHJSONAt(sys, configPath)
+	if err != nil || v == nil {
+		return err
+	}
+	rootObj, ok := v.Value.(*hujson.Object)
+	if !ok {
+		return fmt.Errorf("parsing %s: expected JSON object at top level", configPath)
+	}
+
+	changed := false
+	for i := objectMemberIndex(rootObj, "ci"); i >= 0; i = objectMemberIndex(rootObj, "ci") {
+		if findObjectMember(rootObj, "pr") != nil {
+			deleteMember(rootObj, i)
+		} else {
+			rootObj.Members[i].Name.Value = hujson.String("pr")
+		}
+		changed = true
+	}
+
+	extras := []*hujson.Extra{&rootObj.AfterExtra}
+	for i := range rootObj.Members {
+		extras = append(extras, &rootObj.Members[i].Name.BeforeExtra)
+	}
+	for _, e := range extras {
+		if renamed := commentedCIKey.ReplaceAll(*e, []byte(`$1"pr"$2`)); !bytes.Equal(renamed, *e) {
+			*e = renamed
+			changed = true
+		}
+	}
+
+	if !changed {
+		return nil
+	}
+	if err := atomicWriteConfig(sys, configPath, v.Pack(), 0644); err != nil {
+		return fmt.Errorf("writing %s: %w", configPath, err)
+	}
+	return nil
 }

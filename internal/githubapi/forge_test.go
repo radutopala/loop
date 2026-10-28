@@ -29,7 +29,7 @@ func (r *scriptRunner) Run(_ context.Context, _ string, env []string, args ...st
 	return []byte(r.out[key]), r.errs[key]
 }
 
-const ciView = "pr view 7 --json headRefOid,statusCheckRollup,mergeStateStatus,autoMergeRequest,state,isDraft"
+const ciView = "pr view 7 --json headRefOid,baseRefName,statusCheckRollup,mergeStateStatus,autoMergeRequest,state,isDraft"
 
 type GithubForgeSuite struct {
 	suite.Suite
@@ -44,9 +44,10 @@ func (s *GithubForgeSuite) SetupTest() {
 	s.ref = forge.Ref{Dir: "/w", Number: 7}
 }
 
-func (s *GithubForgeSuite) TestCI() {
+func (s *GithubForgeSuite) TestPR() {
 	r := &scriptRunner{out: map[string]string{ciView: `{
 		"headRefOid": "abc",
+		"baseRefName": "main",
 		"statusCheckRollup": [
 			{"__typename": "CheckRun", "status": "COMPLETED", "conclusion": "SUCCESS"},
 			{"__typename": "CheckRun", "status": "COMPLETED", "conclusion": "NEUTRAL"},
@@ -62,30 +63,31 @@ func (s *GithubForgeSuite) TestCI() {
 		"autoMergeRequest": {"mergeMethod": "SQUASH"},
 		"state": "OPEN"
 	}`}}
-	st, err := NewClientWithRunner(r).CI(context.Background(), s.ref)
+	st, err := NewClientWithRunner(r).Status(context.Background(), s.ref)
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), &forge.CIState{
+	require.Equal(s.T(), &forge.Status{
 		HeadSHA:    "abc",
+		BaseRef:    "main",
 		Checks:     forge.CheckSummary{Total: 9, Passed: 3, Failed: 3, Pending: 2},
 		MergeState: forge.MergeBlocked,
 		AutoMerge:  true,
 	}, st)
 }
 
-func (s *GithubForgeSuite) TestCIStates() {
+func (s *GithubForgeSuite) TestPRStates() {
 	tests := []struct {
 		name string
 		json string
-		want forge.CIState
+		want forge.Status
 	}{
-		{"merged", `{"state": "MERGED", "autoMergeRequest": null, "mergeStateStatus": "UNKNOWN"}`, forge.CIState{Merged: true, MergeState: forge.MergeUnknown}},
-		{"closed", `{"state": "CLOSED", "mergeStateStatus": "CLEAN"}`, forge.CIState{Closed: true, MergeState: forge.MergeClean}},
-		{"draft wins", `{"state": "OPEN", "isDraft": true, "mergeStateStatus": "CLEAN"}`, forge.CIState{MergeState: forge.MergeDraft}},
+		{"merged", `{"state": "MERGED", "autoMergeRequest": null, "mergeStateStatus": "UNKNOWN"}`, forge.Status{Merged: true, MergeState: forge.MergeUnknown}},
+		{"closed", `{"state": "CLOSED", "mergeStateStatus": "CLEAN"}`, forge.Status{Closed: true, MergeState: forge.MergeClean}},
+		{"draft wins", `{"state": "OPEN", "isDraft": true, "mergeStateStatus": "CLEAN"}`, forge.Status{MergeState: forge.MergeDraft}},
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			r := &scriptRunner{out: map[string]string{ciView: tc.json}}
-			st, err := NewClientWithRunner(r).CI(context.Background(), s.ref)
+			st, err := NewClientWithRunner(r).Status(context.Background(), s.ref)
 			require.NoError(s.T(), err)
 			require.Equal(s.T(), &tc.want, st)
 		})
@@ -102,15 +104,15 @@ func (s *GithubForgeSuite) TestMergeStateMapping() {
 	}
 }
 
-func (s *GithubForgeSuite) TestCIErrors() {
-	_, err := NewClientWithRunner(&scriptRunner{errs: map[string]error{ciView: errors.New("boom")}}).CI(context.Background(), s.ref)
+func (s *GithubForgeSuite) TestPRErrors() {
+	_, err := NewClientWithRunner(&scriptRunner{errs: map[string]error{ciView: errors.New("boom")}}).Status(context.Background(), s.ref)
 	require.ErrorContains(s.T(), err, "boom")
 
-	_, err = NewClientWithRunner(&scriptRunner{out: map[string]string{ciView: `{`}}).CI(context.Background(), s.ref)
+	_, err = NewClientWithRunner(&scriptRunner{out: map[string]string{ciView: `{`}}).Status(context.Background(), s.ref)
 	require.ErrorContains(s.T(), err, "parsing gh pr view output")
 
 	r := &scriptRunner{errs: map[string]error{"auth token --user u": errors.New("no user")}}
-	_, err = NewClientWithRunner(r).CI(context.Background(), forge.Ref{Dir: "/w", Account: "u", Number: 7})
+	_, err = NewClientWithRunner(r).Status(context.Background(), forge.Ref{Dir: "/w", Account: "u", Number: 7})
 	require.ErrorContains(s.T(), err, "no user")
 }
 
@@ -208,6 +210,23 @@ func (s *GithubForgeSuite) TestMergeCommands() {
 
 	r = &scriptRunner{errs: map[string]error{"auth token --user u": errors.New("no user")}}
 	require.ErrorContains(s.T(), NewClientWithRunner(r).Merge(context.Background(), ref, "merge"), "no user")
+}
+
+func (s *GithubForgeSuite) TestUnresolvedThreads() {
+	cmd := "api graphql -f query=" + unresolvedThreadsQuery + " -F owner={owner} -F name={repo} -F number=7" +
+		" --jq .data.repository.pullRequest.reviewThreads.nodes"
+	r := &scriptRunner{out: map[string]string{cmd: `[{"id": "T1", "isResolved": false}, {"id": "T2", "isResolved": true}, {"id": "T3", "isResolved": false}]`}}
+	ids, err := NewClientWithRunner(r).UnresolvedThreads(context.Background(), s.ref)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"T1", "T3"}, ids)
+
+	_, err = NewClientWithRunner(&scriptRunner{errs: map[string]error{cmd: errors.New("boom")}}).UnresolvedThreads(context.Background(), s.ref)
+	require.ErrorContains(s.T(), err, "boom")
+	_, err = NewClientWithRunner(&scriptRunner{out: map[string]string{cmd: "{"}}).UnresolvedThreads(context.Background(), s.ref)
+	require.ErrorContains(s.T(), err, "parsing gh review threads")
+	_, err = NewClientWithRunner(&scriptRunner{errs: map[string]error{"auth token --user u": errors.New("no user")}}).
+		UnresolvedThreads(context.Background(), forge.Ref{Dir: "/w", Account: "u", Number: 7})
+	require.ErrorContains(s.T(), err, "no user")
 }
 
 func (s *GithubForgeSuite) TestMergeSettings() {

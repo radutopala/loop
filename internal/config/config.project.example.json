@@ -200,9 +200,9 @@
   //  }
   //],
 
-  // CI auto-fix and merge when ready for this project (each field overrides
-  // global when set; needs trust; see docs/ci.md)
-  //"ci": {
+  // PR auto-fix and merge when ready for this project (each field overrides
+  // global when set; needs trust; see docs/pr.md)
+  //"pr": {
   //  "auto_fix": false,
   //  "merge_method": "rebase"
   //},

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CIStatus } from "./api/ci";
 import { fetchGlobalConfig } from "./api/configApi";
 import {
   createChannel,
@@ -22,6 +21,7 @@ import {
   setChannelLocked,
   setChannelTicketURL,
 } from "./api/loopApi";
+import type { PRStatus } from "./api/pr";
 import horizontalLogo from "./assets/logo-horizontal.svg";
 import { WorkspaceLayout, type WorkspaceLayoutRef } from "./components/layout/WorkspaceLayout";
 import { ContainersPanel, type ContainersPanelHandle } from "./components/panels/ContainersPanel";
@@ -33,7 +33,7 @@ import { CommandPalette } from "./components/shared/CommandPalette";
 import { DaemonUnavailable } from "./components/shared/DaemonUnavailable";
 import { LoopLogo } from "./components/shared/LoopLogo";
 import { Settings } from "./components/shared/Settings";
-import { ciPillIds, trustPillIds } from "./components/sidebar/pills";
+import { ciPillIds, commentPillIds, conflictPillIds, trustPillIds } from "./components/sidebar/pills";
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { useAppPanelState } from "./hooks/useAppPanelState";
 import { type ActiveChatState, useChatStateStore } from "./hooks/useChatStateStore";
@@ -43,7 +43,7 @@ import { fonts } from "./theme";
 import type { Channel, ChannelAgentConfigData, ChannelUpdatedData, ImageBuildStatusData, ImageUpdateAvailableData, PluginBadge, UpdateStatus, WSEvent } from "./types";
 import { useUiBridge } from "./uiBridge/useUiBridge";
 import type { ChannelPatch } from "./utils/channelUpdate";
-import { applyChannelUpdate, applyCI, applyPluginBadge, applyReviewStatus, replayChannelPatches } from "./utils/channelUpdate";
+import { applyChannelUpdate, applyPluginBadge, applyPR, applyReviewStatus, replayChannelPatches } from "./utils/channelUpdate";
 import { logErr } from "./utils/log";
 import { parseChannelTarget } from "./utils/messageLinks";
 import { storageGet, storageRemove, storageSet } from "./utils/storage";
@@ -339,9 +339,9 @@ function AppInner() {
         setPluginsEpoch((n) => n + 1);
         return;
       }
-      if (event.type === "channel.ci") {
-        const d = event.data as CIStatus;
-        patchChannel(event.channel_id, (c) => applyCI(c, d));
+      if (event.type === "channel.pr") {
+        const d = event.data as PRStatus;
+        patchChannel(event.channel_id, (c) => applyPR(c, d));
         return;
       }
       if (event.type === "plugin.badge") {
@@ -759,6 +759,8 @@ function AppInner() {
 
   useEffect(() => {
     syncPill("ci", ciPillIds(channels));
+    syncPill("conflict", conflictPillIds(channels));
+    syncPill("cmt", commentPillIds(channels));
   }, [channels, syncPill]);
 
   const selectedChannel = channels.find((c) => c.id === selectedId);

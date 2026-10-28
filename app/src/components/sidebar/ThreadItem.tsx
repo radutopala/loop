@@ -1,12 +1,12 @@
 import { useRef, useState } from "react";
 import { forkThread } from "../../api/channels";
-import { unreadLabel, unreadTitle } from "../../notifications/notifications";
+import { unreadLabel } from "../../notifications/notifications";
 import { useNotificationsState } from "../../notifications/useNotifications";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { Channel } from "../../types";
 import type { PillKind } from "./pills";
-import { CI_FIXING_PILL, pluginBadgeTitle, REVIEWING_PILL, SIDEBAR_PILLS } from "./pills";
+import { fixingPill, pluginBadgeTitle, REVIEWING_PILL, SIDEBAR_PILLS } from "./pills";
 import { RowInfoPopup } from "./RowInfoPopup";
 import { useExpandToSelected, useRevealSelected } from "./reveal";
 import { SessionKindIcon } from "./SessionKindIcon";
@@ -82,12 +82,12 @@ export function ThreadItem({
   const isUnread = unreadIdsRef?.current?.has(thread.id) ?? false;
   const activePills = SIDEBAR_PILLS.filter((p) => pillsRef?.current?.get(p.kind)?.has(thread.id));
   const reviewing = !!thread.review_running;
-  const ciFixing = thread.ci_attention === "fixing";
+  const fixing = fixingPill(thread.pr_attention);
   const badges = thread.plugin_badges ?? [];
   // The open row's bell already counts its notifications.
   const unread = useNotificationsState().unread[thread.id] ?? 0;
   const notes = selected ? 0 : unread;
-  const hasAnyPill = activePills.length > 0 || reviewing || ciFixing || badges.length > 0 || notes > 0;
+  const hasAnyPill = activePills.length > 0 || reviewing || !!fixing || badges.length > 0 || notes > 0;
   const displayName = sessionName(thread);
 
   return (
@@ -258,21 +258,19 @@ export function ThreadItem({
             />
           )}
           {activePills.map((p, i) => (
-            <StatusPill key={p.kind} label={p.label} color={colors[p.color]} title={p.title} marginLeft={isUnread || i > 0 || thread.diff_additions > 0 || thread.diff_deletions > 0 ? 4 : "auto"} />
+            <StatusPill key={p.kind} label={p.label} color={colors[p.color]} marginLeft={isUnread || i > 0 || thread.diff_additions > 0 || thread.diff_deletions > 0 ? 4 : "auto"} />
           ))}
           {reviewing && (
             <StatusPill
               label={REVIEWING_PILL.label}
               color={colors[REVIEWING_PILL.color]}
-              title={REVIEWING_PILL.title}
               marginLeft={isUnread || activePills.length > 0 || thread.diff_additions > 0 || thread.diff_deletions > 0 ? 4 : "auto"}
             />
           )}
-          {ciFixing && (
+          {fixing && (
             <StatusPill
-              label={CI_FIXING_PILL.label}
-              color={colors[CI_FIXING_PILL.color]}
-              title={CI_FIXING_PILL.title}
+              label={fixing.label}
+              color={colors[fixing.color]}
               marginLeft={isUnread || activePills.length > 0 || reviewing || thread.diff_additions > 0 || thread.diff_deletions > 0 ? 4 : "auto"}
             />
           )}
@@ -282,15 +280,14 @@ export function ThreadItem({
               label={b.text}
               color={colors.textMuted}
               title={pluginBadgeTitle(b)}
-              marginLeft={isUnread || activePills.length > 0 || reviewing || ciFixing || i > 0 || thread.diff_additions > 0 || thread.diff_deletions > 0 ? 4 : "auto"}
+              marginLeft={isUnread || activePills.length > 0 || reviewing || fixing || i > 0 || thread.diff_additions > 0 || thread.diff_deletions > 0 ? 4 : "auto"}
             />
           ))}
           {notes > 0 && (
             <StatusPill
               label={unreadLabel(notes)}
               color={colors.textMuted}
-              title={unreadTitle(notes)}
-              marginLeft={isUnread || activePills.length > 0 || reviewing || ciFixing || badges.length > 0 || thread.diff_additions > 0 || thread.diff_deletions > 0 ? 4 : "auto"}
+              marginLeft={isUnread || activePills.length > 0 || reviewing || fixing || badges.length > 0 || thread.diff_additions > 0 || thread.diff_deletions > 0 ? 4 : "auto"}
             />
           )}
           {(thread.container_running || thread.agent_running || isRunningMapRef?.current?.get(thread.id) || reviewing) && (

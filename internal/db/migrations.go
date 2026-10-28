@@ -656,7 +656,7 @@ var migrations = []migration{
 	// review_id groups the runs of one review: a review loop records one
 	// run per iteration (see ReviewRun).
 	sqlMigration(`ALTER TABLE review_runs ADD COLUMN review_id TEXT NOT NULL DEFAULT ''`),
-	// ci_state is what Loop knows of a thread's PR/MR CI (see CIState): the
+	// ci_state is what Loop knows of a thread's PR/MR CI (see PRState): the
 	// commits its agent pushed, the fix attempts so far and the merge the
 	// owner armed.
 	sqlMigration(`CREATE TABLE IF NOT EXISTS ci_state (
@@ -677,9 +677,18 @@ var migrations = []migration{
 		updated_at        DATETIME NOT NULL
 	)`),
 	// Why the watcher last acted as it did on a failure, and the failed
-	// checks it saw, as JSON (see CIState).
+	// checks it saw, as JSON (see PRState).
 	sqlMigration(`ALTER TABLE ci_state ADD COLUMN reason TEXT NOT NULL DEFAULT ''`),
 	sqlMigration(`ALTER TABLE ci_state ADD COLUMN failed TEXT NOT NULL DEFAULT ''`),
+	// open marks a PR/MR the last poll saw open, polled slowly while idle.
+	sqlMigration(`ALTER TABLE ci_state ADD COLUMN open INTEGER NOT NULL DEFAULT 0`),
+	// threads are the PR/MR's unresolved review threads, one id a line.
+	sqlMigration(`ALTER TABLE ci_state ADD COLUMN threads TEXT NOT NULL DEFAULT ''`),
+	// ci_state is pr_state now that it tracks the PR/MR beyond its CI, and the
+	// messages that send a failure to the agent come from
+	// loop-pr.
+	sqlMigration(`ALTER TABLE ci_state RENAME TO pr_state`),
+	sqlMigration(`UPDATE messages SET author_id = 'loop-pr' WHERE author_id = 'loop-ci'`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the

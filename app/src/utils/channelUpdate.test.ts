@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Channel, ChannelUpdatedData } from "../types";
-import { applyChannelUpdate, applyCI, applyPluginBadge, applyReviewStatus, replayChannelPatches } from "./channelUpdate";
+import { applyChannelUpdate, applyPluginBadge, applyPR, applyReviewStatus, replayChannelPatches } from "./channelUpdate";
 
 const channel: Channel = {
   id: "t1",
@@ -109,12 +109,18 @@ describe("applyPluginBadge", () => {
   });
 });
 
-describe("applyCI", () => {
+describe("applyPR", () => {
   it.each([
     ["failed", "failed"],
     ["fixing", "fixing"],
+    ["conflict", "conflict"],
     ["", undefined],
   ] as const)("%s → %s", (attention, want) => {
-    expect(applyCI({ ...channel, ci_attention: "failed" }, { ci_attention: attention }).ci_attention).toBe(want);
+    expect(applyPR({ ...channel, pr_attention: "failed" }, { pr_attention: attention }).pr_attention).toBe(want);
+  });
+
+  it("sets the unresolved review threads, unset at zero", () => {
+    expect(applyPR(channel, { pr_attention: "", unresolved_threads: 2 }).unresolved_threads).toBe(2);
+    expect(applyPR({ ...channel, unresolved_threads: 2 }, { pr_attention: "" }).unresolved_threads).toBeUndefined();
   });
 });

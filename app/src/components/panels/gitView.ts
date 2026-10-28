@@ -2,7 +2,7 @@ import type { CommitEntry, DiffResponse } from "../../api/loopApi";
 import type { ParsedFile } from "./DiffViewer";
 import { parseUnifiedDiff } from "./DiffViewer";
 
-export type GitMode = "uncommitted" | "branches" | "commits" | "worktrees" | "branchlist" | "ci";
+export type GitMode = "uncommitted" | "branches" | "commits" | "worktrees" | "branchlist" | "pr";
 
 export const COMMITS_PAGE = 50;
 

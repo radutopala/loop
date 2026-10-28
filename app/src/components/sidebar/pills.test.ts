@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CI_FIXING_PILL, ciPillIds, pluginBadgeTitle, REVIEWING_PILL, SIDEBAR_PILLS, trustPillIds } from "./pills";
+import { ciPillIds, commentPillIds, conflictPillIds, fixingPill, pluginBadgeTitle, REVIEWING_PILL, SIDEBAR_PILLS, trustPillIds } from "./pills";
 
 describe("REVIEWING_PILL", () => {
   it("stays out of the pills that mean the session needs you", () => {
@@ -30,15 +30,40 @@ describe("pluginBadgeTitle", () => {
   });
 });
 
-describe("ci pills", () => {
-  it("counts a failure for the needs-you filter, not one being fixed", () => {
-    const ci = SIDEBAR_PILLS.find((p) => p.kind === "ci");
-    expect(ci).toMatchObject({ label: "ci", color: "error" });
-    expect(SIDEBAR_PILLS.map((p) => p.label)).not.toContain(CI_FIXING_PILL.label);
+describe("PR/MR pills", () => {
+  it("has one needs-you pill per issue, none for one being handled", () => {
+    expect(SIDEBAR_PILLS.find((p) => p.kind === "ci")).toMatchObject({ label: "ci", color: "error" });
+    expect(SIDEBAR_PILLS.find((p) => p.kind === "conflict")).toMatchObject({ label: "cnf", color: "error" });
+    expect(SIDEBAR_PILLS.find((p) => p.kind === "cmt")).toMatchObject({ label: "cmt", color: "warning" });
+    const labels = SIDEBAR_PILLS.map((p) => p.label);
+    expect(labels).not.toContain(fixingPill("fixing")?.label);
   });
 
-  it("lights the rows with a failure no agent is fixing", () => {
-    const ids = ciPillIds([{ id: "failed", ci_attention: "failed" }, { id: "fixing", ci_attention: "fixing" }, { id: "none" }]);
-    expect([...ids]).toEqual(["failed"]);
+  it.each([
+    ["fixing", "ci…"],
+    ["failed", undefined],
+    ["conflict", undefined],
+    [undefined, undefined],
+  ] as const)("fixingPill(%s) → %s", (attention, want) => {
+    expect(fixingPill(attention)?.label).toBe(want);
+  });
+
+  const rows = [
+    { id: "failed", pr_attention: "failed" as const },
+    { id: "fixing", pr_attention: "fixing" as const },
+    { id: "conflict", pr_attention: "conflict" as const, unresolved_threads: 1 },
+    { id: "none", unresolved_threads: 0 },
+  ];
+
+  it("lights ci on a failure no agent is fixing", () => {
+    expect([...ciPillIds(rows)]).toEqual(["failed"]);
+  });
+
+  it("lights conflict on a merge conflict", () => {
+    expect([...conflictPillIds(rows)]).toEqual(["conflict"]);
+  });
+
+  it("lights cmt on unresolved review threads", () => {
+    expect([...commentPillIds(rows)]).toEqual(["conflict"]);
   });
 });
