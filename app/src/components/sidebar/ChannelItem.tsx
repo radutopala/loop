@@ -4,9 +4,10 @@ import { useNotificationsState } from "../../notifications/useNotifications";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { Channel } from "../../types";
+import type { OpenPRHandler } from "../shared/OpenPRs";
 import { NewThreadInput } from "./NewThreadInput";
 import type { PillKind } from "./pills";
-import { fixingPill, pluginBadgeTitle, REVIEWING_PILL, SIDEBAR_PILLS } from "./pills";
+import { fixingPill, pluginBadgeTitle, REVIEWING_PILL, useShownPills } from "./pills";
 import { RowInfoPopup } from "./RowInfoPopup";
 import { useExpandToSelected, useRevealSelected } from "./reveal";
 import { SidebarWorktreeButton } from "./SidebarWorktreeButton";
@@ -22,6 +23,7 @@ interface ChannelItemProps {
   onSelect: (id: string) => void;
   onCreateThread: (parentId: string, name: string) => void;
   onCreateWorktree?: (channelId: string, branch: string) => void;
+  onOpenPR?: OpenPRHandler;
   threadReorder?: ThreadReorder;
   onOpenConfig?: (dirPath: string) => void;
   onContextMenu: (e: React.MouseEvent, channel: Channel) => void;
@@ -49,6 +51,7 @@ export function ChannelItem({
   onSelect,
   onCreateThread,
   onCreateWorktree,
+  onOpenPR,
   threadReorder,
   onOpenConfig,
   onContextMenu,
@@ -69,7 +72,8 @@ export function ChannelItem({
   // The open row's bell already counts its notifications.
   const unread = useNotificationsState().unread[channel.id] ?? 0;
   const notes = selected ? 0 : unread;
-  const fixing = fixingPill(channel.pr_attention);
+  const pills = useShownPills();
+  const fixing = fixingPill(channel.pr_attention, pills);
   const [creating, setCreating] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [hovered, setHovered] = useState(false);
@@ -201,9 +205,11 @@ export function ChannelItem({
           >
             {channel.name || channel.dir_path?.split("/").pop() || channel.id}
           </span>
-          {SIDEBAR_PILLS.filter((p) => pillsRef?.current?.get(p.kind)?.has(channel.id)).map((p) => (
-            <StatusPill key={p.kind} label={p.label} color={colors[p.color]} />
-          ))}
+          {pills
+            .filter((p) => pillsRef?.current?.get(p.kind)?.has(channel.id))
+            .map((p) => (
+              <StatusPill key={p.kind} label={p.label} color={colors[p.color]} />
+            ))}
           {channel.review_running && <StatusPill label={REVIEWING_PILL.label} color={colors[REVIEWING_PILL.color]} />}
           {fixing && <StatusPill label={fixing.label} color={colors[fixing.color]} />}
           {channel.plugin_badges?.map((b) => (
@@ -292,7 +298,7 @@ export function ChannelItem({
             >
               + thread
             </button>
-            {channel.dir_path && onCreateWorktree && <SidebarWorktreeButton channelId={channel.id} onCreateWorktree={onCreateWorktree} />}
+            {channel.dir_path && onCreateWorktree && <SidebarWorktreeButton channelId={channel.id} onCreateWorktree={onCreateWorktree} onOpenPR={onOpenPR} />}
           </div>
         )}
       </div>

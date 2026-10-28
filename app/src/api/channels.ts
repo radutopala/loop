@@ -417,15 +417,20 @@ export async function sendCommand(channelId: string, command: string): Promise<v
   if (!res.ok) throw new Error(`Failed to send command: ${res.statusText}`);
 }
 
-export async function createWorktreeThread(channelId: string, branch: string, name?: string): Promise<{ threadId: string; worktreePath: string }> {
-  const body: Record<string, string> = { channel_id: channelId, branch };
+/**
+ * createWorktreeThread makes a worktree thread on a new branch from branch,
+ * or, with pr, on that PR's (or MR's) own branch, with branch its base.
+ */
+export async function createWorktreeThread(channelId: string, branch: string, name?: string, pr?: number): Promise<{ threadId: string; worktreePath: string }> {
+  const body: Record<string, string | number> = { channel_id: channelId, branch };
   if (name) body.name = name;
+  if (pr) body.pr = pr;
   const res = await apiFetch(`${getApiUrl()}/api/worktrees`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`Failed to create worktree: ${res.statusText}`);
+  if (!res.ok) throw new Error(`Failed to create worktree: ${(await res.text()).trim() || res.statusText}`);
   const data: { thread_id: string; worktree_path: string } = await res.json();
   return { threadId: data.thread_id, worktreePath: data.worktree_path };
 }

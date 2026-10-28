@@ -1079,6 +1079,13 @@ func buildSchema(goos string) *ConfigSchema {
 							"panels":   {Type: "integer", Title: "Panels", Default: 12, XWidget: "stepper", XOrder: 5},
 						},
 					},
+					"hidden_pills": {
+						Type:        "array",
+						Title:       "Hidden Sidebar Pills",
+						Description: "Pills that neither show in the sidebar nor count as needing you. Also picked by right-clicking the sidebar's bell.",
+						Items:       &SchemaProperty{Type: "string", Enum: []any{"gate", "rev", "ask", "plan", "trust", "ci", "conflict", "comment"}},
+						XOrder:      3,
+					},
 				},
 			},
 

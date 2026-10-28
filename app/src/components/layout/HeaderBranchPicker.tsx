@@ -3,12 +3,14 @@ import { type BranchInfo, fetchBranches, switchBranch } from "../../api/loopApi"
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import { logErr } from "../../utils/log";
+import { type OpenPRHandler, OpenPRRows, SectionHeader, showsPRs, useOpenPRs } from "../shared/OpenPRs";
 
 export function HeaderBranchPicker({
   channelId,
   branch,
   onBranchChanged,
   onCreateWorktree,
+  onOpenPR,
   onImportWorktree,
   onSelectThread,
   onError,
@@ -17,6 +19,8 @@ export function HeaderBranchPicker({
   branch: string;
   onBranchChanged?: () => void;
   onCreateWorktree?: (channelId: string, branch: string) => Promise<void>;
+  /** Lists the repo's open PRs too, each opened in a worktree on its branch. */
+  onOpenPR?: OpenPRHandler;
   onImportWorktree?: (channelId: string, worktreePath: string) => Promise<void>;
   onSelectThread?: (threadId: string) => void;
   onError?: (msg: string) => void;
@@ -27,6 +31,7 @@ export function HeaderBranchPicker({
   const [search, setSearch] = useState("");
   const ref = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const { prs, error: prsError } = useOpenPRs(channelId, open && !!onOpenPR);
 
   useEffect(() => {
     if (!open) return;
@@ -64,6 +69,8 @@ export function HeaderBranchPicker({
   const filteredWorktrees = (branchInfo?.worktrees ?? []).filter((wt) => !search || wt.branch.toLowerCase().includes(lowerSearch) || wt.path.split("/").pop()?.toLowerCase().includes(lowerSearch));
 
   const hasWorktrees = (branchInfo?.worktrees ?? []).length > 0 && (!!onImportWorktree || !!onSelectThread);
+  const hasPRs = !!onOpenPR && showsPRs(prs, prsError);
+  const sectioned = hasWorktrees || hasPRs;
 
   return (
     <div ref={ref} style={{ position: "relative", display: "flex", alignItems: "center" }}>
@@ -116,8 +123,9 @@ export function HeaderBranchPicker({
             padding: 0,
             zIndex: 1000,
             minWidth: 340,
-            maxHeight: hasWorktrees ? undefined : "min(400px, 70vh)",
-            height: hasWorktrees ? "min(400px, 70vh)" : undefined,
+            maxWidth: 480,
+            maxHeight: sectioned ? undefined : "min(400px, 70vh)",
+            height: sectioned ? "min(400px, 70vh)" : undefined,
             display: "flex",
             flexDirection: "column",
             boxShadow: `0 4px 12px ${colors.shadow}`,
@@ -134,7 +142,7 @@ export function HeaderBranchPicker({
                 ref={searchRef}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder={hasWorktrees ? "Search branches & worktrees" : "Search branches"}
+                placeholder={hasPRs ? "Search branches, PRs & worktrees" : hasWorktrees ? "Search branches & worktrees" : "Search branches"}
                 style={{
                   flex: 1,
                   background: "none",
@@ -148,8 +156,8 @@ export function HeaderBranchPicker({
             </div>
           </div>
           {/* Branches section */}
-          <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "4px 0" }}>
-            <div style={{ padding: "4px 12px 2px", fontSize: 10, color: colors.textDim, textTransform: "uppercase", letterSpacing: 1 }}>Branches</div>
+          <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "0 0 4px" }}>
+            <SectionHeader>Branches</SectionHeader>
             {filtered.map((b) => {
               const isCurrent = b === (branchInfo?.current ?? branch);
               return (
@@ -264,10 +272,26 @@ export function HeaderBranchPicker({
             })}
             {filtered.length === 0 && <div style={{ padding: "8px 12px", color: colors.textDim, fontSize: 12 }}>No branches found</div>}
           </div>
+          {/* Open PRs section */}
+          {hasPRs && onOpenPR && (
+            <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "0 0 4px", borderTop: `1px solid ${colors.border}` }}>
+              <OpenPRRows
+                testId="branch-picker-prs"
+                prs={prs}
+                error={prsError}
+                search={search}
+                worktrees={branchInfo?.worktrees}
+                onPick={(pr, existing) => {
+                  setOpen(false);
+                  onOpenPR(channelId, pr, existing);
+                }}
+              />
+            </div>
+          )}
           {/* Worktrees section */}
           {hasWorktrees && (
-            <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "4px 0", borderTop: `1px solid ${colors.border}` }}>
-              <div style={{ padding: "4px 12px 2px", fontSize: 10, color: colors.textDim, textTransform: "uppercase", letterSpacing: 1 }}>Worktrees</div>
+            <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "0 0 4px", borderTop: `1px solid ${colors.border}` }}>
+              <SectionHeader>Worktrees</SectionHeader>
               {filteredWorktrees.map((wt) => {
                 const dirName = wt.path.split("/").pop() || wt.path;
                 const hasThread = !!wt.thread_id;

@@ -2,6 +2,7 @@ package worktree
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -92,7 +93,35 @@ func (c *Creator) Create(ctx context.Context, dirPath, branch, name, sessionID s
 		return nil, fmt.Errorf("git worktree add failed: %s", strings.TrimSpace(string(out)))
 	}
 
-	// Seed worktree config with extra_dirs pointing at the parent project.
+	return c.seed(dirPath, worktreePath, wtBranch, sessionID), nil
+}
+
+// CreateWith creates a git worktree at dirPath's HEAD with nothing checked
+// out, has checkout put a branch there, then seeds it as Create does. The
+// result's BranchName is the branch checkout left. A failed checkout removes
+// the worktree again.
+func (c *Creator) CreateWith(ctx context.Context, dirPath, name, sessionID string, checkout func(ctx context.Context, worktreePath string) error) (*CreateResult, error) {
+	worktreePath := filepath.Join(dirPath, ".worktrees", name)
+	out, err := c.Run(ctx, dirPath, "git", "worktree", "add", "--detach", worktreePath)
+	if err != nil {
+		return nil, fmt.Errorf("git worktree add failed: %s", strings.TrimSpace(string(out)))
+	}
+	if err := checkout(ctx, worktreePath); err != nil {
+		if rmErr := c.Remove(ctx, dirPath, worktreePath); rmErr != nil {
+			return nil, errors.Join(err, rmErr)
+		}
+		return nil, err
+	}
+	branch, err := c.HeadRef(ctx, worktreePath)
+	if err != nil {
+		return nil, err
+	}
+	return c.seed(dirPath, worktreePath, branch, sessionID), nil
+}
+
+// seed writes the worktree's .loop/config.json, pointing back at the parent
+// project, and copies the parent's session for --resume --fork-session.
+func (c *Creator) seed(dirPath, worktreePath, branch, sessionID string) *CreateResult {
 	// The branch checked out may carry a .loop of symlinks: the writes stay
 	// in the worktree.
 	wtLoopDir := filepath.Join(worktreePath, ".loop")
@@ -101,10 +130,10 @@ func (c *Creator) Create(ctx context.Context, dirPath, branch, name, sessionID s
 		_ = c.Sys.WriteFileIn(worktreePath, filepath.Join(wtLoopDir, "config.json"), []byte(wtCfg), 0o644)
 	}
 
-	// Copy session file so --resume --fork-session works in the worktree dir.
-	// A failure here is not fatal — the worktree is usable, it just has no
-	// conversation to fork — but it must be reported, because a caller that
-	// pins the session id anyway produces a thread that fails on every turn.
+	// A failure to copy the session is not fatal — the worktree is usable,
+	// it just has no conversation to fork — but it must be reported, because
+	// a caller that pins the session id anyway produces a thread that fails
+	// on every turn.
 	staged := false
 	if sessionID != "" {
 		staged = c.copySessionFile(dirPath, worktreePath, sessionID) == nil
@@ -112,9 +141,9 @@ func (c *Creator) Create(ctx context.Context, dirPath, branch, name, sessionID s
 
 	return &CreateResult{
 		WorktreePath:  worktreePath,
-		BranchName:    wtBranch,
+		BranchName:    branch,
 		SessionStaged: staged,
-	}, nil
+	}
 }
 
 // HeadRef returns what dir has checked out: its branch, or its short commit

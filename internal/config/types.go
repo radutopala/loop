@@ -799,6 +799,9 @@ type DesktopConfig struct {
 	Islands          bool              `json:"islands"`
 	Theme            string            `json:"theme,omitempty"`
 	FontSizes        *DesktopFontSizes `json:"font_sizes,omitempty"`
+	// HiddenPills are the sidebar pill kinds that neither show nor count as
+	// needing you.
+	HiddenPills []string `json:"hidden_pills,omitempty"`
 }
 
 // DesktopFontSizes holds per-area font size preferences.

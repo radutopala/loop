@@ -6,7 +6,7 @@ import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { Channel } from "../../types";
 import type { PillKind } from "./pills";
-import { fixingPill, pluginBadgeTitle, REVIEWING_PILL, SIDEBAR_PILLS } from "./pills";
+import { fixingPill, pluginBadgeTitle, REVIEWING_PILL, useShownPills } from "./pills";
 import { RowInfoPopup } from "./RowInfoPopup";
 import { useExpandToSelected, useRevealSelected } from "./reveal";
 import { SessionKindIcon } from "./SessionKindIcon";
@@ -80,9 +80,10 @@ export function ThreadItem({
   useRevealSelected(rowRef, !!selected);
   const hasChildren = (subThreads?.length ?? 0) > 0;
   const isUnread = unreadIdsRef?.current?.has(thread.id) ?? false;
-  const activePills = SIDEBAR_PILLS.filter((p) => pillsRef?.current?.get(p.kind)?.has(thread.id));
+  const pills = useShownPills();
+  const activePills = pills.filter((p) => pillsRef?.current?.get(p.kind)?.has(thread.id));
   const reviewing = !!thread.review_running;
-  const fixing = fixingPill(thread.pr_attention);
+  const fixing = fixingPill(thread.pr_attention, pills);
   const badges = thread.plugin_badges ?? [];
   // The open row's bell already counts its notifications.
   const unread = useNotificationsState().unread[thread.id] ?? 0;

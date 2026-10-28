@@ -1,4 +1,5 @@
 import type { Channel } from "../../types";
+import type { OpenPRHandler } from "../shared/OpenPRs";
 import { ChannelItem } from "./ChannelItem";
 import type { PillKind } from "./pills";
 import type { ThreadReorder } from "./ThreadItem";
@@ -10,6 +11,7 @@ interface ChannelListProps {
   onSelect: (id: string) => void;
   onCreateThread: (parentId: string, name: string) => void;
   onCreateWorktree?: (channelId: string, branch: string) => void;
+  onOpenPR?: OpenPRHandler;
   threadReorder?: ThreadReorder;
   onOpenConfig?: (dirPath: string) => void;
   onContextMenu: (e: React.MouseEvent, channel: Channel) => void;
@@ -35,6 +37,7 @@ export function ChannelList({
   onSelect,
   onCreateThread,
   onCreateWorktree,
+  onOpenPR,
   threadReorder,
   onOpenConfig,
   onContextMenu,
@@ -65,6 +68,7 @@ export function ChannelList({
           onSelect={onSelect}
           onCreateThread={onCreateThread}
           onCreateWorktree={onCreateWorktree}
+          onOpenPR={onOpenPR}
           threadReorder={threadReorder}
           onOpenConfig={onOpenConfig}
           onContextMenu={onContextMenu}
@@ -93,6 +97,7 @@ export function ChannelList({
           onSelect={onSelect}
           onCreateThread={onCreateThread}
           onCreateWorktree={onCreateWorktree}
+          onOpenPR={onOpenPR}
           threadReorder={threadReorder}
           onOpenConfig={onOpenConfig}
           onContextMenu={onContextMenu}

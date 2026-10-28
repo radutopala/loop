@@ -334,6 +334,12 @@ func (s *SchemaSuite) TestDesktopNestedObject() {
 	require.Contains(s.T(), prop.Properties, "theme")
 	require.Contains(s.T(), prop.Properties, "font_sizes")
 	require.Contains(s.T(), prop.Properties, "stop_daemon_on_quit")
+
+	// The sidebar's pill kinds, as app/src/components/sidebar/pills.ts lists them.
+	pills := prop.Properties["hidden_pills"]
+	require.NotNil(s.T(), pills)
+	require.Equal(s.T(), "array", pills.Type)
+	require.Equal(s.T(), []any{"gate", "rev", "ask", "plan", "trust", "ci", "conflict", "comment"}, pills.Items.Enum)
 }
 
 func (s *SchemaSuite) TestGatesNestedObject() {

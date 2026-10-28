@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { ciPillIds, commentPillIds, conflictPillIds, fixingPill, pluginBadgeTitle, REVIEWING_PILL, SIDEBAR_PILLS, trustPillIds } from "./pills";
+import { ciPillIds, commentPillIds, conflictPillIds, fixingPill, pluginBadgeTitle, REVIEWING_PILL, SIDEBAR_PILLS, shownPills, trustPillIds } from "./pills";
 
 describe("REVIEWING_PILL", () => {
   it("stays out of the pills that mean the session needs you", () => {
     expect(SIDEBAR_PILLS.map((p) => p.label)).not.toContain(REVIEWING_PILL.label);
+  });
+});
+
+describe("shownPills", () => {
+  it("leaves out the kinds turned off, in render order", () => {
+    expect(shownPills([]).map((p) => p.kind)).toEqual(SIDEBAR_PILLS.map((p) => p.kind));
+    expect(shownPills(["comment", "ci", "conflict"]).map((p) => p.label)).toEqual(["gate", "rev", "ask", "plan", "trust"]);
   });
 });
 
@@ -34,9 +41,9 @@ describe("PR/MR pills", () => {
   it("has one needs-you pill per issue, none for one being handled", () => {
     expect(SIDEBAR_PILLS.find((p) => p.kind === "ci")).toMatchObject({ label: "ci", color: "error" });
     expect(SIDEBAR_PILLS.find((p) => p.kind === "conflict")).toMatchObject({ label: "cnf", color: "error" });
-    expect(SIDEBAR_PILLS.find((p) => p.kind === "cmt")).toMatchObject({ label: "cmt", color: "warning" });
+    expect(SIDEBAR_PILLS.find((p) => p.kind === "comment")).toMatchObject({ label: "cmt", color: "warning" });
     const labels = SIDEBAR_PILLS.map((p) => p.label);
-    expect(labels).not.toContain(fixingPill("fixing")?.label);
+    expect(labels).not.toContain(fixingPill("fixing", SIDEBAR_PILLS)?.label);
   });
 
   it.each([
@@ -45,7 +52,12 @@ describe("PR/MR pills", () => {
     ["conflict", undefined],
     [undefined, undefined],
   ] as const)("fixingPill(%s) → %s", (attention, want) => {
-    expect(fixingPill(attention)?.label).toBe(want);
+    expect(fixingPill(attention, SIDEBAR_PILLS)?.label).toBe(want);
+  });
+
+  it("drops ci… with the ci pill turned off", () => {
+    expect(fixingPill("fixing", shownPills(["ci"]))).toBeUndefined();
+    expect(fixingPill("fixing", shownPills(["comment"]))?.label).toBe("ci…");
   });
 
   const rows = [

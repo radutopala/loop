@@ -15,6 +15,7 @@ import (
 	"github.com/radutopala/loop/internal/gitutil"
 	"github.com/radutopala/loop/internal/osutil"
 	"github.com/radutopala/loop/internal/randutil"
+	"github.com/radutopala/loop/internal/worktree"
 )
 
 type branchListResponse struct {
@@ -443,10 +444,14 @@ func (s *Server) handleDeleteBranch(w http.ResponseWriter, r *http.Request) {
 
 type createWorktreeRequest struct {
 	ChannelID string `json:"channel_id"`
-	Branch    string `json:"branch"`
-	Name      string `json:"name,omitempty"`
-	AuthorID  string `json:"author_id,omitempty"`
-	Message   string `json:"message,omitempty"`
+	// Branch is what the worktree branches from, or with PR the branch the
+	// PR merges into.
+	Branch string `json:"branch"`
+	// PR, when set, checks out that PR (or MR) itself instead of branching.
+	PR       int    `json:"pr,omitempty"`
+	Name     string `json:"name,omitempty"`
+	AuthorID string `json:"author_id,omitempty"`
+	Message  string `json:"message,omitempty"`
 }
 
 type createWorktreeResponse struct {
@@ -471,12 +476,12 @@ func (s *Server) handleCreateWorktree(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "channel_id is required", http.StatusBadRequest)
 		return
 	}
-	if req.Branch == "" {
+	if req.Branch == "" && req.PR <= 0 {
 		http.Error(w, "branch is required", http.StatusBadRequest)
 		return
 	}
 	branch, ok := sanitizeBranch(req.Branch)
-	if !ok {
+	if !ok && req.Branch != "" {
 		http.Error(w, "invalid branch name", http.StatusBadRequest)
 		return
 	}
@@ -508,16 +513,31 @@ func (s *Server) handleCreateWorktree(w http.ResponseWriter, r *http.Request) {
 	name := req.Name
 	if name == "" {
 		name = "wt-" + randutil.HexID(4)
+		if req.PR > 0 {
+			name = fmt.Sprintf("pr-%d", req.PR)
+		}
 	}
 
-	result, err := s.worktreeCreator.Create(r.Context(), dirPath, branch, name, parent.SessionID)
+	var result *worktree.CreateResult
+	threadBranch := req.Branch
+	if req.PR > 0 {
+		parentDirPath := s.workspace.resolveParentDirPath(r.Context(), parent.ChannelID)
+		result, err = s.worktreeCreator.CreateWith(r.Context(), dirPath, name, parent.SessionID, func(ctx context.Context, worktreePath string) error {
+			return s.checkoutPR(ctx, dirPath, parentDirPath, worktreePath, req.PR)
+		})
+	} else {
+		result, err = s.worktreeCreator.Create(r.Context(), dirPath, branch, name, parent.SessionID)
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	worktreePath := result.WorktreePath
+	if req.PR > 0 {
+		threadBranch = result.BranchName
+	}
 
-	threadName := fmt.Sprintf("%s (%s)", name, req.Branch)
+	threadName := fmt.Sprintf("%s (%s)", name, threadBranch)
 	// When msgHandler is set, skip storing the message in CreateThread —
 	// HandleThreadCreated will store it as a user message instead.
 	msg := req.Message

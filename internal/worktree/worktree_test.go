@@ -2,6 +2,7 @@ package worktree
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -265,6 +266,63 @@ func (s *CreatorSuite) TestCreateSessionCopyMkdirDstError() {
 
 	require.NoError(s.T(), err)
 	require.NotNil(s.T(), result)
+}
+
+func (s *CreatorSuite) TestCreateWith() {
+	wtPath := filepath.Join("/proj", ".worktrees", "pr-12")
+	tests := []struct {
+		name string
+		// fails maps a git subcommand to the error it returns.
+		fails       map[string]error
+		checkoutErr error
+		wantErr     string
+		wantGit     []string
+	}{
+		{name: "checked out", wantGit: []string{"worktree", "symbolic-ref"}},
+		{name: "worktree add fails", fails: map[string]error{"worktree add": errors.New("exit 128")}, wantErr: "git worktree add failed", wantGit: []string{"worktree"}},
+		{name: "checkout fails", checkoutErr: errors.New("already checked out"), wantErr: "already checked out", wantGit: []string{"worktree", "worktree", "worktree"}},
+		{
+			name: "checkout and cleanup fail", checkoutErr: errors.New("already checked out"),
+			fails:   map[string]error{"worktree remove": errors.New("exit 1")},
+			wantErr: "git worktree remove failed", wantGit: []string{"worktree", "worktree"},
+		},
+		{
+			name:    "head unreadable",
+			fails:   map[string]error{"symbolic-ref": errors.New("exit 1"), "rev-parse": errors.New("exit 128")},
+			wantErr: "resolving HEAD", wantGit: []string{"worktree", "symbolic-ref", "rev-parse"},
+		},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			var git []string
+			s.creator.Run = func(_ context.Context, _, _ string, args ...string) ([]byte, error) {
+				git = append(git, args[0])
+				if err := tt.fails[args[0]+" "+args[1]]; err != nil {
+					return nil, err
+				}
+				if err := tt.fails[args[0]]; err != nil {
+					return nil, err
+				}
+				return []byte("feat/pr-head\n"), nil
+			}
+			var checkedOut string
+			result, err := s.creator.CreateWith(context.Background(), "/proj", "pr-12", "", func(_ context.Context, dir string) error {
+				checkedOut = dir
+				return tt.checkoutErr
+			})
+			require.Equal(s.T(), tt.wantGit, git)
+			if tt.wantErr != "" {
+				require.ErrorContains(s.T(), err, tt.wantErr)
+				require.Nil(s.T(), result)
+				return
+			}
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), wtPath, checkedOut)
+			require.Equal(s.T(), &CreateResult{WorktreePath: wtPath, BranchName: "feat/pr-head"}, result)
+			require.Len(s.T(), s.sys.writeFileCalls, 1)
+		})
+	}
 }
 
 func (s *CreatorSuite) TestHeadRef() {

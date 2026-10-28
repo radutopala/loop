@@ -1,6 +1,5 @@
-import { applyEdits, modify, type ParseError, parse } from "jsonc-parser";
 import { apiFetch, getApiUrl } from "./api";
-import { fetchGlobalConfig, fetchProjectConfig, type SchemaProperty, saveGlobalConfig, saveProjectConfig } from "./configApi";
+import { fetchGlobalConfig, fetchProjectConfig, type SchemaProperty, saveGlobalConfig, saveProjectConfig, withConfigValue } from "./configApi";
 
 /** A panel a plugin draws in the workspace. */
 export interface PluginPanelInfo {
@@ -205,18 +204,9 @@ export async function fetchPluginAgent(id: string, channelId: string): Promise<P
 /** The window event telling plugin views their list changed. */
 export const PLUGINS_CHANGED = "loop:plugins-changed";
 
-/** raw, a config file's text, with plugins.<id>.<path> set to value, or
- *  removed when value is undefined, and everything else, comments too, left
- *  as it was. */
+/** raw, a config file's text, with plugins.<id>.<path> set to value (see withConfigValue). */
 export function withPluginValue(raw: string, id: string, path: string[], value: unknown): string {
-  const text = raw.trim() === "" ? "{}\n" : raw;
-  const errors: ParseError[] = [];
-  parse(text, errors, { allowTrailingComma: true });
-  if (errors.length > 0) throw new Error("the config file doesn't parse; fix it first");
-  const eol = text.includes("\r\n") ? "\r\n" : "\n";
-  const indent = /\n(\s+)"/.exec(text)?.[1];
-  const formattingOptions = { insertSpaces: !indent?.startsWith("\t"), tabSize: indent && !indent.startsWith("\t") ? indent.length : 2, eol };
-  return applyEdits(text, modify(text, ["plugins", id, ...path], value, { formattingOptions }));
+  return withConfigValue(raw, ["plugins", id, ...path], value);
 }
 
 /** raw with plugins.<id>.enabled set to enabled. */

@@ -513,6 +513,7 @@ func (s *Server) registerTaskRoutes(mux *http.ServeMux) {
 func (s *Server) registerGitRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/channels/{id}/diff", s.handleGitDiff)
 	mux.HandleFunc("GET /api/channels/{id}/pr", s.handleChannelPR)
+	mux.HandleFunc("GET /api/channels/{id}/prs", s.handleChannelOpenPRs)
 	mux.HandleFunc("POST /api/channels/{id}/pr/merge", s.handlePRMerge)
 	mux.HandleFunc("DELETE /api/channels/{id}/pr/merge", s.handlePRMergeCancel)
 	mux.HandleFunc("GET /api/channels/{id}/pr/status", s.handleChannelPRStatus)
