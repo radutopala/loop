@@ -13,7 +13,7 @@ Feature: Sessions that need you
     And the element "[data-testid='sidebar-needs-you'][aria-pressed='false']" should be visible
 
     When I inject a gate.approval_requested event for the last created thread with req_id "bdd-ny-gate" and target "/tmp/bdd-ny.txt"
-    Then I wait up to "5s" for "[data-testid='sidebar'] [title='Approval needed']" to be visible
+    Then I wait up to "5s" for "[data-testid='sidebar'] [data-pill='gate']" to be visible
 
     # The waiting thread stays, with its channel; the quiet one goes.
     When I click on "[data-testid='sidebar-needs-you']"

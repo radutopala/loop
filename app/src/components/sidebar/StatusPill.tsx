@@ -12,6 +12,7 @@ export function StatusPill({ label, color, title, marginLeft }: StatusPillProps)
   return (
     <span
       title={title}
+      data-pill={label}
       style={{
         flexShrink: 0,
         fontSize: 9,
