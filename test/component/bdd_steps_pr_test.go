@@ -15,15 +15,16 @@ import (
 	"github.com/cucumber/godog"
 )
 
-func registerCISteps(ctx *godog.ScenarioContext, tc *TestContext) {
-	ctx.Step(`^(gh|glab) reports (?:PR #|MR !)(\d+) with a failing "([^"]*)" check$`, tc.fakeForgeCI)
+func registerPRSteps(ctx *godog.ScenarioContext, tc *TestContext) {
+	ctx.Step(`^(gh|glab) reports (?:PR #|MR !)(\d+) with a failing "([^"]*)" check$`, tc.fakeForgePR)
+	ctx.Step(`^(gh|glab) reports (?:PR #|MR !)(\d+) with a failing "([^"]*)" check and a merge conflict$`, tc.fakeForgePRConflict)
 	ctx.Step(`^(gh|glab) should have been called with "([^"]*)"$`, tc.assertFakeCLICall)
 	ctx.Step(`^a GET to "([^"]*)" should soon have JSON "([^"]*)" equal to "([^"]*)"$`, tc.pollGETJSON)
 	ctx.Step(`^the channel list should soon show the current channel's "([^"]*)" as "([^"]*)"$`, tc.pollChannelListField)
 }
 
-// ciHeadSHA is the head commit the fake forges report.
-const ciHeadSHA = "4f1c2d9e8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e"
+// prHeadSHA is the head commit the fake forges report.
+const prHeadSHA = "4f1c2d9e8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e"
 
 // fakeCLICase is one branch of a fake CLI: args matching the shell case
 // pattern print out.
@@ -32,11 +33,26 @@ type fakeCLICase struct {
 	out     string
 }
 
-// fakeForgeCI puts a gh or glab on the daemon's PATH that reports change
+// fakeForgePR puts a gh or glab on the daemon's PATH that reports change
 // number open on whatever branch is asked about, its head with one failed
-// check named check and one passed, and accepts merges. Every call is
+// check named check and one passed, and one unresolved review thread of
+// two, and accepts merges. Every call is
 // logged for assertFakeCLICall.
-func (tc *TestContext) fakeForgeCI(bin string, number int, check string) error {
+func (tc *TestContext) fakeForgePR(bin string, number int, check string) error {
+	return tc.fakeForge(bin, number, check, false)
+}
+
+// fakeForgePRConflict is fakeForgePR with the change conflicting with its
+// base, main.
+func (tc *TestContext) fakeForgePRConflict(bin string, number int, check string) error {
+	return tc.fakeForge(bin, number, check, true)
+}
+
+func (tc *TestContext) fakeForge(bin string, number int, check string, conflict bool) error {
+	ghMerge, glMerge := "BLOCKED", "ci_must_pass"
+	if conflict {
+		ghMerge, glMerge = "DIRTY", "conflict"
+	}
 	n := strconv.Itoa(number)
 	js := func(v any) string {
 		b, _ := json.Marshal(v)
@@ -45,8 +61,8 @@ func (tc *TestContext) fakeForgeCI(bin string, number int, check string) error {
 	var cases []fakeCLICase
 	if bin == "gh" {
 		cases = []fakeCLICase{
-			{`"pr view "*"headRefOid,statusCheckRollup"*`, js(map[string]any{
-				"headRefOid": ciHeadSHA, "mergeStateStatus": "BLOCKED", "autoMergeRequest": nil, "state": "OPEN", "isDraft": false,
+			{`"pr view "*"headRefOid,baseRefName,statusCheckRollup"*`, js(map[string]any{
+				"headRefOid": prHeadSHA, "baseRefName": "main", "mergeStateStatus": ghMerge, "autoMergeRequest": nil, "state": "OPEN", "isDraft": false,
 				"statusCheckRollup": []map[string]string{
 					{"status": "COMPLETED", "conclusion": "FAILURE"},
 					{"status": "COMPLETED", "conclusion": "SUCCESS"},
@@ -59,6 +75,9 @@ func (tc *TestContext) fakeForgeCI(bin string, number int, check string) error {
 			{`"pr checks "*`, js([]map[string]string{
 				{"name": check, "bucket": "fail", "link": "https://github.com/example/repo/actions/runs/9/job/123", "workflow": "CI"},
 				{"name": "test", "bucket": "pass", "link": "https://github.com/example/repo/actions/runs/9/job/124", "workflow": "CI"},
+			})},
+			{`"api graphql "*"reviewThreads"*`, js([]map[string]any{
+				{"id": "T1", "isResolved": false}, {"id": "T2", "isResolved": true},
 			})},
 			{`"api graphql "*`, js(map[string]bool{
 				"autoMergeAllowed": true, "squashMergeAllowed": true, "mergeCommitAllowed": true, "rebaseMergeAllowed": false,
@@ -80,8 +99,12 @@ func (tc *TestContext) fakeForgeCI(bin string, number int, check string) error {
 				{"id": 982, "name": "test", "stage": "test", "status": "success", "web_url": "https://gitlab.example.com/example/group/project/-/jobs/982", "allow_failure": false},
 			})},
 			{`"api projects/"*"/merge_requests/` + n + `"`, js(map[string]any{
-				"sha": ciHeadSHA, "state": "opened", "draft": false, "detailed_merge_status": "ci_must_pass",
+				"sha": prHeadSHA, "target_branch": "main", "state": "opened", "draft": false, "detailed_merge_status": glMerge,
 				"merge_when_pipeline_succeeds": false, "head_pipeline": map[string]int{"id": 5},
+			})},
+			{`"api projects/"*"/discussions"*`, js([]map[string]any{
+				{"id": "d1", "notes": []map[string]bool{{"resolvable": true, "resolved": false}}},
+				{"id": "d2", "notes": []map[string]bool{{"resolvable": true, "resolved": true}}},
 			})},
 			{`"api projects/"*`, js(map[string]string{"merge_method": "merge", "squash_option": "default_off"})},
 		}
@@ -184,7 +207,7 @@ func (tc *TestContext) pollChannelListField(field, want string) error {
 }
 
 // jsonAt returns the value at a dotted path into decoded JSON, a number
-// segment indexing an array: "ci.failed.0.name".
+// segment indexing an array: "pr.failed.0.name".
 func jsonAt(v any, path string) (any, bool) {
 	for seg := range strings.SplitSeq(path, ".") {
 		switch node := v.(type) {

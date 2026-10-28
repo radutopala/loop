@@ -3,7 +3,8 @@ import { fonts } from "../../theme";
 interface StatusPillProps {
   label: string;
   color: string;
-  title: string;
+  /** Only a plugin badge has a tooltip: the status pills leave theirs to the row's info popup. */
+  title?: string;
   marginLeft?: number | string;
 }
 

@@ -221,7 +221,7 @@ type Server struct {
 	caps              *apiauth.Signer        // signs /c/{cap}/ content links
 	workflowBashLocal bool                   // workflow bash nodes run on the host (workflow_bash_local)
 	projectTrust      ProjectTrust           // owner-approved project configs; nil skips trust bookkeeping
-	ci                CIWatcher              // PR/MR CI watcher; nil leaves the CI endpoints unconfigured
+	prWatch           PRWatcher              // PR/MR watcher; nil leaves the PR status endpoints unconfigured
 }
 
 // AuditDirResolver maps a channel ID to the host directory that backs the
@@ -515,11 +515,11 @@ func (s *Server) registerGitRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/channels/{id}/pr", s.handleChannelPR)
 	mux.HandleFunc("POST /api/channels/{id}/pr/merge", s.handlePRMerge)
 	mux.HandleFunc("DELETE /api/channels/{id}/pr/merge", s.handlePRMergeCancel)
-	mux.HandleFunc("GET /api/channels/{id}/ci", s.handleChannelCI)
-	mux.HandleFunc("POST /api/channels/{id}/ci/fix", s.handleChannelCIFix)
-	mux.HandleFunc("POST /api/channels/{id}/ci/rerun", s.handleChannelCIRerun)
-	mux.HandleFunc("GET /api/channels/{id}/ci/log", s.handleChannelCILog)
-	mux.HandleFunc("PUT /api/channels/{id}/ci/auto-fix", s.handleChannelCIAutoFix)
+	mux.HandleFunc("GET /api/channels/{id}/pr/status", s.handleChannelPRStatus)
+	mux.HandleFunc("POST /api/channels/{id}/pr/fix", s.handleChannelPRFix)
+	mux.HandleFunc("POST /api/channels/{id}/pr/rerun", s.handleChannelPRRerun)
+	mux.HandleFunc("GET /api/channels/{id}/pr/log", s.handleChannelPRLog)
+	mux.HandleFunc("PUT /api/channels/{id}/pr/auto-fix", s.handleChannelPRAutoFix)
 	mux.HandleFunc("GET /api/channels/{id}/branches", s.handleListBranches)
 	mux.HandleFunc("GET /api/channels/{id}/commits", s.handleListCommits)
 	mux.HandleFunc("POST /api/channels/{id}/branches/switch", s.handleSwitchBranch)

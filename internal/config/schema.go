@@ -399,9 +399,9 @@ func buildSchema(goos string) *ConfigSchema {
 				},
 			},
 
-			"ci": {
+			"pr": {
 				Type:     "object",
-				XSection: "CI",
+				XSection: "PR",
 				Properties: map[string]*SchemaProperty{
 					"auto_fix": {
 						Type:        "boolean",
@@ -413,8 +413,8 @@ func buildSchema(goos string) *ConfigSchema {
 						Type:         "integer",
 						Title:        "Max Attempts",
 						Description:  "Fixes a PR/MR gets before Loop stops and flags it. 3 by default.",
-						Default:      DefaultCIMaxAttempts,
-						XPlaceholder: strconv.Itoa(DefaultCIMaxAttempts),
+						Default:      DefaultPRMaxAttempts,
+						XPlaceholder: strconv.Itoa(DefaultPRMaxAttempts),
 					},
 					"merge_method": {
 						Type:        "string",
@@ -426,8 +426,15 @@ func buildSchema(goos string) *ConfigSchema {
 						Type:         "integer",
 						Title:        "Poll Interval (sec)",
 						Description:  "How often a PR/MR's checks are polled while they run. 30 by default.",
-						Default:      DefaultCIPollSec,
-						XPlaceholder: strconv.Itoa(DefaultCIPollSec),
+						Default:      DefaultPRPollSec,
+						XPlaceholder: strconv.Itoa(DefaultPRPollSec),
+					},
+					"idle_poll_sec": {
+						Type:         "integer",
+						Title:        "Idle Poll Interval (sec)",
+						Description:  "How often an open PR/MR is polled otherwise, to catch a merge conflict or a push from elsewhere. 300 by default.",
+						Default:      DefaultPRIdlePollSec,
+						XPlaceholder: strconv.Itoa(DefaultPRIdlePollSec),
 					},
 				},
 			},

@@ -121,6 +121,7 @@ var migrationClasses = []migrationClass{
 	{description: "patch review-loop/review-fix-loop to verify the comments once, at the end"},
 	{description: "trust existing project workflows", exempt: exemptAdopt},
 	{description: "trust existing project container images", exempt: exemptAdopt},
+	{description: "rename the ci config block to pr"},
 }
 
 // --- generated trees ---
@@ -210,7 +211,7 @@ func genArray(r *rand.Rand, gen func(*rand.Rand) string) string {
 }
 
 // memberKinds is how many kinds of member genMember makes.
-const memberKinds = 14
+const memberKinds = 17
 
 // genMember is a top-level config member of the given kind, with the
 // comments a migration has to keep or drop.
@@ -236,6 +237,12 @@ func genMember(r *rand.Rand, kind int) string {
 		return `"workflows": ` + pick(r, genArray(r, genWorkflow), genArray(r, genWorkflow), `"scalar"`)
 	case 12:
 		return "/* a block\n     comment */ \"mode\": \"docker\""
+	case 13:
+		return `"ci": ` + pick(r, `{"auto_fix": false}`, `{}`, `"x"`) + pick(r, ``, ` // ci`)
+	case 14:
+		return `"pr": ` + pick(r, `{"poll_sec": 30}`, `{}`)
+	case 15:
+		return "//\"ci\": {\n  //  \"auto_fix\": true\n  //},\n  \"platforms\": [\"local\"]"
 	default:
 		return `"platforms": ["local"]`
 	}
@@ -603,6 +610,8 @@ func specCtx(tr specTree, log *specLog) *Ctx {
 		AdoptProjectConfig:         adopt("config"),
 		AdoptProjectWorkflows:      adopt("workflows"),
 		AdoptProjectContainerImage: adopt("container image"),
+		// The trust file is outside both roots; config.TrustStore covers the rename.
+		RenameTrustedField: func(string, string) error { return nil },
 	}
 }
 

@@ -356,25 +356,27 @@ Enables and configures the Review panel (see [review.md](review.md)).
 
 Both prompt fields empty (the default) uses the daemon's built-in default prompt: the `/code-review` slash command with the run's effort as its level (e.g. `/code-review high`; bare when no effort is set), with the output contract (report actionable findings via the built-in `ReportFindings` tool, each carrying a file and a 1-based line) carried in the system prompt. A configured non-slash prompt gets no system prompt, so it must carry its own contract — see [review.md](review.md#required-output-format).
 
-#### CI
+#### PR watching
 
-How Loop watches a thread's PR/MR checks (see [ci.md](ci.md)).
+How Loop watches a thread's PR/MR checks (see [pr.md](pr.md)).
 
 ```jsonc
-"ci": {
+"pr": {
   "auto_fix": true,
   "max_attempts": 3,
   "merge_method": "squash",
-  "poll_sec": 30
+  "poll_sec": 30,
+  "idle_poll_sec": 300
 }
 ```
 
 | Field | Type | Description |
 |---|---|---|
-| `auto_fix` | `bool` | Send a failure on a commit the thread's agent made back to that agent to fix. `true` by default. The Git panel's *Auto-fix CI* toggle overrides it per thread. With it off, a failure lights the thread's `ci` pill instead. |
+| `auto_fix` | `bool` | Send a failure on a commit the thread's agent made back to that agent to fix. `true` by default. The Git panel's *Auto-fix* toggle overrides it per thread. With it off, a failure lights the thread's `ci` pill instead. |
 | `max_attempts` | `int` | Fixes a PR/MR gets before auto-fix stops and lights the `ci` pill (default `3`). The count resets when the checks pass. |
 | `merge_method` | `string` | `squash`, `merge` or `rebase`: the method "merge when ready" and *Merge now* use when the repo allows it. Empty (the default) picks the first the repo allows, in that order. Any other value is ignored. |
 | `poll_sec` | `int` | Seconds between polls of a watched PR/MR (default `30`). |
+| `idle_poll_sec` | `int` | Seconds between polls of an open PR/MR that isn't watched (default `300`), to catch a merge conflict with its moving base. |
 
 #### Playground share
 
@@ -762,7 +764,7 @@ Not all global fields are available in project configs. The following fields can
 | `github.mount_gh_config` | **Overrides** global value when set, once the project config is trusted. Set to `false`, it also drops the global mounts at `~/.config/gh`. |
 | `gitlab.glab_config_dir` / `gitlab.mount_glab_config` | Each **overrides** the global value when set, once the project config is trusted. `mount_glab_config: false` also drops the global mounts at `~/.config/glab-cli`. |
 | `review.enabled` / `review.prompt` / `review.prompt_path` / `review.verify` / `review.verify_prompt` / `review.max_iterations` / `review.update_base` | Each field **overrides** the global value only when explicitly set (see [Review](#review)). |
-| `ci.auto_fix` / `ci.max_attempts` / `ci.merge_method` / `ci.poll_sec` | Each field **overrides** the global value when set, once the project config is trusted: `auto_fix` when present, the counts when positive, `merge_method` when it's a known method (see [CI](#ci)). |
+| `pr.auto_fix` / `pr.max_attempts` / `pr.merge_method` / `pr.poll_sec` / `pr.idle_poll_sec` | Each field **overrides** the global value when set, once the project config is trusted: `auto_fix` when present, the counts when positive, `merge_method` when it's a known value (see [PR watching](#pr-watching)). |
 | `learn.enabled` / `learn.min_turns` / `learn.model` / `learn.effort` / `learn.prompt` | Each field **overrides** the global value only when set: `enabled` and `min_turns` when present, the strings when non-empty (see [Learn](#learn)). |
 | `explain.enabled` / `explain.model` / `explain.effort` / `explain.prompt` | Each field **overrides** the global value only when set: `enabled` when present, the strings when non-empty (see [Explain](#explain)). |
 | `gates.agentgate.enabled` | **Ignored**: the global setting decides, so a project can neither switch the gate off nor on. |

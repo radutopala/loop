@@ -949,3 +949,78 @@ func (s *TrustSuite) TestAdoptContainerImage() {
 		require.ErrorContains(s.T(), s.store.AdoptContainerImage("/proj"), "parsing")
 	})
 }
+
+func (s *TrustSuite) TestRenameField() {
+	tests := []struct {
+		name  string
+		trust string // the trust file; "" for none
+		want  string // the trust file after; "" when it must be untouched
+	}{
+		{name: "no trust file"},
+		{name: "no project has the field", trust: `{"/proj": {"fields": {"mounts": ["/a:/a"]}, "trusted_at": "2026-09-30T00:00:00Z"}}`},
+		{
+			name:  "renamed",
+			trust: `{"/proj": {"fields": {"ci": {"auto_fix": false}, "mounts": ["/a:/a"]}, "trusted_at": "2026-09-30T00:00:00Z"}}`,
+			want:  `{"/proj": {"fields": {"mounts": ["/a:/a"], "pr": {"auto_fix": false}}, "trusted_at": "2026-09-30T00:00:00Z"}}`,
+		},
+		{
+			name:  "the new name wins",
+			trust: `{"/proj": {"fields": {"ci": {"auto_fix": false}, "pr": {"auto_fix": true}}, "trusted_at": "2026-09-30T00:00:00Z"}}`,
+			want:  `{"/proj": {"fields": {"pr": {"auto_fix": true}}, "trusted_at": "2026-09-30T00:00:00Z"}}`,
+		},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			if tt.trust != "" {
+				s.files[trustPath] = []byte(tt.trust)
+			}
+			if tt.want == "" {
+				s.store.writeFile = func(string, []byte, os.FileMode) error { return errors.New("must not write") }
+			}
+			require.NoError(s.T(), s.store.RenameField("ci", "pr"))
+			if tt.want == "" {
+				if tt.trust == "" {
+					require.NotContains(s.T(), s.files, trustPath)
+				} else {
+					require.Equal(s.T(), tt.trust, string(s.files[trustPath]))
+				}
+				return
+			}
+			require.JSONEq(s.T(), tt.want, string(s.files[trustPath]))
+		})
+	}
+}
+
+func (s *TrustSuite) TestRenameFieldKeepsTrust() {
+	// As the trust file was before the rename.
+	s.files[trustPath] = []byte(`{"/proj": {"fields": {"ci": {"auto_fix": false}}, "trusted_at": "2026-09-30T00:00:00Z"}}`)
+	s.project(`{"pr": {"auto_fix": false}}`)
+	require.NoError(s.T(), s.store.RenameField("ci", "pr"))
+	st, err := s.store.Status("/proj")
+	require.NoError(s.T(), err)
+	require.True(s.T(), st.Trusted)
+}
+
+func (s *TrustSuite) TestRenameFieldErrors() {
+	tests := []struct {
+		name    string
+		trust   string
+		write   error
+		wantErr string
+	}{
+		{name: "trust file isn't JSON", trust: "not json", wantErr: "parsing /cfg/loop/project-trust.json"},
+		{name: "trusted fields aren't an object", trust: `{"/proj": {"fields": ["ci"]}}`, wantErr: "parsing the trusted config of /proj"},
+		{name: "trust file can't be written", trust: `{"/proj": {"fields": {"ci": {}}}}`, write: errors.New("boom"), wantErr: "writing /cfg/loop/project-trust.json.tmp"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			s.files[trustPath] = []byte(tt.trust)
+			if tt.write != nil {
+				s.store.writeFile = func(string, []byte, os.FileMode) error { return tt.write }
+			}
+			require.ErrorContains(s.T(), s.store.RenameField("ci", "pr"), tt.wantErr)
+		})
+	}
+}

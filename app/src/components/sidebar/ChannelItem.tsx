@@ -1,12 +1,12 @@
 import { useRef, useState } from "react";
-import { unreadLabel, unreadTitle } from "../../notifications/notifications";
+import { unreadLabel } from "../../notifications/notifications";
 import { useNotificationsState } from "../../notifications/useNotifications";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { Channel } from "../../types";
 import { NewThreadInput } from "./NewThreadInput";
 import type { PillKind } from "./pills";
-import { CI_FIXING_PILL, pluginBadgeTitle, REVIEWING_PILL, SIDEBAR_PILLS } from "./pills";
+import { fixingPill, pluginBadgeTitle, REVIEWING_PILL, SIDEBAR_PILLS } from "./pills";
 import { RowInfoPopup } from "./RowInfoPopup";
 import { useExpandToSelected, useRevealSelected } from "./reveal";
 import { SidebarWorktreeButton } from "./SidebarWorktreeButton";
@@ -69,6 +69,7 @@ export function ChannelItem({
   // The open row's bell already counts its notifications.
   const unread = useNotificationsState().unread[channel.id] ?? 0;
   const notes = selected ? 0 : unread;
+  const fixing = fixingPill(channel.pr_attention);
   const [creating, setCreating] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [hovered, setHovered] = useState(false);
@@ -201,14 +202,14 @@ export function ChannelItem({
             {channel.name || channel.dir_path?.split("/").pop() || channel.id}
           </span>
           {SIDEBAR_PILLS.filter((p) => pillsRef?.current?.get(p.kind)?.has(channel.id)).map((p) => (
-            <StatusPill key={p.kind} label={p.label} color={colors[p.color]} title={p.title} />
+            <StatusPill key={p.kind} label={p.label} color={colors[p.color]} />
           ))}
-          {channel.review_running && <StatusPill label={REVIEWING_PILL.label} color={colors[REVIEWING_PILL.color]} title={REVIEWING_PILL.title} />}
-          {channel.ci_attention === "fixing" && <StatusPill label={CI_FIXING_PILL.label} color={colors[CI_FIXING_PILL.color]} title={CI_FIXING_PILL.title} />}
+          {channel.review_running && <StatusPill label={REVIEWING_PILL.label} color={colors[REVIEWING_PILL.color]} />}
+          {fixing && <StatusPill label={fixing.label} color={colors[fixing.color]} />}
           {channel.plugin_badges?.map((b) => (
             <StatusPill key={`plugin:${b.plugin_id}`} label={b.text} color={colors.textMuted} title={pluginBadgeTitle(b)} />
           ))}
-          {notes > 0 && <StatusPill label={unreadLabel(notes)} color={colors.textMuted} title={unreadTitle(notes)} />}
+          {notes > 0 && <StatusPill label={unreadLabel(notes)} color={colors.textMuted} />}
           {(channel.container_running || channel.agent_running || isRunningMapRef?.current?.get(channel.id) || channel.review_running) && (
             <span
               style={{

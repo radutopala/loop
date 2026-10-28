@@ -108,7 +108,7 @@ The clock button at the right of the tabs hides task threads from the open tab; 
 
 ### Showing only what needs you
 
-The bell at the right of the tabs narrows both tabs to the sessions with a lit pill: `gate` (an approval), `ask` (a question), `plan` (a plan to approve), `rev` (a review session open), `trust` (a project config to trust), and `ci` (a [CI failure](ci.md) no agent is fixing). The tree keeps the channels and threads that lead to a lit row, so it still reads as a tree, and drops their other threads; a lit row's own unlit threads go too. Recent keeps only the lit sessions. With nothing lit, the tree says *Nothing needs you right now*. A running agent or review (`rev…`), or an agent fixing CI (`ci…`), doesn't count: it isn't waiting on you. The filter combines with the search and the task toggle, and steps aside in selection mode so every row can be picked. The choice is stored in `localStorage` under `loop-sidebar-needs-you`.
+The bell at the right of the tabs narrows both tabs to the sessions with a lit pill: `gate` (an approval), `ask` (a question), `plan` (a plan to approve), `rev` (a review session open), `trust` (a project config to trust), `ci` (a [CI failure](pr.md) no agent is fixing), `cnf` (a PR/MR with a [merge conflict](pr.md#merge-conflicts)) and `cmt` (a PR/MR with [unresolved review comments](pr.md#unresolved-review-threads)). The tree keeps the channels and threads that lead to a lit row, so it still reads as a tree, and drops their other threads; a lit row's own unlit threads go too. Recent keeps only the lit sessions. With nothing lit, the tree says *Nothing needs you right now*. A running agent or review (`rev…`), or an agent fixing CI (`ci…`), doesn't count: it isn't waiting on you. The filter combines with the search and the task toggle, and steps aside in selection mode so every row can be picked. The choice is stored in `localStorage` under `loop-sidebar-needs-you`.
 
 ---
 
@@ -166,7 +166,7 @@ Each channel item (`ChannelItem` component) displays:
 | Collapse chevron | Shown when channel has threads. Rotates 90 degrees when collapsed. Click to toggle. |
 | Hash symbol (`#`) | Channel prefix, dimmed text |
 | Channel name | Truncated with ellipsis. Shows `dir_path.split("/").pop()` if no name set. |
-| Status pills | `rev` (`colors.active`) when a review session is ready, `rev…` (`colors.active`, *Review in progress*) while a review runs, `ask` (`colors.warning`) when an agent is parked on an `AskUserQuestion` card. Pills come from store refs (`reviewChannelIdsRef`, `askUserChannelIdsRef`) that are kept in sync via WebSocket events and rehydrated on reconnect against `/api/review/sessions` and `/api/asks/pending`. The `rev…` pill comes from the channel's `review_running`, which `/api/channels` reports and each `review.status` event patches. |
+| Status pills | `rev` (`colors.active`) when a review session is ready, `rev…` (`colors.active`) while a review runs, `ask` (`colors.warning`) when an agent is parked on an `AskUserQuestion` card. Pills come from store refs (`reviewChannelIdsRef`, `askUserChannelIdsRef`) that are kept in sync via WebSocket events and rehydrated on reconnect against `/api/review/sessions` and `/api/asks/pending`. The `rev…` pill comes from the channel's `review_running`, which `/api/channels` reports and each `review.status` event patches. Status pills have no tooltip, so they don't cover the [row info](#row-info) popup, which says why the PR/MR pills are lit; only a plugin badge shows its plugin's title. |
 | Status indicator | Green dot (6px circle, `colors.active`) when `container_running` or `agent_running` is true, or a review is running on it |
 | Config button (gear icon) | Shown on hover for channels with `dir_path`. Opens project settings. |
 | "+ thread" button | Shown on hover. Toggles the new thread input. |
@@ -208,12 +208,15 @@ Hovering a channel, thread or worktree thread shows a popup beside the row (`Row
 | **path** | The row's directory. For a worktree thread, that's the worktree's checkout. |
 | **branch** | The checked-out branch, e.g. `main`, picked out in the theme's accent color. A worktree thread adds the branch it was cut from, e.g. `worktree/fix (from main)`. A detached checkout shows `detached`. |
 | **pr** | The [pull request](#pull-request) open on the branch, e.g. `#42 Fix the login (open)`. Left out when there's none. |
+| **ci** | Why the `ci` or `ci…` pill is lit: the failing count and checks, then why auto-fix acted as it did, e.g. `✗ 2 failing (lint, test) The head commit isn't one this thread's agent made, so auto-fix leaves it to you.`, or `agent fixing`. |
+| **conflict** | Why the `cnf` pill is lit: `with main yours to resolve`. |
+| **cmt** | Why the `cmt` pill is lit: `2 unresolved review threads`. |
 | **commit** | The short commit hash and its subject line. |
 | **sync** | How far the branch is from its base (worktree threads) and its upstream, e.g. `↑3 ↓1 vs main · ↑1 vs origin/main`, or `even with main`. |
 | **model** | The model and effort picked for this channel in the chat, e.g. `claude-opus-5-5 · high`. Left out when it uses the config's. Updates as soon as they're changed. |
 | **status** | `agent running` or `container running`, and `locked`, when any of them apply. |
 
-The git lines follow the [branch poller](events.md#channelupdated), so they update within a few seconds of a commit, even while the popup is open. A line with nothing to show is left out; every row has at least its title. Moving off the row, clicking, dragging or scrolling hides it.
+The git lines follow the [branch poller](events.md#channelupdated), so they update within a few seconds of a commit, even while the popup is open. The ci, conflict and cmt lines show only while their pill is lit, and the watcher's [PR status](api.md#pr-watching) behind them is looked up only while the popup is open; the pills themselves have no tooltip. A line with nothing to show is left out; every row has at least its title. Moving off the row, clicking, dragging or scrolling hides it.
 
 ---
 

@@ -508,9 +508,9 @@ Also emitted by [`POST /api/channels/{id}/rename`](api.md#post-apichannelsidrena
 
 ---
 
-### `channel.ci`
+### `channel.pr`
 
-The CI of a thread's PR/MR changed: its checks, an auto-fix sent or stopped, or a merge armed or done (see [ci.md](ci.md)). Broadcast globally, and only when something changed, so the sidebar's `ci` / `ci…` pills and the Git panel's CI tab update without re-fetching. An event with only `channel_id` means the branch no longer has a PR/MR.
+The status of a thread's PR/MR changed: its checks, an auto-fix sent or stopped, or a merge armed or done (see [pr.md](pr.md)). Broadcast globally, and only when something changed, so the sidebar's `ci` / `ci…`, `cnf` and `cmt` pills and the Git panel's PR/MR tab update without re-fetching. An event with only `channel_id` means the branch no longer has a PR/MR.
 
 **Payload schema:**
 
@@ -521,18 +521,20 @@ The CI of a thread's PR/MR changed: its checks, an auto-fix sent or stopped, or 
   "number": 342,
   "url": "https://github.com/example/repo/pull/342",
   "head_sha": "4f1c2d9e8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e",
+    "base_ref": "main",
   "checks": {"total": 7, "passed": 6, "failed": 1, "pending": 0},
   "failed": [{"id": "123", "name": "lint", "group": "CI", "url": "https://github.com/example/repo/actions/runs/9/job/123", "run_id": "9"}],
   "merge_state": "blocked",
   "auto_merge": false,
-  "ci_attention": "failed",
+  "pr_attention": "failed",
   "auto_fix": false,
   "auto_fix_default": true,
   "attempts": 0,
   "max_attempts": 3,
   "reason": "not_agent_commit",
   "checkout_sha": "4f1c2d9e8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e",
-  "alert": "PR #342: lint failed"
+  "unresolved_threads": 1,
+  "alert": "PR #342: lint failed; 1 unresolved review thread"
 }
 ```
 
@@ -543,6 +545,7 @@ The CI of a thread's PR/MR changed: its checks, an auto-fix sent or stopped, or 
 | `number`           | int    | The PR number or MR IID |
 | `url`              | string | The PR/MR's web URL |
 | `head_sha`         | string | The head commit the checks ran on |
+| `base_ref`         | string | The branch the PR/MR merges into, omitted when unknown |
 | `checks`           | object | `total`, `passed`, `failed` and `pending` checks; a cancelled or skipped one counts only toward `total` |
 | `failed`           | array  | The failed checks: `id`, `name`, `group` (the workflow or stage), `url`, `run_id`, and `infra` for a GitLab runner failure |
 | `merge_state`      | string | `clean`, `blocked`, `behind`, `conflict`, `draft` or `unknown` |
@@ -551,14 +554,15 @@ The CI of a thread's PR/MR changed: its checks, an auto-fix sent or stopped, or 
 | `merge_armed`      | string | The method "merge when ready" was armed with; omitted when not armed |
 | `merge_methods`    | array  | The methods the repo allows; omitted once merged or closed |
 | `merge_method`     | string | The method a merge would use now |
-| `ci_attention`     | string | `failed` (lights the `ci` pill), `fixing` (`ci…`) or empty |
+| `pr_attention`     | string | `failed` (lights the `ci` pill), `fixing` (`ci…`), `conflict` (`cnf`) or empty |
 | `auto_fix`         | bool   | The thread's effective auto-fix setting |
-| `auto_fix_default` | bool   | The config's `ci.auto_fix` |
+| `auto_fix_default` | bool   | The config's `pr.auto_fix` |
 | `attempts`         | int    | Fixes sent for the current failure streak |
-| `max_attempts`     | int    | The config's `ci.max_attempts` |
-| `reason`           | string | Why the watcher last acted as it did on the failure: `not_agent_commit`, `auto_fix_off`, `max_attempts`, `no_new_commit`, `same_failure`, `infra_rerun`, `infra_again`, `fix_sent` or `fix_asked` (see [ci.md](ci.md#the-git-panel)); omitted when the checks pass or a new head's checks start running |
+| `max_attempts`     | int    | The config's `pr.max_attempts` |
+| `reason`           | string | Why the watcher last acted as it did on the failure: `not_agent_commit`, `auto_fix_off`, `max_attempts`, `no_new_commit`, `same_failure`, `infra_rerun`, `infra_again`, `fix_sent` or `fix_asked` (see [pr.md](pr.md#the-git-panel)); omitted when the checks pass or a new head's checks start running |
 | `checkout_sha`     | string | The commit the thread's checkout is at; omitted when it can't be read |
-| `alert`            | string | A new failure that needs the owner. It also adds a notification, so it's set on one event only |
+| `unresolved_threads` | int  | The PR/MR's unresolved review threads; omitted when none (see [pr.md](pr.md#unresolved-review-threads)) |
+| `alert`            | string | A new failure or unresolved review thread that needs the owner (a merge conflict shows in the PR/MR tab only). It also adds a notification, so it's set on one event only |
 
 ---
 
@@ -1269,7 +1273,7 @@ A plugin's [composer switch](plugins.md#composer-switches) changed in a chat: th
 | `BroadcastChannelCreated` | `channel.created` | `map[string]string{"channel_id": id}` | Channel |
 | `BroadcastChannelDeleted` | `channel.deleted` | `nil` | Channel |
 | `BroadcastChannelUpdated` | `channel.updated` | `ChannelUpdatedData` | Global |
-| `BroadcastChannelCI` | `channel.ci` | `events.CIEventData` | Global |
+| `BroadcastChannelPR` | `channel.pr` | `events.PREventData` | Global |
 | `BroadcastChannelAgentConfig` | `channel.agent_config` | `map[string]string{"model_override", "effort_override"}` | Global |
 | `BroadcastChannelLearn` | `channel.learn` | `map[string]string{"learn"}` | Global |
 | `BroadcastLearnStarted` | `learn.started` | `map[string]string{"learn_channel_id"}` | Global |

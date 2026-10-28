@@ -52,9 +52,11 @@ type CheckSummary struct {
 	Pending int `json:"pending"`
 }
 
-// CIState is a PR/MR's head, its checks and whether it can merge.
-type CIState struct {
-	HeadSHA    string
+// Status is a PR/MR's head, its checks and whether it can merge.
+type Status struct {
+	HeadSHA string
+	// BaseRef is the branch the PR merges into.
+	BaseRef    string
 	Checks     CheckSummary
 	MergeState string
 	AutoMerge  bool
@@ -95,11 +97,14 @@ type MergeSettings struct {
 
 // Forge is a forge's CI and merge operations on one PR/MR.
 type Forge interface {
-	CI(ctx context.Context, ref Ref) (*CIState, error)
+	Status(ctx context.Context, ref Ref) (*Status, error)
 	FailedChecks(ctx context.Context, ref Ref) ([]FailedCheck, error)
 	// Log returns the tail of the check's failure log.
 	Log(ctx context.Context, ref Ref, c FailedCheck) (string, error)
 	Rerun(ctx context.Context, ref Ref, c FailedCheck) error
+	// UnresolvedThreads returns the ids of the PR/MR's unresolved review
+	// threads (GitHub) or discussions (GitLab).
+	UnresolvedThreads(ctx context.Context, ref Ref) ([]string, error)
 	MergeSettings(ctx context.Context, ref Ref) (MergeSettings, error)
 	EnableAutoMerge(ctx context.Context, ref Ref, method string) error
 	DisableAutoMerge(ctx context.Context, ref Ref) error

@@ -1,5 +1,6 @@
 import type { AskUserQuestionData, Channel, ExitPlanModeData, Message, PluginBadge, TimelineResponse } from "../types";
 import { apiFetch, getApiUrl, getWsUrl, wsProtocols } from "./api";
+import type { PRAttention } from "./pr";
 
 /** Open a one-shot WebSocket to send a kill message for a channel's agent container. */
 export function killAgentContainer(channelId: string): void {
@@ -66,7 +67,8 @@ interface ChannelAPIResponse {
   ticket_url?: string;
   trust_pending?: boolean;
   plugin_badges?: PluginBadge[];
-  ci_attention?: "failed" | "fixing";
+  pr_attention?: PRAttention;
+  unresolved_threads?: number;
 }
 
 export async function fetchChannels(): Promise<Channel[]> {
@@ -109,7 +111,8 @@ export async function fetchChannels(): Promise<Channel[]> {
     ticket_url: c.ticket_url,
     trust_pending: c.trust_pending,
     plugin_badges: c.plugin_badges,
-    ci_attention: c.ci_attention,
+    pr_attention: c.pr_attention,
+    unresolved_threads: c.unresolved_threads,
   }));
 }
 

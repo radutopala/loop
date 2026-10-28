@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/radutopala/loop/internal/api"
-	"github.com/radutopala/loop/internal/ciwatch"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/prwatch"
 	"github.com/radutopala/loop/internal/testutil"
 )
 
@@ -26,7 +26,7 @@ func (m *mockMessageHandler) HandleIncomingMessage(ctx context.Context, channelI
 	m.Called(ctx, channelID, authorID, content, mode)
 }
 
-type CIWatcherSuite struct {
+type PRWatcherSuite struct {
 	suite.Suite
 	logger *slog.Logger
 	store  *db.SQLiteStore
@@ -34,11 +34,11 @@ type CIWatcherSuite struct {
 	hub    *api.EventsHub
 }
 
-func TestCIWatcherSuite(t *testing.T) {
-	suite.Run(t, new(CIWatcherSuite))
+func TestPRWatcherSuite(t *testing.T) {
+	suite.Run(t, new(PRWatcherSuite))
 }
 
-func (s *CIWatcherSuite) SetupTest() {
+func (s *PRWatcherSuite) SetupTest() {
 	s.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	store, err := db.NewSQLiteStore(filepath.Join(s.T().TempDir(), "loop.db"))
 	require.NoError(s.T(), err)
@@ -48,21 +48,21 @@ func (s *CIWatcherSuite) SetupTest() {
 	s.hub = api.NewEventsHub(s.logger)
 }
 
-func (s *CIWatcherSuite) TestStartCIWatcher() {
+func (s *PRWatcherSuite) TestStartPRWatcher() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	startCIWatcher(ctx, s.srv, s.store, s.hub, &mockMessageHandler{}, nil, s.logger)
+	startPRWatcher(ctx, s.srv, s.store, s.hub, &mockMessageHandler{}, nil, s.logger)
 }
 
-func (s *CIWatcherSuite) TestStartCIWatcherWithoutCIState() {
+func (s *PRWatcherSuite) TestStartPRWatcherWithoutPRState() {
 	// A store without CI state starts nothing: no call reaches it.
-	startCIWatcher(context.Background(), s.srv, new(testutil.MockStore), s.hub, nil, nil, s.logger)
+	startPRWatcher(context.Background(), s.srv, new(testutil.MockStore), s.hub, nil, nil, s.logger)
 }
 
-func (s *CIWatcherSuite) TestCIDeps() {
+func (s *PRWatcherSuite) TestPRDeps() {
 	msgs := new(mockMessageHandler)
-	msgs.On("HandleIncomingMessage", mock.Anything, "th-1", ciwatch.AuthorID, "fix it", "").Once()
-	d := ciDeps(s.srv, s.store, s.store, s.hub, msgs, nil, s.logger)
+	msgs.On("HandleIncomingMessage", mock.Anything, "th-1", prwatch.AuthorID, "fix it", "").Once()
+	d := prDeps(s.srv, s.store, s.store, s.hub, msgs, nil, s.logger)
 	d.Enqueue(context.Background(), "th-1", "fix it")
 	msgs.AssertExpectations(s.T())
 

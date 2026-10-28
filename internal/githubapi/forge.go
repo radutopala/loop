@@ -22,22 +22,23 @@ func (c *Client) clock() time.Time {
 	return time.Now()
 }
 
-// CI returns the PR's head, a summary of its checks and whether it can
+// Status returns the PR's head, a summary of its checks and whether it can
 // merge.
-func (c *Client) CI(ctx context.Context, ref forge.Ref) (*forge.CIState, error) {
+func (c *Client) Status(ctx context.Context, ref forge.Ref) (*forge.Status, error) {
 	env, err := c.tokenEnv(ctx, ref.Dir, ref.Account)
 	if err != nil {
 		return nil, err
 	}
 	out, err := c.runner.Run(ctx, ref.Dir, env,
 		"pr", "view", strconv.Itoa(ref.Number),
-		"--json", "headRefOid,statusCheckRollup,mergeStateStatus,autoMergeRequest,state,isDraft",
+		"--json", "headRefOid,baseRefName,statusCheckRollup,mergeStateStatus,autoMergeRequest,state,isDraft",
 	)
 	if err != nil {
 		return nil, err
 	}
 	var raw struct {
 		HeadRefOid        string `json:"headRefOid"`
+		BaseRefName       string `json:"baseRefName"`
 		StatusCheckRollup []struct {
 			Status     string `json:"status"`
 			Conclusion string `json:"conclusion"`
@@ -51,8 +52,9 @@ func (c *Client) CI(ctx context.Context, ref forge.Ref) (*forge.CIState, error) 
 	if err := json.Unmarshal(out, &raw); err != nil {
 		return nil, fmt.Errorf("parsing gh pr view output: %w", err)
 	}
-	st := &forge.CIState{
+	st := &forge.Status{
 		HeadSHA:    raw.HeadRefOid,
+		BaseRef:    raw.BaseRefName,
 		MergeState: ghMergeState(raw.MergeStateStatus),
 		AutoMerge:  len(raw.AutoMergeRequest) > 0 && string(raw.AutoMergeRequest) != "null",
 		Merged:     raw.State == "MERGED",
@@ -199,6 +201,43 @@ func (c *Client) Rerun(ctx context.Context, ref forge.Ref, fc forge.FailedCheck)
 		return fmt.Errorf("%s isn't an Actions run", fc.Name)
 	}
 	return c.run(ctx, ref, "run", "rerun", fc.RunID, "--failed")
+}
+
+const unresolvedThreadsQuery = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) { reviewThreads(first: 100) { nodes { id isResolved } } }
+  }
+}`
+
+// UnresolvedThreads returns the ids of the PR's unresolved review threads,
+// among its first 100.
+func (c *Client) UnresolvedThreads(ctx context.Context, ref forge.Ref) ([]string, error) {
+	env, err := c.tokenEnv(ctx, ref.Dir, ref.Account)
+	if err != nil {
+		return nil, err
+	}
+	out, err := c.runner.Run(ctx, ref.Dir, env,
+		"api", "graphql", "-f", "query="+unresolvedThreadsQuery,
+		"-F", "owner={owner}", "-F", "name={repo}", "-F", "number="+strconv.Itoa(ref.Number),
+		"--jq", ".data.repository.pullRequest.reviewThreads.nodes",
+	)
+	if err != nil {
+		return nil, err
+	}
+	var raw []struct {
+		ID         string `json:"id"`
+		IsResolved bool   `json:"isResolved"`
+	}
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return nil, fmt.Errorf("parsing gh review threads: %w", err)
+	}
+	var ids []string
+	for _, t := range raw {
+		if !t.IsResolved {
+			ids = append(ids, t.ID)
+		}
+	}
+	return ids, nil
 }
 
 const mergeSettingsQuery = `query($owner: String!, $name: String!) {

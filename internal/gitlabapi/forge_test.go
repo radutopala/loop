@@ -117,19 +117,20 @@ func (s *GitlabForgeSuite) TestGitOriginURL() {
 	require.Equal(s.T(), "g%2Fp", id)
 }
 
-func (s *GitlabForgeSuite) TestCI() {
+func (s *GitlabForgeSuite) TestPR() {
 	r := &scriptRunner{out: map[string]string{
-		glMRGet: `{"sha": "abc", "state": "opened", "detailed_merge_status": "ci_still_running", "merge_when_pipeline_succeeds": true, "head_pipeline": {"id": 90}}`,
+		glMRGet: `{"sha": "abc", "target_branch": "main", "state": "opened", "detailed_merge_status": "ci_still_running", "merge_when_pipeline_succeeds": true, "head_pipeline": {"id": 90}}`,
 		glJobs: `[
 			{"status": "success"}, {"status": "failed"}, {"status": "failed", "allow_failure": true},
 			{"status": "running"}, {"status": "pending"}, {"status": "canceled"}, {"status": "skipped"}, {"status": "manual"}
 		]`,
 	}}
 	r.out["x"] = ""
-	st, err := s.client(r).CI(context.Background(), forge.Ref{Dir: "/w", Account: "/cfg", Number: 5})
+	st, err := s.client(r).Status(context.Background(), forge.Ref{Dir: "/w", Account: "/cfg", Number: 5})
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), &forge.CIState{
+	require.Equal(s.T(), &forge.Status{
 		HeadSHA:    "abc",
+		BaseRef:    "main",
 		Checks:     forge.CheckSummary{Total: 8, Passed: 2, Failed: 1, Pending: 2},
 		MergeState: forge.MergeBlocked,
 		AutoMerge:  true,
@@ -137,20 +138,20 @@ func (s *GitlabForgeSuite) TestCI() {
 	require.Equal(s.T(), []string{"GLAB_CONFIG_DIR=/cfg"}, r.envs[0])
 }
 
-func (s *GitlabForgeSuite) TestCIStates() {
+func (s *GitlabForgeSuite) TestPRStates() {
 	tests := []struct {
 		name string
 		mr   string
-		want forge.CIState
+		want forge.Status
 	}{
-		{"merged, no pipeline", `{"state": "merged", "detailed_merge_status": "not_open"}`, forge.CIState{Merged: true, MergeState: forge.MergeUnknown}},
-		{"closed", `{"state": "closed", "detailed_merge_status": "mergeable"}`, forge.CIState{Closed: true, MergeState: forge.MergeClean}},
-		{"locked", `{"state": "locked"}`, forge.CIState{Closed: true, MergeState: forge.MergeUnknown}},
-		{"draft wins", `{"state": "opened", "draft": true, "detailed_merge_status": "mergeable"}`, forge.CIState{MergeState: forge.MergeDraft}},
+		{"merged, no pipeline", `{"state": "merged", "detailed_merge_status": "not_open"}`, forge.Status{Merged: true, MergeState: forge.MergeUnknown}},
+		{"closed", `{"state": "closed", "detailed_merge_status": "mergeable"}`, forge.Status{Closed: true, MergeState: forge.MergeClean}},
+		{"locked", `{"state": "locked"}`, forge.Status{Closed: true, MergeState: forge.MergeUnknown}},
+		{"draft wins", `{"state": "opened", "draft": true, "detailed_merge_status": "mergeable"}`, forge.Status{MergeState: forge.MergeDraft}},
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
-			st, err := s.client(&scriptRunner{out: map[string]string{glMRGet: tc.mr}}).CI(context.Background(), s.ref)
+			st, err := s.client(&scriptRunner{out: map[string]string{glMRGet: tc.mr}}).Status(context.Background(), s.ref)
 			require.NoError(s.T(), err)
 			require.Equal(s.T(), &tc.want, st)
 		})
@@ -176,7 +177,7 @@ func (s *GitlabForgeSuite) TestMergeStateMapping() {
 	}
 }
 
-func (s *GitlabForgeSuite) TestCIErrors() {
+func (s *GitlabForgeSuite) TestPRErrors() {
 	tests := []struct {
 		name    string
 		r       *scriptRunner
@@ -189,13 +190,13 @@ func (s *GitlabForgeSuite) TestCIErrors() {
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
-			_, err := s.client(tc.r).CI(context.Background(), s.ref)
+			_, err := s.client(tc.r).Status(context.Background(), s.ref)
 			require.ErrorContains(s.T(), err, tc.wantErr)
 		})
 	}
 	c := s.client(&scriptRunner{})
 	c.originURL = func(context.Context, string) (string, error) { return "", errors.New("no origin") }
-	_, err := c.CI(context.Background(), s.ref)
+	_, err := c.Status(context.Background(), s.ref)
 	require.ErrorContains(s.T(), err, "no origin")
 }
 
@@ -250,6 +251,29 @@ func (s *GitlabForgeSuite) TestLogAndRerun() {
 	require.ErrorContains(s.T(), bad.Merge(context.Background(), s.ref, "merge"), "no origin")
 	require.ErrorContains(s.T(), bad.EnableAutoMerge(context.Background(), s.ref, "merge"), "no origin")
 	_, err = bad.MergeSettings(context.Background(), s.ref)
+	require.ErrorContains(s.T(), err, "no origin")
+}
+
+func (s *GitlabForgeSuite) TestUnresolvedThreads() {
+	disc := "api projects/" + glPID + "/merge_requests/5/discussions?per_page=100"
+	r := &scriptRunner{out: map[string]string{disc: `[
+		{"id": "d1", "notes": [{"resolvable": true, "resolved": false}, {"resolvable": true, "resolved": false}]},
+		{"id": "d2", "notes": [{"resolvable": true, "resolved": true}]},
+		{"id": "d3", "notes": [{"resolvable": false, "resolved": false}]},
+		{"id": "d4", "notes": [{"resolvable": true, "resolved": true}, {"resolvable": true, "resolved": false}]}
+	]`}}
+	ids, err := s.client(r).UnresolvedThreads(context.Background(), s.ref)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"d1", "d4"}, ids)
+
+	_, err = s.client(&scriptRunner{errs: map[string]error{disc: errors.New("gone")}}).UnresolvedThreads(context.Background(), s.ref)
+	require.ErrorContains(s.T(), err, "gone")
+	_, err = s.client(&scriptRunner{out: map[string]string{disc: "{"}}).UnresolvedThreads(context.Background(), s.ref)
+	require.ErrorContains(s.T(), err, "parsing the merge request's discussions")
+
+	bad := s.client(&scriptRunner{})
+	bad.originURL = func(context.Context, string) (string, error) { return "", errors.New("no origin") }
+	_, err = bad.UnresolvedThreads(context.Background(), s.ref)
 	require.ErrorContains(s.T(), err, "no origin")
 }
 

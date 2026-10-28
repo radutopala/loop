@@ -1,13 +1,13 @@
 import { apiFetch, getApiUrl } from "./api";
 
-/** What a thread's sidebar pill shows of its PR/MR's CI. */
-export type CIAttention = "failed" | "fixing";
+/** What a thread's sidebar pills show of its PR/MR's CI failure or merge conflict. */
+export type PRAttention = "failed" | "fixing" | "conflict";
 
 /** Why the watcher last acted as it did on a failure. */
-export type CIReason = "not_agent_commit" | "auto_fix_off" | "max_attempts" | "no_new_commit" | "same_failure" | "infra_rerun" | "infra_again" | "fix_sent" | "fix_asked";
+export type PRReason = "not_agent_commit" | "auto_fix_off" | "max_attempts" | "no_new_commit" | "same_failure" | "infra_rerun" | "infra_again" | "fix_sent" | "fix_asked";
 
 /** A head's checks: cancelled or skipped ones count only toward total. */
-export interface CIChecks {
+export interface PRChecks {
   total: number;
   passed: number;
   failed: number;
@@ -15,7 +15,7 @@ export interface CIChecks {
 }
 
 /** One failed check (GitHub) or job (GitLab). */
-export interface CIFailedCheck {
+export interface PRFailedCheck {
   id: string;
   name: string;
   /** The workflow (GitHub) or stage (GitLab). */
@@ -26,15 +26,17 @@ export interface CIFailedCheck {
   infra?: boolean;
 }
 
-/** The CI of a thread's PR (kind "pr") or MR (kind "mr"): the channel.ci payload. */
-export interface CIStatus {
+/** The status of a thread's PR (kind "pr") or MR (kind "mr"): the channel.pr payload. */
+export interface PRStatus {
   channel_id: string;
   kind: string;
   number: number;
   url?: string;
   head_sha: string;
-  checks: CIChecks;
-  failed?: CIFailedCheck[];
+  /** The branch the PR/MR merges into. */
+  base_ref?: string;
+  checks: PRChecks;
+  failed?: PRFailedCheck[];
   merge_state: string;
   auto_merge: boolean;
   merged?: boolean;
@@ -44,25 +46,27 @@ export interface CIStatus {
   merge_methods?: string[];
   /** The method a merge would use now. */
   merge_method?: string;
-  ci_attention: CIAttention | "";
+  pr_attention: PRAttention | "";
   /** The effective auto-fix setting, and the config's. */
   auto_fix: boolean;
   auto_fix_default: boolean;
   attempts: number;
   max_attempts: number;
-  reason?: CIReason;
+  reason?: PRReason;
   /** The commit the thread's checkout is at. */
   checkout_sha?: string;
-  /** A new failure the owner is told of. */
+  /** The PR/MR's unresolved review threads. */
+  unresolved_threads?: number;
+  /** A new failure or unresolved review thread the owner is told of; a merge conflict shows in the PR/MR tab only. */
   alert?: string;
 }
 
-/** The CI of a channel's PR/MR, null when its branch has none. */
-export async function getCI(channelId: string): Promise<CIStatus | null> {
-  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/ci`);
-  if (!res.ok) throw new Error((await res.text()) || `Failed to fetch CI: ${res.statusText}`);
-  const data: { present: boolean; ci?: CIStatus } = await res.json();
-  return data.present && data.ci ? data.ci : null;
+/** The status of a channel's PR/MR, null when its branch has none. */
+export async function getPRStatus(channelId: string): Promise<PRStatus | null> {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/pr/status`);
+  if (!res.ok) throw new Error((await res.text()) || `Failed to fetch the PR/MR status: ${res.statusText}`);
+  const data: { present: boolean; pr?: PRStatus } = await res.json();
+  return data.present && data.pr ? data.pr : null;
 }
 
 async function send(path: string, method: string, what: string, body?: unknown): Promise<void> {
@@ -74,26 +78,26 @@ async function send(path: string, method: string, what: string, body?: unknown):
 }
 
 /** Sends the current failure to the thread's agent now. */
-export function fixCI(channelId: string): Promise<void> {
-  return send(`/api/channels/${channelId}/ci/fix`, "POST", "fix CI");
+export function fixPR(channelId: string): Promise<void> {
+  return send(`/api/channels/${channelId}/pr/fix`, "POST", "fix it");
 }
 
 /** Re-runs the failed checks now. */
-export function rerunCI(channelId: string): Promise<void> {
-  return send(`/api/channels/${channelId}/ci/rerun`, "POST", "re-run the checks");
+export function rerunPRChecks(channelId: string): Promise<void> {
+  return send(`/api/channels/${channelId}/pr/rerun`, "POST", "re-run the checks");
 }
 
 /** The tail of a failed check's log. */
-export async function getCILog(channelId: string, checkId: string): Promise<string> {
-  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/ci/log?check=${encodeURIComponent(checkId)}`);
+export async function getPRCheckLog(channelId: string, checkId: string): Promise<string> {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/pr/log?check=${encodeURIComponent(checkId)}`);
   if (!res.ok) throw new Error((await res.text()) || `Failed to fetch the log: ${res.statusText}`);
   const data: { log: string } = await res.json();
   return data.log;
 }
 
-/** Overrides ci.auto_fix for the thread; null goes back to the config's. */
-export function setCIAutoFix(channelId: string, autoFix: boolean | null): Promise<void> {
-  return send(`/api/channels/${channelId}/ci/auto-fix`, "PUT", "set auto-fix", { auto_fix: autoFix });
+/** Overrides pr.auto_fix for the thread; null goes back to the config's. */
+export function setPRAutoFix(channelId: string, autoFix: boolean | null): Promise<void> {
+  return send(`/api/channels/${channelId}/pr/auto-fix`, "PUT", "set auto-fix", { auto_fix: autoFix });
 }
 
 /** Merges the thread's PR/MR now, or arms "merge when ready". */

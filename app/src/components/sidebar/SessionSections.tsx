@@ -3,7 +3,7 @@ import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { Channel } from "../../types";
 import type { PillKind } from "./pills";
-import { CI_FIXING_PILL, REVIEWING_PILL, SIDEBAR_PILLS } from "./pills";
+import { fixingPill, REVIEWING_PILL, SIDEBAR_PILLS } from "./pills";
 import { RowInfoPopup } from "./RowInfoPopup";
 import { useRevealSelected } from "./reveal";
 import { SessionKindIcon } from "./SessionKindIcon";
@@ -175,6 +175,7 @@ function SessionRow({ channel, context, selected, unread, running, pills, traili
   const rowRef = useRef<HTMLButtonElement>(null);
   useRevealSelected(rowRef, selected);
   const waiting = pills.length > 0;
+  const fixing = fixingPill(channel.pr_attention);
   return (
     <div style={{ margin: "0 8px" }}>
       <RowInfoPopup channel={channel} anchorRef={rowRef} hovered={hovered} />
@@ -235,10 +236,10 @@ function SessionRow({ channel, context, selected, unread, running, pills, traili
         )}
         {unread && !selected && <span style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: "#5b9cf5", flexShrink: 0 }} />}
         {SIDEBAR_PILLS.filter((p) => pills.includes(p.kind)).map((p) => (
-          <StatusPill key={p.kind} label={p.label} color={colors[p.color]} title={p.title} />
+          <StatusPill key={p.kind} label={p.label} color={colors[p.color]} />
         ))}
-        {channel.review_running && <StatusPill label={REVIEWING_PILL.label} color={colors[REVIEWING_PILL.color]} title={REVIEWING_PILL.title} />}
-        {channel.ci_attention === "fixing" && <StatusPill label={CI_FIXING_PILL.label} color={colors[CI_FIXING_PILL.color]} title={CI_FIXING_PILL.title} />}
+        {channel.review_running && <StatusPill label={REVIEWING_PILL.label} color={colors[REVIEWING_PILL.color]} />}
+        {fixing && <StatusPill label={fixing.label} color={colors[fixing.color]} />}
         {!waiting && trailing && <span style={{ flexShrink: 0, fontSize: 10, fontFamily: fonts.mono, color: colors.textDisabled }}>{trailing}</span>}
       </button>
     </div>

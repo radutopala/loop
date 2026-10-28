@@ -110,12 +110,19 @@ func (c *Client) api(ctx context.Context, ref forge.Ref, method, endpoint string
 type glMR struct {
 	SHA                       string `json:"sha"`
 	State                     string `json:"state"`
+	TargetBranch              string `json:"target_branch"`
 	Draft                     bool   `json:"draft"`
 	DetailedMergeStatus       string `json:"detailed_merge_status"`
 	MergeWhenPipelineSucceeds bool   `json:"merge_when_pipeline_succeeds"`
 	HeadPipeline              *struct {
 		ID int `json:"id"`
 	} `json:"head_pipeline"`
+}
+
+// glNote is a discussion's note, as far as resolving goes.
+type glNote struct {
+	Resolvable bool `json:"resolvable"`
+	Resolved   bool `json:"resolved"`
 }
 
 // glJob is a pipeline job.
@@ -159,15 +166,16 @@ func (c *Client) jobs(ctx context.Context, ref forge.Ref, pid string, pipeline i
 	return jobs, nil
 }
 
-// CI returns the MR's head, a summary of its head pipeline's jobs and
+// Status returns the MR's head, a summary of its head pipeline's jobs and
 // whether it can merge. A job allowed to fail counts as passed.
-func (c *Client) CI(ctx context.Context, ref forge.Ref) (*forge.CIState, error) {
+func (c *Client) Status(ctx context.Context, ref forge.Ref) (*forge.Status, error) {
 	pid, mr, err := c.mr(ctx, ref)
 	if err != nil {
 		return nil, err
 	}
-	st := &forge.CIState{
+	st := &forge.Status{
 		HeadSHA:    mr.SHA,
+		BaseRef:    mr.TargetBranch,
 		MergeState: glMergeState(mr.DetailedMergeStatus),
 		AutoMerge:  mr.MergeWhenPipelineSucceeds,
 		Merged:     mr.State == "merged",
@@ -268,6 +276,33 @@ func (c *Client) Rerun(ctx context.Context, ref forge.Ref, fc forge.FailedCheck)
 	}
 	_, err = c.api(ctx, ref, "POST", fmt.Sprintf("projects/%s/jobs/%s/retry", pid, fc.ID))
 	return err
+}
+
+// UnresolvedThreads returns the ids of the MR's unresolved discussions,
+// among its first 100.
+func (c *Client) UnresolvedThreads(ctx context.Context, ref forge.Ref) ([]string, error) {
+	pid, err := c.projectID(ctx, ref.Dir)
+	if err != nil {
+		return nil, err
+	}
+	out, err := c.api(ctx, ref, "", fmt.Sprintf("projects/%s/merge_requests/%d/discussions?per_page=100", pid, ref.Number))
+	if err != nil {
+		return nil, err
+	}
+	var raw []struct {
+		ID    string   `json:"id"`
+		Notes []glNote `json:"notes"`
+	}
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return nil, fmt.Errorf("parsing the merge request's discussions: %w", err)
+	}
+	var ids []string
+	for _, d := range raw {
+		if slices.ContainsFunc(d.Notes, func(n glNote) bool { return n.Resolvable && !n.Resolved }) {
+			ids = append(ids, d.ID)
+		}
+	}
+	return ids, nil
 }
 
 // MergeSettings returns the project's merge methods: squash unless the

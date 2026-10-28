@@ -218,10 +218,10 @@ func (s *ServerSuite) TestLoopNotification() {
 		{name: "workflow paused",
 			evt: Event{Type: EventWorkflowRunPaused, Data: events.WorkflowRunEventData{WorkflowName: "nightly", ChannelID: "ch-1"}}},
 		{name: "CI failure that needs the owner",
-			evt:  Event{Type: EventChannelCI, Data: events.CIEventData{ChannelID: "th-1", Alert: "PR #12: lint failed"}},
+			evt:  Event{Type: EventChannelPR, Data: events.PREventData{ChannelID: "th-1", Alert: "PR #12: lint failed"}},
 			want: &db.Notification{Kind: db.NotificationRun, ChannelID: "th-1", Title: "PR #12: lint failed"}},
 		{name: "CI update",
-			evt: Event{Type: EventChannelCI, Data: events.CIEventData{ChannelID: "th-1"}}},
+			evt: Event{Type: EventChannelPR, Data: events.PREventData{ChannelID: "th-1"}}},
 		{name: "anything else",
 			evt: Event{Type: EventMessageCreated, Data: events.MessageEventData{}}},
 	}

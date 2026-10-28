@@ -67,7 +67,7 @@ type projectConfig struct {
 	GitLab                     *projectGitLabConfig       `json:"gitlab"`
 	Review                     *jsonReviewConfig          `json:"review"`
 	PlaygroundShare            *jsonPlaygroundShareConfig `json:"playground_share"`
-	CI                         *jsonCIConfig              `json:"ci"`
+	PR                         *jsonPRConfig              `json:"pr"`
 	Learn                      *jsonLearnConfig           `json:"learn"`
 	Explain                    *jsonExplainConfig         `json:"explain"`
 	Plugins                    *PluginsConfig             `json:"plugins"`
@@ -663,7 +663,7 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 	}
 
 	// CI: each field overrides only when set in the project.
-	merged.CI = merged.CI.overlay(pc.CI)
+	merged.PR = merged.PR.overlay(pc.PR)
 
 	// Learn: like Review, each field overrides only when set in the project.
 	if pc.Learn != nil {

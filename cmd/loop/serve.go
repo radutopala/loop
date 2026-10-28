@@ -520,6 +520,7 @@ func (a *app) serve() error {
 				AdoptProjectConfig:         trust.Adopt,
 				AdoptProjectWorkflows:      trust.AdoptWorkflows,
 				AdoptProjectContainerImage: trust.AdoptContainerImage,
+				RenameTrustedField:         trust.RenameField,
 			}); err != nil {
 				return fmt.Errorf("running fs migrations: %w", err)
 			}
@@ -918,7 +919,7 @@ func (a *app) serve() error {
 	executor.SetChannelLocks(orch.ChannelLocksMap())
 	executor.SetCardParker(orch)
 	apiSrv.SetIncomingMessageHandler(chatBot)
-	startCIWatcher(ctx, apiSrv, store, eventsHub, chatBot, map[string]forge.Forge{forge.KindPR: ghClient, forge.KindMR: glClient}, logger)
+	startPRWatcher(ctx, apiSrv, store, eventsHub, chatBot, map[string]forge.Forge{forge.KindPR: ghClient, forge.KindMR: glClient}, logger)
 	monitors := monitor.NewManager(runner, apiSrv.WakeChannel, apiSrv.PublishChannelEvent, logger)
 	apiSrv.SetMonitors(monitors)
 	orch.SetLiveRunner(runner, apiSrv.PublishChannelEvent)

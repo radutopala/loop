@@ -6,24 +6,24 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/radutopala/loop/internal/ciwatch"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/forge"
 	"github.com/radutopala/loop/internal/githubapi"
 	"github.com/radutopala/loop/internal/gitlabapi"
 	"github.com/radutopala/loop/internal/gitutil"
+	"github.com/radutopala/loop/internal/prwatch"
 )
 
-const ciNotConfiguredMsg = "CI watching not configured"
+const prNotConfiguredMsg = "PR watching not configured"
 
-// CIWatcher watches each thread's PR/MR CI, sends failures on the agent's
+// PRWatcher watches each thread's PR/MR CI, sends failures on the agent's
 // own commits back to it and merges what the owner armed. Satisfied by
-// *ciwatch.Watcher.
-type CIWatcher interface {
+// *prwatch.Watcher.
+type PRWatcher interface {
 	Watch(channelID string)
-	Status(ctx context.Context, channelID string) *events.CIEventData
-	Attention(ctx context.Context) (map[string]string, error)
+	Status(ctx context.Context, channelID string) *events.PREventData
+	Flags(ctx context.Context) (map[string]events.PRFlags, error)
 	SetAutoFix(ctx context.Context, channelID string, on *bool) error
 	FixNow(ctx context.Context, channelID string) error
 	Rerun(ctx context.Context, channelID string) error
@@ -35,28 +35,28 @@ type CIWatcher interface {
 	ChannelUpdated(d events.ChannelUpdatedData)
 }
 
-// SetCIWatcher wires the CI watcher behind the channel CI endpoints.
-func (s *Server) SetCIWatcher(w CIWatcher) {
-	s.ci = w
+// SetPRWatcher wires the PR watcher behind the channel PR status endpoints.
+func (s *Server) SetPRWatcher(w PRWatcher) {
+	s.prWatch = w
 }
 
-// ObserveCI hands the CI watcher the events it follows: agent runs and
+// ObservePR hands the PR watcher the events it follows: agent runs and
 // checkout changes. Registered with EventsHub.Observe; it doesn't block.
-func (s *Server) ObserveCI(evt Event) {
-	if s.ci == nil {
+func (s *Server) ObservePR(evt Event) {
+	if s.prWatch == nil {
 		return
 	}
 	switch d := evt.Data.(type) {
 	case events.AgentStatusEventData:
-		s.ci.AgentStatus(evt.ChannelID, d)
+		s.prWatch.AgentStatus(evt.ChannelID, d)
 	case events.ChannelUpdatedData:
-		s.ci.ChannelUpdated(d)
+		s.prWatch.ChannelUpdated(d)
 	}
 }
 
-// CITarget resolves the channel's PR/MR for the CI watcher, with the
+// PRTarget resolves the channel's PR/MR for the PR watcher, with the
 // channel's ci config: nil when its branch has none.
-func (s *Server) CITarget(ctx context.Context, channelID string) (*ciwatch.Target, error) {
+func (s *Server) PRTarget(ctx context.Context, channelID string) (*prwatch.Target, error) {
 	ch, err := s.store.GetChannel(ctx, channelID)
 	if err != nil || ch == nil {
 		return nil, err
@@ -82,18 +82,18 @@ func (s *Server) CITarget(ctx context.Context, channelID string) (*ciwatch.Targe
 	if resp.PR == nil {
 		return nil, nil
 	}
-	t := &ciwatch.Target{
+	t := &prwatch.Target{
 		Kind: forge.KindPR,
 		Ref:  forge.Ref{Dir: dir, Account: s.configs.ghUser(dir, parent), Number: resp.PR.Number},
 		URL:  resp.PR.URL,
-		CI:   config.DefaultCIConfig(),
+		PR:   config.DefaultPRConfig(),
 	}
 	if resp.PR.Kind == forge.KindMR {
 		t.Kind = forge.KindMR
 		t.Ref.Account = s.expandHomePath(s.configs.glabConfigDir(dir, parent))
 	}
 	if cfg := s.configs.merged(dir, parent); cfg != nil {
-		t.CI = cfg.CI
+		t.PR = cfg.PR
 	}
 	return t, nil
 }
@@ -115,20 +115,20 @@ func (s *Server) ChannelHead(ctx context.Context, channelID string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// ciResponse is GET /api/channels/{id}/ci: the CI of the channel's PR/MR,
-// absent when its branch has none.
-type ciResponse struct {
+// prStatusResponse is GET /api/channels/{id}/pr/status: the status of the channel's
+// PR/MR, absent when its branch has none.
+type prStatusResponse struct {
 	Present bool                `json:"present"`
-	CI      *events.CIEventData `json:"ci,omitempty"`
+	PR      *events.PREventData `json:"pr,omitempty"`
 }
 
-// ciLogResponse is GET /api/channels/{id}/ci/log: the tail of a failed
+// prLogResponse is GET /api/channels/{id}/pr/log: the tail of a failed
 // check's log.
-type ciLogResponse struct {
+type prLogResponse struct {
 	Log string `json:"log"`
 }
 
-type ciAutoFixRequest struct {
+type prAutoFixRequest struct {
 	// AutoFix overrides the config's ci.auto_fix for the thread; null goes
 	// back to the config's.
 	AutoFix *bool `json:"auto_fix"`
@@ -142,62 +142,62 @@ type prMergeRequest struct {
 	Method string `json:"method,omitempty"`
 }
 
-// handleChannelCI serves GET /api/channels/{id}/ci.
-func (s *Server) handleChannelCI(w http.ResponseWriter, r *http.Request) {
-	if !requireConfigured(w, s.ci, ciNotConfiguredMsg) {
+// handleChannelPRStatus serves GET /api/channels/{id}/pr/status.
+func (s *Server) handleChannelPRStatus(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.prWatch, prNotConfiguredMsg) {
 		return
 	}
-	d := s.ci.Status(r.Context(), r.PathValue("id"))
-	writeHTTPJSON(w, http.StatusOK, ciResponse{Present: d != nil, CI: d}, s.logger)
+	d := s.prWatch.Status(r.Context(), r.PathValue("id"))
+	writeHTTPJSON(w, http.StatusOK, prStatusResponse{Present: d != nil, PR: d}, s.logger)
 }
 
-// handleChannelCIFix serves POST /api/channels/{id}/ci/fix: the current
+// handleChannelPRFix serves POST /api/channels/{id}/pr/fix: the current
 // failure goes to the thread's agent now.
-func (s *Server) handleChannelCIFix(w http.ResponseWriter, r *http.Request) {
-	if !requireConfigured(w, s.ci, ciNotConfiguredMsg) {
+func (s *Server) handleChannelPRFix(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.prWatch, prNotConfiguredMsg) {
 		return
 	}
-	s.ciResult(w, s.ci.FixNow(r.Context(), r.PathValue("id")))
+	s.prResult(w, s.prWatch.FixNow(r.Context(), r.PathValue("id")))
 }
 
-// handleChannelCIRerun serves POST /api/channels/{id}/ci/rerun: the
+// handleChannelPRRerun serves POST /api/channels/{id}/pr/rerun: the
 // PR/MR's failed checks run again.
-func (s *Server) handleChannelCIRerun(w http.ResponseWriter, r *http.Request) {
-	if !requireConfigured(w, s.ci, ciNotConfiguredMsg) {
+func (s *Server) handleChannelPRRerun(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.prWatch, prNotConfiguredMsg) {
 		return
 	}
-	s.ciResult(w, s.ci.Rerun(r.Context(), r.PathValue("id")))
+	s.prResult(w, s.prWatch.Rerun(r.Context(), r.PathValue("id")))
 }
 
-// handleChannelCILog serves GET /api/channels/{id}/ci/log?check=<id>.
-func (s *Server) handleChannelCILog(w http.ResponseWriter, r *http.Request) {
-	if !requireConfigured(w, s.ci, ciNotConfiguredMsg) {
+// handleChannelPRLog serves GET /api/channels/{id}/pr/log?check=<id>.
+func (s *Server) handleChannelPRLog(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.prWatch, prNotConfiguredMsg) {
 		return
 	}
-	log, err := s.ci.Log(r.Context(), r.PathValue("id"), r.URL.Query().Get("check"))
+	log, err := s.prWatch.Log(r.Context(), r.PathValue("id"), r.URL.Query().Get("check"))
 	if err != nil {
-		s.ciResult(w, err)
+		s.prResult(w, err)
 		return
 	}
-	writeHTTPJSON(w, http.StatusOK, ciLogResponse{Log: log}, s.logger)
+	writeHTTPJSON(w, http.StatusOK, prLogResponse{Log: log}, s.logger)
 }
 
-// handleChannelCIAutoFix serves PUT /api/channels/{id}/ci/auto-fix.
-func (s *Server) handleChannelCIAutoFix(w http.ResponseWriter, r *http.Request) {
-	if !requireConfigured(w, s.ci, ciNotConfiguredMsg) {
+// handleChannelPRAutoFix serves PUT /api/channels/{id}/pr/auto-fix.
+func (s *Server) handleChannelPRAutoFix(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.prWatch, prNotConfiguredMsg) {
 		return
 	}
-	var req ciAutoFixRequest
+	var req prAutoFixRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	s.ciResult(w, s.ci.SetAutoFix(r.Context(), r.PathValue("id"), req.AutoFix))
+	s.prResult(w, s.prWatch.SetAutoFix(r.Context(), r.PathValue("id"), req.AutoFix))
 }
 
 // handlePRMerge serves POST /api/channels/{id}/pr/merge: merges the PR/MR
 // now, or arms "merge when ready".
 func (s *Server) handlePRMerge(w http.ResponseWriter, r *http.Request) {
-	if !requireConfigured(w, s.ci, ciNotConfiguredMsg) {
+	if !requireConfigured(w, s.prWatch, prNotConfiguredMsg) {
 		return
 	}
 	var req prMergeRequest
@@ -205,46 +205,46 @@ func (s *Server) handlePRMerge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.WhenReady {
-		s.ciResult(w, s.ci.Arm(r.Context(), r.PathValue("id"), req.Method))
+		s.prResult(w, s.prWatch.Arm(r.Context(), r.PathValue("id"), req.Method))
 		return
 	}
-	s.ciResult(w, s.ci.MergeNow(r.Context(), r.PathValue("id"), req.Method))
+	s.prResult(w, s.prWatch.MergeNow(r.Context(), r.PathValue("id"), req.Method))
 }
 
 // handlePRMergeCancel serves DELETE /api/channels/{id}/pr/merge: disarms
 // "merge when ready".
 func (s *Server) handlePRMergeCancel(w http.ResponseWriter, r *http.Request) {
-	if !requireConfigured(w, s.ci, ciNotConfiguredMsg) {
+	if !requireConfigured(w, s.prWatch, prNotConfiguredMsg) {
 		return
 	}
-	s.ciResult(w, s.ci.CancelMerge(r.Context(), r.PathValue("id")))
+	s.prResult(w, s.prWatch.CancelMerge(r.Context(), r.PathValue("id")))
 }
 
-// ciResult answers a CI action: 204 when done, 404 without a PR/MR or the
+// prResult answers a CI action: 204 when done, 404 without a PR/MR or the
 // failed check, 409 without a failure to fix, else 502 with the forge's
 // error.
-func (s *Server) ciResult(w http.ResponseWriter, err error) {
+func (s *Server) prResult(w http.ResponseWriter, err error) {
 	switch {
 	case err == nil:
 		w.WriteHeader(http.StatusNoContent)
-	case errors.Is(err, ciwatch.ErrNoPR), errors.Is(err, ciwatch.ErrNoCheck):
+	case errors.Is(err, prwatch.ErrNoPR), errors.Is(err, prwatch.ErrNoCheck):
 		http.Error(w, err.Error(), http.StatusNotFound)
-	case errors.Is(err, ciwatch.ErrNoFailure):
+	case errors.Is(err, prwatch.ErrNoFailure):
 		http.Error(w, err.Error(), http.StatusConflict)
 	default:
 		http.Error(w, err.Error(), http.StatusBadGateway)
 	}
 }
 
-// ciAttention returns each thread's CI attention for the channel list; nil
-// without a watcher or when it can't be read.
-func (s *Server) ciAttention(ctx context.Context) map[string]string {
-	if s.ci == nil {
+// prFlags returns what each thread's pills show of its PR/MR for the channel
+// list; nil without a watcher or when it can't be read.
+func (s *Server) prFlags(ctx context.Context) map[string]events.PRFlags {
+	if s.prWatch == nil {
 		return nil
 	}
-	att, err := s.ci.Attention(ctx)
+	fl, err := s.prWatch.Flags(ctx)
 	if err != nil {
-		s.logger.Warn("ci attention lookup failed", "error", err)
+		s.logger.Warn("ci flags lookup failed", "error", err)
 	}
-	return att
+	return fl
 }

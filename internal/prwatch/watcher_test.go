@@ -1,4 +1,4 @@
-package ciwatch
+package prwatch
 
 import (
 	"context"
@@ -21,11 +21,17 @@ import (
 	"github.com/radutopala/loop/internal/forge"
 )
 
-type mockForge struct{ mock.Mock }
+// mockForge is a testify mock, but for its unresolved review threads,
+// which are threads and threadsErr.
+type mockForge struct {
+	mock.Mock
+	threads    []string
+	threadsErr error
+}
 
-func (m *mockForge) CI(ctx context.Context, ref forge.Ref) (*forge.CIState, error) {
+func (m *mockForge) Status(ctx context.Context, ref forge.Ref) (*forge.Status, error) {
 	args := m.Called(ctx, ref)
-	st, _ := args.Get(0).(*forge.CIState)
+	st, _ := args.Get(0).(*forge.Status)
 	return st, args.Error(1)
 }
 
@@ -42,6 +48,10 @@ func (m *mockForge) Log(ctx context.Context, ref forge.Ref, c forge.FailedCheck)
 
 func (m *mockForge) Rerun(ctx context.Context, ref forge.Ref, c forge.FailedCheck) error {
 	return m.Called(ctx, ref, c).Error(0)
+}
+
+func (m *mockForge) UnresolvedThreads(context.Context, forge.Ref) ([]string, error) {
+	return m.threads, m.threadsErr
 }
 
 func (m *mockForge) MergeSettings(ctx context.Context, ref forge.Ref) (forge.MergeSettings, error) {
@@ -64,11 +74,11 @@ func (m *mockForge) Merge(ctx context.Context, ref forge.Ref, method string) err
 // memStore keeps CI states in memory.
 type memStore struct {
 	mu                       sync.Mutex
-	rows                     map[string]db.CIState
+	rows                     map[string]db.PRState
 	getErr, saveErr, listErr error
 }
 
-func (m *memStore) GetCIState(_ context.Context, channelID string) (*db.CIState, error) {
+func (m *memStore) GetPRState(_ context.Context, channelID string) (*db.PRState, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.getErr != nil {
@@ -81,7 +91,7 @@ func (m *memStore) GetCIState(_ context.Context, channelID string) (*db.CIState,
 	return &st, nil
 }
 
-func (m *memStore) SaveCIState(_ context.Context, st *db.CIState) error {
+func (m *memStore) SavePRState(_ context.Context, st *db.PRState) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.saveErr != nil {
@@ -91,26 +101,26 @@ func (m *memStore) SaveCIState(_ context.Context, st *db.CIState) error {
 	return nil
 }
 
-func (m *memStore) ListCIStates(context.Context) ([]*db.CIState, error) {
+func (m *memStore) ListPRStates(context.Context) ([]*db.PRState, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.listErr != nil {
 		return nil, m.listErr
 	}
-	var out []*db.CIState
+	var out []*db.PRState
 	for _, st := range m.rows {
 		out = append(out, &st)
 	}
 	return out, nil
 }
 
-func (m *memStore) get(id string) db.CIState {
+func (m *memStore) get(id string) db.PRState {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.rows[id]
 }
 
-func (m *memStore) put(st db.CIState) {
+func (m *memStore) put(st db.PRState) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.rows[st.ChannelID] = st
@@ -133,7 +143,7 @@ type WatcherSuite struct {
 	mu         sync.Mutex
 	enqueued   []string
 	notices    []string
-	broadcasts []events.CIEventData
+	broadcasts []events.PREventData
 }
 
 func TestWatcherSuite(t *testing.T) {
@@ -147,11 +157,11 @@ func (s *WatcherSuite) SetupTest() {
 // setup builds a Watcher over a fake forge of kind.
 func (s *WatcherSuite) setup(kind string) {
 	s.ctx = context.Background()
-	s.store = &memStore{rows: map[string]db.CIState{}}
+	s.store = &memStore{rows: map[string]db.PRState{}}
 	s.forge = &mockForge{}
 	s.now = time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
 	s.kind = kind
-	s.target = &Target{Kind: kind, Ref: forge.Ref{Dir: "/w", Number: 12}, URL: "https://example.com/pr/12", CI: config.DefaultCIConfig()}
+	s.target = &Target{Kind: kind, Ref: forge.Ref{Dir: "/w", Number: 12}, URL: "https://example.com/pr/12", PR: config.DefaultPRConfig()}
 	s.resolveErr = nil
 	s.head = ""
 	s.enqueued, s.notices, s.broadcasts = nil, nil, nil
@@ -170,7 +180,7 @@ func (s *WatcherSuite) setup(kind string) {
 			defer s.mu.Unlock()
 			s.notices = append(s.notices, content)
 		},
-		Broadcast: func(d events.CIEventData) {
+		Broadcast: func(d events.PREventData) {
 			s.mu.Lock()
 			defer s.mu.Unlock()
 			s.broadcasts = append(s.broadcasts, d)
@@ -180,7 +190,7 @@ func (s *WatcherSuite) setup(kind string) {
 	s.w.now = func() time.Time { return s.now }
 }
 
-func (s *WatcherSuite) lastBroadcast() events.CIEventData {
+func (s *WatcherSuite) lastBroadcast() events.PREventData {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	require.NotEmpty(s.T(), s.broadcasts)
@@ -192,7 +202,7 @@ func (s *WatcherSuite) settings() {
 }
 
 func (s *WatcherSuite) ci(head string, checks forge.CheckSummary) *mock.Call {
-	return s.forge.On("CI", mock.Anything, s.target.Ref).Return(&forge.CIState{HeadSHA: head, Checks: checks, MergeState: forge.MergeBlocked}, nil)
+	return s.forge.On("Status", mock.Anything, s.target.Ref).Return(&forge.Status{HeadSHA: head, Checks: checks, MergeState: forge.MergeBlocked}, nil)
 }
 
 var (
@@ -204,8 +214,178 @@ var (
 )
 
 func (s *WatcherSuite) poll() bool {
-	keep, _ := s.w.poll(s.ctx, ch, s.w.entry(ch))
+	keep, _, _ := s.w.poll(s.ctx, ch, s.w.entry(ch))
 	return keep
+}
+
+// conflicting has the forge report head conflicting with main.
+func (s *WatcherSuite) conflicting(head string) *mock.Call {
+	return s.forge.On("Status", mock.Anything, s.target.Ref).Return(&forge.Status{HeadSHA: head, BaseRef: "main", Checks: green, MergeState: forge.MergeConflict}, nil)
+}
+
+// TestConflict flags a merge conflict for the owner, whoever made the
+// commit, on both forges: it sends the agent nothing, alerts no one and
+// clears once the conflict is gone.
+func (s *WatcherSuite) TestConflict() {
+	tests := []struct {
+		name string
+		kind string
+		shas []string
+	}{
+		{name: "the agent's commit on a PR", kind: forge.KindPR, shas: []string{"h1"}},
+		{name: "the agent's commit on an MR", kind: forge.KindMR, shas: []string{"h1"}},
+		{name: "someone else's commit", kind: forge.KindPR, shas: []string{"other"}},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.setup(tc.kind)
+			s.settings()
+			s.store.put(db.PRState{ChannelID: ch, Forge: tc.kind, Number: 12, AgentSHAs: tc.shas, Reason: events.PRReasonNotAgent, Failed: []forge.FailedCheck{lint}})
+			s.conflicting("h1").Twice()
+			for range 2 {
+				require.False(s.T(), s.poll())
+				st := s.store.get(ch)
+				require.Equal(s.T(), events.PRAttentionConflict, st.Attention)
+				require.Empty(s.T(), st.Reason)
+				require.Nil(s.T(), st.Failed)
+				require.Zero(s.T(), st.Attempts)
+				require.True(s.T(), st.Open)
+				require.Empty(s.T(), s.enqueued)
+				require.Empty(s.T(), s.notices)
+				require.Empty(s.T(), s.lastBroadcast().Alert)
+				require.Equal(s.T(), "main", s.lastBroadcast().BaseRef)
+				require.Equal(s.T(), events.PRAttentionConflict, s.lastBroadcast().Attention)
+			}
+
+			// The conflict is gone: the flag clears.
+			s.ci("h1", pending).Once()
+			require.True(s.T(), s.poll())
+			require.Empty(s.T(), s.store.get(ch).Attention)
+			s.forge.AssertExpectations(s.T())
+		})
+	}
+}
+
+// TestUnresolvedThreads tells the owner of each new unresolved review
+// thread once, on both forges, and forgets them once the PR/MR is merged.
+func (s *WatcherSuite) TestUnresolvedThreads() {
+	for _, kind := range []string{forge.KindPR, forge.KindMR} {
+		s.Run(kind, func() {
+			s.setup(kind)
+			s.settings()
+			s.store.put(db.PRState{ChannelID: ch, Forge: kind, Number: 12})
+			s.forge.threads = []string{"T1"}
+			s.ci("h1", green).Once()
+			s.poll()
+			require.Equal(s.T(), label(s.target)+": 1 unresolved review thread", s.lastBroadcast().Alert)
+			require.Equal(s.T(), 1, s.lastBroadcast().UnresolvedThreads)
+			require.Equal(s.T(), []string{"T1"}, s.store.get(ch).Threads)
+			require.Empty(s.T(), s.store.get(ch).Attention, "threads don't flag the thread")
+
+			// Told once.
+			n := len(s.broadcasts)
+			s.ci("h1", green).Once()
+			s.poll()
+			require.Len(s.T(), s.broadcasts, n)
+
+			// A new thread tells of them all.
+			s.forge.threads = []string{"T1", "T2"}
+			s.ci("h1", green).Once()
+			s.poll()
+			require.Equal(s.T(), label(s.target)+": 2 unresolved review threads", s.lastBroadcast().Alert)
+
+			// One resolved: no alert, the count follows.
+			s.forge.threads = []string{"T2"}
+			s.ci("h1", green).Once()
+			s.poll()
+			require.Empty(s.T(), s.lastBroadcast().Alert)
+			require.Equal(s.T(), 1, s.lastBroadcast().UnresolvedThreads)
+
+			// A listing error keeps what was known.
+			s.forge.threads, s.forge.threadsErr = nil, errors.New("boom")
+			s.ci("h1", green).Once()
+			s.poll()
+			require.Equal(s.T(), []string{"T2"}, s.store.get(ch).Threads)
+			s.forge.threadsErr = nil
+
+			// Merged: forgotten.
+			s.forge.On("Status", mock.Anything, s.target.Ref).Return(&forge.Status{HeadSHA: "h1", Merged: true}, nil).Once()
+			s.poll()
+			require.Nil(s.T(), s.store.get(ch).Threads)
+			require.Zero(s.T(), s.lastBroadcast().UnresolvedThreads)
+			s.forge.AssertExpectations(s.T())
+		})
+	}
+}
+
+// TestUnresolvedThreadsWithFailure joins a new thread to a failure's alert.
+func (s *WatcherSuite) TestUnresolvedThreadsWithFailure() {
+	s.settings()
+	s.store.put(db.PRState{ChannelID: ch, Forge: forge.KindPR, Number: 12})
+	s.forge.threads = []string{"T1"}
+	s.ci("h1", failing).Once()
+	s.forge.On("FailedChecks", mock.Anything, s.target.Ref).Return([]forge.FailedCheck{lint}, nil).Once()
+	s.poll()
+	require.Equal(s.T(), "PR #12: lint failed; 1 unresolved review thread", s.lastBroadcast().Alert)
+}
+
+// TestConflictWaitsForFix leaves a conflict be while a fix for a failure is
+// in flight.
+func (s *WatcherSuite) TestConflictWaitsForFix() {
+	s.settings()
+	s.store.put(db.PRState{ChannelID: ch, Forge: forge.KindPR, Number: 12, AgentSHAs: []string{"h1"}, MergeArmed: "squash", MergeVia: viaLoop, ArmedSHA: "h0"})
+	s.ci("h1", failing).Once()
+	s.forge.On("FailedChecks", mock.Anything, s.target.Ref).Return([]forge.FailedCheck{lint}, nil).Once()
+	s.forge.On("Log", mock.Anything, s.target.Ref, lint).Return("FAIL", nil).Once()
+	require.True(s.T(), s.poll())
+	s.conflicting("h1").Once()
+	require.True(s.T(), s.poll())
+	require.Len(s.T(), s.enqueued, 1)
+	st := s.store.get(ch)
+	require.Equal(s.T(), events.PRReasonFixSent, st.Reason)
+	require.Equal(s.T(), "h1", st.ArmedSHA, "the armed head follows the agent's")
+	s.forge.AssertExpectations(s.T())
+}
+
+// TestIdlePoll polls an open PR/MR slowly once it isn't watched, and stops
+// once it's closed or gone.
+func (s *WatcherSuite) TestIdlePoll() {
+	s.settings()
+	s.target.PR.IdlePollSec = 600
+	idle := 600 * time.Second
+	e := s.w.entry(ch)
+	s.w.Kick(ch)
+	s.ci("h1", green).Once()
+	s.w.Poll(s.ctx, ch)
+	require.Equal(s.T(), s.now.Add(time.Duration(s.target.PR.PollSec)*time.Second), e.due, "within the linger")
+	require.True(s.T(), s.store.get(ch).Open)
+
+	s.now = s.now.Add(time.Hour)
+	s.ci("h1", green).Once()
+	s.w.Poll(s.ctx, ch)
+	require.Equal(s.T(), s.now.Add(idle), e.due)
+
+	// Errors keep polling an open PR/MR.
+	s.forge.On("Status", mock.Anything, s.target.Ref).Return(nil, errors.New("gh")).Once()
+	s.w.Poll(s.ctx, ch)
+	require.Equal(s.T(), s.now.Add(idle), e.due)
+	s.resolveErr = errors.New("gh")
+	s.w.Poll(s.ctx, ch)
+	require.Equal(s.T(), s.now.Add(time.Duration(config.DefaultPRIdlePollSec)*time.Second), e.due)
+	s.resolveErr = nil
+
+	s.forge.On("Status", mock.Anything, s.target.Ref).Return(&forge.Status{HeadSHA: "h1", Closed: true}, nil).Once()
+	s.w.Poll(s.ctx, ch)
+	require.True(s.T(), e.due.IsZero())
+	require.False(s.T(), s.store.get(ch).Open)
+
+	// A PR/MR that's gone is no longer open.
+	s.store.put(db.PRState{ChannelID: ch, Open: true})
+	s.target = nil
+	s.w.Poll(s.ctx, ch)
+	require.True(s.T(), e.due.IsZero())
+	require.False(s.T(), s.store.get(ch).Open)
+	s.forge.AssertExpectations(s.T())
 }
 
 // TestFixLoop sends a failure on the agent's commit to the agent, follows
@@ -215,25 +395,27 @@ func (s *WatcherSuite) TestFixLoop() {
 		s.Run(kind, func() {
 			s.setup(kind)
 			s.settings()
-			s.store.put(db.CIState{ChannelID: ch, Forge: kind, Number: 12, AgentSHAs: []string{"aaaaaaa1"}})
+			s.store.put(db.PRState{ChannelID: ch, Forge: kind, Number: 12, AgentSHAs: []string{"aaaaaaa1"}})
 			s.ci("aaaaaaa1", failing).Once()
 			s.forge.On("FailedChecks", mock.Anything, s.target.Ref).Return([]forge.FailedCheck{lint}, nil).Once()
 			s.forge.On("Log", mock.Anything, s.target.Ref, lint).Return("FAIL lint", nil).Once()
 
 			require.True(s.T(), s.poll())
 			st := s.store.get(ch)
-			require.Equal(s.T(), events.CIAttentionFixing, st.Attention)
-			require.Equal(s.T(), events.CIReasonFixSent, st.Reason)
+			require.Equal(s.T(), events.PRAttentionFixing, st.Attention)
+			require.Equal(s.T(), events.PRReasonFixSent, st.Reason)
 			require.Equal(s.T(), 1, st.Attempts)
 			require.Len(s.T(), s.enqueued, 1)
 			require.Contains(s.T(), s.enqueued[0], "CI failed on aaaaaaa for "+label(s.target))
 			require.Contains(s.T(), s.enqueued[0], "FAIL lint")
+			// The closing paragraph is one line: the chat breaks at each newline.
+			require.Contains(s.T(), s.enqueued[0], "unrelated to this branch (flaky test, infra, base branch), don't change code — re-run it with `")
 			if kind == forge.KindMR {
 				require.Contains(s.T(), s.enqueued[0], "`glab ci retry 77`")
 			} else {
 				require.Contains(s.T(), s.enqueued[0], "`gh run rerun 70 --failed`")
 			}
-			require.Equal(s.T(), events.CIAttentionFixing, s.lastBroadcast().Attention)
+			require.Equal(s.T(), events.PRAttentionFixing, s.lastBroadcast().Attention)
 
 			// While the fix is in flight, a poll doesn't act.
 			s.ci("aaaaaaa1", failing).Once()
@@ -267,21 +449,21 @@ func (s *WatcherSuite) TestGuards() {
 	off := false
 	tests := []struct {
 		name    string
-		state   db.CIState
-		cfg     func(*config.CIConfig)
+		state   db.PRState
+		cfg     func(*config.PRConfig)
 		checks  []forge.FailedCheck
 		log     string
 		notice  string
 		reason  string
 		noCheck bool
 	}{
-		{name: "someone else's commit", state: db.CIState{AgentSHAs: []string{"other"}}, reason: events.CIReasonNotAgent},
-		{name: "auto-fix off in config", state: db.CIState{AgentSHAs: []string{"h1"}}, cfg: func(c *config.CIConfig) { c.AutoFix = false }, reason: events.CIReasonAutoFixOff},
-		{name: "auto-fix off for the thread", state: db.CIState{AgentSHAs: []string{"h1"}, AutoFix: &off}, reason: events.CIReasonAutoFixOff},
-		{name: "attempts used up", state: db.CIState{AgentSHAs: []string{"h1"}, Attempts: 3, LastFailedSHA: "h0"}, notice: "after 3 attempts", reason: events.CIReasonMaxAttempts},
-		{name: "same failure again", state: db.CIState{AgentSHAs: []string{"h1"}, Attempts: 1, LastFailedSHA: "h0", LastLogHash: forge.LogHash("ci / lint\nFAIL\n")}, log: "FAIL", notice: "same failure came back", reason: events.CIReasonSameFailure},
-		{name: "the fix pushed nothing", state: db.CIState{AgentSHAs: []string{"h1"}, Attempts: 1, LastFailedSHA: "h1"}, notice: "pushed no new commit", reason: events.CIReasonNoNewCommit},
-		{name: "infra again after a re-run", state: db.CIState{AgentSHAs: []string{"h1"}, InfraRetriedSHA: "h1"}, checks: []forge.FailedCheck{infra}, notice: "infrastructure reasons after a re-run", reason: events.CIReasonInfraAgain},
+		{name: "someone else's commit", state: db.PRState{AgentSHAs: []string{"other"}}, reason: events.PRReasonNotAgent},
+		{name: "auto-fix off in config", state: db.PRState{AgentSHAs: []string{"h1"}}, cfg: func(c *config.PRConfig) { c.AutoFix = false }, reason: events.PRReasonAutoFixOff},
+		{name: "auto-fix off for the thread", state: db.PRState{AgentSHAs: []string{"h1"}, AutoFix: &off}, reason: events.PRReasonAutoFixOff},
+		{name: "attempts used up", state: db.PRState{AgentSHAs: []string{"h1"}, Attempts: 3, LastFailedSHA: "h0"}, notice: "after 3 attempts", reason: events.PRReasonMaxAttempts},
+		{name: "same failure again", state: db.PRState{AgentSHAs: []string{"h1"}, Attempts: 1, LastFailedSHA: "h0", LastLogHash: forge.LogHash("ci / lint\nFAIL\n")}, log: "FAIL", notice: "same failure came back", reason: events.PRReasonSameFailure},
+		{name: "the fix pushed nothing", state: db.PRState{AgentSHAs: []string{"h1"}, Attempts: 1, LastFailedSHA: "h1"}, notice: "pushed no new commit", reason: events.PRReasonNoNewCommit},
+		{name: "infra again after a re-run", state: db.PRState{AgentSHAs: []string{"h1"}, InfraRetriedSHA: "h1"}, checks: []forge.FailedCheck{infra}, notice: "infrastructure reasons after a re-run", reason: events.PRReasonInfraAgain},
 	}
 	for _, kind := range []string{forge.KindPR, forge.KindMR} {
 		for _, tc := range tests {
@@ -289,7 +471,7 @@ func (s *WatcherSuite) TestGuards() {
 				s.setup(kind)
 				s.settings()
 				if tc.cfg != nil {
-					tc.cfg(&s.target.CI)
+					tc.cfg(&s.target.PR)
 				}
 				st := tc.state
 				st.ChannelID, st.Forge, st.Number = ch, kind, 12
@@ -304,7 +486,7 @@ func (s *WatcherSuite) TestGuards() {
 
 				require.False(s.T(), s.poll())
 				got := s.store.get(ch)
-				require.Equal(s.T(), events.CIAttentionFailed, got.Attention)
+				require.Equal(s.T(), events.PRAttentionFailed, got.Attention)
 				require.Equal(s.T(), "h1", got.LastFailedSHA)
 				require.Equal(s.T(), tc.reason, got.Reason)
 				require.Equal(s.T(), checks, got.Failed)
@@ -342,12 +524,12 @@ func (s *WatcherSuite) TestGuards() {
 func (s *WatcherSuite) TestBackfill() {
 	s.settings()
 	s.head = "c0ffee1"
-	s.store.put(db.CIState{ChannelID: ch, Forge: forge.KindPR, Number: 12, Attention: events.CIAttentionFailed, LastFailedSHA: "h1"})
+	s.store.put(db.PRState{ChannelID: ch, Forge: forge.KindPR, Number: 12, Attention: events.PRAttentionFailed, LastFailedSHA: "h1"})
 	s.ci("h1", failing).Once()
 	s.forge.On("FailedChecks", mock.Anything, s.target.Ref).Return(nil, errors.New("gh")).Once()
 	require.False(s.T(), s.poll())
 	got := s.store.get(ch)
-	require.Equal(s.T(), events.CIReasonNotAgent, got.Reason)
+	require.Equal(s.T(), events.PRReasonNotAgent, got.Reason)
 	require.Nil(s.T(), got.Failed)
 
 	s.ci("h1", failing).Once()
@@ -355,7 +537,7 @@ func (s *WatcherSuite) TestBackfill() {
 	require.False(s.T(), s.poll())
 	b := s.lastBroadcast()
 	require.Equal(s.T(), []forge.FailedCheck{lint}, b.Failed)
-	require.Equal(s.T(), events.CIReasonNotAgent, b.Reason)
+	require.Equal(s.T(), events.PRReasonNotAgent, b.Reason)
 	require.Equal(s.T(), "c0ffee1", b.CheckoutSHA)
 
 	// Both kept: no more listing.
@@ -368,7 +550,7 @@ func (s *WatcherSuite) TestBackfill() {
 func (s *WatcherSuite) TestInfraRerun() {
 	s.setup(forge.KindMR)
 	s.settings()
-	s.store.put(db.CIState{ChannelID: ch, Forge: forge.KindMR, Number: 12, AgentSHAs: []string{"h1"}})
+	s.store.put(db.PRState{ChannelID: ch, Forge: forge.KindMR, Number: 12, AgentSHAs: []string{"h1"}})
 	s.ci("h1", failing).Once()
 	s.forge.On("FailedChecks", mock.Anything, s.target.Ref).Return([]forge.FailedCheck{infra}, nil).Once()
 	s.forge.On("Rerun", mock.Anything, s.target.Ref, infra).Return(nil).Once()
@@ -381,39 +563,39 @@ func (s *WatcherSuite) TestInfraRerun() {
 	// A failed re-run flags it.
 	s.setup(forge.KindMR)
 	s.settings()
-	s.store.put(db.CIState{ChannelID: ch, Forge: forge.KindMR, Number: 12, AgentSHAs: []string{"h1"}})
+	s.store.put(db.PRState{ChannelID: ch, Forge: forge.KindMR, Number: 12, AgentSHAs: []string{"h1"}})
 	s.ci("h1", failing).Once()
 	s.forge.On("FailedChecks", mock.Anything, s.target.Ref).Return([]forge.FailedCheck{infra}, nil).Once()
 	s.forge.On("Rerun", mock.Anything, s.target.Ref, infra).Return(errors.New("denied")).Once()
 	require.False(s.T(), s.poll())
-	require.Equal(s.T(), events.CIAttentionFailed, s.store.get(ch).Attention)
+	require.Equal(s.T(), events.PRAttentionFailed, s.store.get(ch).Attention)
 }
 
 func (s *WatcherSuite) TestPollEnds() {
 	s.settings()
 	// Merged: nothing watched, nothing armed.
-	s.store.put(db.CIState{ChannelID: ch, Forge: forge.KindPR, Number: 12, Watching: true, Attention: "failed", MergeArmed: "squash", MergeVia: viaForge})
-	s.forge.On("CI", mock.Anything, s.target.Ref).Return(&forge.CIState{HeadSHA: "h", Merged: true}, nil).Once()
+	s.store.put(db.PRState{ChannelID: ch, Forge: forge.KindPR, Number: 12, Watching: true, Attention: "failed", MergeArmed: "squash", MergeVia: viaForge})
+	s.forge.On("Status", mock.Anything, s.target.Ref).Return(&forge.Status{HeadSHA: "h", Merged: true}, nil).Once()
 	require.False(s.T(), s.poll())
 	st := s.store.get(ch)
-	require.Equal(s.T(), db.CIState{ChannelID: ch, Forge: forge.KindPR, Number: 12}, st)
+	require.Equal(s.T(), db.PRState{ChannelID: ch, Forge: forge.KindPR, Number: 12}, st)
 	require.True(s.T(), s.lastBroadcast().Merged)
 	require.Nil(s.T(), s.lastBroadcast().MergeMethods, "no merge settings once merged")
 
 	// No PR: cleared once, quietly after.
-	s.store.put(db.CIState{ChannelID: ch, Watching: true})
+	s.store.put(db.PRState{ChannelID: ch, Watching: true})
 	s.target = nil
 	n := len(s.broadcasts)
 	require.False(s.T(), s.poll())
 	require.False(s.T(), s.store.get(ch).Watching)
-	require.Equal(s.T(), events.CIEventData{ChannelID: ch}, s.lastBroadcast())
+	require.Equal(s.T(), events.PREventData{ChannelID: ch}, s.lastBroadcast())
 	require.False(s.T(), s.poll())
 	require.Len(s.T(), s.broadcasts, n+1)
 }
 
 func (s *WatcherSuite) TestPollErrors() {
 	s.settings()
-	s.store.put(db.CIState{ChannelID: ch, Forge: forge.KindPR, Number: 12, Watching: true})
+	s.store.put(db.PRState{ChannelID: ch, Forge: forge.KindPR, Number: 12, Watching: true})
 
 	s.resolveErr = errors.New("gh down")
 	require.True(s.T(), s.poll(), "keeps watching through a lookup error")
@@ -423,10 +605,10 @@ func (s *WatcherSuite) TestPollErrors() {
 	require.True(s.T(), s.poll(), "no forge for the kind")
 	s.target.Kind = forge.KindPR
 
-	s.forge.On("CI", mock.Anything, s.target.Ref).Return(nil, errors.New("boom")).Once()
+	s.forge.On("Status", mock.Anything, s.target.Ref).Return(nil, errors.New("boom")).Once()
 	require.True(s.T(), s.poll())
 
-	s.store.put(db.CIState{ChannelID: ch, Forge: forge.KindPR, Number: 12, AgentSHAs: []string{"h1"}})
+	s.store.put(db.PRState{ChannelID: ch, Forge: forge.KindPR, Number: 12, AgentSHAs: []string{"h1"}})
 	s.ci("h1", failing).Once()
 	s.forge.On("FailedChecks", mock.Anything, s.target.Ref).Return(nil, errors.New("boom")).Once()
 	require.True(s.T(), s.poll())
@@ -446,15 +628,15 @@ func (s *WatcherSuite) TestPollErrors() {
 func (s *WatcherSuite) TestNewPRStartsOver() {
 	s.settings()
 	on := true
-	s.store.put(db.CIState{ChannelID: ch, Forge: forge.KindPR, Number: 3, AgentSHAs: []string{"h1"}, Attempts: 3, Attention: "failed", AutoFix: &on, MergeArmed: "merge"})
+	s.store.put(db.PRState{ChannelID: ch, Forge: forge.KindPR, Number: 3, AgentSHAs: []string{"h1"}, Attempts: 3, Attention: "failed", AutoFix: &on, MergeArmed: "merge"})
 	s.ci("h1", pending).Once()
 	s.poll()
-	require.Equal(s.T(), db.CIState{ChannelID: ch, Forge: forge.KindPR, Number: 12, AgentSHAs: []string{"h1"}, AutoFix: &on, Watching: true}, s.store.get(ch))
+	require.Equal(s.T(), db.PRState{ChannelID: ch, Forge: forge.KindPR, Number: 12, AgentSHAs: []string{"h1"}, AutoFix: &on, Watching: true, Open: true}, s.store.get(ch))
 }
 
 func (s *WatcherSuite) TestLoopMerge() {
 	s.forge.On("MergeSettings", mock.Anything, mock.Anything).Return(forge.MergeSettings{}, errors.New("no settings")).Maybe()
-	armed := db.CIState{ChannelID: ch, Forge: forge.KindPR, Number: 12, AgentSHAs: []string{"h1", "h2"}, MergeArmed: "merge", MergeVia: viaLoop, ArmedSHA: "h1"}
+	armed := db.PRState{ChannelID: ch, Forge: forge.KindPR, Number: 12, AgentSHAs: []string{"h1", "h2"}, MergeArmed: "merge", MergeVia: viaLoop, ArmedSHA: "h1"}
 
 	// The agent's new head moves the armed head along.
 	s.store.put(armed)
@@ -463,14 +645,14 @@ func (s *WatcherSuite) TestLoopMerge() {
 	require.Equal(s.T(), "h2", s.store.get(ch).ArmedSHA)
 
 	// Green and clean: merged once.
-	s.forge.On("CI", mock.Anything, s.target.Ref).Return(&forge.CIState{HeadSHA: "h2", Checks: green, MergeState: forge.MergeClean}, nil).Once()
+	s.forge.On("Status", mock.Anything, s.target.Ref).Return(&forge.Status{HeadSHA: "h2", Checks: green, MergeState: forge.MergeClean}, nil).Once()
 	s.forge.On("Merge", mock.Anything, s.target.Ref, "merge").Return(nil).Once()
 	require.True(s.T(), s.poll(), "watched until it reads merged")
 	require.Empty(s.T(), s.store.get(ch).MergeArmed)
 
 	// A failed merge disarms with a notice.
 	s.store.put(armed)
-	s.forge.On("CI", mock.Anything, s.target.Ref).Return(&forge.CIState{HeadSHA: "h1", Checks: green, MergeState: forge.MergeClean}, nil).Once()
+	s.forge.On("Status", mock.Anything, s.target.Ref).Return(&forge.Status{HeadSHA: "h1", Checks: green, MergeState: forge.MergeClean}, nil).Once()
 	s.forge.On("Merge", mock.Anything, s.target.Ref, "merge").Return(errors.New("blocked")).Once()
 	require.False(s.T(), s.poll())
 	require.Contains(s.T(), s.notices[0], "Merge when ready failed: blocked")
@@ -552,7 +734,7 @@ func (s *WatcherSuite) TestRecordSHA() {
 	for i := range maxAgentSHAs {
 		shas = append(shas, fmt.Sprint(i))
 	}
-	s.store.put(db.CIState{ChannelID: ch, AgentSHAs: shas})
+	s.store.put(db.PRState{ChannelID: ch, AgentSHAs: shas})
 	s.w.recordSHA(s.ctx, ch, "new")
 	got := s.store.get(ch).AgentSHAs
 	require.Len(s.T(), got, maxAgentSHAs)
@@ -583,15 +765,23 @@ func (s *WatcherSuite) TestStatus() {
 	require.Nil(s.T(), s.w.Status(s.ctx, "nopr"))
 }
 
-func (s *WatcherSuite) TestAttention() {
-	s.store.put(db.CIState{ChannelID: "a", Attention: "failed"})
-	s.store.put(db.CIState{ChannelID: "b"})
-	got, err := s.w.Attention(s.ctx)
+func (s *WatcherSuite) TestFlags() {
+	s.store.put(db.PRState{ChannelID: "a", Attention: "failed"})
+	s.store.put(db.PRState{ChannelID: "b"})
+	s.store.put(db.PRState{ChannelID: "c", Attention: "conflict"})
+	s.store.put(db.PRState{ChannelID: "d", Attention: "fixing", Threads: []string{"T1", "T2"}})
+	s.store.put(db.PRState{ChannelID: "e", Threads: []string{"T1"}})
+	got, err := s.w.Flags(s.ctx)
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), map[string]string{"a": "failed"}, got)
+	require.Equal(s.T(), map[string]events.PRFlags{
+		"a": {Attention: events.PRAttentionFailed},
+		"c": {Attention: events.PRAttentionConflict},
+		"d": {Attention: events.PRAttentionFixing, UnresolvedThreads: 2},
+		"e": {UnresolvedThreads: 1},
+	}, got)
 
 	s.store.listErr = errors.New("db")
-	_, err = s.w.Attention(s.ctx)
+	_, err = s.w.Flags(s.ctx)
 	require.Error(s.T(), err)
 }
 
@@ -609,18 +799,23 @@ func (s *WatcherSuite) TestSetAutoFix() {
 
 func (s *WatcherSuite) TestFixNow() {
 	s.settings()
-	s.store.put(db.CIState{ChannelID: ch, Forge: forge.KindPR, Number: 12, Attention: "failed", LastFailedSHA: "h1"})
+	s.store.put(db.PRState{ChannelID: ch, Forge: forge.KindPR, Number: 12, Attention: "failed", LastFailedSHA: "h1"})
 	s.ci("h1", failing).Once()
 	s.forge.On("FailedChecks", mock.Anything, s.target.Ref).Return([]forge.FailedCheck{lint}, nil).Once()
 	s.forge.On("Log", mock.Anything, s.target.Ref, lint).Return("", errors.New("expired")).Once()
 	require.NoError(s.T(), s.w.FixNow(s.ctx, ch))
 	require.Contains(s.T(), s.enqueued[0], "(no log available)")
-	require.Equal(s.T(), events.CIAttentionFixing, s.store.get(ch).Attention)
-	require.Equal(s.T(), events.CIReasonFixAsked, s.store.get(ch).Reason)
-	require.Equal(s.T(), events.CIAttentionFixing, s.lastBroadcast().Attention)
+	require.Equal(s.T(), events.PRAttentionFixing, s.store.get(ch).Attention)
+	require.Equal(s.T(), events.PRReasonFixAsked, s.store.get(ch).Reason)
+	require.Equal(s.T(), events.PRAttentionFixing, s.lastBroadcast().Attention)
 
 	s.ci("h1", green).Once()
 	require.ErrorIs(s.T(), s.w.FixNow(s.ctx, ch), ErrNoFailure)
+
+	// A merge conflict is the owner's: it never goes to the agent.
+	s.conflicting("h1").Once()
+	require.ErrorIs(s.T(), s.w.FixNow(s.ctx, ch), ErrNoFailure)
+	require.Len(s.T(), s.enqueued, 1)
 
 	s.ci("h1", failing).Once()
 	s.forge.On("FailedChecks", mock.Anything, s.target.Ref).Return(nil, errors.New("boom")).Once()
@@ -633,7 +828,7 @@ func (s *WatcherSuite) TestFixNow() {
 	require.Error(s.T(), s.w.FixNow(s.ctx, ch))
 	s.store.saveErr = nil
 
-	s.forge.On("CI", mock.Anything, s.target.Ref).Return(nil, errors.New("boom")).Once()
+	s.forge.On("Status", mock.Anything, s.target.Ref).Return(nil, errors.New("boom")).Once()
 	require.Error(s.T(), s.w.FixNow(s.ctx, ch))
 
 	s.target = nil
@@ -649,7 +844,7 @@ func (s *WatcherSuite) TestRerun() {
 	for _, kind := range []string{forge.KindPR, forge.KindMR} {
 		s.Run(kind, func() {
 			s.setup(kind)
-			s.store.put(db.CIState{ChannelID: ch, Forge: kind, Number: 12})
+			s.store.put(db.PRState{ChannelID: ch, Forge: kind, Number: 12})
 			s.forge.On("FailedChecks", mock.Anything, s.target.Ref).Return([]forge.FailedCheck{lint, other, infra}, nil).Once()
 			s.forge.On("Rerun", mock.Anything, s.target.Ref, lint).Return(nil).Once()
 			if kind == forge.KindMR {
@@ -663,7 +858,7 @@ func (s *WatcherSuite) TestRerun() {
 }
 
 func (s *WatcherSuite) TestRerunErrors() {
-	s.store.put(db.CIState{ChannelID: ch, Forge: forge.KindPR, Number: 12})
+	s.store.put(db.PRState{ChannelID: ch, Forge: forge.KindPR, Number: 12})
 	s.forge.On("FailedChecks", mock.Anything, s.target.Ref).Return([]forge.FailedCheck{lint}, nil).Once()
 	s.forge.On("Rerun", mock.Anything, s.target.Ref, lint).Return(errors.New("gh")).Once()
 	require.EqualError(s.T(), s.w.Rerun(s.ctx, ch), "gh")
@@ -683,7 +878,7 @@ func (s *WatcherSuite) TestRerunErrors() {
 
 // TestLog reads the log of one of the failed checks CI last reported.
 func (s *WatcherSuite) TestLog() {
-	s.store.put(db.CIState{ChannelID: ch, Forge: forge.KindPR, Number: 12, Failed: []forge.FailedCheck{infra, lint}})
+	s.store.put(db.PRState{ChannelID: ch, Forge: forge.KindPR, Number: 12, Failed: []forge.FailedCheck{infra, lint}})
 	s.forge.On("Log", mock.Anything, s.target.Ref, lint).Return("FAIL lint", nil).Once()
 	got, err := s.w.Log(s.ctx, ch, "77")
 	require.NoError(s.T(), err)
@@ -708,24 +903,24 @@ func (s *WatcherSuite) TestArm() {
 		method   string
 		cfg      string
 		enable   error
-		ci       *forge.CIState
+		ci       *forge.Status
 		wantVia  string
 		want     string
 		wantErr  string
 	}{
-		{name: "forge auto-merge", settings: forge.MergeSettings{AutoMerge: true, Methods: []string{"squash", "merge"}}, ci: &forge.CIState{HeadSHA: "h1"}, wantVia: viaForge, want: "squash"},
-		{name: "configured method, Loop merges", settings: forge.MergeSettings{Methods: []string{"squash", "merge"}}, cfg: "merge", ci: &forge.CIState{HeadSHA: "h1"}, wantVia: viaLoop, want: "merge"},
+		{name: "forge auto-merge", settings: forge.MergeSettings{AutoMerge: true, Methods: []string{"squash", "merge"}}, ci: &forge.Status{HeadSHA: "h1"}, wantVia: viaForge, want: "squash"},
+		{name: "configured method, Loop merges", settings: forge.MergeSettings{Methods: []string{"squash", "merge"}}, cfg: "merge", ci: &forge.Status{HeadSHA: "h1"}, wantVia: viaLoop, want: "merge"},
 		{name: "method not allowed", settings: forge.MergeSettings{Methods: []string{"squash"}}, method: "rebase", wantErr: "doesn't allow rebase"},
-		{name: "closed", settings: forge.MergeSettings{Methods: []string{"merge"}}, ci: &forge.CIState{Closed: true}, wantErr: "no longer open"},
-		{name: "enable fails", settings: forge.MergeSettings{AutoMerge: true, Methods: []string{"merge"}}, ci: &forge.CIState{HeadSHA: "h1"}, enable: errors.New("not allowed"), wantErr: "not allowed"},
+		{name: "closed", settings: forge.MergeSettings{Methods: []string{"merge"}}, ci: &forge.Status{Closed: true}, wantErr: "no longer open"},
+		{name: "enable fails", settings: forge.MergeSettings{AutoMerge: true, Methods: []string{"merge"}}, ci: &forge.Status{HeadSHA: "h1"}, enable: errors.New("not allowed"), wantErr: "not allowed"},
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			s.setup(forge.KindPR)
-			s.target.CI.MergeMethod = tc.cfg
+			s.target.PR.MergeMethod = tc.cfg
 			s.forge.On("MergeSettings", mock.Anything, s.target.Ref).Return(tc.settings, nil)
 			if tc.ci != nil {
-				s.forge.On("CI", mock.Anything, s.target.Ref).Return(tc.ci, nil)
+				s.forge.On("Status", mock.Anything, s.target.Ref).Return(tc.ci, nil)
 			}
 			s.forge.On("EnableAutoMerge", mock.Anything, s.target.Ref, mock.Anything).Return(tc.enable)
 			err := s.w.Arm(s.ctx, ch, tc.method)
@@ -756,16 +951,16 @@ func (s *WatcherSuite) TestArmErrors() {
 	require.ErrorContains(s.T(), s.w.Arm(s.ctx, ch, ""), "settings")
 
 	s.forge.On("MergeSettings", mock.Anything, s.target.Ref).Return(forge.MergeSettings{Methods: []string{"merge"}}, nil)
-	s.forge.On("CI", mock.Anything, s.target.Ref).Return(nil, errors.New("ci")).Once()
+	s.forge.On("Status", mock.Anything, s.target.Ref).Return(nil, errors.New("ci")).Once()
 	require.ErrorContains(s.T(), s.w.Arm(s.ctx, ch, ""), "ci")
 
-	s.forge.On("CI", mock.Anything, s.target.Ref).Return(&forge.CIState{HeadSHA: "h"}, nil).Once()
+	s.forge.On("Status", mock.Anything, s.target.Ref).Return(&forge.Status{HeadSHA: "h"}, nil).Once()
 	s.store.saveErr = errors.New("db")
 	require.ErrorContains(s.T(), s.w.Arm(s.ctx, ch, ""), "db")
 }
 
 func (s *WatcherSuite) TestCancelMerge() {
-	s.store.put(db.CIState{ChannelID: ch, Forge: forge.KindPR, Number: 12, MergeArmed: "squash", MergeVia: viaForge})
+	s.store.put(db.PRState{ChannelID: ch, Forge: forge.KindPR, Number: 12, MergeArmed: "squash", MergeVia: viaForge})
 	s.forge.On("DisableAutoMerge", mock.Anything, s.target.Ref).Return(errors.New("gh")).Once()
 	require.ErrorContains(s.T(), s.w.CancelMerge(s.ctx, ch), "gh")
 	s.forge.On("DisableAutoMerge", mock.Anything, s.target.Ref).Return(nil).Once()
@@ -773,7 +968,7 @@ func (s *WatcherSuite) TestCancelMerge() {
 	require.Empty(s.T(), s.store.get(ch).MergeArmed)
 
 	// Loop's own merge needs no forge call.
-	s.store.put(db.CIState{ChannelID: ch, Forge: forge.KindPR, Number: 12, MergeArmed: "squash", MergeVia: viaLoop})
+	s.store.put(db.PRState{ChannelID: ch, Forge: forge.KindPR, Number: 12, MergeArmed: "squash", MergeVia: viaLoop})
 	require.NoError(s.T(), s.w.CancelMerge(s.ctx, ch))
 
 	s.store.saveErr = errors.New("db")
@@ -811,9 +1006,16 @@ func (s *WatcherSuite) TestPublishOnChange() {
 // TestRun restores the watched threads, polls them and stops with ctx.
 func (s *WatcherSuite) TestRun() {
 	s.settings()
-	s.store.put(db.CIState{ChannelID: ch, Forge: forge.KindPR, Number: 12, Watching: true, Attention: events.CIAttentionFixing, LastFailedSHA: "h1"})
-	s.store.put(db.CIState{ChannelID: "idle"})
+	s.store.put(db.PRState{ChannelID: ch, Forge: forge.KindPR, Number: 12, Watching: true, Attention: events.PRAttentionFixing, LastFailedSHA: "h1"})
+	s.store.put(db.PRState{ChannelID: "idle"})
+	s.store.put(db.PRState{ChannelID: "open", Open: true})
 	s.ci("h1", failing)
+	s.w.Resolve = func(_ context.Context, id string) (*Target, error) {
+		if id == "open" {
+			return nil, nil
+		}
+		return s.target, nil
+	}
 	s.w.tick = time.Millisecond
 	s.w.now = time.Now
 	ctx, cancel := context.WithCancel(s.ctx)
@@ -829,12 +1031,13 @@ func (s *WatcherSuite) TestRun() {
 	}, time.Second, time.Millisecond)
 	cancel()
 	<-done
-	require.Equal(s.T(), events.CIAttentionFixing, s.store.get(ch).Attention, "the restored fix is still in flight")
+	require.Equal(s.T(), events.PRAttentionFixing, s.store.get(ch).Attention, "the restored fix is still in flight")
 	require.Empty(s.T(), s.enqueued)
 	s.w.mu.Lock()
 	_, ok := s.w.entries["idle"]
 	s.w.mu.Unlock()
 	require.False(s.T(), ok, "an idle thread isn't polled")
+	require.False(s.T(), s.store.get("open").Open, "an open PR/MR is polled")
 
 	// A failed listing starts with nothing.
 	s.store.listErr = errors.New("db")
@@ -883,7 +1086,7 @@ func (s *WatcherSuite) TestScheduling() {
 	// Within the linger window a thread with no PR stays scheduled.
 	s.target = nil
 	s.w.Poll(s.ctx, ch)
-	require.Equal(s.T(), s.now.Add(time.Duration(config.DefaultCIPollSec)*time.Second), e.due)
+	require.Equal(s.T(), s.now.Add(time.Duration(config.DefaultPRPollSec)*time.Second), e.due)
 	s.now = s.now.Add(time.Hour)
 	require.Equal(s.T(), []string{ch}, s.w.dueNow())
 	s.w.Poll(s.ctx, ch)

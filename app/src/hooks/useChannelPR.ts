@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { fetchPR, type PRInfo } from "../api/git";
+import { getPRStatus, type PRStatus } from "../api/pr";
 
 /**
  * The PR open on a channel's branch, looked up while enabled and again when
@@ -27,4 +28,30 @@ export function useChannelPR(channelId: string, branch: string | undefined, enab
     };
   }, [channelId, branch, enabled]);
   return pr;
+}
+
+/**
+ * The watcher's status of a channel's PR/MR, looked up while enabled; null
+ * without one or when the lookup fails.
+ */
+export function useChannelPRStatus(channelId: string, enabled: boolean): PRStatus | null {
+  const [status, setStatus] = useState<PRStatus | null>(null);
+  useEffect(() => {
+    if (!enabled || !channelId) {
+      setStatus(null);
+      return;
+    }
+    let cancelled = false;
+    getPRStatus(channelId)
+      .then((res) => {
+        if (!cancelled) setStatus(res);
+      })
+      .catch(() => {
+        if (!cancelled) setStatus(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [channelId, enabled]);
+  return status;
 }

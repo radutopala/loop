@@ -1,4 +1,4 @@
-import type { CIStatus } from "../api/ci";
+import type { PRStatus } from "../api/pr";
 import type { Channel, ChannelUpdatedData, PluginBadge } from "../types";
 
 /**
@@ -75,7 +75,7 @@ export function replayChannelPatches(channels: Channel[], patches: ChannelPatch[
   };
 }
 
-/** Applies a channel.ci event to a channel: its CI attention, unset when none. */
-export function applyCI(c: Channel, d: Pick<CIStatus, "ci_attention">): Channel {
-  return { ...c, ci_attention: d.ci_attention || undefined };
+/** Applies a channel.pr event to a channel: its attention and unresolved review threads, unset when none. */
+export function applyPR(c: Channel, d: Pick<PRStatus, "pr_attention" | "unresolved_threads">): Channel {
+  return { ...c, pr_attention: d.pr_attention || undefined, unresolved_threads: d.unresolved_threads || undefined };
 }

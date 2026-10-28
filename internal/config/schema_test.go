@@ -142,14 +142,14 @@ func (s *SchemaSuite) TestPlaygroundShareNestedObject() {
 	require.Equal(s.T(), false, enabled.Default)
 }
 
-func (s *SchemaSuite) TestCINestedObject() {
-	prop := GlobalConfigSchema().Properties["ci"]
+func (s *SchemaSuite) TestPRNestedObject() {
+	prop := GlobalConfigSchema().Properties["pr"]
 	require.NotNil(s.T(), prop)
 	require.Equal(s.T(), "object", prop.Type)
-	require.Equal(s.T(), "CI", prop.XSection)
+	require.Equal(s.T(), "PR", prop.XSection)
 	require.Equal(s.T(), true, prop.Properties["auto_fix"].Default)
-	require.Equal(s.T(), DefaultCIMaxAttempts, prop.Properties["max_attempts"].Default)
-	require.Equal(s.T(), DefaultCIPollSec, prop.Properties["poll_sec"].Default)
+	require.Equal(s.T(), DefaultPRMaxAttempts, prop.Properties["max_attempts"].Default)
+	require.Equal(s.T(), DefaultPRPollSec, prop.Properties["poll_sec"].Default)
 	require.Equal(s.T(), []any{"", "squash", "merge", "rebase"}, prop.Properties["merge_method"].Enum)
 }
 
