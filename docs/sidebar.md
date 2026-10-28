@@ -218,6 +218,8 @@ Hovering a channel, thread or worktree thread shows a popup beside the row (`Row
 
 The git lines follow the [branch poller](events.md#channelupdated), so they update within a few seconds of a commit, even while the popup is open. The ci, conflict and cmt lines show only while their pill is lit, and the watcher's [PR status](api.md#pr-watching) behind them is looked up only while the popup is open; the pills themselves have no tooltip. A line with nothing to show is left out; every row has at least its title. Moving off the row, clicking, dragging or scrolling hides it.
 
+Agents read the same lines for a whole tree of channels, threads and worktree threads with the `channel_status` [MCP tool](mcpserver.md).
+
 ---
 
 ## Thread Item

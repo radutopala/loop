@@ -185,7 +185,7 @@ func (s *MainSuite) TestRunMCPWithInMemoryTransport() {
 
 	res, err := session.ListTools(context.Background(), nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 56) // 24 base + 2 ui + 3 playground + 2 shortcut + 1 chat_component + 12 quality + 1 rename + 1 description + 1 ticket + 9 review
+	require.Len(s.T(), res.Tools, 57) // 25 base + 2 ui + 3 playground + 2 shortcut + 1 chat_component + 12 quality + 1 rename + 1 description + 1 ticket + 9 review
 }
 
 func (s *MainSuite) TestEnsureChannelSuccess() {

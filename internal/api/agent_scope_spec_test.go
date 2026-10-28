@@ -93,6 +93,7 @@ var worldRoutes = map[string]worldRoute{
 	"GET /api/channels/{id}/monitors":          {target: "/api/channels/<channel>/monitors"},
 	"DELETE /api/channels/{id}/monitors/{mid}": {target: "/api/channels/<channel>/monitors/<monitor>"},
 	"GET /api/channels/{id}/sessions":          {target: "/api/channels/<channel>/sessions"},
+	"GET /api/channels/{id}/pr/status":         {target: "/api/channels/<channel>/pr/status"},
 	"PUT /api/channels/{id}/session":           {target: "/api/channels/<channel>/session", body: `{"session_id":"<session>"}`},
 	"POST /api/messages":                       {target: "/api/messages", body: `{"channel_id":"<channel>","content":"hi"}`, writes: "agents post to any channel, the way they did before API tokens"},
 	"DELETE /api/messages/{id}":                {target: "/api/messages/<msg>?channel_id=<channel>"},

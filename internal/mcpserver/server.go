@@ -184,6 +184,11 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 	}, s.handleSearchChannels)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "channel_status",
+		Description: "Show a channel's tree: the channel, its threads and worktree threads, and theirs, each with what the desktop app's sidebar shows when hovering it. That's its description, ticket, directory, branch (and the base a worktree was cut from), its PR/MR's number, checks and URL, why its ci, cnf and cmt pills are lit (failing checks and the auto-fix reason, a merge conflict and its base, unresolved review threads), its commit, how far it is from its base and upstream, model/effort overrides, and whether its agent is running or it's locked. channel_id is optional — omit it for the tree this agent's channel or thread is in.",
+	}, s.handleChannelStatus)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "send_message",
 		Description: "Send a message to a channel or thread. channel_id is optional — omit it to target the current channel/thread this agent is running in; use search_channels to find another channel's ID. To trigger the bot in the target channel, include @BotName (e.g. @LoopBot) as plain text in the message — it will be converted to a proper mention automatically.",
 	}, s.handleSendMessage)

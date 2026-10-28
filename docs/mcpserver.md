@@ -64,6 +64,7 @@ Agent (Claude Code)  ←→  MCP Protocol (stdio)  ←→  loop mcp  ←→  HTT
 | `fork_thread` | Fork a thread by ID (mirrors the sidebar `+fork` action): creates a sibling that continues the source's conversation on a forked Claude session, leaving the source untouched. Worktree threads also get a fresh worktree branched from the source's committed state. No agent is triggered — follow up with `send_message` to task the fork. |
 | `delete_thread` | Delete a thread by ID |
 | `search_channels` | Search channels and threads by optional query. Returns IDs, names, directory paths, parent IDs, and active status. |
+| `channel_status` | Show a channel's tree (`GET /api/channels`): the channel, its threads and worktree threads and theirs, indented, each with the lines of its [sidebar hover popup](sidebar.md#row-info): description, ticket, path, branch (and a worktree's base), its PR/MR's number, checks and URL (`GET /api/channels/{id}/pr/status`, for the rows on a branch), why its `ci`, `cnf` and `cmt` pills are lit, commit, distance from its base and upstream, model/effort overrides, and whether its agent is running or it's locked. `channel_id` is optional — defaults to the tree the current channel/thread is in, marked `this one`. |
 
 #### Review
 

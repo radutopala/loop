@@ -7,6 +7,10 @@ Feature: Recent sessions in the sidebar
   (the channel tree), Tree until one is picked; with nothing recent only
   the tree shows, without tabs. Each tab has its own task-thread filter.
 
+  Background:
+    # Recent lists sessions from the whole daemon, so none may be left over.
+    Given no channel is left from another scenario
+
   Scenario: A run keeps a session at the top of Recent
     Given I set up a test channel via API for git repo "bdd-sessions"
     And I open the app in a browser
