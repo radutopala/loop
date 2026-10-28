@@ -4,6 +4,7 @@ import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import { logErr } from "../../utils/log";
 import { EFFORT_PRESETS, shortModel } from "./agentPresets";
+import { HoverTip } from "./HoverTip";
 
 /**
  * Composer pill for the per-channel model/effort override. Applies to any
@@ -87,42 +88,46 @@ export function AgentConfigPill({ channelId }: { channelId: string }) {
 
   return (
     // The model/effort label is the one piece of this row that can lose
-    // characters without losing meaning (the full value stays in the title),
+    // characters without losing meaning (the full value stays in the hover tip),
     // so it shrinks and ellipsises first — that buys the footer a good 40px
     // before it has to wrap onto a second line.
     <div style={{ position: "relative", display: "flex", alignItems: "center", minWidth: 0, marginRight: 8 }}>
-      <button
-        onClick={() => setOpen((v) => !v)}
-        title={
+      <HoverTip
+        shrink
+        text={
           overridden
-            ? `Model/effort override active for this channel:\n${model || `(default ${defaults.model})`} · ${effort || `(default effort)`}\nApplies from the next run.`
-            : `Override the model/effort for this channel's runs (default: ${defaults.model || "config"}${defaults.effort ? ` · ${defaults.effort}` : ""})`
+            ? `Model/effort override\n${model || `(default ${defaults.model})`} · ${effort || `(default effort)`} for this channel's runs, from the next run.`
+            : `Model/effort\nOverride them for this channel's runs (default: ${defaults.model || "config"}${defaults.effort ? ` · ${defaults.effort}` : ""}).`
         }
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 4,
-          height: 24,
-          padding: "0 8px",
-          background: "transparent",
-          border: `1px solid ${overridden ? colors.active : colors.border}`,
-          borderRadius: 12,
-          color: overridden ? colors.active : colors.textDim,
-          cursor: "pointer",
-          fontFamily: fonts.mono,
-          fontSize: 10,
-          minWidth: 0,
-          overflow: "hidden",
-        }}
       >
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0 }}>
-          <line x1="4" y1="8" x2="20" y2="8" />
-          <circle cx="9" cy="8" r="2.5" fill="currentColor" stroke="none" />
-          <line x1="4" y1="16" x2="20" y2="16" />
-          <circle cx="15" cy="16" r="2.5" fill="currentColor" stroke="none" />
-        </svg>
-        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
-      </button>
+        <button
+          onClick={() => setOpen((v) => !v)}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+            height: 24,
+            padding: "0 8px",
+            background: "transparent",
+            border: `1px solid ${overridden ? colors.active : colors.border}`,
+            borderRadius: 12,
+            color: overridden ? colors.active : colors.textDim,
+            cursor: "pointer",
+            fontFamily: fonts.mono,
+            fontSize: 10,
+            minWidth: 0,
+            overflow: "hidden",
+          }}
+        >
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0 }}>
+            <line x1="4" y1="8" x2="20" y2="8" />
+            <circle cx="9" cy="8" r="2.5" fill="currentColor" stroke="none" />
+            <line x1="4" y1="16" x2="20" y2="16" />
+            <circle cx="15" cy="16" r="2.5" fill="currentColor" stroke="none" />
+          </svg>
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
+        </button>
+      </HoverTip>
       {open && (
         <>
           <div style={{ position: "fixed", inset: 0, zIndex: 999 }} onMouseDown={() => setOpen(false)} />

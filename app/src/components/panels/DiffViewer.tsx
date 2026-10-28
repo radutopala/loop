@@ -567,7 +567,9 @@ export function DiffViewer({
     return lines;
   };
 
-  /** Render an expand row for a gap. */
+  /** Render an expand row for a gap. Its step buttons reveal the lines next
+   * to a hunk: ↑ those just above the hunk below the gap, ↓ those just
+   * below the hunk above it. */
   const renderExpandRow = (filePath: string, gap: ExpandableGap, position: "top" | "middle" | "bottom", remaining: number) => {
     const expandBtnStyle: React.CSSProperties = {
       background: "none",
@@ -586,7 +588,7 @@ export function DiffViewer({
         <span style={{ width: 40, textAlign: "right", paddingRight: 8, color: colors.textDim, fontSize: 11 }}>···</span>
         <span style={{ width: 14 }} />
         <span style={{ flex: 1, display: "flex", alignItems: "center", gap: 4 }}>
-          {(position === "top" || position === "middle") && !showAll && (
+          {(position === "bottom" || position === "middle") && !showAll && (
             <button
               style={expandBtnStyle}
               onClick={() => handleExpand(filePath, gap, "down")}
@@ -627,7 +629,7 @@ export function DiffViewer({
               ↕ all {remaining}
             </button>
           )}
-          {(position === "bottom" || position === "middle") && !showAll && (
+          {(position === "top" || position === "middle") && !showAll && (
             <button
               style={expandBtnStyle}
               onClick={() => handleExpand(filePath, gap, "up")}

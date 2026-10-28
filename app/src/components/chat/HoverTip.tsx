@@ -12,8 +12,10 @@ const MARGIN = 8;
  * Electron holds back about a second) and styled like the composer's other
  * popovers. The first line is the heading; the rest wraps below it. It
  * renders on the body, kept inside the window, so a pane's edge can't cut it.
+ * With `shrink` the anchor gives up width like its child would, for a pill
+ * whose label ellipsises.
  */
-export function HoverTip({ text, children }: { text: string; children: ReactNode }) {
+export function HoverTip({ text, shrink, children }: { text: string; shrink?: boolean; children: ReactNode }) {
   const { colors } = useTheme();
   const [at, setAt] = useState<{ left: number; bottom: number } | null>(null);
   const anchor = useRef<HTMLSpanElement>(null);
@@ -39,7 +41,7 @@ export function HoverTip({ text, children }: { text: string; children: ReactNode
   const [heading, ...rest] = text.split("\n");
 
   return (
-    <span ref={anchor} style={{ display: "flex", flexShrink: 0 }} onMouseEnter={show} onMouseLeave={hide} onMouseDown={hide}>
+    <span ref={anchor} style={{ display: "flex", flexShrink: shrink ? 1 : 0, minWidth: shrink ? 0 : undefined }} onMouseEnter={show} onMouseLeave={hide} onMouseDown={hide}>
       {children}
       {at &&
         createPortal(
