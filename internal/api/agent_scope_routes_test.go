@@ -47,6 +47,7 @@ var agentRouteScopes = map[string]routeScope{
 	"GET /api/channels/{id}/monitors":          {path: "channel"},
 	"DELETE /api/channels/{id}/monitors/{mid}": {path: "channel"},
 	"GET /api/channels/{id}/sessions":          {path: "channel"},
+	"GET /api/channels/{id}/pr/status":         {path: "channel"},
 	"PUT /api/channels/{id}/session":           {path: "channel"},
 	"POST /api/messages":                       {none: "agents post to any channel, the way they did before API tokens"},
 	"DELETE /api/messages/{id}":                {query: []string{"channel_id"}},

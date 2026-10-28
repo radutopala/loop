@@ -34,6 +34,7 @@ var agentRoutes = []string{
 	"GET /api/channels/{id}/monitors",
 	"DELETE /api/channels/{id}/monitors/{mid}",
 	"GET /api/channels/{id}/sessions",
+	"GET /api/channels/{id}/pr/status",
 	"PUT /api/channels/{id}/session",
 	"POST /api/messages",
 	"DELETE /api/messages/{id}",

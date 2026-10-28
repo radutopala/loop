@@ -101,6 +101,7 @@ func parityTools() map[string]parityTool {
 		"cancel_monitor":           {},
 		"cancel_task":              {},
 		"cancel_workflow_run":      {},
+		"channel_status":           {responses: map[string]string{"GET /api/channels": `[{"channel_id":"v-channel_id-v","name":"n","branch":"b"}]`}},
 		"chat_component":           {sets: []map[string]any{{"action": "templates"}, {"action": "show"}}, local: map[string]string{"action": selectsAction}},
 		"create_channel":           {},
 		"create_thread":            {},

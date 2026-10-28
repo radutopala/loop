@@ -1131,6 +1131,7 @@ In headless/Linux environments where Electron can't launch, `LOOP_NO_ELECTRON=1 
 | `set_ticket_url` | Link a channel, thread or worktree thread to its ticket's URL (Jira, GitHub, …), shown when hovering it in the sidebar (defaults to the current one; empty clears) |
 | `delete_thread` | Delete a thread by ID (cleans up worktree and branch if applicable) |
 | `search_channels` | Search for channels and threads by name |
+| `channel_status` | Show a channel's threads and worktree threads as a tree, each with its sidebar hover info: branch, PR/MR checks, merge conflict, unresolved review threads, sync and agent status (`channel_id` optional — defaults to the current channel's tree) |
 | `send_message` | Send a message to a channel or thread (`channel_id` optional — defaults to the current channel) |
 | `queue_message` | Queue a follow-up prompt for yourself in the current channel/thread/worktree; `interrupt=true` cancels the active run and jumps the queue; `delay_seconds` holds it back and returns its `msg_id` |
 | `list_queued_messages` | List the messages waiting in the current channel's queue: `msg_id`, running/queued/delayed, and the start of each |
