@@ -420,6 +420,19 @@ func (s *SchedulerSuite) TestPollLoopDoesNotRestartATaskInFlight() {
 	s.executor.AssertNumberOfCalls(s.T(), "ExecuteTask", 1)
 }
 
+func (s *SchedulerSuite) TestProcessDueTasksStartsNothingOnceStopping() {
+	task := &db.ScheduledTask{ID: 1, ChannelID: "ch1", Schedule: "0 13 * * *", Type: db.TaskTypeCron, Prompt: "p", Enabled: true}
+	s.store.On("GetDueTasks", mock.Anything, mock.Anything).Return([]*db.ScheduledTask{task}, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ts := NewTaskScheduler(s.store, s.executor, time.Hour, s.logger)
+	ts.processDueTasks(ctx)
+	ts.wg.Wait()
+
+	s.executor.AssertNotCalled(s.T(), "ExecuteTask", mock.Anything, mock.Anything)
+}
+
 func (s *SchedulerSuite) TestPollLoopExecutorError() {
 	task := &db.ScheduledTask{
 		ID: 2, ChannelID: "ch1", Schedule: "1h",
