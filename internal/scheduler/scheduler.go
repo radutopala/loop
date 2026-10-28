@@ -239,6 +239,11 @@ func (s *TaskScheduler) processDueTasks(ctx context.Context) {
 	// Each due task runs on its own goroutine, so a long run doesn't hold
 	// back the tasks due after it.
 	for _, task := range tasks {
+		// Once stopping, start nothing: a run that ended since GetDueTasks
+		// freed its slot, and would otherwise start over.
+		if ctx.Err() != nil {
+			return
+		}
 		if !s.beginRun(task.ID) {
 			continue
 		}
