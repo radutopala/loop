@@ -85,6 +85,7 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I clear all prompt shortcuts via API$`, tc.clearAllShortcutsViaAPI)
 	ctx.Step(`^I add a bash shortcut "([^"]*)" with command "([^"]*)" via API$`, tc.addBashShortcutViaAPI)
 	ctx.Step(`^I clear all bash shortcuts via API$`, tc.clearAllBashShortcutsViaAPI)
+	ctx.Step(`^no channel is left from another scenario$`, tc.clearLeftoverChannels)
 
 	// Config history steps
 	ctx.Step(`^I remember the newest global config revision as "([^"]*)"$`, tc.rememberNewestConfigRevision)
@@ -1045,6 +1046,61 @@ func (tc *TestContext) clearAllBashShortcutsViaAPI() error {
 		}
 		if tc.LastStatus != http.StatusNoContent {
 			return fmt.Errorf("failed to delete bash shortcut %q: status %d, body: %s", sc.Name, tc.LastStatus, string(tc.LastBody))
+		}
+	}
+	return nil
+}
+
+// clearLeftoverChannels deletes every channel and thread but the shared
+// sample project's: those an earlier scenario left behind, such as one created
+// through the UI or a task thread its run created after cleanup. Recent lists
+// sessions from the whole daemon, so a leftover with activity shows in it.
+func (tc *TestContext) clearLeftoverChannels() error {
+	type channel struct {
+		ID       string `json:"channel_id"`
+		ParentID string `json:"parent_id"`
+	}
+	list := func() ([]channel, error) {
+		if err := tc.doRequest(http.MethodGet, "/api/channels", ""); err != nil {
+			return nil, err
+		}
+		if tc.LastStatus != http.StatusOK {
+			return nil, fmt.Errorf("failed to list channels: status %d, body: %s", tc.LastStatus, string(tc.LastBody))
+		}
+		var channels []channel
+		if err := json.Unmarshal(tc.LastBody, &channels); err != nil {
+			return nil, fmt.Errorf("decoding channel list: %w", err)
+		}
+		return channels, nil
+	}
+	keep := func(id, parentID string) bool {
+		return sampleProject.channelID != "" && (id == sampleProject.channelID || parentID == sampleProject.channelID)
+	}
+	channels, err := list()
+	if err != nil {
+		return err
+	}
+	// Threads first: a thread whose parent is gone isn't deleted with it.
+	for _, threads := range []bool{true, false} {
+		for _, ch := range channels {
+			if keep(ch.ID, ch.ParentID) || (ch.ParentID != "") != threads {
+				continue
+			}
+			path := "/api/channels/" + ch.ID
+			if threads {
+				path = "/api/threads/" + ch.ID
+			}
+			if err := tc.doRequest(http.MethodDelete, path, ""); err != nil {
+				return err
+			}
+		}
+	}
+	if channels, err = list(); err != nil {
+		return err
+	}
+	for _, ch := range channels {
+		if !keep(ch.ID, ch.ParentID) {
+			return fmt.Errorf("channel %s is still listed after deleting it", ch.ID)
 		}
 	}
 	return nil
