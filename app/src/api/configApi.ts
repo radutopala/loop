@@ -1,3 +1,4 @@
+import { applyEdits, modify, type ParseError, parse } from "jsonc-parser";
 import { apiFetch, getApiUrl } from "./api";
 
 // ── Schema types ──
@@ -59,6 +60,25 @@ export async function saveGlobalConfig(content: string): Promise<void> {
     body: JSON.stringify({ content }),
   });
   if (!res.ok) throw new Error(`Failed to save global config: ${res.statusText}`);
+}
+
+/** raw, a config file's text, with path set to value, or removed when value
+ *  is undefined, and everything else, comments too, left as it was. */
+export function withConfigValue(raw: string, path: string[], value: unknown): string {
+  const text = raw.trim() === "" ? "{}\n" : raw;
+  const errors: ParseError[] = [];
+  parse(text, errors, { allowTrailingComma: true });
+  if (errors.length > 0) throw new Error("the config file doesn't parse; fix it first");
+  const eol = text.includes("\r\n") ? "\r\n" : "\n";
+  const indent = /\n(\s+)"/.exec(text)?.[1];
+  const formattingOptions = { insertSpaces: !indent?.startsWith("\t"), tabSize: indent && !indent.startsWith("\t") ? indent.length : 2, eol };
+  return applyEdits(text, modify(text, path, value, { formattingOptions }));
+}
+
+/** Sets path in the global config file, leaving the rest of it as it was. */
+export async function setGlobalConfigValue(path: string[], value: unknown): Promise<void> {
+  const cfg = await fetchGlobalConfig();
+  await saveGlobalConfig(withConfigValue(cfg.raw ?? "", path, value));
 }
 
 export async function fetchProjectConfig(channelId: string): Promise<ConfigResponse> {

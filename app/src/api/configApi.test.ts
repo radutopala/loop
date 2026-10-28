@@ -9,6 +9,7 @@ import {
   fetchProjectTrust,
   ProjectTrustChangedError,
   restoreConfigRevision,
+  setGlobalConfigValue,
   trustProjectConfig,
 } from "./configApi";
 
@@ -177,5 +178,20 @@ describe("configRevisionSourceLabel", () => {
     ["other", "other"],
   ])("labels %s", (source, label) => {
     expect(configRevisionSourceLabel(source)).toBe(label);
+  });
+});
+
+describe("setGlobalConfigValue", () => {
+  it("sets one key in the global config and keeps its comments", async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ path: "", content: null, raw: '{\n  // mine\n  "desktop": {"theme": "light"}\n}' }) });
+    fetchMock.mockResolvedValueOnce({ ok: true });
+    await setGlobalConfigValue(["desktop", "hidden_pills"], ["ci", "comment"]);
+    const [url, init] = fetchMock.mock.calls[1] ?? [];
+    expect(url).toMatch(/\/api\/config$/);
+    expect(init.method).toBe("PUT");
+    const content: string = JSON.parse(init.body).content;
+    expect(content).toContain("// mine");
+    expect(content).toContain('"theme": "light"');
+    expect(content).toMatch(/"hidden_pills": \[\s*"ci",\s*"comment"\s*\]/);
   });
 });

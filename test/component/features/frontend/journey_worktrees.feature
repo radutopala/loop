@@ -214,3 +214,25 @@ Feature: Worktrees Journey
     And I click button "Worktrees" in the git panel
     Then the element "[data-testid='worktrees-panel']" should contain text "rename-wt"
 
+
+  @pr-worktree
+  Scenario: An open PR opens in a worktree on its branch from +wt, then its thread from the branch picker
+    Given I set up a test channel via API for git repo "bdd-pr-wt"
+    And the channel's repo has origin "https://github.com/o/r.git"
+    And gh lists open PR #42 "Fix the login redirect" on branch "fix-login"
+    And I open the app in a browser
+    And I wait for text "bdd-pr-wt" to appear
+
+    When I hover over "bdd-pr-wt" in the sidebar
+    And I click the worktree button for "bdd-pr-wt" in the sidebar
+    Then the element "[data-testid='sidebar-worktree-prs-42']" should contain text "Fix the login redirect"
+    And the element "[data-testid='sidebar-worktree-prs-42']" should contain text "+wt"
+
+    When I click on "[data-testid='sidebar-worktree-prs-42']"
+    Then I wait up to "15s" for text "pr-42 (fix-login)" to appear
+
+    When I click on "bdd-pr-wt" in the sidebar
+    And I click on the button with title "Branch"
+    Then the element "[data-testid='branch-picker-prs-42']" should contain text "go"
+    When I click on "[data-testid='branch-picker-prs-42']"
+    Then the element "[data-testid='header-info']" should contain text "fix-login"

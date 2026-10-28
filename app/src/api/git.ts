@@ -130,6 +130,14 @@ export async function fetchPR(channelId: string, fresh = false): Promise<PRRespo
   return res.json();
 }
 
+/** The repo's open PRs (MRs on GitLab), for checking one out in a new worktree. */
+export async function fetchOpenPRs(channelId: string): Promise<PRInfo[]> {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/prs`);
+  if (!res.ok) throw new Error((await res.text()).trim() || `Failed to list the open PRs: ${res.statusText}`);
+  const data: { prs: PRInfo[] } = await res.json();
+  return data.prs;
+}
+
 export async function fetchDiff(channelId: string, source?: string, target?: string, rootIndex?: number): Promise<DiffResponse> {
   const params = new URLSearchParams();
   if (source && target) {

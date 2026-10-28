@@ -33,6 +33,16 @@ func (m *mockGitHubLookup) LookupPR(ctx context.Context, workdir, ghUser, branch
 	return pr, args.Error(1)
 }
 
+func (m *mockGitHubLookup) ListOpenPRs(ctx context.Context, workdir, ghUser string) ([]githubapi.PRInfo, error) {
+	args := m.Called(ctx, workdir, ghUser)
+	prs, _ := args.Get(0).([]githubapi.PRInfo)
+	return prs, args.Error(1)
+}
+
+func (m *mockGitHubLookup) CheckoutPR(ctx context.Context, workdir, ghUser string, number int) error {
+	return m.Called(ctx, workdir, ghUser, number).Error(0)
+}
+
 // gitInitRepoWithBranch creates a temp git repo on a named branch with one
 // commit and a GitHub origin. Returns the dir path. Branch creation lets the
 // handler's gitBranch helper return a non-empty value; the origin routes the
@@ -545,6 +555,16 @@ func (m *mockGitLabLookup) LookupMR(ctx context.Context, workdir, configDir, bra
 	args := m.Called(ctx, workdir, configDir, branch)
 	pr, _ := args.Get(0).(*githubapi.PRInfo)
 	return pr, args.Error(1)
+}
+
+func (m *mockGitLabLookup) ListOpenMRs(ctx context.Context, workdir, configDir string) ([]githubapi.PRInfo, error) {
+	args := m.Called(ctx, workdir, configDir)
+	prs, _ := args.Get(0).([]githubapi.PRInfo)
+	return prs, args.Error(1)
+}
+
+func (m *mockGitLabLookup) CheckoutMR(ctx context.Context, workdir, configDir string, iid int) error {
+	return m.Called(ctx, workdir, configDir, iid).Error(0)
 }
 
 // setOrigin points dir's origin remote at url, or removes it when url is "".

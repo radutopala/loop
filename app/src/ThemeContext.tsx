@@ -27,6 +27,9 @@ interface ThemeContextValue {
   setFontSizes: (sizes: FontSizes) => void;
   islands: boolean;
   setIslands: (v: boolean) => void;
+  /** The sidebar pill kinds turned off (desktop.hidden_pills). */
+  hiddenPills: string[];
+  setHiddenPills: (kinds: string[]) => void;
 }
 
 const ThemeContext = createContext<ThemeContextValue>({
@@ -38,6 +41,8 @@ const ThemeContext = createContext<ThemeContextValue>({
   setFontSizes: () => {},
   islands: true,
   setIslands: () => {},
+  hiddenPills: [],
+  setHiddenPills: () => {},
 });
 
 export function ThemeProvider({
@@ -45,12 +50,14 @@ export function ThemeProvider({
   initialTheme,
   initialFontSizes,
   initialIslands,
+  initialHiddenPills,
   customThemes,
 }: {
   children: ReactNode;
   initialTheme?: string;
   initialFontSizes?: Partial<FontSizes>;
   initialIslands?: boolean;
+  initialHiddenPills?: string[];
   customThemes?: Record<string, ColorPalette>;
 }) {
   const allThemes = { ...builtinThemes, ...customThemes };
@@ -59,6 +66,7 @@ export function ThemeProvider({
   const [themeName, setThemeNameState] = useState<string>(initialTheme && allThemes[initialTheme] ? initialTheme : "dark");
   const [fontSizes, setFontSizes] = useState<FontSizes>({ ...DEFAULT_FONT_SIZES, ...initialFontSizes });
   const [islands, setIslands] = useState(initialIslands ?? true);
+  const [hiddenPills, setHiddenPills] = useState<string[]>(initialHiddenPills ?? []);
 
   const baseColors = allThemes[themeName] ?? darkColors;
   const colors = islands
@@ -124,7 +132,9 @@ export function ThemeProvider({
     if (meta) meta.setAttribute("content", colors.canvas);
   }, [themeName, colors, islands]);
 
-  return <ThemeContext.Provider value={{ themeName, colors, setThemeName, availableThemes, fontSizes, setFontSizes, islands, setIslands }}>{children}</ThemeContext.Provider>;
+  return (
+    <ThemeContext.Provider value={{ themeName, colors, setThemeName, availableThemes, fontSizes, setFontSizes, islands, setIslands, hiddenPills, setHiddenPills }}>{children}</ThemeContext.Provider>
+  );
 }
 
 export function useTheme() {

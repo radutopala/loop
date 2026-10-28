@@ -95,7 +95,7 @@ export function Settings({
   initialSection,
   onProjectTrusted,
 }: SettingsProps) {
-  const { colors, setThemeName, setFontSizes, setIslands } = useTheme();
+  const { colors, setThemeName, setFontSizes, setIslands, setHiddenPills } = useTheme();
   const [daemonInfo, setDaemonInfo] = useState<DaemonInfo | null>(null);
   const [restarting, setRestarting] = useState(false);
   const [schema, setSchema] = useState<ConfigSchema | null>(null);
@@ -211,12 +211,13 @@ export function Settings({
   };
 
   // applyDesktop applies a global config's desktop settings (theme, font
-  // sizes, islands) live.
+  // sizes, islands, hidden sidebar pills) live.
   const applyDesktop = (desktop: any) => {
     if (!desktop) return;
     setThemeName(desktop.theme || "dark");
     setFontSizes(desktop.font_sizes ? { ...DEFAULT_FONT_SIZES, ...desktop.font_sizes } : { ...DEFAULT_FONT_SIZES });
     setIslands(desktop.islands ?? false);
+    setHiddenPills(desktop.hidden_pills ?? []);
   };
 
   const handleSaveGlobalConfig = async (content: string): Promise<string | null> => {

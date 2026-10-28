@@ -2204,6 +2204,31 @@ A GitLab merge request has `"kind": "mr"`, its IID as `number`, and GitLab's low
 
 **Errors:** `404` if channel not found.
 
+### `GET /api/channels/{id}/prs`
+
+List the open pull requests of the channel's repo: GitHub PRs via `gh pr list`, or GitLab merge requests via `glab mr list` when `origin` is a GitLab host. The branch pickers list them to check one out in a worktree (see `pr` on [`POST /api/worktrees`](#post-apiworktrees)).
+
+**Response (200):**
+```json
+{
+  "prs": [
+    {
+      "number": 42,
+      "url": "https://github.com/owner/repo/pull/42",
+      "base_ref": "main",
+      "head_ref": "fix-login",
+      "state": "OPEN",
+      "title": "Fix the login redirect",
+      "is_draft": false
+    }
+  ]
+}
+```
+
+Each entry has the fields of [`GET /api/channels/{id}/pr`](#get-apichannelsidpr)'s `pr`, `kind: "mr"` included on GitLab. A channel without a directory or a repo without a GitHub or GitLab `origin` gets `{"prs": []}`.
+
+**Errors:** `404` if channel not found, `502` when `gh`/`glab` fails (the body is its error).
+
 ---
 
 ## PR watching
@@ -2406,9 +2431,12 @@ Create a git worktree as a new thread. The worktree gets its own branch (`worktr
   "branch": "main",
   "name": "optional-name",
   "author_id": "optional-user-id",
-  "message": "optional first prompt"
+  "message": "optional first prompt",
+  "pr": 0
 }
 ```
+
+With `pr` set to an open PR's number (an MR's IID on GitLab), the worktree is checked out on that PR's own branch instead: `git worktree add --detach`, then `gh pr checkout <pr>` (or `glab mr checkout <pr>`) inside it, so pushes from it update the PR. `branch` is then optional, `name` defaults to `pr-<pr>`, and the thread is named `<name> (<head branch>)`. A failed checkout removes the worktree and answers `500` with the error; so does a repo without a GitHub or GitLab `origin`.
 
 If `message` is provided, the bot posts it as a self-mention into the new thread to trigger a runner immediately with that prompt — same auto-trigger semantics as `POST /api/threads`.
 

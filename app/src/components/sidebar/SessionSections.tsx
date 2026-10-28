@@ -1,9 +1,10 @@
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { Fragment, type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { Channel } from "../../types";
+import { InfoPopup } from "./InfoPopup";
 import type { PillKind } from "./pills";
-import { fixingPill, REVIEWING_PILL, SIDEBAR_PILLS } from "./pills";
+import { fixingPill, REVIEWING_PILL, SIDEBAR_PILLS, useShownPills } from "./pills";
 import { RowInfoPopup } from "./RowInfoPopup";
 import { useRevealSelected } from "./reveal";
 import { SessionKindIcon } from "./SessionKindIcon";
@@ -18,25 +19,43 @@ interface SectionTabsProps {
   showTabs: boolean;
   recentCount: number;
   onChange: (tab: SectionKey) => void;
-  /** Whether the open tab hides task threads. */
-  hideTasks: boolean;
+  /** Whether each tab hides task threads; the toggle flips the open tab's. */
+  hideTasks: Record<SectionKey, boolean>;
   onToggleHideTasks: () => void;
   /** Whether both tabs show only the rows with a lit pill. */
   needsYouOnly: boolean;
   onToggleNeedsYouOnly: () => void;
+  /** Opens the menu that picks which pills show and count as needing you. */
+  onPickPills: (e: React.MouseEvent) => void;
 }
 
 /**
  * Tabs switching the sidebar list between Recent sessions and the channel
  * tree, with the open tab's task-thread filter beside them.
  */
-export function SectionTabs({ tab, showTabs, recentCount, onChange, hideTasks, onToggleHideTasks, needsYouOnly, onToggleNeedsYouOnly }: SectionTabsProps) {
+export function SectionTabs({ tab, showTabs, recentCount, onChange, hideTasks, onToggleHideTasks, needsYouOnly, onToggleNeedsYouOnly, onPickPills }: SectionTabsProps) {
   const { colors } = useTheme();
+  const pills = useShownPills();
   const tabs: { key: SectionKey; label: string; count?: number }[] = [
     { key: "recent", label: "Recent", count: recentCount },
     { key: "tree", label: "Tree" },
   ];
   const tabLabel = tab === "recent" ? "Recent" : "Tree";
+  // Which control the pointer rests on, for its info card.
+  const [hovered, setHovered] = useState<SectionInfoKey | null>(null);
+  const refs = {
+    recent: useRef<HTMLButtonElement>(null),
+    tree: useRef<HTMLButtonElement>(null),
+    bell: useRef<HTMLButtonElement>(null),
+    tasks: useRef<HTMLButtonElement>(null),
+  };
+  const hover = (key: SectionInfoKey) => ({
+    ref: refs[key],
+    onMouseEnter: () => setHovered(key),
+    onMouseLeave: () => setHovered(null),
+  });
+  const hideTasksHere = hideTasks[tab];
+  const showing = needsYouOnly ? "only the sessions that need you" : "all sessions";
   return (
     <div
       data-sidebar-sticky
@@ -76,6 +95,7 @@ export function SectionTabs({ tab, showTabs, recentCount, onChange, hideTasks, o
                 role="tab"
                 aria-selected={selected}
                 data-testid={`sidebar-tab-${t.key}`}
+                {...hover(t.key)}
                 onClick={() => onChange(t.key)}
                 style={{
                   position: "relative",
@@ -109,8 +129,10 @@ export function SectionTabs({ tab, showTabs, recentCount, onChange, hideTasks, o
       <button
         data-testid="sidebar-needs-you"
         onClick={onToggleNeedsYouOnly}
+        onContextMenu={onPickPills}
         aria-pressed={needsYouOnly}
-        title={needsYouOnly ? "Show all sessions" : `Show only sessions that need you (${SIDEBAR_PILLS.map((p) => p.label).join(", ")})`}
+        aria-label={needsYouOnly ? "Show all sessions" : "Show only sessions that need you"}
+        {...hover("bell")}
         style={{
           flexShrink: 0,
           display: "flex",
@@ -132,8 +154,9 @@ export function SectionTabs({ tab, showTabs, recentCount, onChange, hideTasks, o
       <button
         data-testid="sidebar-hide-tasks"
         onClick={onToggleHideTasks}
-        aria-pressed={hideTasks}
-        title={hideTasks ? `Show task threads in ${tabLabel}` : `Hide task threads in ${tabLabel}`}
+        aria-pressed={hideTasksHere}
+        aria-label={hideTasksHere ? `Show task threads in ${tabLabel}` : `Hide task threads in ${tabLabel}`}
+        {...hover("tasks")}
         style={{
           flexShrink: 0,
           display: "flex",
@@ -142,17 +165,95 @@ export function SectionTabs({ tab, showTabs, recentCount, onChange, hideTasks, o
           border: "none",
           borderRadius: 4,
           cursor: "pointer",
-          color: hideTasks ? colors.active : colors.textDim,
-          background: hideTasks ? colors.hoverBg : "none",
+          color: hideTasksHere ? colors.active : colors.textDim,
+          background: hideTasksHere ? colors.hoverBg : "none",
         }}
       >
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="12" cy="12" r="10" />
           <polyline points="12 6 12 12 16 14" />
-          {hideTasks && <line x1="4" y1="4" x2="20" y2="20" />}
+          {hideTasksHere && <line x1="4" y1="4" x2="20" y2="20" />}
         </svg>
       </button>
+      <SectionInfo
+        anchorRef={refs.recent}
+        hovered={hovered === "recent"}
+        testId="sidebar-tab-recent-info"
+        title="Recent"
+        description="Sessions active in the last 48 hours, from anywhere in the tree; those waiting on you or running come first."
+        lines={[
+          ["sessions", String(recentCount)],
+          ["showing", showing, "showing"],
+          ["task threads", hideTasks.recent ? "hidden" : "shown"],
+        ]}
+      />
+      <SectionInfo
+        anchorRef={refs.tree}
+        hovered={hovered === "tree"}
+        testId="sidebar-tab-tree-info"
+        title="Tree"
+        description="Every channel with its threads and worktrees."
+        lines={[
+          ["showing", showing, "showing"],
+          ["task threads", hideTasks.tree ? "hidden" : "shown"],
+        ]}
+      />
+      <SectionInfo
+        anchorRef={refs.bell}
+        hovered={hovered === "bell"}
+        testId="sidebar-needs-you-info"
+        title={`Showing ${showing}`}
+        description={`Click to show ${needsYouOnly ? "all sessions" : "only the sessions waiting on you: those with one of these pills"}. Right-click to turn pills on or off.`}
+        lines={SIDEBAR_PILLS.map((p) => {
+          const on = pills.some((s) => s.kind === p.kind);
+          return [<StatusPill key={p.kind} label={p.label} color={on ? colors[p.color] : colors.textDisabled} />, `${p.hint}${on ? "" : " · turned off"}`, p.kind];
+        })}
+      />
+      <SectionInfo
+        anchorRef={refs.tasks}
+        hovered={hovered === "tasks"}
+        testId="sidebar-hide-tasks-info"
+        title="Task threads"
+        description={`The threads scheduled tasks post to. Click to ${hideTasksHere ? "show" : "hide"} them in ${tabLabel}; running ones and those waiting on you always show.`}
+        lines={[
+          ["Recent", hideTasks.recent ? "hidden" : "shown", "recent"],
+          ["Tree", hideTasks.tree ? "hidden" : "shown", "tree"],
+        ]}
+      />
     </div>
+  );
+}
+
+type SectionInfoKey = SectionKey | "bell" | "tasks";
+
+interface SectionInfoProps {
+  anchorRef: RefObject<HTMLElement | null>;
+  hovered: boolean;
+  testId: string;
+  title: string;
+  description: string;
+  /** Label, value and an optional key for the value's test id (the label's text otherwise). */
+  lines: [ReactNode, string, string?][];
+}
+
+/** The info card of a control in the bar above the list. */
+function SectionInfo({ anchorRef, hovered, testId, title, description, lines }: SectionInfoProps) {
+  const { colors } = useTheme();
+  return (
+    <InfoPopup anchorRef={anchorRef} hovered={hovered} testId={testId} title={title}>
+      <div style={{ gridColumn: "1 / -1", color: colors.textLight, maxWidth: 320, marginBottom: 4 }}>{description}</div>
+      {lines.map(([label, value, key]) => {
+        const id = key ?? String(label);
+        return (
+          <Fragment key={id}>
+            <span style={{ color: colors.textMuted }}>{label}</span>
+            <span data-testid={`${testId}-${id.replace(/ /g, "-")}`} style={{ color: colors.textLight }}>
+              {value}
+            </span>
+          </Fragment>
+        );
+      })}
+    </InfoPopup>
   );
 }
 
@@ -174,8 +275,9 @@ function SessionRow({ channel, context, selected, unread, running, pills, traili
   const [hovered, setHovered] = useState(false);
   const rowRef = useRef<HTMLButtonElement>(null);
   useRevealSelected(rowRef, selected);
+  const shown = useShownPills();
   const waiting = pills.length > 0;
-  const fixing = fixingPill(channel.pr_attention);
+  const fixing = fixingPill(channel.pr_attention, shown);
   return (
     <div style={{ margin: "0 8px" }}>
       <RowInfoPopup channel={channel} anchorRef={rowRef} hovered={hovered} />
@@ -235,9 +337,11 @@ function SessionRow({ channel, context, selected, unread, running, pills, traili
           </span>
         )}
         {unread && !selected && <span style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: "#5b9cf5", flexShrink: 0 }} />}
-        {SIDEBAR_PILLS.filter((p) => pills.includes(p.kind)).map((p) => (
-          <StatusPill key={p.kind} label={p.label} color={colors[p.color]} />
-        ))}
+        {shown
+          .filter((p) => pills.includes(p.kind))
+          .map((p) => (
+            <StatusPill key={p.kind} label={p.label} color={colors[p.color]} />
+          ))}
         {channel.review_running && <StatusPill label={REVIEWING_PILL.label} color={colors[REVIEWING_PILL.color]} />}
         {fixing && <StatusPill label={fixing.label} color={colors[fixing.color]} />}
         {!waiting && trailing && <span style={{ flexShrink: 0, fontSize: 10, fontFamily: fonts.mono, color: colors.textDisabled }}>{trailing}</span>}

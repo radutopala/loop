@@ -32,6 +32,7 @@ import { WorkflowsGlobalPanel, type WorkflowsGlobalPanelHandle } from "./compone
 import { CommandPalette } from "./components/shared/CommandPalette";
 import { DaemonUnavailable } from "./components/shared/DaemonUnavailable";
 import { LoopLogo } from "./components/shared/LoopLogo";
+import type { OpenPRHandler } from "./components/shared/OpenPRs";
 import { Settings } from "./components/shared/Settings";
 import { ciPillIds, commentPillIds, conflictPillIds, trustPillIds } from "./components/sidebar/pills";
 import { Sidebar } from "./components/sidebar/Sidebar";
@@ -101,7 +102,12 @@ export default function App() {
   if (desktop === undefined) return null;
 
   return (
-    <ThemeProvider initialTheme={desktop?.theme} initialFontSizes={desktop?.font_sizes ? { ...DEFAULT_FONT_SIZES, ...desktop.font_sizes } : undefined} initialIslands={desktop?.islands ?? true}>
+    <ThemeProvider
+      initialTheme={desktop?.theme}
+      initialFontSizes={desktop?.font_sizes ? { ...DEFAULT_FONT_SIZES, ...desktop.font_sizes } : undefined}
+      initialIslands={desktop?.islands ?? true}
+      initialHiddenPills={desktop?.hidden_pills}
+    >
       <AppInner />
     </ThemeProvider>
   );
@@ -635,6 +641,28 @@ function AppInner() {
     [loadChannels, handleSelect],
   );
 
+  // A PR's worktree thread when there is one, else its worktree imported,
+  // else a new worktree checked out on its branch.
+  const handleOpenPR = useCallback<OpenPRHandler>(
+    async (channelId, pr, existing) => {
+      if (existing?.thread_id) {
+        handleSelect(existing.thread_id);
+        return;
+      }
+      setError(null);
+      try {
+        const { threadId } = existing ? await importWorktree(channelId, existing.path) : await createWorktreeThread(channelId, pr.base_ref, undefined, pr.number);
+        await loadChannels();
+        handleSelect(threadId);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to open the PR in a worktree";
+        setError(message);
+        console.error("open PR worktree failed:", err);
+      }
+    },
+    [loadChannels, handleSelect],
+  );
+
   const handleImportWorktree = useCallback(
     async (channelId: string, worktreePath: string) => {
       setError(null);
@@ -760,7 +788,7 @@ function AppInner() {
   useEffect(() => {
     syncPill("ci", ciPillIds(channels));
     syncPill("conflict", conflictPillIds(channels));
-    syncPill("cmt", commentPillIds(channels));
+    syncPill("comment", commentPillIds(channels));
   }, [channels, syncPill]);
 
   const selectedChannel = channels.find((c) => c.id === selectedId);
@@ -813,6 +841,7 @@ function AppInner() {
           onCreateChannel={handleCreateChannel}
           onCreateThread={handleCreateThread}
           onCreateWorktree={handleCreateWorktree}
+          onOpenPR={handleOpenPR}
           onDeleteThread={handleDelete}
           onRenameThread={handleRename}
           onSetDescription={handleSetDescription}
@@ -862,6 +891,7 @@ function AppInner() {
               diffStats={diffStats}
               parentIsWorktree={!!(selectedChannel.parent_id && channels.find((c) => c.id === selectedChannel.parent_id)?.worktree)}
               onCreateWorktree={handleCreateWorktree}
+              onOpenPR={handleOpenPR}
               onImportWorktree={handleImportWorktree}
               onSelectThread={handleSelect}
               initialChatState={getState(selectedId)}

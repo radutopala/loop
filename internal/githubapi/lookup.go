@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -454,6 +455,21 @@ func (c *Client) ListOpenPRs(ctx context.Context, workdir, ghUser string) ([]PRI
 		})
 	}
 	return prs, nil
+}
+
+// CheckoutPR checks out PR number in workdir the way `gh pr checkout` does:
+// a local branch named after the PR's head that tracks it, a fork's too, so
+// a push from workdir updates the PR.
+func (c *Client) CheckoutPR(ctx context.Context, workdir, ghUser string, number int) error {
+	if workdir == "" || number <= 0 {
+		return fmt.Errorf("workdir and PR number are required")
+	}
+	env, err := c.tokenEnv(ctx, workdir, ghUser)
+	if err != nil {
+		return err
+	}
+	_, err = c.runner.Run(ctx, workdir, env, "pr", "checkout", strconv.Itoa(number))
+	return err
 }
 
 // PRReviewComment is a single inline review comment already filed on a PR

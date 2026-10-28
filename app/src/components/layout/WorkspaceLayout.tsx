@@ -90,6 +90,7 @@ import { SessionsPanel } from "../panels/SessionsPanel";
 import { TasksPanel } from "../panels/TasksPanel";
 import { getCloseForInstance, Terminal } from "../panels/Terminal";
 import { WorkflowsLayoutPanel } from "../panels/WorkflowsLayoutPanel";
+import type { OpenPRHandler } from "../shared/OpenPRs";
 import { ChannelHeaderInfo } from "./ChannelHeaderInfo";
 import { ChatShellPane } from "./ChatShellPane";
 import { ChatSlot, createChatHost } from "./ChatSlot";
@@ -296,6 +297,7 @@ interface WorkspaceLayoutProps {
   style?: React.CSSProperties;
   parentIsWorktree?: boolean;
   onCreateWorktree?: (channelId: string, branch: string) => Promise<void>;
+  onOpenPR?: OpenPRHandler;
   onImportWorktree?: (channelId: string, worktreePath: string) => Promise<void>;
   onSelectThread?: (threadId: string) => void;
   /** Restored chat state from the app-level store. */
@@ -346,6 +348,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     style,
     parentIsWorktree,
     onCreateWorktree,
+    onOpenPR,
     onImportWorktree,
     onSelectThread,
     initialChatState,
@@ -1783,6 +1786,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                   branch={branch}
                   onBranchChanged={onStatusChange}
                   onCreateWorktree={channel.parent_id ? undefined : onCreateWorktree}
+                  onOpenPR={channel.parent_id ? undefined : onOpenPR}
                   onImportWorktree={channel.parent_id ? undefined : onImportWorktree}
                   onSelectThread={channel.parent_id ? undefined : onSelectThread}
                   onError={setBranchError}

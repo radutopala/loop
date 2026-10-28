@@ -9,17 +9,21 @@ import (
 	"github.com/radutopala/loop/internal/githubapi"
 )
 
-// GitHubLookup is the subset of githubapi.Client the PR endpoint needs.
+// GitHubLookup is the subset of githubapi.Client the PR endpoints need.
 // It is an interface so tests can stub `gh` invocations without a real
 // binary on PATH.
 type GitHubLookup interface {
 	LookupPR(ctx context.Context, workdir, ghUser, branch string) (*githubapi.PRInfo, error)
+	ListOpenPRs(ctx context.Context, workdir, ghUser string) ([]githubapi.PRInfo, error)
+	CheckoutPR(ctx context.Context, workdir, ghUser string, number int) error
 }
 
-// GitLabLookup is the subset of gitlabapi.Client the PR endpoint needs.
+// GitLabLookup is the subset of gitlabapi.Client the PR endpoints need.
 type GitLabLookup interface {
 	IsGitLabHost(host, configDir string) bool
 	LookupMR(ctx context.Context, workdir, configDir, branch string) (*githubapi.PRInfo, error)
+	ListOpenMRs(ctx context.Context, workdir, configDir string) ([]githubapi.PRInfo, error)
+	CheckoutMR(ctx context.Context, workdir, configDir string, iid int) error
 }
 
 // prCacheTTL bounds how long a PR lookup (hit or miss) is served from cache.

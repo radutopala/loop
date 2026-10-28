@@ -261,7 +261,8 @@
   //    "terminal": 13,
   //    "editor": 13,
   //    "panels": 12
-  //  }
+  //  },
+  //  "hidden_pills": [] // sidebar pills to hide: gate, rev, ask, plan, trust, ci, conflict, comment
   //},
 
   // Extra environment variables passed to all containers

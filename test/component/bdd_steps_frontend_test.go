@@ -224,6 +224,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^the channel's repo has origin "([^"]*)"$`, tc.setChannelOrigin)
 	ctx.Step(`^gh reports PR #(\d+) "([^"]*)" for any branch$`, tc.fakeGhPR)
 	ctx.Step(`^glab reports MR !(\d+) "([^"]*)" for any branch$`, tc.fakeGlabMR)
+	ctx.Step(`^gh lists open PR #(\d+) "([^"]*)" on branch "([^"]*)"$`, tc.fakeGhOpenPR)
 	ctx.Step(`^the row info should show the (channel|worktree)'s path and branch "([^"]*)"$`, tc.assertRowInfo)
 	ctx.Step(`^the row info "(title|ticket|branch-detail|pr|pr-detail|commit|commit-detail|sync|model|status|description)" should read "([^"]*)"$`, tc.assertRowInfoLine)
 	ctx.Step(`^the row info should not show "(ticket|pr|commit|sync|model|status|description)"$`, tc.assertRowInfoLineAbsent)
@@ -1231,9 +1232,9 @@ func (tc *TestContext) clickButtonWithTitle(title string) error {
 	)
 }
 
-// clickWorktreeButtonForChannel clicks the "+wt" (New worktree from branch)
+// clickWorktreeButtonForChannel clicks the "+wt" (new worktree from a branch or PR)
 // button that belongs to a specific sidebar channel row. Every channel with a
-// dir_path renders its own +wt button, so a plain button[title=...] selector
+// dir_path renders its own +wt button, so a plain button[data-testid=...] selector
 // would hit whichever row comes first (e.g. the default DM); this scopes the
 // click to the row whose name matches, so the worktree branches off the right
 // project.
@@ -1251,7 +1252,7 @@ func (tc *TestContext) clickWorktreeButtonForChannel(name string) error {
 		// Walk up to this row and click its own +wt button.
 		let row = nameEl;
 		for (let i = 0; i < 8 && row; i++) {
-			const btn = row.querySelector('button[title="New worktree from branch"]');
+			const btn = row.querySelector('button[data-testid="sidebar-worktree-button"]');
 			if (btn) { btn.click(); return true; }
 			row = row.parentElement;
 		}
@@ -1434,14 +1435,38 @@ func (tc *TestContext) fakeGlabMR(iid int, title string) error {
 	return tc.fakeCLI("glab", "mr list", string(list))
 }
 
+// fakeGhOpenPR puts a gh on the daemon's PATH that lists one open PR,
+// number titled title on branch, and checks it out on that branch.
+func (tc *TestContext) fakeGhOpenPR(number int, title, branch string) error {
+	list, _ := json.Marshal([]map[string]any{{
+		"number": number, "url": fmt.Sprintf("https://github.com/o/r/pull/%d", number),
+		"baseRefName": "main", "headRefName": branch, "state": "OPEN", "title": title, "isDraft": false,
+	}})
+	return tc.fakeCLICases("gh", [][2]string{
+		{"pr list", fmt.Sprintf("echo '%s'", list)},
+		{"pr checkout", fmt.Sprintf("git checkout -q -b '%s'", branch)},
+	})
+}
+
 // fakeCLI installs a fake bin in /usr/local/bin that prints out for the
 // subcommand sub (its first two args) and fails for anything else.
 func (tc *TestContext) fakeCLI(bin, sub, out string) error {
+	return tc.fakeCLICases(bin, [][2]string{{sub, fmt.Sprintf("echo '%s'", out)}})
+}
+
+// fakeCLICases installs a fake bin in /usr/local/bin that runs the shell
+// command of the case whose subcommand (its first two args) it is called
+// with, and fails for anything else.
+func (tc *TestContext) fakeCLICases(bin string, cases [][2]string) error {
 	if found, err := exec.LookPath(bin); err == nil {
 		return fmt.Errorf("a %s is already on PATH at %s", bin, found)
 	}
 	path := "/usr/local/bin/" + bin
-	script := fmt.Sprintf("#!/bin/sh\nif [ \"$1 $2\" = \"%s\" ]; then echo '%s'; exit 0; fi\necho \"fake %s: unsupported: $*\" >&2\nexit 1\n", sub, out, bin)
+	script := "#!/bin/sh\ncase \"$1 $2\" in\n"
+	for _, c := range cases {
+		script += fmt.Sprintf("%q) %s ;;\n", c[0], c[1])
+	}
+	script += fmt.Sprintf("*) echo \"fake %s: unsupported: $*\" >&2; exit 1 ;;\nesac\n", bin)
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		return err
 	}

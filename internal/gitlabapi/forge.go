@@ -91,10 +91,6 @@ func remotePath(u string) string {
 
 // api runs `glab api` as ref's account. method is "" for GET.
 func (c *Client) api(ctx context.Context, ref forge.Ref, method, endpoint string, fields ...string) ([]byte, error) {
-	var env []string
-	if ref.Account != "" {
-		env = []string{"GLAB_CONFIG_DIR=" + ref.Account}
-	}
 	args := []string{"api"}
 	if method != "" {
 		args = append(args, "--method", method)
@@ -103,7 +99,7 @@ func (c *Client) api(ctx context.Context, ref forge.Ref, method, endpoint string
 	for _, f := range fields {
 		args = append(args, "-F", f)
 	}
-	return c.runner.Run(ctx, ref.Dir, env, args...)
+	return c.runner.Run(ctx, ref.Dir, glabEnv(ref.Account), args...)
 }
 
 // glMR is the part of a merge request CI and merging read.

@@ -695,7 +695,8 @@ The gate runs a seccomp `RET_USER_NOTIF` filter inside each agent container and 
     "terminal": 13,
     "editor": 13,
     "panels": 12
-  }
+  },
+  "hidden_pills": []
 }
 ```
 
@@ -707,6 +708,7 @@ The gate runs a seccomp `RET_USER_NOTIF` filter inside each agent container and 
 | `desktop.auto_save_on_blur` | `bool` | `false` | Save open editor tabs when the window loses focus. |
 | `desktop.stop_daemon_on_quit` | `bool` | `false` | Uninstalls the daemon service on quit. Re-installed on next app launch. |
 | `desktop.font_sizes` | `object` | See above | Per-area font size overrides (in px). Keys: `sidebar`, `chat`, `terminal`, `editor`, `panels`. |
+| `desktop.hidden_pills` | `[]string` | `[]` | Sidebar pills that neither show nor count as [needing you](sidebar.md#showing-only-what-needs-you). Any of `gate`, `rev`, `ask`, `plan`, `trust`, `ci`, `conflict`, `comment`. Also set by right-clicking the sidebar's bell. |
 
 These settings are global-only (not available in project configs). Changes are applied live when saving the config — no restart required.
 

@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -155,18 +156,42 @@ func (c *Client) LookupMR(ctx context.Context, workdir, configDir, branch string
 	if workdir == "" || branch == "" {
 		return nil, nil
 	}
-	var env []string
-	if configDir != "" {
-		env = append(env, "GLAB_CONFIG_DIR="+configDir)
-	}
-	out, err := c.runner.Run(ctx, workdir, env,
-		"mr", "list",
+	mrs, err := c.listMRs(ctx, workdir, configDir,
 		"--source-branch", branch,
 		"--all",
 		"--order", "updated_at", "--sort", "desc",
 		"--per-page", "1",
-		"--output", "json",
 	)
+	if err != nil || len(mrs) == 0 || mrs[0].Number == 0 {
+		return nil, err
+	}
+	return &mrs[0], nil
+}
+
+// ListOpenMRs returns the open merge requests of the project backing
+// workdir, at most 100, like githubapi's ListOpenPRs.
+func (c *Client) ListOpenMRs(ctx context.Context, workdir, configDir string) ([]githubapi.PRInfo, error) {
+	if workdir == "" {
+		return nil, fmt.Errorf("workdir is required")
+	}
+	return c.listMRs(ctx, workdir, configDir, "--per-page", "100")
+}
+
+// CheckoutMR checks out merge request iid in workdir the way `glab mr
+// checkout` does: a local branch named after its source branch that tracks
+// it, so a push from workdir updates the MR.
+func (c *Client) CheckoutMR(ctx context.Context, workdir, configDir string, iid int) error {
+	if workdir == "" || iid <= 0 {
+		return fmt.Errorf("workdir and MR number are required")
+	}
+	_, err := c.runner.Run(ctx, workdir, glabEnv(configDir), "mr", "checkout", strconv.Itoa(iid))
+	return err
+}
+
+// listMRs runs `glab mr list` with filters and returns the MRs it lists.
+func (c *Client) listMRs(ctx context.Context, workdir, configDir string, filters ...string) ([]githubapi.PRInfo, error) {
+	args := append(append([]string{"mr", "list"}, filters...), "--output", "json")
+	out, err := c.runner.Run(ctx, workdir, glabEnv(configDir), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -182,18 +207,26 @@ func (c *Client) LookupMR(ctx context.Context, workdir, configDir, branch string
 	if err := json.Unmarshal(out, &raw); err != nil {
 		return nil, fmt.Errorf("parsing glab mr list output: %w", err)
 	}
-	if len(raw) == 0 || raw[0].IID == 0 {
-		return nil, nil
+	mrs := make([]githubapi.PRInfo, 0, len(raw))
+	for _, mr := range raw {
+		mrs = append(mrs, githubapi.PRInfo{
+			Number:  mr.IID,
+			URL:     mr.WebURL,
+			BaseRef: mr.TargetBranch,
+			HeadRef: mr.SourceBranch,
+			State:   mr.State,
+			Title:   mr.Title,
+			IsDraft: mr.Draft,
+			Kind:    KindMR,
+		})
 	}
-	mr := raw[0]
-	return &githubapi.PRInfo{
-		Number:  mr.IID,
-		URL:     mr.WebURL,
-		BaseRef: mr.TargetBranch,
-		HeadRef: mr.SourceBranch,
-		State:   mr.State,
-		Title:   mr.Title,
-		IsDraft: mr.Draft,
-		Kind:    KindMR,
-	}, nil
+	return mrs, nil
+}
+
+// glabEnv points glab at configDir's account, or at its own without one.
+func glabEnv(configDir string) []string {
+	if configDir == "" {
+		return nil
+	}
+	return []string{"GLAB_CONFIG_DIR=" + configDir}
 }

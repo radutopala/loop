@@ -1,16 +1,19 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { forkThread } from "../../api/channels";
+import { setGlobalConfigValue } from "../../api/configApi";
 import { useTheme } from "../../ThemeContext";
 import type { Channel, ImageBuildStatusData, ImageUpdateAvailableData, UpdateStatus } from "../../types";
+import { logErr } from "../../utils/log";
 import { openExternalUrl } from "../../utils/openExternal";
 import { storageGetJSON, storageSetJSON } from "../../utils/storage";
 import type { MenuItem } from "../shared/ContextMenu";
 import { ContextMenu } from "../shared/ContextMenu";
+import type { OpenPRHandler } from "../shared/OpenPRs";
 import { pruneToLit } from "./attention";
 import { ChannelList } from "./ChannelList";
 import { DescriptionDialog } from "./DescriptionDialog";
 import type { PillKind } from "./pills";
-import { SIDEBAR_PILLS } from "./pills";
+import { ShownPillsContext, SIDEBAR_PILLS, shownPills } from "./pills";
 import { RenameThreadDialog } from "./RenameThreadDialog";
 import { type SectionKey, SectionTabs, SessionSections } from "./SessionSections";
 import { SidebarFooter } from "./SidebarFooter";
@@ -87,6 +90,7 @@ interface SidebarProps {
   onCreateChannel: (name: string) => void;
   onCreateThread: (parentId: string, name: string) => void;
   onCreateWorktree?: (channelId: string, branch: string) => void;
+  onOpenPR?: OpenPRHandler;
   onDeleteThread: (threadId: string) => void;
   onRenameThread?: (threadId: string, newName: string) => void;
   /** Sets what a thread is for; empty clears it. */
@@ -130,6 +134,7 @@ export function Sidebar({
   onCreateChannel,
   onCreateThread,
   onCreateWorktree,
+  onOpenPR,
   onDeleteThread,
   onRenameThread,
   onSetDescription,
@@ -158,7 +163,8 @@ export function Sidebar({
   onRebuildImage,
   onToggleSidebar,
 }: SidebarProps) {
-  const { colors, fontSizes } = useTheme();
+  // hiddenPills are the pill kinds turned off, the global config's desktop.hidden_pills.
+  const { colors, fontSizes, hiddenPills, setHiddenPills } = useTheme();
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   const [resizing, setResizing] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
@@ -181,6 +187,7 @@ export function Sidebar({
   const [tab, setTab] = useState<SectionKey>(loadTab);
   const [hideTasks, setHideTasks] = useState(loadHideTasks);
   const [needsYouOnly, setNeedsYouOnly] = useState(() => storageGetJSON<boolean>(NEEDS_YOU_STORAGE_KEY) === true);
+  const pills = useMemo(() => shownPills(hiddenPills), [hiddenPills]);
   // When each session was last seen active. A run that just ended counts
   // as recent activity before the next channel refresh brings its newest
   // message's time.
@@ -205,6 +212,29 @@ export function Sidebar({
       return !prev;
     });
   }, []);
+
+  const togglePill = useCallback(
+    (kind: PillKind) => {
+      const next = hiddenPills.includes(kind) ? hiddenPills.filter((k) => k !== kind) : [...hiddenPills, kind];
+      setHiddenPills(next);
+      setGlobalConfigValue(["desktop", "hidden_pills"], next).catch(logErr("saving the hidden sidebar pills"));
+    },
+    [hiddenPills, setHiddenPills],
+  );
+
+  const pickPills = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const items: MenuItem[] = SIDEBAR_PILLS.map((p) => ({
+        label: p.label,
+        hint: p.hint,
+        checked: !hiddenPills.includes(p.kind),
+        onClick: () => togglePill(p.kind),
+      }));
+      setContextMenu({ x: e.clientX, y: e.clientY, items });
+    },
+    [hiddenPills, togglePill],
+  );
 
   const toggleSelected = useCallback((id: string) => {
     setSelected((prev) => {
@@ -421,7 +451,7 @@ export function Sidebar({
   const query = searchQuery.toLowerCase();
   const byId = new Map(channels.map((c) => [c.id, c]));
   const isRunning = (id: string) => !!byId.get(id)?.agent_running || !!byId.get(id)?.review_running || !!isRunningMapRef?.current?.has(id);
-  const pillsFor = (id: string): PillKind[] => SIDEBAR_PILLS.filter((p) => pillsRef?.current?.get(p.kind)?.has(id)).map((p) => p.kind);
+  const pillsFor = (id: string): PillKind[] => pills.filter((p) => pillsRef?.current?.get(p.kind)?.has(id)).map((p) => p.kind);
   // Hidden task threads take their sub-threads with them; one that's running
   // or waiting on you stays. Each tab has its own filter.
   const hidden = (c: Channel, section: SectionKey) => hideTasks[section] && isTaskThread(c) && !isRunning(c.id) && pillsFor(c.id).length === 0;
@@ -508,239 +538,243 @@ export function Sidebar({
   }
 
   return (
-    <div
-      data-testid="sidebar"
-      ref={sidebarRef}
-      style={{
-        width,
-        minWidth: MIN_WIDTH,
-        flexShrink: 0,
-        backgroundColor: colors.sidebarNav,
-        display: "flex",
-        flexDirection: "column",
-        overflow: "hidden",
-        position: "relative",
-        zoom: fontSizes.sidebar / 12,
-        // Prevent text selection while dragging
-        userSelect: resizing ? "none" : undefined,
-        borderRadius: colors.islandRadius,
-        boxShadow: colors.islandShadow,
-        border: colors.islandBorder,
-        ...(!colors.islandRadius && { borderRight: `1px solid ${colors.border}` }),
-      }}
-    >
-      {/* Drag region over traffic lights area */}
+    <ShownPillsContext.Provider value={pills}>
       <div
+        data-testid="sidebar"
+        ref={sidebarRef}
         style={{
-          height: 38,
+          width,
+          minWidth: MIN_WIDTH,
           flexShrink: 0,
-          WebkitAppRegion: "drag",
+          backgroundColor: colors.sidebarNav,
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
           position: "relative",
+          zoom: fontSizes.sidebar / 12,
+          // Prevent text selection while dragging
+          userSelect: resizing ? "none" : undefined,
+          borderRadius: colors.islandRadius,
+          boxShadow: colors.islandShadow,
+          border: colors.islandBorder,
+          ...(!colors.islandRadius && { borderRight: `1px solid ${colors.border}` }),
         }}
       >
-        {onToggleSidebar && (
-          <button
-            onClick={onToggleSidebar}
-            title="Collapse sidebar"
-            style={{
-              position: "absolute",
-              right: 4,
-              top: 10,
-              background: "none",
-              border: "none",
-              color: colors.textDim,
-              cursor: "pointer",
-              padding: "2px 4px",
-              lineHeight: 1,
-              borderRadius: 4,
-              display: "flex",
-              alignItems: "center",
-              WebkitAppRegion: "no-drag",
+        {/* Drag region over traffic lights area */}
+        <div
+          style={{
+            height: 38,
+            flexShrink: 0,
+            WebkitAppRegion: "drag",
+            position: "relative",
+          }}
+        >
+          {onToggleSidebar && (
+            <button
+              onClick={onToggleSidebar}
+              title="Collapse sidebar"
+              style={{
+                position: "absolute",
+                right: 4,
+                top: 10,
+                background: "none",
+                border: "none",
+                color: colors.textDim,
+                cursor: "pointer",
+                padding: "2px 4px",
+                lineHeight: 1,
+                borderRadius: 4,
+                display: "flex",
+                alignItems: "center",
+                WebkitAppRegion: "no-drag",
+              }}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="3" />
+                <line x1="9" y1="3" x2="9" y2="21" />
+                <polyline points="15,9 12,12 15,15" />
+              </svg>
+            </button>
+          )}
+        </div>
+        <SidebarHeader
+          searchQuery={searchQuery}
+          onSearchQueryChange={setSearchQuery}
+          selectMode={selectMode}
+          selectedCount={selected.size}
+          onBatchDelete={handleBatchDelete}
+          onEnterSelectMode={() => {
+            setSelectMode(true);
+            setSelected(new Set());
+          }}
+          onCancelSelectMode={() => {
+            setSelectMode(false);
+            setSelected(new Set());
+          }}
+          unreadCount={unreadCount}
+          onMarkAllRead={onMarkAllRead}
+          onNewProject={() => {
+            setCreatingChannel(true);
+            setNewChannelName("");
+            setTimeout(() => newChannelInputRef.current?.focus(), 0);
+          }}
+          onOpenDirectory={onOpenDirectory}
+          creatingChannel={creatingChannel}
+          newChannelName={newChannelName}
+          onNewChannelNameChange={setNewChannelName}
+          onCreateChannel={(name) => {
+            onCreateChannel(name);
+            setCreatingChannel(false);
+            setNewChannelName("");
+          }}
+          onCancelCreateChannel={() => {
+            setCreatingChannel(false);
+            setNewChannelName("");
+          }}
+          newChannelInputRef={newChannelInputRef}
+        />
+        <div data-sidebar-list style={{ flex: 1, overflowY: "auto", overflowX: "hidden", minHeight: 0 }}>
+          {!selectMode && (
+            <SectionTabs
+              tab={openTab}
+              showTabs={showTabs}
+              recentCount={recent.length}
+              onChange={changeTab}
+              hideTasks={hideTasks}
+              onToggleHideTasks={() => toggleHideTasks(openTab)}
+              needsYouOnly={needsYouOnly}
+              onToggleNeedsYouOnly={toggleNeedsYouOnly}
+              onPickPills={pickPills}
+            />
+          )}
+          {/* Recent has its own empty line. */}
+          {needsYou && showTree && !dmChannel && topLevel.length === 0 && (
+            <div data-testid="sidebar-needs-you-empty" style={{ padding: "8px 16px", fontSize: 11, color: colors.textDisabled }}>
+              Nothing needs you right now
+            </div>
+          )}
+          {!showTree && (
+            <SessionSections
+              active={active}
+              recent={recent}
+              byId={byId}
+              selectedId={selectedId}
+              isRunning={isRunning}
+              pillsFor={pillsFor}
+              isUnread={isUnread}
+              lastActivity={lastActivity}
+              onSelect={onSelect}
+              onContextMenu={handleContextMenu}
+            />
+          )}
+          {showTree && (
+            <ChannelList
+              dmChannel={dmChannel}
+              topLevel={topLevel}
+              selectedId={selectedId}
+              onSelect={onSelect}
+              onCreateThread={onCreateThread}
+              onCreateWorktree={onCreateWorktree}
+              onOpenPR={onOpenPR}
+              threadReorder={{
+                onDragStart: handleThreadDragStart,
+                onDragOver: handleThreadDragOver,
+                onDrop: handleThreadDrop,
+                onDragEnd: handleThreadDragEnd,
+                dragOverId: threadDragOverId,
+              }}
+              onOpenConfig={onOpenConfig}
+              onContextMenu={handleContextMenu}
+              onDragStart={handleDragStart}
+              onDragOver={handleDragOver}
+              onDrop={handleDrop}
+              onDragEnd={handleDragEnd}
+              dragOverId={dragOverId}
+              getFilteredThreads={getFilteredThreads}
+              threadsByParent={threadsByParent}
+              selectMode={selectMode}
+              checkedIds={selected}
+              onToggleCheck={toggleSelected}
+              isRunningMapRef={isRunningMapRef}
+              unreadIdsRef={unreadIdsRef}
+              pillsRef={pillsRef}
+            />
+          )}
+        </div>
+
+        <SidebarFooter
+          updateStatus={updateStatus}
+          onDownloadUpdate={onDownloadUpdate}
+          onInstallUpdate={onInstallUpdate}
+          imageBuildStatus={imageBuildStatus}
+          imageUpdateAvailable={imageUpdateAvailable}
+          onRebuildImage={onRebuildImage}
+          onOpenSettings={onOpenSettings}
+          onOpenTasks={onOpenTasks}
+          onOpenWorkflows={onOpenWorkflows}
+          onOpenShares={onOpenShares}
+          shareCount={shareCount}
+          onOpenContainers={onOpenContainers}
+          onOpenReadme={onOpenReadme}
+        />
+
+        {contextMenu && <ContextMenu x={contextMenu.x} y={contextMenu.y} items={contextMenu.items} onClose={() => setContextMenu(null)} />}
+
+        {renaming && (
+          <RenameThreadDialog
+            currentName={renaming.name}
+            isWorktree={!!renaming.worktree}
+            onCancel={() => setRenaming(null)}
+            onSubmit={(newName) => {
+              onRenameThread?.(renaming.id, newName);
+              setRenaming(null);
             }}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="3" width="18" height="18" rx="3" />
-              <line x1="9" y1="3" x2="9" y2="21" />
-              <polyline points="15,9 12,12 15,15" />
-            </svg>
-          </button>
-        )}
-      </div>
-      <SidebarHeader
-        searchQuery={searchQuery}
-        onSearchQueryChange={setSearchQuery}
-        selectMode={selectMode}
-        selectedCount={selected.size}
-        onBatchDelete={handleBatchDelete}
-        onEnterSelectMode={() => {
-          setSelectMode(true);
-          setSelected(new Set());
-        }}
-        onCancelSelectMode={() => {
-          setSelectMode(false);
-          setSelected(new Set());
-        }}
-        unreadCount={unreadCount}
-        onMarkAllRead={onMarkAllRead}
-        onNewProject={() => {
-          setCreatingChannel(true);
-          setNewChannelName("");
-          setTimeout(() => newChannelInputRef.current?.focus(), 0);
-        }}
-        onOpenDirectory={onOpenDirectory}
-        creatingChannel={creatingChannel}
-        newChannelName={newChannelName}
-        onNewChannelNameChange={setNewChannelName}
-        onCreateChannel={(name) => {
-          onCreateChannel(name);
-          setCreatingChannel(false);
-          setNewChannelName("");
-        }}
-        onCancelCreateChannel={() => {
-          setCreatingChannel(false);
-          setNewChannelName("");
-        }}
-        newChannelInputRef={newChannelInputRef}
-      />
-      <div data-sidebar-list style={{ flex: 1, overflowY: "auto", overflowX: "hidden", minHeight: 0 }}>
-        {!selectMode && (
-          <SectionTabs
-            tab={openTab}
-            showTabs={showTabs}
-            recentCount={recent.length}
-            onChange={changeTab}
-            hideTasks={hideTasks[openTab]}
-            onToggleHideTasks={() => toggleHideTasks(openTab)}
-            needsYouOnly={needsYouOnly}
-            onToggleNeedsYouOnly={toggleNeedsYouOnly}
           />
         )}
-        {/* Recent has its own empty line. */}
-        {needsYou && showTree && !dmChannel && topLevel.length === 0 && (
-          <div data-testid="sidebar-needs-you-empty" style={{ padding: "8px 16px", fontSize: 11, color: colors.textDisabled }}>
-            Nothing needs you right now
-          </div>
-        )}
-        {!showTree && (
-          <SessionSections
-            active={active}
-            recent={recent}
-            byId={byId}
-            selectedId={selectedId}
-            isRunning={isRunning}
-            pillsFor={pillsFor}
-            isUnread={isUnread}
-            lastActivity={lastActivity}
-            onSelect={onSelect}
-            onContextMenu={handleContextMenu}
-          />
-        )}
-        {showTree && (
-          <ChannelList
-            dmChannel={dmChannel}
-            topLevel={topLevel}
-            selectedId={selectedId}
-            onSelect={onSelect}
-            onCreateThread={onCreateThread}
-            onCreateWorktree={onCreateWorktree}
-            threadReorder={{
-              onDragStart: handleThreadDragStart,
-              onDragOver: handleThreadDragOver,
-              onDrop: handleThreadDrop,
-              onDragEnd: handleThreadDragEnd,
-              dragOverId: threadDragOverId,
+
+        {describing && (
+          <DescriptionDialog
+            currentDescription={describing.description ?? ""}
+            name={describing.name}
+            onCancel={() => setDescribing(null)}
+            onSubmit={(description) => {
+              onSetDescription?.(describing.id, description);
+              setDescribing(null);
             }}
-            onOpenConfig={onOpenConfig}
-            onContextMenu={handleContextMenu}
-            onDragStart={handleDragStart}
-            onDragOver={handleDragOver}
-            onDrop={handleDrop}
-            onDragEnd={handleDragEnd}
-            dragOverId={dragOverId}
-            getFilteredThreads={getFilteredThreads}
-            threadsByParent={threadsByParent}
-            selectMode={selectMode}
-            checkedIds={selected}
-            onToggleCheck={toggleSelected}
-            isRunningMapRef={isRunningMapRef}
-            unreadIdsRef={unreadIdsRef}
-            pillsRef={pillsRef}
           />
         )}
+
+        {ticketing && (
+          <TicketDialog
+            currentTicketURL={ticketing.ticket_url ?? ""}
+            name={ticketing.name}
+            onCancel={() => setTicketing(null)}
+            onSubmit={(ticketURL) => {
+              onSetTicketURL?.(ticketing.id, ticketURL);
+              setTicketing(null);
+            }}
+          />
+        )}
+
+        {/* Resize handle */}
+        <div
+          onMouseDown={handleMouseDown}
+          style={{
+            position: "absolute",
+            top: 0,
+            right: -colors.islandGap,
+            width: colors.islandGap + 4,
+            height: "100%",
+            cursor: "col-resize",
+            backgroundColor: "transparent",
+          }}
+          onMouseEnter={() => {}}
+          onMouseLeave={() => {}}
+        />
+
+        {/* Inline keyframes for spinner */}
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
-
-      <SidebarFooter
-        updateStatus={updateStatus}
-        onDownloadUpdate={onDownloadUpdate}
-        onInstallUpdate={onInstallUpdate}
-        imageBuildStatus={imageBuildStatus}
-        imageUpdateAvailable={imageUpdateAvailable}
-        onRebuildImage={onRebuildImage}
-        onOpenSettings={onOpenSettings}
-        onOpenTasks={onOpenTasks}
-        onOpenWorkflows={onOpenWorkflows}
-        onOpenShares={onOpenShares}
-        shareCount={shareCount}
-        onOpenContainers={onOpenContainers}
-        onOpenReadme={onOpenReadme}
-      />
-
-      {contextMenu && <ContextMenu x={contextMenu.x} y={contextMenu.y} items={contextMenu.items} onClose={() => setContextMenu(null)} />}
-
-      {renaming && (
-        <RenameThreadDialog
-          currentName={renaming.name}
-          isWorktree={!!renaming.worktree}
-          onCancel={() => setRenaming(null)}
-          onSubmit={(newName) => {
-            onRenameThread?.(renaming.id, newName);
-            setRenaming(null);
-          }}
-        />
-      )}
-
-      {describing && (
-        <DescriptionDialog
-          currentDescription={describing.description ?? ""}
-          name={describing.name}
-          onCancel={() => setDescribing(null)}
-          onSubmit={(description) => {
-            onSetDescription?.(describing.id, description);
-            setDescribing(null);
-          }}
-        />
-      )}
-
-      {ticketing && (
-        <TicketDialog
-          currentTicketURL={ticketing.ticket_url ?? ""}
-          name={ticketing.name}
-          onCancel={() => setTicketing(null)}
-          onSubmit={(ticketURL) => {
-            onSetTicketURL?.(ticketing.id, ticketURL);
-            setTicketing(null);
-          }}
-        />
-      )}
-
-      {/* Resize handle */}
-      <div
-        onMouseDown={handleMouseDown}
-        style={{
-          position: "absolute",
-          top: 0,
-          right: -colors.islandGap,
-          width: colors.islandGap + 4,
-          height: "100%",
-          cursor: "col-resize",
-          backgroundColor: "transparent",
-        }}
-        onMouseEnter={() => {}}
-        onMouseLeave={() => {}}
-      />
-
-      {/* Inline keyframes for spinner */}
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-    </div>
+    </ShownPillsContext.Provider>
   );
 }

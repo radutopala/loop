@@ -110,6 +110,10 @@ The clock button at the right of the tabs hides task threads from the open tab; 
 
 The bell at the right of the tabs narrows both tabs to the sessions with a lit pill: `gate` (an approval), `ask` (a question), `plan` (a plan to approve), `rev` (a review session open), `trust` (a project config to trust), `ci` (a [CI failure](pr.md) no agent is fixing), `cnf` (a PR/MR with a [merge conflict](pr.md#merge-conflicts)) and `cmt` (a PR/MR with [unresolved review comments](pr.md#unresolved-review-threads)). The tree keeps the channels and threads that lead to a lit row, so it still reads as a tree, and drops their other threads; a lit row's own unlit threads go too. Recent keeps only the lit sessions. With nothing lit, the tree says *Nothing needs you right now*. A running agent or review (`rev…`), or an agent fixing CI (`ci…`), doesn't count: it isn't waiting on you. The filter combines with the search and the task toggle, and steps aside in selection mode so every row can be picked. The choice is stored in `localStorage` under `loop-sidebar-needs-you`.
 
+Right-click the bell to pick the pills. A pill you turn off no longer shows on rows, and doesn't count as needing you, so it neither keeps a row under the bell nor tops Recent. Turning off `ci` also hides `ci…`. Every pill is on until you change it. The kinds turned off are kept in the global config's [`desktop.hidden_pills`](configuration.md#desktop-electron-app), which Settings → Desktop also edits.
+
+Resting the pointer on a control in the tab bar shows a card like a row's info. The bell's card says whether the list shows all sessions or only the ones that need you, and lists every pill with what it waits on, marking the ones turned off. The task toggle's card says whether task threads are shown or hidden in each tab. A tab's card says what it lists, how many sessions Recent has, and how the bell and the task toggle are set for it.
+
 ---
 
 ## Selection Mode
@@ -227,6 +231,23 @@ Agents read the same lines for a whole tree of channels, threads and worktree th
 Hovering a channel row reveals a **+wt** button; clicking it opens a branch
 picker (portaled just below the button) to spin off a git worktree from any
 branch — the worktree opens as its own thread under that channel.
+
+When the repo's `origin` is on GitHub or GitLab, the picker also lists the
+open pull requests (merge requests on GitLab) in a section of their own,
+below the branches; the search filters both, matching a PR's number, title
+or branch. Picking a PR checks it out on its own branch (`gh pr checkout`,
+`glab mr checkout`) in a new `pr-N` worktree thread, so pushes from it
+update the PR. Each PR row's label says what a pick does:
+
+| Label | When | Pick |
+|---|---|---|
+| `+wt` | No worktree is on the PR's branch | Check it out in a new worktree thread |
+| `imp` | A worktree is on the branch, with no thread | Import that worktree as a thread |
+| `go` | A worktree thread is on the branch | Open that thread |
+
+The branch picker in a channel's header lists the same open PRs, between its
+branches and worktrees. Each section's title stays in view while its list
+scrolls.
 
 ![The +wt branch picker on a channel row, listing branches to create a git worktree from](static/images/features/sidebar-worktree.png)
 

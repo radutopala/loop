@@ -19,6 +19,7 @@ type dispatchRunner struct {
 	tokenOut, tokenErr       any // []byte or error
 	prViewOut, prViewErr     any
 	prListOut, prListErr     any
+	prCheckoutErr            any
 	repoViewOut, repoViewErr any
 	apiOut, apiErr           any
 }
@@ -33,6 +34,8 @@ func (d *dispatchRunner) Run(_ context.Context, workdir string, env []string, ar
 		return asBytes(d.prViewOut), asErr(d.prViewErr)
 	case len(args) >= 2 && args[0] == "pr" && args[1] == "list":
 		return asBytes(d.prListOut), asErr(d.prListErr)
+	case len(args) >= 2 && args[0] == "pr" && args[1] == "checkout":
+		return nil, asErr(d.prCheckoutErr)
 	case len(args) >= 2 && args[0] == "repo" && args[1] == "view":
 		return asBytes(d.repoViewOut), asErr(d.repoViewErr)
 	case len(args) >= 1 && args[0] == "api":
@@ -549,6 +552,38 @@ func (s *ReviewAPISuite) TestListOpenPRsTokenFailure() {
 	c := NewClientWithRunner(r)
 	_, err := c.ListOpenPRs(context.Background(), "/tmp", "u")
 	require.Error(s.T(), err)
+}
+
+// ── CheckoutPR ───────────────────────────────────────────────────────────
+
+func (s *ReviewAPISuite) TestCheckoutPR() {
+	tests := []struct {
+		name    string
+		workdir string
+		number  int
+		ghUser  string
+		r       *dispatchRunner
+		wantErr string
+	}{
+		{name: "checked out", workdir: "/w", number: 12, r: &dispatchRunner{}},
+		{name: "no workdir", number: 12, r: &dispatchRunner{}, wantErr: "required"},
+		{name: "no number", workdir: "/w", r: &dispatchRunner{}, wantErr: "required"},
+		{name: "token failure", workdir: "/w", number: 12, ghUser: "u", r: &dispatchRunner{tokenErr: errors.New("no token")}, wantErr: "no token"},
+		{name: "checkout fails", workdir: "/w", number: 12, r: &dispatchRunner{prCheckoutErr: errors.New("already checked out")}, wantErr: "already checked out"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			c := NewClientWithRunner(tt.r)
+			err := c.CheckoutPR(context.Background(), tt.workdir, tt.ghUser, tt.number)
+			if tt.wantErr != "" {
+				require.ErrorContains(s.T(), err, tt.wantErr)
+				return
+			}
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), []string{"pr", "checkout", "12"}, tt.r.calls[len(tt.r.calls)-1].args)
+			require.Equal(s.T(), "/w", tt.r.calls[len(tt.r.calls)-1].workdir)
+		})
+	}
 }
 
 // ── FetchPRHeadSHA ───────────────────────────────────────────────────────

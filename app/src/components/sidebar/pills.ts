@@ -1,3 +1,4 @@
+import { createContext, useContext } from "react";
 import type { Channel, PluginBadge } from "../../types";
 
 // Sidebar status-pill registry. One row per pill kind: the store tracks
@@ -6,33 +7,50 @@ import type { Channel, PluginBadge } from "../../types";
 // plus a config row, with no new refs or props anywhere.
 
 /** The pill kinds the chat store tracks per channel. */
-export type PillKind = "gate" | "rev" | "ask" | "plan" | "trust" | "ci" | "conflict" | "cmt";
+export type PillKind = "gate" | "rev" | "ask" | "plan" | "trust" | "ci" | "conflict" | "comment";
 
 export interface PillSpec {
   kind: PillKind;
   label: string;
   /** Theme color key on the `colors` object. */
   color: "warning" | "active" | "error";
+  /** What the pill waits on, beside its label in the bell's menu. */
+  hint: string;
 }
 
 /** Render order matches the pre-unification hardcoded order. */
 export const SIDEBAR_PILLS: PillSpec[] = [
-  { kind: "gate", label: "gate", color: "warning" },
-  { kind: "rev", label: "rev", color: "active" },
-  { kind: "ask", label: "ask", color: "warning" },
-  { kind: "plan", label: "plan", color: "warning" },
-  { kind: "trust", label: "trust", color: "warning" },
-  { kind: "ci", label: "ci", color: "error" },
-  { kind: "conflict", label: "cnf", color: "error" },
-  { kind: "cmt", label: "cmt", color: "warning" },
+  { kind: "gate", label: "gate", color: "warning", hint: "an approval" },
+  { kind: "rev", label: "rev", color: "active", hint: "a review session" },
+  { kind: "ask", label: "ask", color: "warning", hint: "a question" },
+  { kind: "plan", label: "plan", color: "warning", hint: "a plan to approve" },
+  { kind: "trust", label: "trust", color: "warning", hint: "a config to trust" },
+  { kind: "ci", label: "ci", color: "error", hint: "a CI failure" },
+  { kind: "conflict", label: "cnf", color: "error", hint: "a merge conflict" },
+  { kind: "comment", label: "cmt", color: "warning", hint: "review comments" },
 ];
+
+/**
+ * The pills the sidebar shows: the ones not turned off in the bell's menu.
+ * A pill that's off neither shows nor counts as needing you.
+ */
+export function shownPills(off: ReadonlyArray<string>): PillSpec[] {
+  return SIDEBAR_PILLS.filter((p) => !off.includes(p.kind));
+}
+
+/** The pills the sidebar shows, provided by the Sidebar to its rows. */
+export const ShownPillsContext = createContext<PillSpec[]>(SIDEBAR_PILLS);
+
+export function useShownPills(): PillSpec[] {
+  return useContext(ShownPillsContext);
+}
 
 /**
  * The pill a channel shows while a review runs on it. It isn't a PillKind: a
  * running review isn't waiting on you, so the needs-you filter and Recent's
  * waiting group leave it out.
  */
-export const REVIEWING_PILL: Omit<PillSpec, "kind"> = { label: "rev…", color: "active" };
+export const REVIEWING_PILL: Omit<PillSpec, "kind" | "hint"> = { label: "rev…", color: "active" };
 
 /**
  * The rows the trust pill lights: a project's config waiting for trust is one
@@ -46,9 +64,10 @@ export function trustPillIds(channels: ReadonlyArray<Pick<Channel, "id" | "paren
 /**
  * The pill a thread shows while its agent was sent to fix its CI. Like
  * REVIEWING_PILL it isn't a PillKind: it's being handled, not waiting on you.
+ * It goes with the ci pill when that's turned off.
  */
-export function fixingPill(attention: Channel["pr_attention"]): Omit<PillSpec, "kind"> | undefined {
-  if (attention === "fixing") return { label: "ci…", color: "active" };
+export function fixingPill(attention: Channel["pr_attention"], shown: ReadonlyArray<PillSpec>): Omit<PillSpec, "kind" | "hint"> | undefined {
+  if (attention === "fixing" && shown.some((p) => p.kind === "ci")) return { label: "ci…", color: "active" };
   return undefined;
 }
 

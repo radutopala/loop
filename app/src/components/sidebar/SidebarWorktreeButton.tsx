@@ -4,18 +4,20 @@ import { type BranchInfo, fetchBranches } from "../../api/git";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import { logErr } from "../../utils/log";
+import { type OpenPRHandler, OpenPRRows, SectionHeader, showsPRs, useOpenPRs } from "../shared/OpenPRs";
 
 /**
  * A "+wt" button for a sidebar channel row. Clicking it opens a branch
  * dropdown (the same data the header branch picker uses); picking a branch
- * creates a worktree thread from it. Only rendered for channels backed by a
- * git repo (a dir_path).
+ * creates a worktree thread from it. With onOpenPR it also lists the repo's
+ * open PRs; picking one opens it in a worktree on its own branch. Only
+ * rendered for channels backed by a git repo (a dir_path).
  *
  * The dropdown is portaled to the document body and positioned at the button's
  * lower-right via fixed coordinates, so it opens down-and-to-the-right of the
  * click instead of being clipped by the sidebar's overflow.
  */
-export function SidebarWorktreeButton({ channelId, onCreateWorktree }: { channelId: string; onCreateWorktree: (channelId: string, branch: string) => void }) {
+export function SidebarWorktreeButton({ channelId, onCreateWorktree, onOpenPR }: { channelId: string; onCreateWorktree: (channelId: string, branch: string) => void; onOpenPR?: OpenPRHandler }) {
   const { colors } = useTheme();
   const [open, setOpen] = useState(false);
   const [coords, setCoords] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
@@ -24,6 +26,8 @@ export function SidebarWorktreeButton({ channelId, onCreateWorktree }: { channel
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const { prs, error: prsError } = useOpenPRs(channelId, open && !!onOpenPR);
+  const hasPRs = !!onOpenPR && showsPRs(prs, prsError);
 
   useEffect(() => {
     if (!open) return;
@@ -60,8 +64,9 @@ export function SidebarWorktreeButton({ channelId, onCreateWorktree }: { channel
     <>
       <button
         ref={buttonRef}
+        data-testid="sidebar-worktree-button"
         onClick={handleOpen}
-        title="New worktree from branch"
+        title={onOpenPR ? "New worktree from a branch or PR" : "New worktree from branch"}
         style={{
           background: "none",
           border: "none",
@@ -98,8 +103,12 @@ export function SidebarWorktreeButton({ channelId, onCreateWorktree }: { channel
               border: `1px solid ${colors.border}`,
               borderRadius: 8,
               zIndex: 1000,
-              minWidth: 260,
-              maxHeight: "min(360px, 60vh)",
+              minWidth: hasPRs ? 340 : 260,
+              maxWidth: 480,
+              maxHeight: hasPRs ? undefined : "min(360px, 60vh)",
+              height: hasPRs ? "min(400px, 70vh)" : undefined,
+              // Portaled outside the app root, so it doesn't inherit the app's font.
+              fontFamily: fonts.sans,
               display: "flex",
               flexDirection: "column",
               boxShadow: `0 4px 12px ${colors.shadow}`,
@@ -115,12 +124,13 @@ export function SidebarWorktreeButton({ channelId, onCreateWorktree }: { channel
                   ref={searchRef}
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Worktree from branch…"
+                  placeholder={onOpenPR ? "Worktree from branch or PR…" : "Worktree from branch…"}
                   style={{ flex: 1, background: "none", border: "none", outline: "none", color: colors.textLight, fontSize: 12, fontFamily: fonts.sans }}
                 />
               </div>
             </div>
-            <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "4px 0" }}>
+            <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: hasPRs ? "0 0 4px" : "4px 0" }}>
+              {hasPRs && <SectionHeader>Branches</SectionHeader>}
               {filtered.map((b) => (
                 <button
                   key={b}
@@ -173,6 +183,21 @@ export function SidebarWorktreeButton({ channelId, onCreateWorktree }: { channel
               {branchInfo && filtered.length === 0 && <div style={{ padding: "8px 12px", color: colors.textDim, fontSize: 12 }}>No branches found</div>}
               {!branchInfo && <div style={{ padding: "8px 12px", color: colors.textDim, fontSize: 12 }}>Loading branches…</div>}
             </div>
+            {hasPRs && onOpenPR && (
+              <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "0 0 4px", borderTop: `1px solid ${colors.border}` }}>
+                <OpenPRRows
+                  testId="sidebar-worktree-prs"
+                  prs={prs}
+                  error={prsError}
+                  search={search}
+                  worktrees={branchInfo?.worktrees}
+                  onPick={(pr, existing) => {
+                    setOpen(false);
+                    onOpenPR(channelId, pr, existing);
+                  }}
+                />
+              </div>
+            )}
           </div>,
           document.body,
         )}

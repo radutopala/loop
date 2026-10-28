@@ -1,9 +1,9 @@
-import { Fragment, type ReactNode, type RefObject, useLayoutEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { Fragment, type ReactNode, type RefObject } from "react";
 import { useChannelPR, useChannelPRStatus } from "../../hooks/useChannelPR";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { Channel } from "../../types";
+import { InfoPopup, infoBorder } from "./InfoPopup";
 import { type RowInfoLine, rowInfoLines } from "./rowInfo";
 import { sessionName } from "./sessions";
 
@@ -22,10 +22,6 @@ interface RowInfoPopupProps {
  */
 export function RowInfoPopup({ channel, anchorRef, hovered }: RowInfoPopupProps) {
   const { colors } = useTheme();
-  // rowMid is the row's vertical middle, where the arrow points.
-  const [pos, setPos] = useState<{ top: number; left: number; rowMid: number } | null>(null);
-  const popupRef = useRef<HTMLDivElement>(null);
-  const title = sessionName(channel);
   // Looked up only while the popup shows, not for every row in the sidebar.
   const pr = useChannelPR(channel.id, channel.branch, hovered);
   // The watcher's status, only for a row with a PR/MR pill to explain.
@@ -33,139 +29,52 @@ export function RowInfoPopup({ channel, anchorRef, hovered }: RowInfoPopupProps)
   const lines = rowInfoLines(channel, pr, status);
   const description = channel.description?.trim();
 
-  // A layout effect, so the popup shows in the same frame as the row's
-  // hover background.
-  useLayoutEffect(() => {
-    if (!hovered) {
-      setPos(null);
-      return;
-    }
-    const row = anchorRef.current;
-    const r = row?.getBoundingClientRect();
-    // Past the sidebar's edge, not the row's, so the arrow doesn't sit on
-    // the sidebar's border.
-    const right = row?.closest("[data-testid='sidebar']")?.getBoundingClientRect().right ?? r?.right ?? 0;
-    if (r) setPos({ top: r.top, left: right + 10, rowMid: r.top + r.height / 2 });
-    const hide = () => setPos(null);
-    window.addEventListener("mousedown", hide, true);
-    window.addEventListener("dragstart", hide, true);
-    window.addEventListener("wheel", hide, true);
-    return () => {
-      hide();
-      window.removeEventListener("mousedown", hide, true);
-      window.removeEventListener("dragstart", hide, true);
-      window.removeEventListener("wheel", hide, true);
-    };
-  }, [hovered, anchorRef]);
-
-  // Center it on the row, kept on screen; the arrow still points at the row
-  // when it's shifted. Again when the PR line arrives and makes it taller.
-  useLayoutEffect(() => {
-    const el = popupRef.current;
-    if (!el || !pos) return;
-    const h = el.getBoundingClientRect().height;
-    const top = Math.round(Math.max(8, Math.min(pos.rowMid - h / 2, window.innerHeight - 8 - h)));
-    if (top !== pos.top) setPos({ ...pos, top });
-  }, [pos, pr, status]);
-
-  if (!pos) return null;
-  // A step lighter than anything under it on dark themes, so it stands out
-  // against the sidebar and the chat.
-  const bg = colors.isDark ? colors.inputBorder : colors.bg;
-  const border = `1px solid ${colors.isDark ? colors.textDisabled : colors.inputBorder}`;
+  const border = infoBorder(colors);
   const label = { color: colors.textMuted };
   const value = { color: colors.textLight, fontFamily: fonts.mono, fontSize: 12, overflowWrap: "anywhere" as const };
   // The branch is what's usually looked for, so it's picked out like the
   // sidebar's worktree icon.
   const branch = { color: colors.active, fontWeight: 600 };
-  return createPortal(
-    <div
-      ref={popupRef}
-      data-testid="sidebar-row-info"
-      style={{
-        position: "fixed",
-        top: pos.top,
-        left: pos.left,
-        maxWidth: 640,
-        padding: "8px 12px",
-        backgroundColor: bg,
-        border,
-        borderRadius: 6,
-        boxShadow: `0 4px 12px ${colors.shadow}`,
-        // Portaled outside the app root, so it doesn't inherit the app's font.
-        fontFamily: fonts.sans,
-        fontSize: 12.5,
-        lineHeight: 1.5,
-        display: "grid",
-        gridTemplateColumns: "auto 1fr",
-        columnGap: 12,
-        rowGap: 2,
-        alignItems: "baseline",
-        zIndex: 1000,
-        pointerEvents: "none",
-      }}
-    >
-      <span
-        style={{
-          position: "absolute",
-          left: -6,
-          top: pos.rowMid - pos.top - 5,
-          width: 10,
-          height: 10,
-          backgroundColor: bg,
-          borderLeft: border,
-          borderBottom: border,
-          transform: "rotate(45deg)",
-        }}
-      />
-      {/* The row cuts a long name short; here it shows in full. */}
-      <div
-        data-testid="sidebar-row-info-title"
-        style={{
-          gridColumn: "1 / -1",
-          color: colors.textLight,
-          fontWeight: 600,
-          whiteSpace: "pre-wrap",
-          overflowWrap: "anywhere",
-          ...(description || lines.length > 0 ? { paddingBottom: 6, marginBottom: 4, borderBottom: border } : {}),
-        }}
-      >
-        {title}
-      </div>
-      {description && (
-        <div
-          data-testid="sidebar-row-info-description"
-          style={{
-            gridColumn: "1 / -1",
-            color: colors.textLight,
-            whiteSpace: "pre-wrap",
-            overflowWrap: "anywhere",
-            ...(lines.length > 0 ? { paddingBottom: 6, marginBottom: 4, borderBottom: border } : {}),
-          }}
-        >
-          {description}
-        </div>
-      )}
-      {lines.map((line) => (
-        <Fragment key={line.key}>
-          <span style={{ ...label, ...(line.key === "branch" ? { color: colors.active } : {}), display: "inline-flex", alignItems: "center", gap: 5 }}>
-            <RowInfoIcon kind={line.key} />
-            {line.key}
-          </span>
-          <span style={value}>
-            <span data-testid={`sidebar-row-info-${line.key}`} style={line.key === "branch" ? branch : undefined}>
-              {line.value}
-            </span>
-            {line.detail && (
-              <span data-testid={`sidebar-row-info-${line.key}-detail`} style={{ ...label, fontFamily: fonts.sans, fontSize: 12.5 }}>
-                {` ${line.detail}`}
+  return (
+    // The row cuts a long name short; here it shows in full.
+    <InfoPopup anchorRef={anchorRef} hovered={hovered} testId="sidebar-row-info" title={sessionName(channel)}>
+      {(description || lines.length > 0) && (
+        <>
+          {description && (
+            <div
+              data-testid="sidebar-row-info-description"
+              style={{
+                gridColumn: "1 / -1",
+                color: colors.textLight,
+                whiteSpace: "pre-wrap",
+                overflowWrap: "anywhere",
+                ...(lines.length > 0 ? { paddingBottom: 6, marginBottom: 4, borderBottom: border } : {}),
+              }}
+            >
+              {description}
+            </div>
+          )}
+          {lines.map((line) => (
+            <Fragment key={line.key}>
+              <span style={{ ...label, ...(line.key === "branch" ? { color: colors.active } : {}), display: "inline-flex", alignItems: "center", gap: 5 }}>
+                <RowInfoIcon kind={line.key} />
+                {line.key}
               </span>
-            )}
-          </span>
-        </Fragment>
-      ))}
-    </div>,
-    document.body,
+              <span style={value}>
+                <span data-testid={`sidebar-row-info-${line.key}`} style={line.key === "branch" ? branch : undefined}>
+                  {line.value}
+                </span>
+                {line.detail && (
+                  <span data-testid={`sidebar-row-info-${line.key}-detail`} style={{ ...label, fontFamily: fonts.sans, fontSize: 12.5 }}>
+                    {` ${line.detail}`}
+                  </span>
+                )}
+              </span>
+            </Fragment>
+          ))}
+        </>
+      )}
+    </InfoPopup>
   );
 }
 

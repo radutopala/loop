@@ -94,6 +94,76 @@ func (s *GitlabAPISuite) TestLookupMR() {
 	}
 }
 
+func (s *GitlabAPISuite) TestListOpenMRs() {
+	tests := []struct {
+		name      string
+		workdir   string
+		configDir string
+		out       string
+		err       error
+		want      []githubapi.PRInfo
+		wantErr   string
+		wantEnv   []string
+	}{
+		{name: "empty workdir", wantErr: "workdir is required"},
+		{
+			name: "listed", workdir: "/w", configDir: "/cfg", wantEnv: []string{"GLAB_CONFIG_DIR=/cfg"},
+			out: `[{"iid":4,"web_url":"u4","target_branch":"main","source_branch":"feat","state":"opened","title":"Fix","draft":true},{"iid":5,"source_branch":"b"}]`,
+			want: []githubapi.PRInfo{
+				{Number: 4, URL: "u4", BaseRef: "main", HeadRef: "feat", State: "opened", Title: "Fix", IsDraft: true, Kind: KindMR},
+				{Number: 5, HeadRef: "b", Kind: KindMR},
+			},
+		},
+		{name: "none", workdir: "/w", out: `[]`, want: []githubapi.PRInfo{}},
+		{name: "runner error", workdir: "/w", err: errors.New("glab mr list: 401"), wantErr: "401"},
+		{name: "malformed JSON", workdir: "/w", out: `{`, wantErr: "parsing glab mr list output"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			r := &fakeRunner{out: []byte(tt.out), err: tt.err}
+			c := NewClientWithRunner(r, "", noFile)
+			got, err := c.ListOpenMRs(context.Background(), tt.workdir, tt.configDir)
+			if tt.wantErr != "" {
+				require.ErrorContains(s.T(), err, tt.wantErr)
+				return
+			}
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tt.want, got)
+			require.Len(s.T(), r.calls, 1)
+			require.Equal(s.T(), tt.wantEnv, r.calls[0].env)
+			require.Equal(s.T(), []string{"mr", "list", "--per-page", "100", "--output", "json"}, r.calls[0].args)
+		})
+	}
+}
+
+func (s *GitlabAPISuite) TestCheckoutMR() {
+	tests := []struct {
+		name    string
+		workdir string
+		iid     int
+		err     error
+		wantErr string
+	}{
+		{name: "checked out", workdir: "/w", iid: 7},
+		{name: "no workdir", iid: 7, wantErr: "required"},
+		{name: "no iid", workdir: "/w", wantErr: "required"},
+		{name: "runner error", workdir: "/w", iid: 7, err: errors.New("already checked out"), wantErr: "already checked out"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			r := &fakeRunner{err: tt.err}
+			c := NewClientWithRunner(r, "", noFile)
+			err := c.CheckoutMR(context.Background(), tt.workdir, "/cfg", tt.iid)
+			if tt.wantErr != "" {
+				require.ErrorContains(s.T(), err, tt.wantErr)
+				return
+			}
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), []fakeCall{{workdir: "/w", env: []string{"GLAB_CONFIG_DIR=/cfg"}, args: []string{"mr", "checkout", "7"}}}, r.calls)
+		})
+	}
+}
+
 func (s *GitlabAPISuite) TestDefaultConfigDir() {
 	tests := []struct {
 		name    string
