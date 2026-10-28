@@ -192,6 +192,7 @@ cat > "$LOOP_DIR/config.json" <<EOF
   "log_level": "warn",
   $MEMORY_BLOCK
   "browser": { "enabled": true },
+  "ci": { "poll_sec": 1 },
   "workflow_bash_local": true,
   "workflows": [
     {

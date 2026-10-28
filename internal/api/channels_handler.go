@@ -87,6 +87,9 @@ type channelResponse struct {
 	TrustPending bool `json:"trust_pending,omitempty"`
 	// PluginBadges are the labels plugins show on the row.
 	PluginBadges []pluginBadge `json:"plugin_badges,omitempty"`
+	// CIAttention is "failed" or "fixing" while the thread's PR/MR CI
+	// failure needs the owner or is being fixed; absent otherwise.
+	CIAttention string `json:"ci_attention,omitempty"`
 }
 
 // homeDisplayPath shows dir under home as ~: "/Users/me/dev/x" → "~/dev/x".
@@ -191,6 +194,7 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	reviews := s.reviewSummaries()
+	ciAttention := s.ciAttention(r.Context())
 	badges := s.pluginBadgesByChannel(r.Context())
 
 	// Without a home dir the paths show in full.
@@ -314,6 +318,7 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 			LastActivityAt:      lastActivity,
 			TrustPending:        trustPendingFor(trustDir),
 			PluginBadges:        badges[ch.ChannelID],
+			CIAttention:         ciAttention[ch.ChannelID],
 		})
 	}
 

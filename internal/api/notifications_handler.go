@@ -240,6 +240,8 @@ func loopNotification(evt Event) *db.Notification {
 		return runNotification(evt.ChannelID, d)
 	case events.TaskRunEventData:
 		return taskRunNotification(d)
+	case events.CIEventData:
+		return ciNotification(d)
 	}
 	return nil
 }
@@ -260,6 +262,15 @@ func runNotification(channelID string, d events.AgentStatusEventData) *db.Notifi
 		return nil
 	}
 	return &db.Notification{Kind: db.NotificationRun, ChannelID: channelID, Title: "Run failed", Body: d.Error}
+}
+
+// ciNotification is the notification of a PR/MR CI failure that needs the
+// owner.
+func ciNotification(d events.CIEventData) *db.Notification {
+	if d.Alert == "" {
+		return nil
+	}
+	return &db.Notification{Kind: db.NotificationRun, ChannelID: d.ChannelID, Title: d.Alert}
 }
 
 // taskRunNotification is the notification of a scheduled plugin action that

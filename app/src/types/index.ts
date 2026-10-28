@@ -53,6 +53,8 @@ export interface Channel {
   trust_pending?: boolean;
   /** The badges plugins show on the row, by plugin id. */
   plugin_badges?: PluginBadge[];
+  /** The PR/MR's CI: "failed" needs you, "fixing" is with the agent; unset when neither. */
+  ci_attention?: "failed" | "fixing";
 }
 
 /** A plugin's badge on a sidebar row: a short label and its tooltip. */

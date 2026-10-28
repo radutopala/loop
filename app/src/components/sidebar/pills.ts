@@ -6,13 +6,13 @@ import type { Channel, PluginBadge } from "../../types";
 // plus a config row, with no new refs or props anywhere.
 
 /** The pill kinds the chat store tracks per channel. */
-export type PillKind = "gate" | "rev" | "ask" | "plan" | "trust";
+export type PillKind = "gate" | "rev" | "ask" | "plan" | "trust" | "ci";
 
 export interface PillSpec {
   kind: PillKind;
   label: string;
   /** Theme color key on the `colors` object. */
-  color: "warning" | "active";
+  color: "warning" | "active" | "error";
   title: string;
 }
 
@@ -23,6 +23,7 @@ export const SIDEBAR_PILLS: PillSpec[] = [
   { kind: "ask", label: "ask", color: "warning", title: "Agent is asking a question" },
   { kind: "plan", label: "plan", color: "warning", title: "Plan awaiting approval" },
   { kind: "trust", label: "trust", color: "warning", title: "Project config changed: review and trust it in Settings → Project" },
+  { kind: "ci", label: "ci", color: "error", title: "CI failed: see the Git panel" },
 ];
 
 /**
@@ -39,6 +40,17 @@ export const REVIEWING_PILL: Omit<PillSpec, "kind"> = { label: "rev…", color: 
  */
 export function trustPillIds(channels: ReadonlyArray<Pick<Channel, "id" | "parent_id" | "trust_pending">>): Set<string> {
   return new Set(channels.filter((c) => c.trust_pending && !c.parent_id).map((c) => c.id));
+}
+
+/**
+ * The pill a thread shows while its agent was sent to fix its CI. Like
+ * REVIEWING_PILL it isn't a PillKind: it's being handled, not waiting on you.
+ */
+export const CI_FIXING_PILL: Omit<PillSpec, "kind"> = { label: "ci…", color: "active", title: "Agent is fixing CI" };
+
+/** The rows the ci pill lights: a CI failure no agent is fixing. */
+export function ciPillIds(channels: ReadonlyArray<Pick<Channel, "id" | "ci_attention">>): Set<string> {
+  return new Set(channels.filter((c) => c.ci_attention === "failed").map((c) => c.id));
 }
 
 /** A plugin badge's tooltip: the plugin, then its title or else its text. */

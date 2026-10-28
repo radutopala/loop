@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Channel, ChannelUpdatedData } from "../types";
-import { applyChannelUpdate, applyPluginBadge, applyReviewStatus, replayChannelPatches } from "./channelUpdate";
+import { applyChannelUpdate, applyCI, applyPluginBadge, applyReviewStatus, replayChannelPatches } from "./channelUpdate";
 
 const channel: Channel = {
   id: "t1",
@@ -106,5 +106,15 @@ describe("applyPluginBadge", () => {
     expect(applyPluginBadge(c, { plugin_id: "quiz", text: "" }).plugin_badges).toEqual([audit]);
     expect(applyPluginBadge({ ...channel, plugin_badges: [quiz] }, { plugin_id: "quiz", text: "" }).plugin_badges).toBeUndefined();
     expect(applyPluginBadge(channel, { plugin_id: "quiz", text: "" }).plugin_badges).toBeUndefined();
+  });
+});
+
+describe("applyCI", () => {
+  it.each([
+    ["failed", "failed"],
+    ["fixing", "fixing"],
+    ["", undefined],
+  ] as const)("%s → %s", (attention, want) => {
+    expect(applyCI({ ...channel, ci_attention: "failed" }, { ci_attention: attention }).ci_attention).toBe(want);
   });
 });

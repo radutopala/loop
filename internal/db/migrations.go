@@ -656,6 +656,26 @@ var migrations = []migration{
 	// review_id groups the runs of one review: a review loop records one
 	// run per iteration (see ReviewRun).
 	sqlMigration(`ALTER TABLE review_runs ADD COLUMN review_id TEXT NOT NULL DEFAULT ''`),
+	// ci_state is what Loop knows of a thread's PR/MR CI (see CIState): the
+	// commits its agent pushed, the fix attempts so far and the merge the
+	// owner armed.
+	sqlMigration(`CREATE TABLE IF NOT EXISTS ci_state (
+		channel_id        TEXT PRIMARY KEY,
+		forge             TEXT NOT NULL DEFAULT '',
+		number            INTEGER NOT NULL DEFAULT 0,
+		agent_shas        TEXT NOT NULL DEFAULT '',
+		attempts          INTEGER NOT NULL DEFAULT 0,
+		last_failed_sha   TEXT NOT NULL DEFAULT '',
+		last_log_hash     TEXT NOT NULL DEFAULT '',
+		auto_fix_override INTEGER,
+		merge_armed       TEXT NOT NULL DEFAULT '',
+		merge_via         TEXT NOT NULL DEFAULT '',
+		armed_sha         TEXT NOT NULL DEFAULT '',
+		attention         TEXT NOT NULL DEFAULT '',
+		watching          INTEGER NOT NULL DEFAULT 0,
+		infra_retried_sha TEXT NOT NULL DEFAULT '',
+		updated_at        DATETIME NOT NULL
+	)`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the

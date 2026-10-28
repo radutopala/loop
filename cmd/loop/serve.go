@@ -29,6 +29,7 @@ import (
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/embeddings"
 	"github.com/radutopala/loop/internal/events"
+	"github.com/radutopala/loop/internal/forge"
 	"github.com/radutopala/loop/internal/fsmigrate"
 	"github.com/radutopala/loop/internal/githubapi"
 	"github.com/radutopala/loop/internal/gitlabapi"
@@ -676,6 +677,7 @@ func (a *app) serve() error {
 	// server construction via options — none of them need the server; only
 	// the engine's progress hook flows the other way and is wired after.
 	ghClient := githubapi.NewClient(hostProxyEnv)
+	glClient := gitlabapi.NewClient(hostProxyEnv)
 	reviewPrompt, reviewErr := cfg.Review.ResolvePrompt(cfg.LoopDir, os.ReadFile)
 	if reviewErr != nil {
 		logger.Warn("review prompt resolve failed, using built-in default", "error", reviewErr)
@@ -683,7 +685,7 @@ func (a *app) serve() error {
 	}
 	serverOpts := []api.Option{
 		api.WithGitHubLookup(ghClient),
-		api.WithGitLabLookup(gitlabapi.NewClient(hostProxyEnv)),
+		api.WithGitLabLookup(glClient),
 		api.WithTunnel(tunnel.NewManager(filepath.Join(cfg.LoopDir, "bin"), logger)),
 		api.WithReview(ghClient, review.NewStore(), &review.GitPR{Run: review.CommandRunner(worktree.ExecCommandRunnerWithEnv(hostProxyEnv))}),
 		api.WithReviewAgent(&review.Runner{Agent: runner}, "", reviewPrompt),
@@ -916,6 +918,7 @@ func (a *app) serve() error {
 	executor.SetChannelLocks(orch.ChannelLocksMap())
 	executor.SetCardParker(orch)
 	apiSrv.SetIncomingMessageHandler(chatBot)
+	startCIWatcher(ctx, apiSrv, store, eventsHub, chatBot, map[string]forge.Forge{forge.KindPR: ghClient, forge.KindMR: glClient}, logger)
 	monitors := monitor.NewManager(runner, apiSrv.WakeChannel, apiSrv.PublishChannelEvent, logger)
 	apiSrv.SetMonitors(monitors)
 	orch.SetLiveRunner(runner, apiSrv.PublishChannelEvent)

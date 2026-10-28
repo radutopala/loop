@@ -66,6 +66,7 @@ type projectConfig struct {
 	GitLab                     *projectGitLabConfig       `json:"gitlab"`
 	Review                     *jsonReviewConfig          `json:"review"`
 	PlaygroundShare            *jsonPlaygroundShareConfig `json:"playground_share"`
+	CI                         *jsonCIConfig              `json:"ci"`
 	Learn                      *jsonLearnConfig           `json:"learn"`
 	Explain                    *jsonExplainConfig         `json:"explain"`
 	Plugins                    *PluginsConfig             `json:"plugins"`
@@ -655,6 +656,9 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 	if pc.PlaygroundShare != nil && pc.PlaygroundShare.Enabled != nil {
 		merged.PlaygroundShare.Enabled = *pc.PlaygroundShare.Enabled
 	}
+
+	// CI: each field overrides only when set in the project.
+	merged.CI = merged.CI.overlay(pc.CI)
 
 	// Learn: like Review, each field overrides only when set in the project.
 	if pc.Learn != nil {

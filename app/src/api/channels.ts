@@ -66,6 +66,7 @@ interface ChannelAPIResponse {
   ticket_url?: string;
   trust_pending?: boolean;
   plugin_badges?: PluginBadge[];
+  ci_attention?: "failed" | "fixing";
 }
 
 export async function fetchChannels(): Promise<Channel[]> {
@@ -108,6 +109,7 @@ export async function fetchChannels(): Promise<Channel[]> {
     ticket_url: c.ticket_url,
     trust_pending: c.trust_pending,
     plugin_badges: c.plugin_badges,
+    ci_attention: c.ci_attention,
   }));
 }
 

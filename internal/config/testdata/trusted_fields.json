@@ -136,5 +136,11 @@
         "schedule": "1m"
       }
     }
+  },
+  {
+    "path": "ci",
+    "sample": {
+      "auto_fix": false
+    }
   }
 ]

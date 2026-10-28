@@ -168,6 +168,7 @@ List all channels with optional filtering. Enriches each channel with container 
 - `description` is what the channel or thread is for, set via [`POST /api/channels/{id}/description`](#post-apichannelsiddescription). Omitted when empty.
 - `ticket_url` is the URL of the channel or thread's ticket, set via [`POST /api/channels/{id}/ticket`](#post-apichannelsidticket). Omitted when unset.
 - `trust_pending` is `true` when the project config's host-reaching fields changed since you last trusted them, so they don't apply yet (see [`GET /api/config/project/trust`](#get-apiconfigprojecttrust)). For a worktree chain it's the root checkout's config. Omitted otherwise, and when the config can't be read.
+- `ci_attention` is the CI of the thread's PR/MR (see [CI](#ci)): `failed` for a failure no agent is fixing, which lights the sidebar's `ci` pill, or `fixing` while the thread's agent was sent to fix one (`ci…`). Omitted otherwise, and when CI watching is off. The sidebar patches it live from `channel.ci` events.
 - `plugin_badges` are the badges plugins set on the row with [`PUT /api/plugin/v1/badge`](#plugin-api-v1), as `[{"plugin_id", "text", "title"?}]` in plugin id order. Omitted when there are none, when plugins are off, or when the lookup fails. The sidebar patches them live from `plugin.badge` events.
 - `task_id` is set on a thread a scheduled task created for its output: the id of that task. Omitted on every other channel and thread, including ones that host tasks. The sidebar's hide-task-threads toggle filters on it.
 - `locked` is true when the channel/thread is guarded against accidental deletion (toggle via [`PATCH /api/channels/{id}/lock`](#patch-apichannelsidlock)). `DELETE /api/channels/{id}` and `DELETE /api/threads/{id}` return `409 Conflict` while a row is locked.
@@ -2198,8 +2199,91 @@ A GitLab merge request has `"kind": "mr"`, its IID as `number`, and GitLab's low
 - The `gh` account is picked by the `github.gh_user` config key (mergeable per-project via `.loop/config.json`); empty falls back to whichever account `gh` currently has active.
 - A repo without an `origin` remote looks nothing up. An `origin` on a GitLab host (its name contains `gitlab`, or the `glab` config lists it) runs `glab mr list --source-branch <branch> --all`, newest first; `gitlab.glab_config_dir` picks the config, so the account, it uses. Any other host goes to `gh`, GitHub Enterprise included.
 - Environmental failures (`gh` or `glab` not installed, network) degrade to `present: false` rather than a 5xx so the UI hides the PR chip silently.
+- A PR/MR found has the [CI watcher](#ci) poll the thread's checks.
 
 **Errors:** `404` if channel not found.
+
+---
+
+## CI
+
+Loop watches the checks of a thread's PR/MR and sends failures on the agent's own commits back to it (see [ci.md](ci.md)). These routes are owner-only: the [agent scope](#agent-scope) leaves them out. All of them return `501` with `CI watching not configured` when the daemon runs without it.
+
+### `GET /api/channels/{id}/ci`
+
+The CI of the channel's PR/MR, as the last [`channel.ci`](events.md#channelci) event reported it, or read from the forge when nothing has been reported yet.
+
+**Response (200):**
+```json
+{
+  "present": true,
+  "ci": {
+    "channel_id": "thread-id",
+    "kind": "mr",
+    "number": 57,
+    "url": "https://gitlab.example.com/example/group/project/-/merge_requests/57",
+    "head_sha": "4f1c2d9e8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e",
+    "checks": {"total": 7, "passed": 5, "failed": 2, "pending": 0},
+    "failed": [{"id": "981", "name": "lint", "group": "test", "url": "https://gitlab.example.com/example/group/project/-/jobs/981", "run_id": "981"}],
+    "merge_state": "blocked",
+    "auto_merge": false,
+    "merge_methods": ["squash", "merge"],
+    "merge_method": "squash",
+    "ci_attention": "fixing",
+    "auto_fix": true,
+    "auto_fix_default": true,
+    "attempts": 1,
+    "max_attempts": 3
+  }
+}
+```
+
+`{"present": false}` when the branch has no PR/MR. The fields are those of the [`channel.ci`](events.md#channelci) event.
+
+### `POST /api/channels/{id}/ci/fix`
+
+Sends the PR/MR's current failure to the thread's agent now, whoever made the commit and whatever the auto-fix guards say. Returns `204`.
+
+**Errors:** `404` when the branch has no PR/MR, `409` when nothing failed, `502` when the forge can't be read.
+
+### `PUT /api/channels/{id}/ci/auto-fix`
+
+Overrides `ci.auto_fix` for the thread. Returns `204`.
+
+**Request body:**
+```json
+{"auto_fix": false}
+```
+
+`null` drops the override, so the config's setting applies again.
+
+**Errors:** `400` for a malformed body, `502` when the setting can't be saved.
+
+### `POST /api/channels/{id}/pr/merge`
+
+Merges the thread's PR/MR now, or arms "merge when ready". Returns `204`.
+
+**Request body:**
+```json
+{"when_ready": true, "method": "squash"}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `when_ready` | bool | Arm "merge when ready" instead of merging now |
+| `method` | string | `squash`, `merge` or `rebase`. Empty uses `ci.merge_method`, else the first the repo allows |
+
+**Behavior notes:**
+- Armed, the merge goes through the forge's own auto-merge when the repo allows it (`gh pr merge --auto`, or GitLab's auto-merge). Otherwise Loop merges once the checks pass and the PR/MR can merge cleanly. Loop disarms its own merge when someone other than the agent pushes a new head.
+- A method the repo doesn't allow fails with `502`.
+
+**Errors:** `400` for a malformed body, `404` when the branch has no PR/MR, `502` when the forge refuses or can't be read.
+
+### `DELETE /api/channels/{id}/pr/merge`
+
+Cancels the "merge when ready" Loop armed, turning the forge's auto-merge off when that's what it armed. An auto-merge turned on outside Loop is left alone. Returns `204`.
+
+**Errors:** `404` when the branch has no PR/MR, `502` when the forge refuses.
 
 ---
 

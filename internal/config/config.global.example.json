@@ -91,6 +91,19 @@
   //  "enabled": true
   //},
 
+  // CI: Loop watches a thread's PR/MR checks. A failure on a commit the
+  // thread's agent made goes back to that agent to fix (auto_fix, on by
+  // default), at most max_attempts times per PR/MR; any other failure lights
+  // the thread's ci pill. merge_method is how "merge when ready" merges
+  // (squash, merge or rebase; empty picks the first the repo allows, squash
+  // first). poll_sec is how often running checks are polled. See docs/ci.md.
+  //"ci": {
+  //  "auto_fix": true,
+  //  "max_attempts": 3,
+  //  "merge_method": "squash",
+  //  "poll_sec": 30
+  //},
+
   // Backup: zip ~/.loop/loop.db and the playgrounds into a directory on a
   // schedule, such as a folder Dropbox or OneDrive syncs. times_per_day spaces
   // the backups evenly over a day (at most 24). Older backups are pruned in

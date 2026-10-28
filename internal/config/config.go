@@ -71,6 +71,7 @@ type jsonConfig struct {
 	GitLab                     *GitLabConfig              `json:"gitlab"`
 	Review                     *jsonReviewConfig          `json:"review"`
 	PlaygroundShare            *jsonPlaygroundShareConfig `json:"playground_share"`
+	CI                         *jsonCIConfig              `json:"ci"`
 	Learn                      *jsonLearnConfig           `json:"learn"`
 	Explain                    *jsonExplainConfig         `json:"explain"`
 	Plugins                    *PluginsConfig             `json:"plugins"`
@@ -470,6 +471,8 @@ func (l *Loader) parse() (*Config, error) {
 	if jc.PlaygroundShare != nil {
 		cfg.PlaygroundShare.Enabled = ptrDefault(jc.PlaygroundShare.Enabled, false)
 	}
+
+	cfg.CI = ciConfigOf(jc.CI)
 
 	backup := cmp.Or(jc.Backup, &jsonBackupConfig{})
 	cfg.Backup = BackupConfig{

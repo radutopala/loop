@@ -80,6 +80,9 @@ func (s *Server) handleChannelPR(w http.ResponseWriter, r *http.Request) {
 
 	resp := prResponse{Present: pr != nil, PR: pr}
 	s.prLookup.put(dirPath, branch, resp)
+	if pr != nil && s.ci != nil {
+		s.ci.Watch(channelID)
+	}
 	writeHTTPJSON(w, http.StatusOK, resp, s.logger)
 }
 

@@ -66,4 +66,5 @@ func initializeScenario(ctx *godog.ScenarioContext) {
 	registerBackendSteps(ctx, tc)
 	registerAuthSteps(ctx, tc)
 	registerFrontendSteps(ctx, tc)
+	registerCISteps(ctx, tc)
 }

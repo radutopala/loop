@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { type CIStatus, getCI } from "../../api/ci";
 import { fetchRoots, type RootEntry } from "../../api/files";
 import type { CommitEntry, DiffResponse, PRInfo } from "../../api/loopApi";
 import { fetchBranches, fetchCommits, fetchDiff, fetchPR } from "../../api/loopApi";
@@ -13,6 +14,7 @@ import { storageGet, storageSet } from "../../utils/storage";
 import type { FileLinkOpenDetail } from "../chat/FileLink";
 import { ContextMenu } from "../shared/ContextMenu";
 import { BranchesPanel } from "./BranchesPanel";
+import { CISection } from "./CISection";
 import { CommitDiffView } from "./CommitDiffView";
 import { CommitHistory } from "./CommitHistory";
 import type { ParsedFile } from "./DiffViewer";
@@ -118,6 +120,8 @@ export function GitPanel({
   const [diffVersion, setDiffVersion] = useState(0);
   const panelRef = useRef<HTMLDivElement>(null);
   const [pr, setPR] = useState<PRInfo | null>(null);
+  // The CI of the channel's PR/MR, null without one (or without CI watching).
+  const [ci, setCI] = useState<CIStatus | null>(null);
   // Multi-root workspace support: primary dir_path + extra_dirs. When the
   // channel has no extras, roots.length is 1 and the dropdown is hidden.
   const [roots, setRoots] = useState<RootEntry[]>([]);
@@ -136,6 +140,14 @@ export function GitPanel({
     e.currentTarget.style.color = colors.textDim;
   };
 
+  // The CI row's data; a daemon without CI watching answers with an error.
+  const loadCI = useCallback(() => {
+    if (!channelId) return;
+    getCI(channelId)
+      .then(setCI)
+      .catch(() => setCI(null));
+  }, [channelId]);
+
   // Load PR info. When a PR is open, seed sourceBranch to the PR's base
   // (only once per channel) so the Branches Diff mode defaults to the PR's
   // target rather than main. `fresh` bypasses the backend lookup cache —
@@ -144,18 +156,21 @@ export function GitPanel({
     (fresh = false) => {
       if (!channelId) {
         setPR(null);
+        setCI(null);
         return;
       }
       fetchPR(channelId, fresh)
         .then((res) => {
           if (res.present && res.pr) {
             setPR(res.pr);
+            loadCI();
             if (prSeededRef.current !== channelId) {
               setSourceBranch(res.pr.base_ref);
               prSeededRef.current = channelId;
             }
           } else {
             setPR(null);
+            setCI(null);
           }
         })
         .catch(() => setPR(null));
@@ -312,6 +327,11 @@ export function GitPanel({
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onEvent = useCallback(
     (event: WSEvent) => {
+      // CI events come for every channel; only this one's updates the CI row.
+      if (event.type === "channel.ci") {
+        if (event.channel_id === channelId) setCI(event.data as CIStatus);
+        return;
+      }
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(load, 1_000);
       if (event.type === "agent.status" && (event.data as AgentStatusData | undefined)?.status !== "running") {
@@ -320,7 +340,7 @@ export function GitPanel({
         loadPR();
       }
     },
-    [load, loadPR],
+    [load, loadPR, channelId],
   );
   useEffect(
     () => () => {
@@ -577,6 +597,9 @@ export function GitPanel({
     <BranchesPanel channelId={channelId} isWorktree={isWorktree ?? false} hasBranch={hasBranch ?? false} onSelectThread={onSelectThread} onBranchChanged={onStatusChange} />
   ) : null;
 
+  // Shown for this channel's CI only, not a previous channel's still loaded.
+  const ciSection = channelId && pr && ci?.channel_id === channelId ? <CISection channelId={channelId} ci={ci} colors={colors} onChanged={loadCI} /> : null;
+
   const contextMenuOverlay = fileContextMenu && (
     <ContextMenu
       x={fileContextMenu.x}
@@ -608,6 +631,7 @@ export function GitPanel({
     return (
       <div data-testid="git-panel" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", backgroundColor: colors.sidebar, zoom: fontSizes.panels / 12 }}>
         {gitToolbar}
+        {ciSection}
         {gitMode === "branchlist" ? branchesContent : gitMode === "worktrees" ? worktreesContent : gitMode === "commits" ? commitsContent : diffContent}
         {contextMenuOverlay}
       </div>
@@ -929,6 +953,7 @@ export function GitPanel({
         )}
       </div>
 
+      {ciSection}
       {/* File list + diffs / Commits / Worktrees */}
       {gitMode === "branchlist" ? branchesContent : gitMode === "worktrees" ? worktreesContent : gitMode === "commits" ? commitsContent : diffContent}
       {contextMenuOverlay}

@@ -1609,3 +1609,16 @@ func (s *EventsHubSuite) TestObserve() {
 	require.Equal(s.T(), EventAgentStatus, seen[0].Type)
 	require.NotZero(s.T(), seen[0].Timestamp)
 }
+
+func (s *EventsHubSuite) TestBroadcastChannelCI() {
+	hub := NewEventsHub(testLogger())
+	var seen []Event
+	hub.Observe(func(e Event) { seen = append(seen, e) })
+	data := events.CIEventData{ChannelID: "th-1", Kind: "pr", Number: 12}
+	hub.BroadcastChannelCI(data)
+	require.Len(s.T(), seen, 1)
+	require.Equal(s.T(), EventChannelCI, seen[0].Type)
+	require.Equal(s.T(), "th-1", seen[0].ChannelID)
+	require.Equal(s.T(), data, seen[0].Data)
+	require.True(s.T(), seen[0].Global)
+}

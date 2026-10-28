@@ -79,6 +79,7 @@ const (
 	EventReviewApproved            = "review.approved"
 	EventPluginsChanged            = "plugins.changed"
 	EventPluginRunStarted          = "plugin.run_started"
+	EventChannelCI                 = "channel.ci"
 )
 
 // Event represents a server-sent event to WebSocket clients.
@@ -753,5 +754,16 @@ func (h *EventsHub) BroadcastQualityEvent(eventType, channelID string, data any)
 		Type:      eventType,
 		ChannelID: channelID,
 		Data:      data,
+	})
+}
+
+// BroadcastChannelCI sends a channel.ci event when a thread's PR/MR CI
+// changes. Global so the sidebar can show any thread's CI pill.
+func (h *EventsHub) BroadcastChannelCI(data events.CIEventData) {
+	h.Broadcast(Event{
+		Type:      EventChannelCI,
+		ChannelID: data.ChannelID,
+		Data:      data,
+		Global:    true,
 	})
 }
