@@ -534,7 +534,7 @@ The status of a thread's PR/MR changed: its checks, an auto-fix sent or stopped,
   "reason": "not_agent_commit",
   "checkout_sha": "4f1c2d9e8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e",
   "unresolved_threads": 1,
-  "alert": "PR #342: lint failed; 1 unresolved review thread"
+  "alert": "PR #342: lint failed"
 }
 ```
 
@@ -562,7 +562,7 @@ The status of a thread's PR/MR changed: its checks, an auto-fix sent or stopped,
 | `reason`           | string | Why the watcher last acted as it did on the failure: `not_agent_commit`, `auto_fix_off`, `max_attempts`, `no_new_commit`, `same_failure`, `infra_rerun`, `infra_again`, `fix_sent` or `fix_asked` (see [pr.md](pr.md#the-git-panel)); omitted when the checks pass or a new head's checks start running |
 | `checkout_sha`     | string | The commit the thread's checkout is at; omitted when it can't be read |
 | `unresolved_threads` | int  | The PR/MR's unresolved review threads; omitted when none (see [pr.md](pr.md#unresolved-review-threads)) |
-| `alert`            | string | A new failure or unresolved review thread that needs the owner (a merge conflict shows in the PR/MR tab only). It also adds a notification, so it's set on one event only |
+| `alert`            | string | A new failure that needs the owner (a merge conflict and review threads show in the sidebar and PR/MR tab only). It also adds a notification, so it's set on one event only |
 
 ---
 

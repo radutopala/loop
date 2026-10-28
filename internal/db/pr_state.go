@@ -18,9 +18,9 @@ import (
 // fix was for. AutoFix overrides the config's auto_fix when set. MergeArmed
 // is the merge method the owner armed, MergeVia whether the forge ("forge")
 // or Loop ("loop") merges and ArmedSHA the head it was armed on. Attention
-// is "", "failed" or "fixing"; Reason says why, and Failed are the failed
+// is "", "failed", "fixing" or "conflict"; Reason says why, and Failed are the failed
 // checks of the head that failed. Open is whether the last poll saw the PR/MR
-// open, and Threads are its unresolved review threads the owner was told of.
+// open, and Threads are its unresolved review threads.
 type PRState struct {
 	ChannelID       string
 	Forge           string

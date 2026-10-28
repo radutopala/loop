@@ -50,8 +50,8 @@ const (
 // Reason says why the watcher acted as it did on a failure (a PRReason*),
 // and CheckoutSHA is the commit the thread's checkout is on.
 // UnresolvedThreads counts the PR/MR's unresolved review threads. Alert,
-// when set, is a new failure or unresolved review thread the owner is told
-// of in a notification; a merge conflict shows in the PR/MR tab only.
+// when set, is a new failure the owner is told of in a notification; a
+// merge conflict and review threads show in the sidebar and PR/MR tab only.
 type PREventData struct {
 	ChannelID         string              `json:"channel_id"`
 	Kind              string              `json:"kind"`

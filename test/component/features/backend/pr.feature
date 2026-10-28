@@ -2,9 +2,8 @@
 Feature: PR watching
   Loop watches the checks of a thread's PR/MR. A failure on a commit the
   thread's agent didn't make lights the thread's ci pill, any merge conflict
-  its conflict pill and the PR/MR tab only, new unresolved review threads
-  notify the owner and light its cmt pill, and the owner can arm "merge when
-  ready". The forge is a fake gh or glab on the daemon's PATH.
+  its cnf pill and the PR/MR tab only, unresolved review threads its cmt
+  pill only, and the owner can arm "merge when ready". The forge is a fake gh or glab on the daemon's PATH.
 
   Scenario Outline: A failure on a commit that isn't the agent's needs the owner
     Given I set up a test channel via API for git repo "bdd-pr-fail-<cli>"
@@ -22,7 +21,7 @@ Feature: PR watching
     And the channel list should soon show the current channel's "pr_attention" as "failed"
     And a GET to "/api/channels/{channel_id}/pr/status" should soon have JSON "pr.unresolved_threads" equal to "1"
     And the channel list should soon show the current channel's "unresolved_threads" as "1"
-    And a GET to "/api/notifications?channel_id={channel_id}" should soon have JSON "notifications.0.title" equal to "<label>: lint failed; 1 unresolved review thread"
+    And a GET to "/api/notifications?channel_id={channel_id}" should soon have JSON "notifications.0.title" equal to "<label>: lint failed"
 
     Examples:
       | cli  | origin                                                | label | kind |
@@ -40,7 +39,9 @@ Feature: PR watching
     And a GET to "/api/channels/{channel_id}/pr/status" should soon have JSON "pr.pr_attention" equal to "conflict"
     And the response JSON "pr.base_ref" should be "main"
     And the channel list should soon show the current channel's "pr_attention" as "conflict"
-    And a GET to "/api/notifications?channel_id={channel_id}" should soon have JSON "notifications.0.title" equal to "<label>: 1 unresolved review thread"
+    And the channel list should soon show the current channel's "unresolved_threads" as "1"
+    When I send a GET request to "/api/notifications?channel_id={channel_id}"
+    Then the response JSON "unread" should be "0"
 
     Examples:
       | cli  | origin                                                | label | kind |

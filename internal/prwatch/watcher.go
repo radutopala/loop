@@ -1,8 +1,8 @@
 // Package prwatch watches each thread's PR/MR: its checks, merge state and
 // review threads. A failure on a commit the thread's agent made goes back
 // to that agent to fix, within guards; any other, and any merge conflict,
-// flags the thread for its owner. The owner is told of new unresolved
-// review threads. It also carries out "merge when ready" where the forge can't.
+// flags the thread for its owner, as do unresolved review threads. It
+// also carries out "merge when ready" where the forge can't.
 package prwatch
 
 import (
@@ -380,7 +380,7 @@ func (w *Watcher) poll(ctx context.Context, channelID string, e *entry) (bool, t
 		}
 	}
 	if st.Open {
-		alert = w.threads(ctx, t, f, st, alert)
+		w.threads(ctx, t, f, st)
 	} else {
 		st.Threads = nil
 	}
@@ -391,27 +391,15 @@ func (w *Watcher) poll(ctx context.Context, channelID string, e *entry) (bool, t
 	return st.Watching, every, openIdle(st, idle)
 }
 
-// threads keeps the PR/MR's unresolved review threads in st and returns
-// alert, telling the owner of any new one too.
-func (w *Watcher) threads(ctx context.Context, t *Target, f forge.Forge, st *db.PRState, alert string) string {
+// threads keeps the PR/MR's unresolved review threads in st. They light
+// the thread's cmt pill and alert no one; on an error the last ones stay.
+func (w *Watcher) threads(ctx context.Context, t *Target, f forge.Forge, st *db.PRState) {
 	ids, err := f.UnresolvedThreads(ctx, t.Ref)
 	if err != nil {
 		w.Logger.Warn("pr: listing unresolved review threads", "channel_id", st.ChannelID, "error", err)
-		return alert
+		return
 	}
-	fresh := slices.ContainsFunc(ids, func(id string) bool { return !slices.Contains(st.Threads, id) })
 	st.Threads = ids
-	if !fresh {
-		return alert
-	}
-	what := fmt.Sprintf("%d unresolved review thread", len(ids))
-	if len(ids) > 1 {
-		what += "s"
-	}
-	if alert == "" {
-		return label(t) + ": " + what
-	}
-	return alert + "; " + what
 }
 
 // openIdle is how often the thread's PR/MR is polled while it isn't

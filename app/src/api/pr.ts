@@ -57,7 +57,7 @@ export interface PRStatus {
   checkout_sha?: string;
   /** The PR/MR's unresolved review threads. */
   unresolved_threads?: number;
-  /** A new failure or unresolved review thread the owner is told of; a merge conflict shows in the PR/MR tab only. */
+  /** A new failure the owner is told of; a merge conflict and review threads show in the sidebar and PR/MR tab only. */
   alert?: string;
 }
 

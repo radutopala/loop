@@ -1,7 +1,7 @@
 ---
 title: PR Watching
 ---
-Loop watches the checks, merge state and review threads of a thread's pull request (GitHub) or merge request (GitLab). When a check fails on a commit the thread's agent made, Loop sends it back to that agent to fix. Any other failure lights a red `ci` pill on the thread, and a merge conflict with the base a red `cnf` pill, so you know it needs you. Hovering the thread says why each pill is lit. New unresolved review threads on the PR/MR are notified too, and light a `cmt` pill. You can also arm **merge when ready**, so the PR/MR merges once its checks pass.
+Loop watches the checks, merge state and review threads of a thread's pull request (GitHub) or merge request (GitLab). When a check fails on a commit the thread's agent made, Loop sends it back to that agent to fix. Any other failure lights a red `ci` pill on the thread, and a merge conflict with the base a red `cnf` pill, so you know it needs you. Unresolved review threads on the PR/MR light a yellow `cmt` pill. Hovering the thread says why each pill is lit. You can also arm **merge when ready**, so the PR/MR merges once its checks pass.
 
 **Related docs:** [Git Panel](git.md) | [Sidebar](sidebar.md) | [Configuration — PR watching](configuration.md#pr-watching) | [HTTP API — PR watching](api.md#pr-watching) | [Events — `channel.pr`](events.md#channelpr)
 
@@ -57,9 +57,7 @@ When the PR/MR conflicts with its base (GitHub's `DIRTY`, GitLab's `conflict`), 
 
 ## Unresolved review threads
 
-Each poll of an open PR/MR also counts its unresolved review threads: GitHub review threads not marked resolved, or GitLab discussions with a resolvable note not yet resolved (the first 100 of either). A thread not seen before raises a notification, such as "PR #342: 2 unresolved review threads", once per thread, also across daemon restarts. With a new failure in the same poll, the two share one notification: "PR #342: lint failed; 1 unresolved review thread".
-
-Review threads light the yellow `cmt` pill and show their count in the Git panel's PR/MR tab until they're resolved. Auto-fix doesn't send them to the agent.
+Each poll of an open PR/MR also counts its unresolved review threads: GitHub review threads not marked resolved, or GitLab discussions with a resolvable note not yet resolved (the first 100 of either). They raise no notification: they light the yellow `cmt` pill, show their count in the thread's hover popup and the Git panel's PR/MR tab until they're resolved. Auto-fix doesn't send them to the agent.
 
 ## The Git panel
 

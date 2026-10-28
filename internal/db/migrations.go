@@ -682,8 +682,7 @@ var migrations = []migration{
 	sqlMigration(`ALTER TABLE ci_state ADD COLUMN failed TEXT NOT NULL DEFAULT ''`),
 	// open marks a PR/MR the last poll saw open, polled slowly while idle.
 	sqlMigration(`ALTER TABLE ci_state ADD COLUMN open INTEGER NOT NULL DEFAULT 0`),
-	// threads are the PR/MR's unresolved review threads the owner was told
-	// of, one id a line.
+	// threads are the PR/MR's unresolved review threads, one id a line.
 	sqlMigration(`ALTER TABLE ci_state ADD COLUMN threads TEXT NOT NULL DEFAULT ''`),
 	// ci_state is pr_state now that it tracks the PR/MR beyond its CI, and the
 	// messages that send a failure to the agent come from

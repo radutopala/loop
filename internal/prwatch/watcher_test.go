@@ -266,8 +266,8 @@ func (s *WatcherSuite) TestConflict() {
 	}
 }
 
-// TestUnresolvedThreads tells the owner of each new unresolved review
-// thread once, on both forges, and forgets them once the PR/MR is merged.
+// TestUnresolvedThreads counts the unresolved review threads, on both
+// forges, without alerting anyone, and forgets them once the PR/MR is merged.
 func (s *WatcherSuite) TestUnresolvedThreads() {
 	for _, kind := range []string{forge.KindPR, forge.KindMR} {
 		s.Run(kind, func() {
@@ -277,28 +277,22 @@ func (s *WatcherSuite) TestUnresolvedThreads() {
 			s.forge.threads = []string{"T1"}
 			s.ci("h1", green).Once()
 			s.poll()
-			require.Equal(s.T(), label(s.target)+": 1 unresolved review thread", s.lastBroadcast().Alert)
+			require.Empty(s.T(), s.lastBroadcast().Alert)
 			require.Equal(s.T(), 1, s.lastBroadcast().UnresolvedThreads)
 			require.Equal(s.T(), []string{"T1"}, s.store.get(ch).Threads)
 			require.Empty(s.T(), s.store.get(ch).Attention, "threads don't flag the thread")
 
-			// Told once.
-			n := len(s.broadcasts)
-			s.ci("h1", green).Once()
-			s.poll()
-			require.Len(s.T(), s.broadcasts, n)
-
-			// A new thread tells of them all.
+			// A new thread: the count follows, still no alert.
 			s.forge.threads = []string{"T1", "T2"}
 			s.ci("h1", green).Once()
 			s.poll()
-			require.Equal(s.T(), label(s.target)+": 2 unresolved review threads", s.lastBroadcast().Alert)
+			require.Empty(s.T(), s.lastBroadcast().Alert)
+			require.Equal(s.T(), 2, s.lastBroadcast().UnresolvedThreads)
 
-			// One resolved: no alert, the count follows.
+			// One resolved.
 			s.forge.threads = []string{"T2"}
 			s.ci("h1", green).Once()
 			s.poll()
-			require.Empty(s.T(), s.lastBroadcast().Alert)
 			require.Equal(s.T(), 1, s.lastBroadcast().UnresolvedThreads)
 
 			// A listing error keeps what was known.
@@ -318,7 +312,7 @@ func (s *WatcherSuite) TestUnresolvedThreads() {
 	}
 }
 
-// TestUnresolvedThreadsWithFailure joins a new thread to a failure's alert.
+// TestUnresolvedThreadsWithFailure leaves a failure's alert to the failure.
 func (s *WatcherSuite) TestUnresolvedThreadsWithFailure() {
 	s.settings()
 	s.store.put(db.PRState{ChannelID: ch, Forge: forge.KindPR, Number: 12})
@@ -326,7 +320,8 @@ func (s *WatcherSuite) TestUnresolvedThreadsWithFailure() {
 	s.ci("h1", failing).Once()
 	s.forge.On("FailedChecks", mock.Anything, s.target.Ref).Return([]forge.FailedCheck{lint}, nil).Once()
 	s.poll()
-	require.Equal(s.T(), "PR #12: lint failed; 1 unresolved review thread", s.lastBroadcast().Alert)
+	require.Equal(s.T(), "PR #12: lint failed", s.lastBroadcast().Alert)
+	require.Equal(s.T(), 1, s.lastBroadcast().UnresolvedThreads)
 }
 
 // TestConflictWaitsForFix leaves a conflict be while a fix for a failure is

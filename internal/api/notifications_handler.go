@@ -264,8 +264,8 @@ func runNotification(channelID string, d events.AgentStatusEventData) *db.Notifi
 	return &db.Notification{Kind: db.NotificationRun, ChannelID: channelID, Title: "Run failed", Body: d.Error}
 }
 
-// prNotification is the notification of a PR/MR CI failure, merge
-// conflict or unresolved review thread that needs the owner.
+// prNotification is the notification of a PR/MR CI failure that needs
+// the owner.
 func prNotification(d events.PREventData) *db.Notification {
 	if d.Alert == "" {
 		return nil
