@@ -60,10 +60,11 @@ func (tc *TestContext) fakeForgeCI(bin string, number int, check string) error {
 				{"name": check, "bucket": "fail", "link": "https://github.com/example/repo/actions/runs/9/job/123", "workflow": "CI"},
 				{"name": "test", "bucket": "pass", "link": "https://github.com/example/repo/actions/runs/9/job/124", "workflow": "CI"},
 			})},
-			{`"repo view "*`, js(map[string]bool{
+			{`"api graphql "*`, js(map[string]bool{
 				"autoMergeAllowed": true, "squashMergeAllowed": true, "mergeCommitAllowed": true, "rebaseMergeAllowed": false,
 			})},
 			{`"run view "*`, check + ": missing comma"},
+			{`"run rerun "*`, ""},
 			{`"pr merge "*`, ""},
 		}
 	} else {

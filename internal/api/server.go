@@ -517,6 +517,8 @@ func (s *Server) registerGitRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/channels/{id}/pr/merge", s.handlePRMergeCancel)
 	mux.HandleFunc("GET /api/channels/{id}/ci", s.handleChannelCI)
 	mux.HandleFunc("POST /api/channels/{id}/ci/fix", s.handleChannelCIFix)
+	mux.HandleFunc("POST /api/channels/{id}/ci/rerun", s.handleChannelCIRerun)
+	mux.HandleFunc("GET /api/channels/{id}/ci/log", s.handleChannelCILog)
 	mux.HandleFunc("PUT /api/channels/{id}/ci/auto-fix", s.handleChannelCIAutoFix)
 	mux.HandleFunc("GET /api/channels/{id}/branches", s.handleListBranches)
 	mux.HandleFunc("GET /api/channels/{id}/commits", s.handleListCommits)

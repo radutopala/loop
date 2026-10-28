@@ -45,6 +45,15 @@ func (m *mockCIWatcher) FixNow(ctx context.Context, channelID string) error {
 	return m.Called(ctx, channelID).Error(0)
 }
 
+func (m *mockCIWatcher) Rerun(ctx context.Context, channelID string) error {
+	return m.Called(ctx, channelID).Error(0)
+}
+
+func (m *mockCIWatcher) Log(ctx context.Context, channelID, checkID string) (string, error) {
+	args := m.Called(ctx, channelID, checkID)
+	return args.String(0), args.Error(1)
+}
+
 func (m *mockCIWatcher) Arm(ctx context.Context, channelID, method string) error {
 	return m.Called(ctx, channelID, method).Error(0)
 }
@@ -68,6 +77,8 @@ func (s *ServerSuite) ciMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/channels/{id}/ci", s.srv.handleChannelCI)
 	mux.HandleFunc("POST /api/channels/{id}/ci/fix", s.srv.handleChannelCIFix)
+	mux.HandleFunc("POST /api/channels/{id}/ci/rerun", s.srv.handleChannelCIRerun)
+	mux.HandleFunc("GET /api/channels/{id}/ci/log", s.srv.handleChannelCILog)
 	mux.HandleFunc("PUT /api/channels/{id}/ci/auto-fix", s.srv.handleChannelCIAutoFix)
 	mux.HandleFunc("POST /api/channels/{id}/pr/merge", s.srv.handlePRMerge)
 	mux.HandleFunc("DELETE /api/channels/{id}/pr/merge", s.srv.handlePRMergeCancel)
@@ -85,6 +96,8 @@ func (s *ServerSuite) TestCIRoutesNotConfigured() {
 	for _, r := range [][2]string{
 		{"GET", "/api/channels/th-1/ci"},
 		{"POST", "/api/channels/th-1/ci/fix"},
+		{"POST", "/api/channels/th-1/ci/rerun"},
+		{"GET", "/api/channels/th-1/ci/log?check=9"},
 		{"PUT", "/api/channels/th-1/ci/auto-fix"},
 		{"POST", "/api/channels/th-1/pr/merge"},
 		{"DELETE", "/api/channels/th-1/pr/merge"},
@@ -125,6 +138,14 @@ func (s *ServerSuite) TestChannelCIActions() {
 			setup: func(ci *mockCIWatcher) { ci.On("FixNow", mock.Anything, "th-1").Return(ciwatch.ErrNoFailure) }, want: http.StatusConflict},
 		{name: "fix without a PR", method: "POST", path: "/api/channels/th-1/ci/fix",
 			setup: func(ci *mockCIWatcher) { ci.On("FixNow", mock.Anything, "th-1").Return(ciwatch.ErrNoPR) }, want: http.StatusNotFound},
+		{name: "rerun", method: "POST", path: "/api/channels/th-1/ci/rerun",
+			setup: func(ci *mockCIWatcher) { ci.On("Rerun", mock.Anything, "th-1").Return(nil) }, want: http.StatusNoContent},
+		{name: "rerun without a failure", method: "POST", path: "/api/channels/th-1/ci/rerun",
+			setup: func(ci *mockCIWatcher) { ci.On("Rerun", mock.Anything, "th-1").Return(ciwatch.ErrNoFailure) }, want: http.StatusConflict},
+		{name: "log of an unknown check", method: "GET", path: "/api/channels/th-1/ci/log?check=9",
+			setup: func(ci *mockCIWatcher) { ci.On("Log", mock.Anything, "th-1", "9").Return("", ciwatch.ErrNoCheck) }, want: http.StatusNotFound},
+		{name: "log the forge can't read", method: "GET", path: "/api/channels/th-1/ci/log?check=9",
+			setup: func(ci *mockCIWatcher) { ci.On("Log", mock.Anything, "th-1", "9").Return("", errors.New("gh")) }, want: http.StatusBadGateway},
 		{name: "auto-fix on", method: "PUT", path: "/api/channels/th-1/ci/auto-fix", body: `{"auto_fix":true}`,
 			setup: func(ci *mockCIWatcher) { ci.On("SetAutoFix", mock.Anything, "th-1", &on).Return(nil) }, want: http.StatusNoContent},
 		{name: "auto-fix back to the config's", method: "PUT", path: "/api/channels/th-1/ci/auto-fix", body: `{"auto_fix":null}`,
@@ -152,6 +173,16 @@ func (s *ServerSuite) TestChannelCIActions() {
 			ci.AssertExpectations(s.T())
 		})
 	}
+}
+
+func (s *ServerSuite) TestChannelCILog() {
+	ci := new(mockCIWatcher)
+	s.srv.SetCIWatcher(ci)
+	ci.On("Log", mock.Anything, "th-1", "9").Return("FAIL: TestX", nil).Once()
+	w := s.serveCI("GET", "/api/channels/th-1/ci/log?check=9", "")
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	require.JSONEq(s.T(), `{"log":"FAIL: TestX"}`, w.Body.String())
+	ci.AssertExpectations(s.T())
 }
 
 func (s *ServerSuite) TestObserveCI() {

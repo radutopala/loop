@@ -223,6 +223,7 @@ func (s *WatcherSuite) TestFixLoop() {
 			require.True(s.T(), s.poll())
 			st := s.store.get(ch)
 			require.Equal(s.T(), events.CIAttentionFixing, st.Attention)
+			require.Equal(s.T(), events.CIReasonFixSent, st.Reason)
 			require.Equal(s.T(), 1, st.Attempts)
 			require.Len(s.T(), s.enqueued, 1)
 			require.Contains(s.T(), s.enqueued[0], "CI failed on aaaaaaa for "+label(s.target))
@@ -271,15 +272,16 @@ func (s *WatcherSuite) TestGuards() {
 		checks  []forge.FailedCheck
 		log     string
 		notice  string
+		reason  string
 		noCheck bool
 	}{
-		{name: "someone else's commit", state: db.CIState{AgentSHAs: []string{"other"}}},
-		{name: "auto-fix off in config", state: db.CIState{AgentSHAs: []string{"h1"}}, cfg: func(c *config.CIConfig) { c.AutoFix = false }},
-		{name: "auto-fix off for the thread", state: db.CIState{AgentSHAs: []string{"h1"}, AutoFix: &off}},
-		{name: "attempts used up", state: db.CIState{AgentSHAs: []string{"h1"}, Attempts: 3, LastFailedSHA: "h0"}, notice: "after 3 attempts"},
-		{name: "same failure again", state: db.CIState{AgentSHAs: []string{"h1"}, Attempts: 1, LastFailedSHA: "h0", LastLogHash: forge.LogHash("ci / lint\nFAIL\n")}, log: "FAIL", notice: "same failure came back"},
-		{name: "the fix pushed nothing", state: db.CIState{AgentSHAs: []string{"h1"}, Attempts: 1, LastFailedSHA: "h1"}, notice: "pushed no new commit"},
-		{name: "infra again after a re-run", state: db.CIState{AgentSHAs: []string{"h1"}, InfraRetriedSHA: "h1"}, checks: []forge.FailedCheck{infra}, notice: "infrastructure reasons after a re-run"},
+		{name: "someone else's commit", state: db.CIState{AgentSHAs: []string{"other"}}, reason: events.CIReasonNotAgent},
+		{name: "auto-fix off in config", state: db.CIState{AgentSHAs: []string{"h1"}}, cfg: func(c *config.CIConfig) { c.AutoFix = false }, reason: events.CIReasonAutoFixOff},
+		{name: "auto-fix off for the thread", state: db.CIState{AgentSHAs: []string{"h1"}, AutoFix: &off}, reason: events.CIReasonAutoFixOff},
+		{name: "attempts used up", state: db.CIState{AgentSHAs: []string{"h1"}, Attempts: 3, LastFailedSHA: "h0"}, notice: "after 3 attempts", reason: events.CIReasonMaxAttempts},
+		{name: "same failure again", state: db.CIState{AgentSHAs: []string{"h1"}, Attempts: 1, LastFailedSHA: "h0", LastLogHash: forge.LogHash("ci / lint\nFAIL\n")}, log: "FAIL", notice: "same failure came back", reason: events.CIReasonSameFailure},
+		{name: "the fix pushed nothing", state: db.CIState{AgentSHAs: []string{"h1"}, Attempts: 1, LastFailedSHA: "h1"}, notice: "pushed no new commit", reason: events.CIReasonNoNewCommit},
+		{name: "infra again after a re-run", state: db.CIState{AgentSHAs: []string{"h1"}, InfraRetriedSHA: "h1"}, checks: []forge.FailedCheck{infra}, notice: "infrastructure reasons after a re-run", reason: events.CIReasonInfraAgain},
 	}
 	for _, kind := range []string{forge.KindPR, forge.KindMR} {
 		for _, tc := range tests {
@@ -304,10 +306,13 @@ func (s *WatcherSuite) TestGuards() {
 				got := s.store.get(ch)
 				require.Equal(s.T(), events.CIAttentionFailed, got.Attention)
 				require.Equal(s.T(), "h1", got.LastFailedSHA)
+				require.Equal(s.T(), tc.reason, got.Reason)
+				require.Equal(s.T(), checks, got.Failed)
 				require.Empty(s.T(), s.enqueued)
 				b := s.lastBroadcast()
 				require.Equal(s.T(), label(s.target)+": "+checks[0].Name+" failed", b.Alert)
 				require.Equal(s.T(), checks, b.Failed)
+				require.Equal(s.T(), tc.reason, b.Reason)
 				if tc.notice == "" {
 					require.Empty(s.T(), s.notices)
 				} else {
@@ -323,10 +328,40 @@ func (s *WatcherSuite) TestGuards() {
 				// A new head that's still running clears the flag.
 				s.ci("h2", pending).Once()
 				require.True(s.T(), s.poll())
-				require.Empty(s.T(), s.store.get(ch).Attention)
+				got = s.store.get(ch)
+				require.Empty(s.T(), got.Attention)
+				require.Empty(s.T(), got.Reason)
+				require.Nil(s.T(), got.Failed)
 			})
 		}
 	}
+}
+
+// TestBackfill fills in the reason and the failed checks of a failure
+// flagged before Loop kept them, once.
+func (s *WatcherSuite) TestBackfill() {
+	s.settings()
+	s.head = "c0ffee1"
+	s.store.put(db.CIState{ChannelID: ch, Forge: forge.KindPR, Number: 12, Attention: events.CIAttentionFailed, LastFailedSHA: "h1"})
+	s.ci("h1", failing).Once()
+	s.forge.On("FailedChecks", mock.Anything, s.target.Ref).Return(nil, errors.New("gh")).Once()
+	require.False(s.T(), s.poll())
+	got := s.store.get(ch)
+	require.Equal(s.T(), events.CIReasonNotAgent, got.Reason)
+	require.Nil(s.T(), got.Failed)
+
+	s.ci("h1", failing).Once()
+	s.forge.On("FailedChecks", mock.Anything, s.target.Ref).Return([]forge.FailedCheck{lint}, nil).Once()
+	require.False(s.T(), s.poll())
+	b := s.lastBroadcast()
+	require.Equal(s.T(), []forge.FailedCheck{lint}, b.Failed)
+	require.Equal(s.T(), events.CIReasonNotAgent, b.Reason)
+	require.Equal(s.T(), "c0ffee1", b.CheckoutSHA)
+
+	// Both kept: no more listing.
+	s.ci("h1", failing).Once()
+	require.False(s.T(), s.poll())
+	s.forge.AssertExpectations(s.T())
 }
 
 // TestInfraRerun re-runs infra failures once.
@@ -581,6 +616,7 @@ func (s *WatcherSuite) TestFixNow() {
 	require.NoError(s.T(), s.w.FixNow(s.ctx, ch))
 	require.Contains(s.T(), s.enqueued[0], "(no log available)")
 	require.Equal(s.T(), events.CIAttentionFixing, s.store.get(ch).Attention)
+	require.Equal(s.T(), events.CIReasonFixAsked, s.store.get(ch).Reason)
 	require.Equal(s.T(), events.CIAttentionFixing, s.lastBroadcast().Attention)
 
 	s.ci("h1", green).Once()
@@ -604,6 +640,64 @@ func (s *WatcherSuite) TestFixNow() {
 	require.ErrorIs(s.T(), s.w.FixNow(s.ctx, ch), ErrNoPR)
 	s.store.getErr = errors.New("db")
 	require.Error(s.T(), s.w.FixNow(s.ctx, ch))
+	s.forge.AssertExpectations(s.T())
+}
+
+// TestRerun re-runs each failed GitHub run once, and each failed GitLab job.
+func (s *WatcherSuite) TestRerun() {
+	other := forge.FailedCheck{ID: "79", RunID: "70", Name: "vet"}
+	for _, kind := range []string{forge.KindPR, forge.KindMR} {
+		s.Run(kind, func() {
+			s.setup(kind)
+			s.store.put(db.CIState{ChannelID: ch, Forge: kind, Number: 12})
+			s.forge.On("FailedChecks", mock.Anything, s.target.Ref).Return([]forge.FailedCheck{lint, other, infra}, nil).Once()
+			s.forge.On("Rerun", mock.Anything, s.target.Ref, lint).Return(nil).Once()
+			if kind == forge.KindMR {
+				s.forge.On("Rerun", mock.Anything, s.target.Ref, other).Return(nil).Once()
+			}
+			s.forge.On("Rerun", mock.Anything, s.target.Ref, infra).Return(nil).Once()
+			require.NoError(s.T(), s.w.Rerun(s.ctx, ch))
+			s.forge.AssertExpectations(s.T())
+		})
+	}
+}
+
+func (s *WatcherSuite) TestRerunErrors() {
+	s.store.put(db.CIState{ChannelID: ch, Forge: forge.KindPR, Number: 12})
+	s.forge.On("FailedChecks", mock.Anything, s.target.Ref).Return([]forge.FailedCheck{lint}, nil).Once()
+	s.forge.On("Rerun", mock.Anything, s.target.Ref, lint).Return(errors.New("gh")).Once()
+	require.EqualError(s.T(), s.w.Rerun(s.ctx, ch), "gh")
+
+	s.forge.On("FailedChecks", mock.Anything, s.target.Ref).Return(nil, nil).Once()
+	require.ErrorIs(s.T(), s.w.Rerun(s.ctx, ch), ErrNoFailure)
+
+	s.forge.On("FailedChecks", mock.Anything, s.target.Ref).Return(nil, errors.New("boom")).Once()
+	require.EqualError(s.T(), s.w.Rerun(s.ctx, ch), "boom")
+
+	s.target = nil
+	require.ErrorIs(s.T(), s.w.Rerun(s.ctx, ch), ErrNoPR)
+	s.store.getErr = errors.New("db")
+	require.Error(s.T(), s.w.Rerun(s.ctx, ch))
+	s.forge.AssertExpectations(s.T())
+}
+
+// TestLog reads the log of one of the failed checks CI last reported.
+func (s *WatcherSuite) TestLog() {
+	s.store.put(db.CIState{ChannelID: ch, Forge: forge.KindPR, Number: 12, Failed: []forge.FailedCheck{infra, lint}})
+	s.forge.On("Log", mock.Anything, s.target.Ref, lint).Return("FAIL lint", nil).Once()
+	got, err := s.w.Log(s.ctx, ch, "77")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "FAIL lint", got)
+
+	_, err = s.w.Log(s.ctx, ch, "1")
+	require.ErrorIs(s.T(), err, ErrNoCheck)
+
+	s.target = nil
+	_, err = s.w.Log(s.ctx, ch, "77")
+	require.ErrorIs(s.T(), err, ErrNoPR)
+	s.store.getErr = errors.New("db")
+	_, err = s.w.Log(s.ctx, ch, "77")
+	require.Error(s.T(), err)
 	s.forge.AssertExpectations(s.T())
 }
 

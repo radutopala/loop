@@ -53,13 +53,28 @@ The `ci` and `ci…` pills clear when the checks pass, when the PR/MR is merged 
 
 ## The Git panel
 
-When the thread's branch has a PR/MR, the Git panel shows a CI row under its toolbar:
+When the thread's branch has a PR/MR, the Git panel gets a **CI** tab. Its label carries the state, so it reads from any other tab: `CI ✗ 2`, `CI ◌ 3/7`, `CI ✓`, `CI merged` or `CI closed`. The tab shows:
 
-- **The chip.** It reads `PR #342` or `MR !57`, then the state: `✓ checks`, `✗ 2 failing`, `◌ 3/7 running`, `merging when ready`, `merged` or `closed`. Clicking it opens the PR/MR.
-- **The failed checks.** Each one links to its job on the forge. A runner failure is marked `(runner)`.
+- **The chip.** It reads `PR #342` or `MR !57`, then the state: `✓ checks`, `✗ 2 failing`, `◌ 3/7 running`, `merging when ready`, `merged` or `closed`. Clicking it opens the PR/MR. Below it are the check counts and the head commit.
+- **A stale checkout.** When the thread's checkout is at another commit than the head, the tab says so: the head was pushed from elsewhere, or the checkout has commits not pushed yet. Auto-fix leaves a head pushed from elsewhere to you.
+- **Why.** What the watcher last did about the failure, and why (see the table below).
 - **Auto-fix CI.** This toggle overrides `ci.auto_fix` for the thread. Its label shows the config's default when the thread differs from it, and flipping it back to the default clears the override.
 - **Fix it.** Sends the current failure to the agent now, whoever made the commit and whatever the guards say.
+- **Re-run failed.** Re-runs the failed checks on the forge: each failed GitHub workflow run once, or each failed GitLab job.
 - **Merge when ready**, **Cancel auto-merge** and **Merge now.** Each button shows the merge method it uses.
+- **The failed checks.** Each one links to its job on the forge, and **Log** shows the tail of its log. A runner failure is marked `(runner)`.
+
+| Why | The tab says |
+|---|---|
+| `not_agent_commit` | The head commit isn't one this thread's agent made, so auto-fix leaves it to you. |
+| `auto_fix_off` | Auto-fix is off for this thread. |
+| `max_attempts` | Auto-fix stopped after N attempts. |
+| `no_new_commit` | The last fix pushed no new commit. |
+| `same_failure` | The same failure came back after a fix. |
+| `infra_rerun` | The checks failed for runner reasons, so Loop re-ran them. |
+| `infra_again` | The checks failed for runner reasons again after a re-run. |
+| `fix_sent` | Auto-fix sent the failure to the agent. |
+| `fix_asked` | Fix it sent the failure to the agent. |
 
 Each message `loop-ci` sends carries a red `CI` badge in the chat.
 

@@ -10,8 +10,13 @@ import (
 	"github.com/radutopala/loop/internal/forge"
 )
 
-// ErrNoFailure is returned by FixNow when the PR/MR's checks aren't failing.
+// ErrNoFailure is returned by FixNow and Rerun when the PR/MR's checks
+// aren't failing.
 var ErrNoFailure = errors.New("no failing checks to fix")
+
+// ErrNoCheck is returned by Log for a check that isn't among the failed
+// ones.
+var ErrNoCheck = errors.New("no such failed check")
 
 // AgentStatus follows the thread's agent runs, to tell its commits from
 // others' and to know when a fix run ended. It doesn't block.
@@ -181,14 +186,72 @@ func (w *Watcher) FixNow(ctx context.Context, channelID string) error {
 	if err != nil {
 		return err
 	}
+	st.Failed = fcs
 	prompt, hash := w.prompt(ctx, f, t, ci.HeadSHA, fcs)
-	w.sendFix(ctx, e, st, ci.HeadSHA, hash, prompt)
+	w.sendFix(ctx, e, st, ci.HeadSHA, hash, prompt, events.CIReasonFixAsked)
 	if err := w.Store.SaveCIState(ctx, st); err != nil {
 		return err
 	}
 	w.publish(e, w.eventData(ctx, t, f, st, ci))
 	w.Kick(channelID)
 	return nil
+}
+
+// Rerun re-runs the PR/MR's failed checks now, each run once.
+func (w *Watcher) Rerun(ctx context.Context, channelID string) error {
+	e := w.entry(channelID)
+	e.lock.Lock()
+	defer e.lock.Unlock()
+	st, err := w.load(ctx, channelID)
+	if err != nil {
+		return err
+	}
+	t, f, err := w.target(ctx, st)
+	if err != nil {
+		return err
+	}
+	fcs, err := f.FailedChecks(ctx, t.Ref)
+	if err != nil {
+		return err
+	}
+	if len(fcs) == 0 {
+		return ErrNoFailure
+	}
+	done := map[string]bool{}
+	for _, fc := range fcs {
+		// A GitHub run re-runs all its failed jobs at once.
+		run := fc.RunID + "/" + fc.ID
+		if t.Kind == forge.KindPR && fc.RunID != "" {
+			run = fc.RunID
+		}
+		if done[run] {
+			continue
+		}
+		done[run] = true
+		if err := f.Rerun(ctx, t.Ref, fc); err != nil {
+			return err
+		}
+	}
+	w.Kick(channelID)
+	return nil
+}
+
+// Log returns the tail of the log of the failed check id, one of those the
+// thread's CI last reported.
+func (w *Watcher) Log(ctx context.Context, channelID, id string) (string, error) {
+	st, err := w.load(ctx, channelID)
+	if err != nil {
+		return "", err
+	}
+	t, f, err := w.target(ctx, st)
+	if err != nil {
+		return "", err
+	}
+	i := slices.IndexFunc(st.Failed, func(fc forge.FailedCheck) bool { return fc.ID == id })
+	if i < 0 {
+		return "", ErrNoCheck
+	}
+	return f.Log(ctx, t.Ref, st.Failed[i])
 }
 
 // Arm has the PR/MR merged with method once its checks pass, through the

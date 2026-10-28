@@ -26,6 +26,8 @@ type CIWatcher interface {
 	Attention(ctx context.Context) (map[string]string, error)
 	SetAutoFix(ctx context.Context, channelID string, on *bool) error
 	FixNow(ctx context.Context, channelID string) error
+	Rerun(ctx context.Context, channelID string) error
+	Log(ctx context.Context, channelID, checkID string) (string, error)
 	Arm(ctx context.Context, channelID, method string) error
 	CancelMerge(ctx context.Context, channelID string) error
 	MergeNow(ctx context.Context, channelID, method string) error
@@ -120,6 +122,12 @@ type ciResponse struct {
 	CI      *events.CIEventData `json:"ci,omitempty"`
 }
 
+// ciLogResponse is GET /api/channels/{id}/ci/log: the tail of a failed
+// check's log.
+type ciLogResponse struct {
+	Log string `json:"log"`
+}
+
 type ciAutoFixRequest struct {
 	// AutoFix overrides the config's ci.auto_fix for the thread; null goes
 	// back to the config's.
@@ -150,6 +158,28 @@ func (s *Server) handleChannelCIFix(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.ciResult(w, s.ci.FixNow(r.Context(), r.PathValue("id")))
+}
+
+// handleChannelCIRerun serves POST /api/channels/{id}/ci/rerun: the
+// PR/MR's failed checks run again.
+func (s *Server) handleChannelCIRerun(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.ci, ciNotConfiguredMsg) {
+		return
+	}
+	s.ciResult(w, s.ci.Rerun(r.Context(), r.PathValue("id")))
+}
+
+// handleChannelCILog serves GET /api/channels/{id}/ci/log?check=<id>.
+func (s *Server) handleChannelCILog(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.ci, ciNotConfiguredMsg) {
+		return
+	}
+	log, err := s.ci.Log(r.Context(), r.PathValue("id"), r.URL.Query().Get("check"))
+	if err != nil {
+		s.ciResult(w, err)
+		return
+	}
+	writeHTTPJSON(w, http.StatusOK, ciLogResponse{Log: log}, s.logger)
 }
 
 // handleChannelCIAutoFix serves PUT /api/channels/{id}/ci/auto-fix.
@@ -190,13 +220,14 @@ func (s *Server) handlePRMergeCancel(w http.ResponseWriter, r *http.Request) {
 	s.ciResult(w, s.ci.CancelMerge(r.Context(), r.PathValue("id")))
 }
 
-// ciResult answers a CI action: 204 when done, 404 without a PR/MR, 409
-// without a failure to fix, else 502 with the forge's error.
+// ciResult answers a CI action: 204 when done, 404 without a PR/MR or the
+// failed check, 409 without a failure to fix, else 502 with the forge's
+// error.
 func (s *Server) ciResult(w http.ResponseWriter, err error) {
 	switch {
 	case err == nil:
 		w.WriteHeader(http.StatusNoContent)
-	case errors.Is(err, ciwatch.ErrNoPR):
+	case errors.Is(err, ciwatch.ErrNoPR), errors.Is(err, ciwatch.ErrNoCheck):
 		http.Error(w, err.Error(), http.StatusNotFound)
 	case errors.Is(err, ciwatch.ErrNoFailure):
 		http.Error(w, err.Error(), http.StatusConflict)

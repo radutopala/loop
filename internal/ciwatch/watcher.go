@@ -322,24 +322,27 @@ func (w *Watcher) poll(ctx context.Context, channelID string, e *entry) (bool, t
 		st.Attention = ""
 	}
 	agent := agentCommit(st.AgentSHAs, ci.HeadSHA)
-	var failed []forge.FailedCheck
 	alert := ""
 	switch {
 	case ci.Merged || ci.Closed:
-		st.Watching, st.Attention = false, ""
+		st.Watching, st.Attention, st.Reason, st.Failed = false, "", "", nil
 		st.MergeArmed, st.MergeVia, st.ArmedSHA = "", "", ""
 	case ci.Checks.Pending > 0:
 		w.checkArmedHead(ctx, st, ci, agent)
 		st.Watching = true
-		if st.Attention == events.CIAttentionFailed && ci.HeadSHA != st.LastFailedSHA {
-			st.Attention = ""
+		if ci.HeadSHA != st.LastFailedSHA {
+			st.Failed = nil
+			if st.Attention == events.CIAttentionFailed {
+				st.Attention, st.Reason = "", ""
+			}
 		}
 	case ci.Checks.Failed > 0:
 		w.checkArmedHead(ctx, st, ci, agent)
-		failed, alert = w.failure(ctx, e, t, f, ci, st, agent)
+		alert = w.failure(ctx, e, t, f, ci, st, agent)
 	default:
 		w.checkArmedHead(ctx, st, ci, agent)
 		st.Attention, st.Attempts, st.LastFailedSHA, st.LastLogHash = "", 0, "", ""
+		st.Reason, st.Failed = "", nil
 		st.Watching = st.MergeArmed != ""
 		if st.MergeVia == viaLoop && ci.MergeState == forge.MergeClean {
 			// Watched until the forge reports it merged.
@@ -348,7 +351,6 @@ func (w *Watcher) poll(ctx context.Context, channelID string, e *entry) (bool, t
 	}
 	w.save(ctx, st)
 	data := w.eventData(ctx, t, f, st, ci)
-	data.Failed = failed
 	data.Alert = alert
 	w.publish(e, data)
 	return st.Watching, every
@@ -382,50 +384,83 @@ func (w *Watcher) mergeArmed(ctx context.Context, f forge.Forge, t *Target, st *
 
 // failure acts on finished checks with failures: re-runs infra failures
 // once, sends a failure on the agent's commit back to it within the guards
-// and flags any other. It returns the failed checks and the alert to tell
-// the owner, if any.
-func (w *Watcher) failure(ctx context.Context, e *entry, t *Target, f forge.Forge, ci *forge.CIState, st *db.CIState, agent bool) ([]forge.FailedCheck, string) {
+// and flags any other. It keeps the failed checks and why it acted in st,
+// and returns the alert to tell the owner, if any.
+func (w *Watcher) failure(ctx context.Context, e *entry, t *Target, f forge.Forge, ci *forge.CIState, st *db.CIState, agent bool) string {
 	armed := st.MergeArmed != ""
 	if ci.HeadSHA == st.LastFailedSHA {
 		switch st.Attention {
 		case events.CIAttentionFixing:
 			st.Watching = true
-			return nil, ""
+			return ""
 		case events.CIAttentionFailed:
 			st.Watching = armed
-			return nil, ""
+			w.backfill(ctx, t, f, st, agent)
+			return ""
 		}
 	}
 	fcs, err := f.FailedChecks(ctx, t.Ref)
 	if err != nil {
 		w.Logger.Warn("ci: listing failed checks", "channel_id", st.ChannelID, "error", err)
 		st.Watching = true
-		return nil, ""
+		return ""
 	}
+	st.Failed = fcs
 	if ci.HeadSHA == st.LastFailedSHA && st.Attempts > 0 {
-		return fcs, w.stop(ctx, t, ci, st, fcs, "Auto-fix stopped: the last fix pushed no new commit.")
+		return w.stop(ctx, t, ci, st, events.CIReasonNoNewCommit, "Auto-fix stopped: the last fix pushed no new commit.")
 	}
 	if allInfra(fcs) {
 		if st.InfraRetriedSHA != ci.HeadSHA && w.rerun(ctx, f, t, ci, st, fcs) {
 			st.Watching = true
-			return fcs, ""
+			st.Reason = events.CIReasonInfraRerun
+			return ""
 		}
-		return fcs, w.stop(ctx, t, ci, st, fcs, "CI failed again for infrastructure reasons after a re-run.")
+		return w.stop(ctx, t, ci, st, events.CIReasonInfraAgain, "CI failed again for infrastructure reasons after a re-run.")
 	}
-	switch {
-	case !agent:
-		return fcs, w.stop(ctx, t, ci, st, fcs, "")
-	case !autoFix(t, st):
-		return fcs, w.stop(ctx, t, ci, st, fcs, "")
-	case st.Attempts >= t.CI.MaxAttempts:
-		return fcs, w.stop(ctx, t, ci, st, fcs, fmt.Sprintf("Auto-fix stopped: CI still fails after %d attempts.", st.Attempts))
+	if reason := flagReason(t, st, agent); reason != "" {
+		notice := ""
+		if reason == events.CIReasonMaxAttempts {
+			notice = fmt.Sprintf("Auto-fix stopped: CI still fails after %d attempts.", st.Attempts)
+		}
+		return w.stop(ctx, t, ci, st, reason, notice)
 	}
 	prompt, hash := w.prompt(ctx, f, t, ci.HeadSHA, fcs)
 	if st.Attempts > 0 && hash == st.LastLogHash {
-		return fcs, w.stop(ctx, t, ci, st, fcs, "Auto-fix stopped: the same failure came back after the fix.")
+		return w.stop(ctx, t, ci, st, events.CIReasonSameFailure, "Auto-fix stopped: the same failure came back after the fix.")
 	}
-	w.sendFix(ctx, e, st, ci.HeadSHA, hash, prompt)
-	return fcs, ""
+	w.sendFix(ctx, e, st, ci.HeadSHA, hash, prompt, events.CIReasonFixSent)
+	return ""
+}
+
+// flagReason is why a failure on the head isn't sent to the agent, "" when
+// it can be.
+func flagReason(t *Target, st *db.CIState, agent bool) string {
+	switch {
+	case !agent:
+		return events.CIReasonNotAgent
+	case !autoFix(t, st):
+		return events.CIReasonAutoFixOff
+	case st.Attempts >= t.CI.MaxAttempts:
+		return events.CIReasonMaxAttempts
+	}
+	return ""
+}
+
+// backfill fills in the failed checks and the reason of a failure flagged
+// before Loop kept them.
+func (w *Watcher) backfill(ctx context.Context, t *Target, f forge.Forge, st *db.CIState, agent bool) {
+	if st.Reason == "" {
+		st.Reason = flagReason(t, st, agent)
+	}
+	if st.Failed != nil {
+		return
+	}
+	fcs, err := f.FailedChecks(ctx, t.Ref)
+	if err != nil {
+		w.Logger.Warn("ci: listing failed checks", "channel_id", st.ChannelID, "error", err)
+		return
+	}
+	st.Failed = fcs
 }
 
 // allInfra reports whether every failed check failed for infrastructure
@@ -453,23 +488,23 @@ func (w *Watcher) rerun(ctx context.Context, f forge.Forge, t *Target, ci *forge
 	return true
 }
 
-// stop flags the failure for the owner, with notice in the thread when
-// set, and returns the alert.
-func (w *Watcher) stop(ctx context.Context, t *Target, ci *forge.CIState, st *db.CIState, fcs []forge.FailedCheck, notice string) string {
-	st.Attention = events.CIAttentionFailed
+// stop flags the failure for the owner for reason, with notice in the
+// thread when set, and returns the alert.
+func (w *Watcher) stop(ctx context.Context, t *Target, ci *forge.CIState, st *db.CIState, reason, notice string) string {
+	st.Attention, st.Reason = events.CIAttentionFailed, reason
 	st.LastFailedSHA = ci.HeadSHA
 	st.Watching = st.MergeArmed != ""
 	if notice != "" {
 		w.Notice(ctx, st.ChannelID, notice)
 	}
-	return alertText(t, fcs)
+	return alertText(t, st.Failed)
 }
 
-// sendFix sends the failure to the agent.
-func (w *Watcher) sendFix(ctx context.Context, e *entry, st *db.CIState, sha, hash, prompt string) {
+// sendFix sends the failure to the agent, for reason.
+func (w *Watcher) sendFix(ctx context.Context, e *entry, st *db.CIState, sha, hash, prompt, reason string) {
 	st.Attempts++
 	st.LastFailedSHA, st.LastLogHash = sha, hash
-	st.Attention = events.CIAttentionFixing
+	st.Attention, st.Reason = events.CIAttentionFixing, reason
 	st.Watching = true
 	w.mu.Lock()
 	e.fix = fixQueued
@@ -511,6 +546,9 @@ func (w *Watcher) eventData(ctx context.Context, t *Target, f forge.Forge, st *d
 		AutoFixDefault: t.CI.AutoFix,
 		Attempts:       st.Attempts,
 		MaxAttempts:    t.CI.MaxAttempts,
+		Failed:         st.Failed,
+		Reason:         st.Reason,
+		CheckoutSHA:    w.Head(ctx, st.ChannelID),
 	}
 	if !ci.Merged && !ci.Closed {
 		if s, err := f.MergeSettings(ctx, t.Ref); err == nil {

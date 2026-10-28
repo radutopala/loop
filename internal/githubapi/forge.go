@@ -201,6 +201,12 @@ func (c *Client) Rerun(ctx context.Context, ref forge.Ref, fc forge.FailedCheck)
 	return c.run(ctx, ref, "run", "rerun", fc.RunID, "--failed")
 }
 
+const mergeSettingsQuery = `query($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    autoMergeAllowed squashMergeAllowed mergeCommitAllowed rebaseMergeAllowed
+  }
+}`
+
 // MergeSettings returns whether the repo allows auto-merge and which
 // merge methods, reused for ten minutes.
 func (c *Client) MergeSettings(ctx context.Context, ref forge.Ref) (forge.MergeSettings, error) {
@@ -209,8 +215,11 @@ func (c *Client) MergeSettings(ctx context.Context, ref forge.Ref) (forge.MergeS
 		if err != nil {
 			return forge.MergeSettings{}, err
 		}
+		// gh repo view --json has no autoMergeAllowed, and the REST repo
+		// endpoint leaves the merge flags null without admin rights.
 		out, err := c.runner.Run(ctx, ref.Dir, env,
-			"repo", "view", "--json", "autoMergeAllowed,squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed",
+			"api", "graphql", "-f", "query="+mergeSettingsQuery,
+			"-F", "owner={owner}", "-F", "name={repo}", "--jq", ".data.repository",
 		)
 		if err != nil {
 			return forge.MergeSettings{}, err
@@ -222,7 +231,7 @@ func (c *Client) MergeSettings(ctx context.Context, ref forge.Ref) (forge.MergeS
 			RebaseMergeAllowed bool `json:"rebaseMergeAllowed"`
 		}
 		if err := json.Unmarshal(out, &raw); err != nil {
-			return forge.MergeSettings{}, fmt.Errorf("parsing gh repo view output: %w", err)
+			return forge.MergeSettings{}, fmt.Errorf("parsing gh merge settings: %w", err)
 		}
 		s := forge.MergeSettings{AutoMerge: raw.AutoMergeAllowed}
 		for _, m := range []struct {

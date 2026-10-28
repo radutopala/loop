@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CIStatus } from "../api/ci";
-import { ciAutoFixLabel, ciAutoFixToggle, ciCanFix, ciChip, ciLabel, ciMergeActions, ciMergeMethod, isCIMessage } from "./ciState";
+import { ciAutoFixLabel, ciAutoFixToggle, ciCanFix, ciCanRerun, ciChip, ciLabel, ciMergeActions, ciMergeMethod, ciReasonText, ciStaleCheckout, ciTabBadge, isCIMessage } from "./ciState";
 
 const base: CIStatus = {
   channel_id: "t1",
@@ -66,6 +66,59 @@ describe("ciMergeMethod", () => {
     [ci({}), ""],
   ])("%#", (d, want) => {
     expect(ciMergeMethod(d)).toBe(want);
+  });
+});
+
+describe("ciTabBadge", () => {
+  it.each([
+    { name: "failing", d: ci({ checks: { total: 7, passed: 6, failed: 1, pending: 0 } }), want: { text: "✗ 1", tone: "failed" } },
+    { name: "running", d: ci({ checks: { total: 7, passed: 3, failed: 0, pending: 4 } }), want: { text: "◌ 3/7", tone: "running" } },
+    { name: "passing", d: ci({}), want: { text: "✓", tone: "ok" } },
+    { name: "merging", d: ci({ auto_merge: true }), want: { text: "✓", tone: "merging" } },
+    { name: "no checks", d: ci({ checks: { total: 0, passed: 0, failed: 0, pending: 0 } }), want: { text: "", tone: "ok" } },
+    { name: "merged", d: ci({ merged: true }), want: { text: "merged", tone: "merged" } },
+    { name: "closed", d: ci({ closed: true }), want: { text: "closed", tone: "closed" } },
+  ])("$name", ({ d, want }) => {
+    expect(ciTabBadge(d)).toEqual(want);
+  });
+});
+
+describe("ciReasonText", () => {
+  it.each([
+    [ci({ reason: "not_agent_commit" }), "The head commit isn't one this thread's agent made, so auto-fix leaves it to you."],
+    [ci({ reason: "auto_fix_off" }), "Auto-fix is off for this thread."],
+    [ci({ reason: "max_attempts", attempts: 3 }), "Auto-fix stopped after 3 attempts."],
+    [ci({ reason: "no_new_commit" }), "The last fix pushed no new commit."],
+    [ci({ reason: "same_failure" }), "The same failure came back after a fix."],
+    [ci({ reason: "infra_rerun" }), "The checks failed for runner reasons, so Loop re-ran them."],
+    [ci({ reason: "infra_again" }), "The checks failed for runner reasons again after a re-run."],
+    [ci({ reason: "fix_sent" }), "Auto-fix sent the failure to the agent."],
+    [ci({ reason: "fix_asked" }), "Fix it sent the failure to the agent."],
+    [ci({}), ""],
+  ])("%#", (d, want) => {
+    expect(ciReasonText(d)).toBe(want);
+  });
+});
+
+describe("ciStaleCheckout", () => {
+  it.each([
+    { name: "at the head", d: ci({ checkout_sha: "abc" }), want: false },
+    { name: "behind the head", d: ci({ checkout_sha: "def" }), want: true },
+    { name: "checkout unknown", d: ci({}), want: false },
+  ])("$name", ({ d, want }) => {
+    expect(ciStaleCheckout(d)).toBe(want);
+  });
+});
+
+describe("ciCanRerun", () => {
+  const failing = { total: 1, passed: 0, failed: 1, pending: 0 };
+  it.each([
+    { name: "a failure", d: ci({ checks: failing }), want: true },
+    { name: "nothing failed", d: ci({}), want: false },
+    { name: "merged", d: ci({ checks: failing, merged: true }), want: false },
+    { name: "closed", d: ci({ checks: failing, closed: true }), want: false },
+  ])("$name", ({ d, want }) => {
+    expect(ciCanRerun(d)).toBe(want);
   });
 });
 

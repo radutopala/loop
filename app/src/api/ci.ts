@@ -3,6 +3,9 @@ import { apiFetch, getApiUrl } from "./api";
 /** What a thread's sidebar pill shows of its PR/MR's CI. */
 export type CIAttention = "failed" | "fixing";
 
+/** Why the watcher last acted as it did on a failure. */
+export type CIReason = "not_agent_commit" | "auto_fix_off" | "max_attempts" | "no_new_commit" | "same_failure" | "infra_rerun" | "infra_again" | "fix_sent" | "fix_asked";
+
 /** A head's checks: cancelled or skipped ones count only toward total. */
 export interface CIChecks {
   total: number;
@@ -47,6 +50,9 @@ export interface CIStatus {
   auto_fix_default: boolean;
   attempts: number;
   max_attempts: number;
+  reason?: CIReason;
+  /** The commit the thread's checkout is at. */
+  checkout_sha?: string;
   /** A new failure the owner is told of. */
   alert?: string;
 }
@@ -70,6 +76,19 @@ async function send(path: string, method: string, what: string, body?: unknown):
 /** Sends the current failure to the thread's agent now. */
 export function fixCI(channelId: string): Promise<void> {
   return send(`/api/channels/${channelId}/ci/fix`, "POST", "fix CI");
+}
+
+/** Re-runs the failed checks now. */
+export function rerunCI(channelId: string): Promise<void> {
+  return send(`/api/channels/${channelId}/ci/rerun`, "POST", "re-run the checks");
+}
+
+/** The tail of a failed check's log. */
+export async function getCILog(channelId: string, checkId: string): Promise<string> {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/ci/log?check=${encodeURIComponent(checkId)}`);
+  if (!res.ok) throw new Error((await res.text()) || `Failed to fetch the log: ${res.statusText}`);
+  const data: { log: string } = await res.json();
+  return data.log;
 }
 
 /** Overrides ci.auto_fix for the thread; null goes back to the config's. */

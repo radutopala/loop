@@ -2233,7 +2233,9 @@ The CI of the channel's PR/MR, as the last [`channel.ci`](events.md#channelci) e
     "auto_fix": true,
     "auto_fix_default": true,
     "attempts": 1,
-    "max_attempts": 3
+    "max_attempts": 3,
+    "reason": "fix_sent",
+    "checkout_sha": "4f1c2d9e8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e"
   }
 }
 ```
@@ -2245,6 +2247,23 @@ The CI of the channel's PR/MR, as the last [`channel.ci`](events.md#channelci) e
 Sends the PR/MR's current failure to the thread's agent now, whoever made the commit and whatever the auto-fix guards say. Returns `204`.
 
 **Errors:** `404` when the branch has no PR/MR, `409` when nothing failed, `502` when the forge can't be read.
+
+### `POST /api/channels/{id}/ci/rerun`
+
+Re-runs the PR/MR's failed checks on the forge now: each failed GitHub workflow run once (`gh run rerun --failed`), or each failed GitLab job. Returns `204`.
+
+**Errors:** `404` when the branch has no PR/MR, `409` when nothing failed, `502` when the forge can't be read or refuses.
+
+### `GET /api/channels/{id}/ci/log?check={id}`
+
+The tail of the log of a failed check, one of the `failed` the CI last reported.
+
+**Response (200):**
+```json
+{"log": "--- FAIL: TestParse (0.00s)\n..."}
+```
+
+**Errors:** `404` when the branch has no PR/MR or `check` isn't one of the failed checks, `502` when the forge can't be read.
 
 ### `PUT /api/channels/{id}/ci/auto-fix`
 

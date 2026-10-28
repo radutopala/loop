@@ -510,7 +510,7 @@ Also emitted by [`POST /api/channels/{id}/rename`](api.md#post-apichannelsidrena
 
 ### `channel.ci`
 
-The CI of a thread's PR/MR changed: its checks, an auto-fix sent or stopped, or a merge armed or done (see [ci.md](ci.md)). Broadcast globally, and only when something changed, so the sidebar's `ci` / `ci…` pills and the Git panel's CI row update without re-fetching. An event with only `channel_id` means the branch no longer has a PR/MR.
+The CI of a thread's PR/MR changed: its checks, an auto-fix sent or stopped, or a merge armed or done (see [ci.md](ci.md)). Broadcast globally, and only when something changed, so the sidebar's `ci` / `ci…` pills and the Git panel's CI tab update without re-fetching. An event with only `channel_id` means the branch no longer has a PR/MR.
 
 **Payload schema:**
 
@@ -530,6 +530,8 @@ The CI of a thread's PR/MR changed: its checks, an auto-fix sent or stopped, or 
   "auto_fix_default": true,
   "attempts": 0,
   "max_attempts": 3,
+  "reason": "not_agent_commit",
+  "checkout_sha": "4f1c2d9e8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e",
   "alert": "PR #342: lint failed"
 }
 ```
@@ -554,6 +556,8 @@ The CI of a thread's PR/MR changed: its checks, an auto-fix sent or stopped, or 
 | `auto_fix_default` | bool   | The config's `ci.auto_fix` |
 | `attempts`         | int    | Fixes sent for the current failure streak |
 | `max_attempts`     | int    | The config's `ci.max_attempts` |
+| `reason`           | string | Why the watcher last acted as it did on the failure: `not_agent_commit`, `auto_fix_off`, `max_attempts`, `no_new_commit`, `same_failure`, `infra_rerun`, `infra_again`, `fix_sent` or `fix_asked` (see [ci.md](ci.md#the-git-panel)); omitted when the checks pass or a new head's checks start running |
+| `checkout_sha`     | string | The commit the thread's checkout is at; omitted when it can't be read |
 | `alert`            | string | A new failure that needs the owner. It also adds a notification, so it's set on one event only |
 
 ---

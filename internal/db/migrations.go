@@ -676,6 +676,10 @@ var migrations = []migration{
 		infra_retried_sha TEXT NOT NULL DEFAULT '',
 		updated_at        DATETIME NOT NULL
 	)`),
+	// Why the watcher last acted as it did on a failure, and the failed
+	// checks it saw, as JSON (see CIState).
+	sqlMigration(`ALTER TABLE ci_state ADD COLUMN reason TEXT NOT NULL DEFAULT ''`),
+	sqlMigration(`ALTER TABLE ci_state ADD COLUMN failed TEXT NOT NULL DEFAULT ''`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the

@@ -211,7 +211,7 @@ func (s *GithubForgeSuite) TestMergeCommands() {
 }
 
 func (s *GithubForgeSuite) TestMergeSettings() {
-	const cmd = "repo view --json autoMergeAllowed,squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed"
+	cmd := "api graphql -f query=" + mergeSettingsQuery + " -F owner={owner} -F name={repo} --jq .data.repository"
 	r := &scriptRunner{out: map[string]string{cmd: `{"autoMergeAllowed": true, "squashMergeAllowed": true, "mergeCommitAllowed": false, "rebaseMergeAllowed": true}`}}
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	c := NewClientWithRunner(r)
@@ -234,7 +234,7 @@ func (s *GithubForgeSuite) TestMergeSettings() {
 	_, err = NewClientWithRunner(&scriptRunner{errs: map[string]error{cmd: errors.New("boom")}}).MergeSettings(context.Background(), s.ref)
 	require.ErrorContains(s.T(), err, "boom")
 	_, err = NewClientWithRunner(&scriptRunner{out: map[string]string{cmd: "{"}}).MergeSettings(context.Background(), s.ref)
-	require.ErrorContains(s.T(), err, "parsing gh repo view output")
+	require.ErrorContains(s.T(), err, "parsing gh merge settings")
 	_, err = NewClientWithRunner(&scriptRunner{errs: map[string]error{"auth token --user u": errors.New("no user")}}).
 		MergeSettings(context.Background(), forge.Ref{Dir: "/w", Account: "u"})
 	require.ErrorContains(s.T(), err, "no user")

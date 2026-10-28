@@ -43,6 +43,62 @@ export function ciMergeMethod(d: CIStatus): string {
   return d.merge_armed || d.merge_method || "";
 }
 
+/**
+ * The Git panel's CI tab badge: the chip's state in a few characters, so the
+ * tab reads it from any other tab.
+ */
+export function ciTabBadge(d: CIStatus): { text: string; tone: CITone } {
+  const chip = ciChip(d);
+  const { total, failed, pending } = d.checks;
+  switch (chip.tone) {
+    case "failed":
+      return { text: `✗ ${failed}`, tone: chip.tone };
+    case "running":
+      return { text: `◌ ${total - pending}/${total}`, tone: chip.tone };
+    case "merged":
+    case "closed":
+      return chip;
+    default:
+      return { text: total > 0 ? "✓" : "", tone: chip.tone };
+  }
+}
+
+/** Why the watcher last acted as it did on a failure, in a sentence. */
+export function ciReasonText(d: CIStatus): string {
+  switch (d.reason) {
+    case "not_agent_commit":
+      return "The head commit isn't one this thread's agent made, so auto-fix leaves it to you.";
+    case "auto_fix_off":
+      return "Auto-fix is off for this thread.";
+    case "max_attempts":
+      return `Auto-fix stopped after ${d.attempts} attempts.`;
+    case "no_new_commit":
+      return "The last fix pushed no new commit.";
+    case "same_failure":
+      return "The same failure came back after a fix.";
+    case "infra_rerun":
+      return "The checks failed for runner reasons, so Loop re-ran them.";
+    case "infra_again":
+      return "The checks failed for runner reasons again after a re-run.";
+    case "fix_sent":
+      return "Auto-fix sent the failure to the agent.";
+    case "fix_asked":
+      return "Fix it sent the failure to the agent.";
+    default:
+      return "";
+  }
+}
+
+/** Whether the thread's checkout is at another commit than the PR/MR's head. */
+export function ciStaleCheckout(d: CIStatus): boolean {
+  return !!d.checkout_sha && !!d.head_sha && d.checkout_sha !== d.head_sha;
+}
+
+/** Whether "Re-run failed" has failed checks to re-run. */
+export function ciCanRerun(d: CIStatus): boolean {
+  return !d.merged && !d.closed && d.checks.failed > 0;
+}
+
 /** Whether "Fix it" has a failure to send. */
 export function ciCanFix(d: CIStatus): boolean {
   return !d.merged && !d.closed && d.checks.failed > 0 && d.ci_attention !== "fixing";

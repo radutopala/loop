@@ -47,6 +47,35 @@ Feature: CI watching
       | gh   | https://github.com/example/repo.git                  | PR #7 | pr merge 7 --auto --squash                                                                           | pr merge 7 --disable-auto                                                                       |
       | glab | https://gitlab.example.com/example/group/project.git | MR !7 | api --method PUT projects/example%2Fgroup%2Fproject/merge_requests/7/merge -F squash=true -F auto_merge=true | api --method POST projects/example%2Fgroup%2Fproject/merge_requests/7/cancel_merge_when_pipeline_succeeds |
 
+  Scenario Outline: The CI tab explains the failure, re-runs it and tails its log
+    Given I set up a test channel via API for git repo "bdd-ci-tab-<cli>"
+    And the channel's repo has origin "<origin>"
+    And <cli> reports <label> with a failing "lint" check
+
+    When I send a GET request to "/api/channels/{channel_id}/ci"
+    Then the response status should be 200
+    And the response JSON "ci.reason" should be "not_agent_commit"
+    And the response JSON "ci.failed.0.id" should be "<check>"
+
+    When I send a POST request to "/api/channels/{channel_id}/ci/rerun" with body:
+      """
+      {}
+      """
+    Then the response status should be 204
+    And <cli> should have been called with "<rerun>"
+
+    When I send a GET request to "/api/channels/{channel_id}/ci/log?check=<check>"
+    Then the response status should be 200
+    And the response should contain "missing comma"
+
+    When I send a GET request to "/api/channels/{channel_id}/ci/log?check=404"
+    Then the response status should be 404
+
+    Examples:
+      | cli  | origin                                               | label | check | rerun                                                                    |
+      | gh   | https://github.com/example/repo.git                  | PR #7 | 123   | run rerun 9 --failed                                                     |
+      | glab | https://gitlab.example.com/example/group/project.git | MR !7 | 981   | api --method POST projects/example%2Fgroup%2Fproject/jobs/981/retry |
+
   Scenario: A branch without a PR has no CI
     Given I set up a test channel via API for git repo "bdd-ci-none"
 

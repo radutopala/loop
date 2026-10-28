@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { cancelMerge, fixCI, getCI, mergePR, setCIAutoFix } from "./ci";
+import { cancelMerge, fixCI, getCI, getCILog, mergePR, rerunCI, setCIAutoFix } from "./ci";
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -41,6 +41,7 @@ describe("getCI", () => {
 describe("CI actions", () => {
   it.each([
     { name: "fix", call: () => fixCI("ch1"), path: "/ci/fix", method: "POST", body: undefined },
+    { name: "re-run", call: () => rerunCI("ch1"), path: "/ci/rerun", method: "POST", body: undefined },
     { name: "auto-fix off", call: () => setCIAutoFix("ch1", false), path: "/ci/auto-fix", method: "PUT", body: '{"auto_fix":false}' },
     { name: "auto-fix back to the config's", call: () => setCIAutoFix("ch1", null), path: "/ci/auto-fix", method: "PUT", body: '{"auto_fix":null}' },
     { name: "merge when ready", call: () => mergePR("ch1", true), path: "/pr/merge", method: "POST", body: '{"when_ready":true}' },
@@ -63,5 +64,23 @@ describe("CI actions", () => {
   it("falls back to the status text", async () => {
     fetchMock.mockResolvedValue(new Response("", { status: 502, statusText: "Bad Gateway" }));
     await expect(cancelMerge("ch1")).rejects.toThrow("Failed to cancel the merge: Bad Gateway");
+  });
+});
+
+describe("getCILog", () => {
+  it("returns the log's tail", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ log: "FAIL lint" })));
+    expect(await getCILog("ch1", "7 7")).toBe("FAIL lint");
+    expect(fetchMock.mock.calls[0]![0]).toBe("http://localhost:8222/api/channels/ch1/ci/log?check=7%207");
+  });
+
+  it("throws the daemon's message", async () => {
+    fetchMock.mockResolvedValue(new Response("no such failed check", { status: 404 }));
+    await expect(getCILog("ch1", "9")).rejects.toThrow("no such failed check");
+  });
+
+  it("falls back to the status text", async () => {
+    fetchMock.mockResolvedValue(new Response("", { status: 502, statusText: "Bad Gateway" }));
+    await expect(getCILog("ch1", "9")).rejects.toThrow("Failed to fetch the log: Bad Gateway");
   });
 });
