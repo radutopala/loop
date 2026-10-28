@@ -38,6 +38,14 @@ type Broadcaster interface {
 	BroadcastLearnStarted(channelID, learnChannelID string)
 	BroadcastExplainUpdated(e *db.Explanation)
 	BroadcastLearnPass(p *db.LearnPass)
+	BroadcastPromptSuggestion(channelID string, data PromptSuggestionEventData)
+}
+
+// PromptSuggestionEventData is the payload for agent.prompt_suggestion
+// events: the next prompt the agent predicts after a turn, which the chat
+// composer offers.
+type PromptSuggestionEventData struct {
+	Suggestion string `json:"suggestion"`
 }
 
 // ReviewCommentEventData is the payload for review.comment events. Sent

@@ -3,7 +3,7 @@ import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { Channel } from "../../types";
 import type { PillKind } from "./pills";
-import { REVIEWING_PILL, SIDEBAR_PILLS } from "./pills";
+import { CI_FIXING_PILL, REVIEWING_PILL, SIDEBAR_PILLS } from "./pills";
 import { RowInfoPopup } from "./RowInfoPopup";
 import { useRevealSelected } from "./reveal";
 import { SessionKindIcon } from "./SessionKindIcon";
@@ -238,6 +238,7 @@ function SessionRow({ channel, context, selected, unread, running, pills, traili
           <StatusPill key={p.kind} label={p.label} color={colors[p.color]} title={p.title} />
         ))}
         {channel.review_running && <StatusPill label={REVIEWING_PILL.label} color={colors[REVIEWING_PILL.color]} title={REVIEWING_PILL.title} />}
+        {channel.ci_attention === "fixing" && <StatusPill label={CI_FIXING_PILL.label} color={colors[CI_FIXING_PILL.color]} title={CI_FIXING_PILL.title} />}
         {!waiting && trailing && <span style={{ flexShrink: 0, fontSize: 10, fontFamily: fonts.mono, color: colors.textDisabled }}>{trailing}</span>}
       </button>
     </div>

@@ -1,3 +1,4 @@
+import type { CIStatus } from "../api/ci";
 import type { Channel, ChannelUpdatedData, PluginBadge } from "../types";
 
 /**
@@ -72,4 +73,9 @@ export function replayChannelPatches(channels: Channel[], patches: ChannelPatch[
     channels: channels.map((c) => pending.reduce((acc, p) => (p.id === c.id ? p.apply(acc) : acc), c)),
     pending,
   };
+}
+
+/** Applies a channel.ci event to a channel: its CI attention, unset when none. */
+export function applyCI(c: Channel, d: Pick<CIStatus, "ci_attention">): Channel {
+  return { ...c, ci_attention: d.ci_attention || undefined };
 }

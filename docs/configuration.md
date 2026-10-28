@@ -47,6 +47,7 @@ Exactly one of these should be set. OAuth takes precedence if both are provided.
 | `claude_bin_path` | `string` | `"claude"` | Path to the Claude CLI binary inside containers. |
 | `claude_model` | `string` | `"claude-sonnet-5-5"` | Claude model to use. Options: `"claude-opus-5-5"`, `"claude-opus-5"`, `"claude-sonnet-5-5"`, `"claude-sonnet-5"`, `"claude-fable-5-1"`, `"claude-fable-5"`, `"claude-opus-4-8"`, `"claude-haiku-5-5"`. Append `[1m]` (e.g. `"claude-opus-5-5[1m]"`) for the 1M-token context window; Loop then sets `CLAUDE_CODE_DISABLE_1M_CONTEXT=0` for the run so a host `~/.claude/settings.json` that disables it can't cap it at 200k. |
 | `claude_effort` | `string` | `""` | Reasoning-effort level passed to the Claude CLI as `--effort`. Empty leaves it unset (model default). Options: `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`. |
+| `claude_prompt_suggestions` | `bool` | `true` | After each chat turn, run the Claude CLI with `--prompt-suggestions` and offer its predicted next prompt in the chat composer, where Tab accepts it — see [Chat: Prompt suggestions](chat.md#prompt-suggestions). Each suggestion is one small extra request, and the run ends when it arrives. Only app chats ask for one: scheduled tasks, reviews, learn and explain runs, and Discord or Slack channels don't. |
 
 Both `claude_model` and `claude_effort` can additionally be **overridden per channel/thread/worktree on demand** from the chat composer's model pill (persisted on the channel row, applied from the next run) — see [Chat: Model / Effort Override](chat.md#model--effort-override). The per-channel override beats the merged config value. Subagents a run spawns use the same model unless the Agent call or the agent definition names another: Loop passes `CLAUDE_CODE_SUBAGENT_MODEL=inherit` through `--settings`, so a value in `~/.claude/settings.json` (which agent containers mount) does not apply.
 | `claude_batch_disallowed_tools` | `[]string` | `["ScheduleWakeup", "CronCreate", "CronDelete", "CronList", "Monitor", "ReportFindings"]` | Claude Code tool names passed to `--disallowedTools` for **batch** (`--print`) agent runs only — the interactive terminal is unaffected. The defaults rely on a persistent harness that one-shot containers lack: `ScheduleWakeup`/`Cron*` schedule re-invocations that never fire, so they silently park work that never resumes; `Monitor` keeps the run, and so the channel, busy for as long as the watch lasts — Loop's own [`monitor`](mcpserver.md#communication) MCP tool waits outside the run instead. A [live session](chat.md#live-sessions) drops `Monitor` from the list, since its process outlives the turn. `ReportFindings` reports code-review findings into a harness UI channel batch runs don't render. Review runs are the exception: they drop `ReportFindings` from this list, because the built-in `/code-review` command only runs inline (rather than forking a silent subagent) when it can call that tool, and the daemon reads the findings off the stream. Override to tune the list (e.g. to re-enable a tool). |
@@ -354,6 +355,26 @@ Enables and configures the Review panel (see [review.md](review.md)).
 | `update_base` | `bool` | Before each pass a review fast-forwards the local base branch to `origin`'s when no worktree has it checked out (see [Load](review.md#lifecycle)). It also fast-forwards it where it is checked out, when that worktree is clean, which moves that checkout's files as a pull would; `false` leaves a checked-out base alone. `true` by default. |
 
 Both prompt fields empty (the default) uses the daemon's built-in default prompt: the `/code-review` slash command with the run's effort as its level (e.g. `/code-review high`; bare when no effort is set), with the output contract (report actionable findings via the built-in `ReportFindings` tool, each carrying a file and a 1-based line) carried in the system prompt. A configured non-slash prompt gets no system prompt, so it must carry its own contract — see [review.md](review.md#required-output-format).
+
+#### CI
+
+How Loop watches a thread's PR/MR checks (see [ci.md](ci.md)).
+
+```jsonc
+"ci": {
+  "auto_fix": true,
+  "max_attempts": 3,
+  "merge_method": "squash",
+  "poll_sec": 30
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `auto_fix` | `bool` | Send a failure on a commit the thread's agent made back to that agent to fix. `true` by default. The Git panel's *Auto-fix CI* toggle overrides it per thread. With it off, a failure lights the thread's `ci` pill instead. |
+| `max_attempts` | `int` | Fixes a PR/MR gets before auto-fix stops and lights the `ci` pill (default `3`). The count resets when the checks pass. |
+| `merge_method` | `string` | `squash`, `merge` or `rebase`: the method "merge when ready" and *Merge now* use when the repo allows it. Empty (the default) picks the first the repo allows, in that order. Any other value is ignored. |
+| `poll_sec` | `int` | Seconds between polls of a watched PR/MR (default `30`). |
 
 #### Playground share
 
@@ -741,6 +762,7 @@ Not all global fields are available in project configs. The following fields can
 | `github.mount_gh_config` | **Overrides** global value when set, once the project config is trusted. Set to `false`, it also drops the global mounts at `~/.config/gh`. |
 | `gitlab.glab_config_dir` / `gitlab.mount_glab_config` | Each **overrides** the global value when set, once the project config is trusted. `mount_glab_config: false` also drops the global mounts at `~/.config/glab-cli`. |
 | `review.enabled` / `review.prompt` / `review.prompt_path` / `review.verify` / `review.verify_prompt` / `review.max_iterations` / `review.update_base` | Each field **overrides** the global value only when explicitly set (see [Review](#review)). |
+| `ci.auto_fix` / `ci.max_attempts` / `ci.merge_method` / `ci.poll_sec` | Each field **overrides** the global value when set, once the project config is trusted: `auto_fix` when present, the counts when positive, `merge_method` when it's a known method (see [CI](#ci)). |
 | `learn.enabled` / `learn.min_turns` / `learn.model` / `learn.effort` / `learn.prompt` | Each field **overrides** the global value only when set: `enabled` and `min_turns` when present, the strings when non-empty (see [Learn](#learn)). |
 | `explain.enabled` / `explain.model` / `explain.effort` / `explain.prompt` | Each field **overrides** the global value only when set: `enabled` when present, the strings when non-empty (see [Explain](#explain)). |
 | `gates.agentgate.enabled` | **Ignored**: the global setting decides, so a project can neither switch the gate off nor on. |
@@ -774,6 +796,7 @@ The project config lives in the workspace, so an agent can edit it. The fields t
 - `browser.mode`, `browser.host_cdp_port`, `browser.extensions`, `browser.cookie_import`
 - `memory.paths`
 - `github.mount_gh_config`, `gitlab.glab_config_dir`, `gitlab.mount_glab_config` (they hand the host's `gh`/`glab` credentials to the agent)
+- `ci` (a failing check sends the agent a prompt, which starts a run unattended, and it picks how "merge when ready" merges)
 
 Everything else (model, prompt shortcuts, MCP servers and so on) only shapes the agent's own container and applies as written.
 

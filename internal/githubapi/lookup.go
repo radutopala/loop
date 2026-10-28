@@ -19,7 +19,9 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
+	"github.com/radutopala/loop/internal/forge"
 	"github.com/radutopala/loop/internal/gitutil"
 )
 
@@ -96,6 +98,9 @@ func (e execRunner) Run(ctx context.Context, workdir string, env []string, args 
 // Client looks up PRs for a workdir.
 type Client struct {
 	runner Runner
+	// now is the clock the merge settings cache reads; nil is time.Now.
+	now      func() time.Time
+	settings forge.SettingsCache
 }
 
 // NewClient builds a Client backed by the real gh binary. proxyEnv, if

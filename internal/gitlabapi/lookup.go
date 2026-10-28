@@ -15,9 +15,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/radutopala/loop/internal/forge"
 	"github.com/radutopala/loop/internal/githubapi"
 	"github.com/radutopala/loop/internal/gitutil"
 )
@@ -79,6 +82,14 @@ type Client struct {
 	// defaultConfigDir is glab's config dir when none is configured.
 	defaultConfigDir string
 	readFile         func(string) ([]byte, error)
+	// originURL reads a checkout's origin remote URL; nil runs git.
+	originURL func(ctx context.Context, dir string) (string, error)
+	// now is the clock the merge settings cache reads; nil is time.Now.
+	now      func() time.Time
+	settings forge.SettingsCache
+
+	mu       sync.Mutex
+	projects map[string]string // project id per checkout dir
 }
 
 // NewClient builds a Client backed by the real glab binary. proxyEnv, if

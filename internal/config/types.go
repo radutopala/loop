@@ -612,6 +612,11 @@ type Config struct {
 	// xhigh, max). Empty by default (no flag). Hierarchy: global → project →
 	// worktree.
 	ClaudeEffort string
+	// ClaudePromptSuggestions has a chat run ask the Claude CLI for a
+	// predicted next prompt after each turn (--prompt-suggestions), which the
+	// chat composer offers. On by default. Hierarchy: global → project →
+	// worktree.
+	ClaudePromptSuggestions bool
 	// ClaudeBatchDisallowedTools lists Claude Code tool names passed to
 	// `--disallowedTools` for batch (`--print`) agent runs only. Defaults to the
 	// persistent-harness tools (ScheduleWakeup, Cron*) that no-op in one-shot
@@ -632,6 +637,7 @@ type Config struct {
 	GitLab                     GitLabConfig
 	Review                     ReviewConfig
 	PlaygroundShare            PlaygroundShareConfig
+	CI                         CIConfig
 	Backup                     BackupConfig
 	Learn                      LearnConfig
 	Explain                    ExplainConfig

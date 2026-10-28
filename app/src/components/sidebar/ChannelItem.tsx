@@ -6,7 +6,7 @@ import { fonts } from "../../theme";
 import type { Channel } from "../../types";
 import { NewThreadInput } from "./NewThreadInput";
 import type { PillKind } from "./pills";
-import { pluginBadgeTitle, REVIEWING_PILL, SIDEBAR_PILLS } from "./pills";
+import { CI_FIXING_PILL, pluginBadgeTitle, REVIEWING_PILL, SIDEBAR_PILLS } from "./pills";
 import { RowInfoPopup } from "./RowInfoPopup";
 import { useExpandToSelected, useRevealSelected } from "./reveal";
 import { SidebarWorktreeButton } from "./SidebarWorktreeButton";
@@ -204,6 +204,7 @@ export function ChannelItem({
             <StatusPill key={p.kind} label={p.label} color={colors[p.color]} title={p.title} />
           ))}
           {channel.review_running && <StatusPill label={REVIEWING_PILL.label} color={colors[REVIEWING_PILL.color]} title={REVIEWING_PILL.title} />}
+          {channel.ci_attention === "fixing" && <StatusPill label={CI_FIXING_PILL.label} color={colors[CI_FIXING_PILL.color]} title={CI_FIXING_PILL.title} />}
           {channel.plugin_badges?.map((b) => (
             <StatusPill key={`plugin:${b.plugin_id}`} label={b.text} color={colors.textMuted} title={pluginBadgeTitle(b)} />
           ))}

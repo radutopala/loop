@@ -54,6 +54,7 @@ End-to-end walkthrough — a guided tour of every panel, recorded in one continu
 - [**Playground**](playground.md) — Live interactive code sandbox, agent-driven HTML/CSS/JS rendering, global and project scopes
 - [**Sessions**](sessions.md) — Sessions panel: a channel's past Claude Code sessions, newest first, and resuming one
 - [**Review**](review.md) — Pull-request review panel, agent diff pass, inline comments pushed back to the PR
+- [**CI Auto-Fix**](ci.md) — A thread's PR/MR checks: failures on the agent's commits go back to it, the `ci` pill, merge when ready
 - [**Settings**](settings.md) — Settings panel, command palette (Cmd+K), daemon management
 
 ## Help

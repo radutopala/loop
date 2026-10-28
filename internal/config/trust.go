@@ -58,6 +58,10 @@ type trustedFields struct {
 	// reads them from.
 	GitHub *trustedGitHub `json:"github,omitempty"`
 	GitLab *trustedGitLab `json:"gitlab,omitempty"`
+	// CI decides whether a failing check sends the agent a prompt, which
+	// starts a run unattended, and how the owner's "merge when ready"
+	// merges.
+	CI *jsonCIConfig `json:"ci,omitempty"`
 	// ContainerImage and ContainerImageAutobuild pick the image the agent
 	// runs in, built from the project's .loop/container when autobuild is
 	// on. The gate and the docker proxy run from inside that image, and the
@@ -130,6 +134,9 @@ func trustedFieldsOf(pc *projectConfig) trustedFields {
 	if g := pc.GitLab; g != nil && (g.GlabConfigDir != "" || g.MountGlabConfig != nil) {
 		t.GitLab = &trustedGitLab{GlabConfigDir: g.GlabConfigDir, MountGlabConfig: g.MountGlabConfig}
 	}
+	if c := pc.CI; c != nil && *c != (jsonCIConfig{}) {
+		t.CI = c
+	}
 	if pc.Plugins != nil {
 		for id, c := range pc.Plugins.ByID {
 			if c.Enabled != nil {
@@ -200,6 +207,7 @@ func (t trustedFields) apply(pc *projectConfig) {
 		}
 		pc.GitLab = &projectGitLabConfig{GlabConfigDir: g.GlabConfigDir, MountGlabConfig: g.MountGlabConfig}
 	}
+	pc.CI = t.CI
 	if pc.Plugins != nil || t.Plugins != nil || t.PluginSchedules != nil {
 		if pc.Plugins == nil {
 			pc.Plugins = &PluginsConfig{}

@@ -240,6 +240,12 @@ func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRe
 	// Batch-only: the interactive terminal already exposes these.
 	cmd = append(cmd, "--permission-prompt-tool", "mcp__loop__permission_prompt")
 	cmd = append(cmd, "--print", "--verbose", "--output-format", "stream-json")
+	// The CLI writes the predicted next prompt after the turn's result, so
+	// only a run that asks gets one: it costs a request and keeps the
+	// process up until it's written.
+	if cfg.ClaudePromptSuggestions && req.Suggest {
+		cmd = append(cmd, "--prompt-suggestions")
+	}
 	if req.SystemPrompt != "" {
 		cmd = append(cmd, "--append-system-prompt", req.SystemPrompt)
 	}

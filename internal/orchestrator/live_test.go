@@ -927,3 +927,29 @@ func (s *OrchestratorSuite) TestKeepLiveSession() {
 		})
 	}
 }
+
+// A live session's predicted next prompt reaches the channel's composer.
+func (s *OrchestratorSuite) TestLiveHooksSuggestion() {
+	tests := []struct {
+		name   string
+		events bool
+	}{
+		{name: "with events", events: true},
+		{name: "without events"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			s.withLive()
+			ev := new(MockEventBroadcaster)
+			if tt.events {
+				s.orch.SetEventBroadcaster(ev)
+				ev.On("BroadcastPromptSuggestion", "ch-1", events.PromptSuggestionEventData{Suggestion: "run the tests"}).Once()
+			}
+
+			s.orch.liveHooks("ch-1").Suggestion("run the tests")
+
+			ev.AssertExpectations(s.T())
+		})
+	}
+}

@@ -290,6 +290,10 @@ func (m *MockEventBroadcaster) BroadcastLearnStarted(channelID, learnChannelID s
 	m.Called(channelID, learnChannelID)
 }
 
+func (m *MockEventBroadcaster) BroadcastPromptSuggestion(channelID string, data events.PromptSuggestionEventData) {
+	m.Called(channelID, data)
+}
+
 type MockRunner struct {
 	mock.Mock
 }

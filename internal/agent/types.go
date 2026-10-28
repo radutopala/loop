@@ -98,6 +98,9 @@ type AgentRequest struct {
 	// background each time that set changes, mid-turn too; empty when none
 	// are left.
 	OnBackgroundTasks func(tasks []BackgroundTask) `json:"-"`
+	// OnSuggestion is called with the next prompt the CLI predicts the user
+	// will send, after the turn's result, when Suggest asked for one.
+	OnSuggestion func(text string) `json:"-"`
 	// OnThinking is called for each "thinking" content block emitted by the
 	// assistant (extended thinking). Empty blocks are not delivered.
 	OnThinking func(text string) `json:"-"`
@@ -113,6 +116,9 @@ type AgentRequest struct {
 	// Live runs the request as a turn of the channel's live session when one
 	// is running (see LiveHooks); without one it runs as usual.
 	Live bool `json:"live,omitempty"`
+	// Suggest asks the CLI to predict the user's next prompt after each
+	// turn, when the config's claude_prompt_suggestions allows.
+	Suggest bool `json:"suggest,omitempty"`
 }
 
 // LiveHooks is how a live session reports what happens between the turns it
@@ -140,6 +146,10 @@ type LiveHooks struct {
 	System func(subtype string, event json.RawMessage)
 	// Prompt gets the user message of a turn started from outside Loop.
 	Prompt func(text string)
+	// Suggestion gets the next prompt the process predicts after a turn,
+	// as OnSuggestion does; it comes after the turn's result, so no turn
+	// is running to take it.
+	Suggestion func(text string)
 }
 
 // LiveInfo describes a channel's live session.

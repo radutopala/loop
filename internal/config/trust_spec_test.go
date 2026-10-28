@@ -122,6 +122,7 @@ func specMain() *Config {
 		Memory: MemoryConfig{Paths: []string{"/global/memory"}},
 		GitHub: GitHubConfig{MountGHConfig: true},
 		GitLab: GitLabConfig{GlabConfigDir: "/global/glab", MountGlabConfig: true},
+		CI:     CIConfig{AutoFix: true, MaxAttempts: 3, PollSec: 30},
 		Plugins: PluginsConfig{
 			Enabled:    true,
 			GateBinary: "/global/loop",
@@ -161,6 +162,7 @@ type trustView struct {
 	MemoryPaths      []string                   `json:"memory_paths"`
 	MountGHConfig    bool                       `json:"mount_gh_config"`
 	GitLab           GitLabConfig               `json:"gitlab"`
+	CI               CIConfig                   `json:"ci"`
 	ContainerImage   string                     `json:"container_image"`
 	ImageAutobuild   bool                       `json:"container_image_autobuild"`
 	PluginsEnabled   bool                       `json:"plugins_enabled"`
@@ -189,6 +191,7 @@ func viewOf(cfg *Config) string {
 		MemoryPaths:      cfg.Memory.Paths,
 		MountGHConfig:    cfg.GitHub.MountGHConfig,
 		GitLab:           cfg.GitLab,
+		CI:               cfg.CI,
 		ContainerImage:   cfg.ContainerImage,
 		ImageAutobuild:   cfg.ContainerImageAutobuild,
 		PluginsEnabled:   cfg.Plugins.Enabled,
@@ -346,6 +349,7 @@ var projectFieldClasses = []fieldClass{
 	{path: "container_image", trusted: true, sample: `"evil.example.com/agent"`},
 	{path: "container_image_autobuild", trusted: true, sample: `true`},
 	{path: "plugins.*.schedules", trusted: true, sample: `{"a": {"type": "interval", "schedule": "1m"}}`},
+	{path: "ci", trusted: true, sample: `{"auto_fix": false}`},
 
 	{path: "proxies.http_proxy", sample: `"http://proxy:3128"`, reason: "the agent container's HTTP_PROXY, which the agent can set for itself"},
 	{path: "proxies.https_proxy", sample: `"http://proxy:3128"`, reason: "the agent container's HTTPS_PROXY, which the agent can set for itself"},
@@ -355,6 +359,7 @@ var projectFieldClasses = []fieldClass{
 	{path: "claude_effort", sample: `"high"`, reason: "the agent's effort"},
 	{path: "claude_bin_path", sample: `"/usr/bin/claude"`, reason: "a path inside the agent container"},
 	{path: "claude_batch_disallowed_tools", sample: `["Bash"]`, reason: "Claude's tools inside the container"},
+	{path: "claude_prompt_suggestions", sample: `false`, reason: "whether the agent's chat runs predict a next prompt for the composer"},
 	{path: "claude_retry.max_attempts", sample: `3`, reason: "retries of the agent's own runs"},
 	{path: "claude_retry.backoff_base_sec", sample: `3`, reason: "retries of the agent's own runs"},
 	{path: "claude_retry.backoff_max_sec", sample: `3`, reason: "retries of the agent's own runs"},

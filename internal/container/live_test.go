@@ -1015,6 +1015,21 @@ func (s *RunnerSuite) TestLivePrompt() {
 	s.runner.liveCallbacks(&liveSession{}).onPrompt("dropped")
 }
 
+// A suggestion comes after the turn's result, so it goes to
+// hooks.Suggestion; one that lands once the next turn started is stale and
+// dropped, as is any without the hook.
+func (s *RunnerSuite) TestLiveCallbacksSuggestion() {
+	s.runner.liveCallbacks(&liveSession{}).onSuggestion("dropped")
+
+	var got []string
+	sess := &liveSession{hooks: agent.LiveHooks{Suggestion: func(text string) { got = append(got, text) }}}
+	cb := s.runner.liveCallbacks(sess)
+	cb.onSuggestion("now add tests")
+	sess.turn = &liveTurn{}
+	cb.onSuggestion("stale")
+	require.Equal(s.T(), []string{"now add tests"}, got)
+}
+
 // Control requests go to the process and come back with their answers,
 // matched by id; system events Loop doesn't handle go to hooks.System.
 func (s *RunnerSuite) TestSendLiveControl() {

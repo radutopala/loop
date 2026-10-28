@@ -25,6 +25,7 @@ const (
 	EventToolResult                = "tool.result"
 	EventAgentThinking             = "agent.thinking"
 	EventAgentActivity             = "agent.activity"
+	EventPromptSuggestion          = "agent.prompt_suggestion"
 	EventAskUser                   = "agent.ask_user"
 	EventAskResolved               = "agent.ask_resolved"
 	EventExitPlan                  = "agent.exit_plan"
@@ -79,6 +80,7 @@ const (
 	EventReviewApproved            = "review.approved"
 	EventPluginsChanged            = "plugins.changed"
 	EventPluginRunStarted          = "plugin.run_started"
+	EventChannelCI                 = "channel.ci"
 )
 
 // Event represents a server-sent event to WebSocket clients.
@@ -511,6 +513,16 @@ func (h *EventsHub) BroadcastAgentActivity(channelID string, data events.AgentAc
 	})
 }
 
+// BroadcastPromptSuggestion sends an agent.prompt_suggestion event with the
+// next prompt the agent predicts after a turn.
+func (h *EventsHub) BroadcastPromptSuggestion(channelID string, data events.PromptSuggestionEventData) {
+	h.Broadcast(Event{
+		Type:      EventPromptSuggestion,
+		ChannelID: channelID,
+		Data:      data,
+	})
+}
+
 // BroadcastAgentThinking sends an agent.thinking event with the assistant's
 // extended-thinking content for the live UI.
 func (h *EventsHub) BroadcastAgentThinking(channelID string, data events.AgentThinkingEventData) {
@@ -753,5 +765,16 @@ func (h *EventsHub) BroadcastQualityEvent(eventType, channelID string, data any)
 		Type:      eventType,
 		ChannelID: channelID,
 		Data:      data,
+	})
+}
+
+// BroadcastChannelCI sends a channel.ci event when a thread's PR/MR CI
+// changes. Global so the sidebar can show any thread's CI pill.
+func (h *EventsHub) BroadcastChannelCI(data events.CIEventData) {
+	h.Broadcast(Event{
+		Type:      EventChannelCI,
+		ChannelID: data.ChannelID,
+		Data:      data,
+		Global:    true,
 	})
 }

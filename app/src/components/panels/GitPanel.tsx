@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { type CIStatus, getCI } from "../../api/ci";
 import { fetchRoots, type RootEntry } from "../../api/files";
 import type { CommitEntry, DiffResponse, PRInfo } from "../../api/loopApi";
 import { fetchBranches, fetchCommits, fetchDiff, fetchPR } from "../../api/loopApi";
@@ -7,12 +8,14 @@ import { useTheme } from "../../ThemeContext";
 import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
 import type { AgentStatusData, WSEvent } from "../../types";
+import { ciTabBadge } from "../../utils/ciState";
 import { logErr } from "../../utils/log";
 import { prKind, prRef, prState, prSummary } from "../../utils/prState";
 import { storageGet, storageSet } from "../../utils/storage";
 import type { FileLinkOpenDetail } from "../chat/FileLink";
 import { ContextMenu } from "../shared/ContextMenu";
 import { BranchesPanel } from "./BranchesPanel";
+import { CIPanel, ciToneColor } from "./CIPanel";
 import { CommitDiffView } from "./CommitDiffView";
 import { CommitHistory } from "./CommitHistory";
 import type { ParsedFile } from "./DiffViewer";
@@ -118,6 +121,8 @@ export function GitPanel({
   const [diffVersion, setDiffVersion] = useState(0);
   const panelRef = useRef<HTMLDivElement>(null);
   const [pr, setPR] = useState<PRInfo | null>(null);
+  // The CI of the channel's PR/MR, null without one (or without CI watching).
+  const [ci, setCI] = useState<CIStatus | null>(null);
   // Multi-root workspace support: primary dir_path + extra_dirs. When the
   // channel has no extras, roots.length is 1 and the dropdown is hidden.
   const [roots, setRoots] = useState<RootEntry[]>([]);
@@ -136,6 +141,14 @@ export function GitPanel({
     e.currentTarget.style.color = colors.textDim;
   };
 
+  // The CI row's data; a daemon without CI watching answers with an error.
+  const loadCI = useCallback(() => {
+    if (!channelId) return;
+    getCI(channelId)
+      .then(setCI)
+      .catch(() => setCI(null));
+  }, [channelId]);
+
   // Load PR info. When a PR is open, seed sourceBranch to the PR's base
   // (only once per channel) so the Branches Diff mode defaults to the PR's
   // target rather than main. `fresh` bypasses the backend lookup cache —
@@ -144,18 +157,21 @@ export function GitPanel({
     (fresh = false) => {
       if (!channelId) {
         setPR(null);
+        setCI(null);
         return;
       }
       fetchPR(channelId, fresh)
         .then((res) => {
           if (res.present && res.pr) {
             setPR(res.pr);
+            loadCI();
             if (prSeededRef.current !== channelId) {
               setSourceBranch(res.pr.base_ref);
               prSeededRef.current = channelId;
             }
           } else {
             setPR(null);
+            setCI(null);
           }
         })
         .catch(() => setPR(null));
@@ -312,6 +328,11 @@ export function GitPanel({
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onEvent = useCallback(
     (event: WSEvent) => {
+      // CI events come for every channel; only this one's updates the CI row.
+      if (event.type === "channel.ci") {
+        if (event.channel_id === channelId) setCI(event.data as CIStatus);
+        return;
+      }
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(load, 1_000);
       if (event.type === "agent.status" && (event.data as AgentStatusData | undefined)?.status !== "running") {
@@ -320,7 +341,7 @@ export function GitPanel({
         loadPR();
       }
     },
-    [load, loadPR],
+    [load, loadPR, channelId],
   );
   useEffect(
     () => () => {
@@ -401,6 +422,16 @@ export function GitPanel({
     cursor: "pointer",
   };
 
+  // Shown for this channel's CI only, not a previous channel's still loaded.
+  // Refresh re-fetches the PR too (and with it the CI): a fetch that failed
+  // while the daemon restarted would otherwise hide the PR chip and CI tab.
+  const refresh = () => {
+    if (gitMode !== "ci") load();
+    loadPR(true);
+  };
+  const ciShown = channelId && pr && ci?.channel_id === channelId ? ci : null;
+  const ciBadge = ciShown ? ciTabBadge(ciShown) : null;
+
   const modeTabStyle = (active: boolean): React.CSSProperties => ({
     background: "none",
     border: "none",
@@ -416,6 +447,15 @@ export function GitPanel({
     whiteSpace: "nowrap",
     flexShrink: 0,
   });
+
+  // The CI tab, while the branch has a PR/MR: its badge reads the CI's state
+  // from any other tab.
+  const ciTab = ciShown && ciBadge && (
+    <button data-testid="git-panel-ci-tab" style={modeTabStyle(gitMode === "ci")} onClick={() => setGitMode("ci")}>
+      CI
+      {ciBadge.text && <span style={{ marginLeft: 4, color: ciToneColor(ciBadge.tone, colors), fontFamily: fonts.mono, textTransform: "none", letterSpacing: 0 }}>{ciBadge.text}</span>}
+    </button>
+  );
 
   // The file-count / +adds -dels counters next to the tabs. Mirrors the tabs'
   // vertical geometry (20px line + 4px bottom chrome) so the numbers sit on
@@ -476,8 +516,11 @@ export function GitPanel({
               Worktrees
             </button>
           )}
-          {gitMode !== "commits" && gitMode !== "worktrees" && gitMode !== "branchlist" && totalFiles > 0 && <span style={{ ...modeStatStyle, color: colors.textDim }}>{totalFiles}</span>}
-          {gitMode !== "commits" && gitMode !== "worktrees" && gitMode !== "branchlist" && (totalAdd > 0 || totalDel > 0) && (
+          {ciTab}
+          {gitMode !== "commits" && gitMode !== "worktrees" && gitMode !== "branchlist" && gitMode !== "ci" && totalFiles > 0 && (
+            <span style={{ ...modeStatStyle, color: colors.textDim }}>{totalFiles}</span>
+          )}
+          {gitMode !== "commits" && gitMode !== "worktrees" && gitMode !== "branchlist" && gitMode !== "ci" && (totalAdd > 0 || totalDel > 0) && (
             <span style={{ ...modeStatStyle, fontFamily: fonts.mono }}>
               <span style={{ color: colors.diffAddText }}>+{totalAdd}</span> <span style={{ color: colors.diffDelText }}>-{totalDel}</span>
             </span>
@@ -495,7 +538,7 @@ export function GitPanel({
         )}
         {pr && <PRChip pr={pr} colors={colors} />}
         {gitMode !== "worktrees" && gitMode !== "branchlist" && (
-          <button onClick={load} title="Refresh" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
+          <button onClick={refresh} title="Refresh" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M21 12a9 9 0 1 1-3-6.7" />
               <polyline points="21,3 21,9 15,9" />
@@ -577,6 +620,13 @@ export function GitPanel({
     <BranchesPanel channelId={channelId} isWorktree={isWorktree ?? false} hasBranch={hasBranch ?? false} onSelectThread={onSelectThread} onBranchChanged={onStatusChange} />
   ) : null;
 
+  const ciContent =
+    channelId && ciShown ? (
+      <CIPanel key={channelId} channelId={channelId} ci={ciShown} colors={colors} onChanged={loadCI} />
+    ) : (
+      <div style={{ padding: 12, fontSize: 12, color: colors.textDim }}>This branch has no PR/MR with CI.</div>
+    );
+
   const contextMenuOverlay = fileContextMenu && (
     <ContextMenu
       x={fileContextMenu.x}
@@ -608,7 +658,7 @@ export function GitPanel({
     return (
       <div data-testid="git-panel" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", backgroundColor: colors.sidebar, zoom: fontSizes.panels / 12 }}>
         {gitToolbar}
-        {gitMode === "branchlist" ? branchesContent : gitMode === "worktrees" ? worktreesContent : gitMode === "commits" ? commitsContent : diffContent}
+        {gitMode === "ci" ? ciContent : gitMode === "branchlist" ? branchesContent : gitMode === "worktrees" ? worktreesContent : gitMode === "commits" ? commitsContent : diffContent}
         {contextMenuOverlay}
       </div>
     );
@@ -815,8 +865,11 @@ export function GitPanel({
                     Worktrees
                   </button>
                 )}
-                {gitMode !== "commits" && gitMode !== "worktrees" && gitMode !== "branchlist" && totalFiles > 0 && <span style={{ ...modeStatStyle, color: colors.textDim }}>{totalFiles}</span>}
-                {gitMode !== "commits" && gitMode !== "worktrees" && gitMode !== "branchlist" && (totalAdd > 0 || totalDel > 0) && (
+                {ciTab}
+                {gitMode !== "commits" && gitMode !== "worktrees" && gitMode !== "branchlist" && gitMode !== "ci" && totalFiles > 0 && (
+                  <span style={{ ...modeStatStyle, color: colors.textDim }}>{totalFiles}</span>
+                )}
+                {gitMode !== "commits" && gitMode !== "worktrees" && gitMode !== "branchlist" && gitMode !== "ci" && (totalAdd > 0 || totalDel > 0) && (
                   <span style={{ ...modeStatStyle, fontFamily: fonts.mono }}>
                     <span style={{ color: colors.diffAddText }}>+{totalAdd}</span> <span style={{ color: colors.diffDelText }}>-{totalDel}</span>
                   </span>
@@ -852,8 +905,11 @@ export function GitPanel({
                     Worktrees
                   </button>
                 )}
-                {gitMode !== "commits" && gitMode !== "worktrees" && gitMode !== "branchlist" && totalFiles > 0 && <span style={{ ...modeStatStyle, color: colors.textDim }}>{totalFiles}</span>}
-                {gitMode !== "commits" && gitMode !== "worktrees" && gitMode !== "branchlist" && (totalAdd > 0 || totalDel > 0) && (
+                {ciTab}
+                {gitMode !== "commits" && gitMode !== "worktrees" && gitMode !== "branchlist" && gitMode !== "ci" && totalFiles > 0 && (
+                  <span style={{ ...modeStatStyle, color: colors.textDim }}>{totalFiles}</span>
+                )}
+                {gitMode !== "commits" && gitMode !== "worktrees" && gitMode !== "branchlist" && gitMode !== "ci" && (totalAdd > 0 || totalDel > 0) && (
                   <span style={{ ...modeStatStyle, fontFamily: fonts.mono }}>
                     <span style={{ color: colors.diffAddText }}>+{totalAdd}</span> <span style={{ color: colors.diffDelText }}>-{totalDel}</span>
                   </span>
@@ -861,7 +917,7 @@ export function GitPanel({
               </span>
             )}
             {gitMode !== "worktrees" && (
-              <button onClick={load} title="Refresh" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
+              <button onClick={refresh} title="Refresh" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M21 12a9 9 0 1 1-3-6.7" />
                   <polyline points="21,3 21,9 15,9" />
@@ -929,8 +985,8 @@ export function GitPanel({
         )}
       </div>
 
-      {/* File list + diffs / Commits / Worktrees */}
-      {gitMode === "branchlist" ? branchesContent : gitMode === "worktrees" ? worktreesContent : gitMode === "commits" ? commitsContent : diffContent}
+      {/* File list + diffs / Commits / Worktrees / CI */}
+      {gitMode === "ci" ? ciContent : gitMode === "branchlist" ? branchesContent : gitMode === "worktrees" ? worktreesContent : gitMode === "commits" ? commitsContent : diffContent}
       {contextMenuOverlay}
     </div>
   );

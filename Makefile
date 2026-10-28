@@ -212,13 +212,18 @@ coverage: ## Generate HTML coverage report
 	go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
 
+# Where _coverage-check-run writes its profiles. coverage-check points it
+# inside the container: a profile written through the bind mount can come
+# back with NUL bytes on macOS Docker.
+COVER_DIR ?= .
+
 _coverage-check-run:
 	@# The timeout catches a hung test, not a slow package: internal/api's
 	@# spec tests build a fresh SQLite world per route, which -race slows.
 	go generate ./internal/readme/
-	go test -race -count=1 -timeout 3m -coverpkg=./... -coverprofile=coverage.out ./...
+	go test -race -count=1 -timeout 3m -coverpkg=./... -coverprofile=$(COVER_DIR)/coverage.out ./...
 	@# The plugin SDK is its own module, so it has its own profile.
-	cd pluginsdk && go test -race -count=1 -timeout 90s -coverpkg=./... -coverprofile=../coverage-pluginsdk.out ./...
+	cd pluginsdk && go test -race -count=1 -timeout 90s -coverpkg=./... -coverprofile=$(abspath $(COVER_DIR))/coverage-pluginsdk.out ./...
 	@# Counted from the raw profile: `go tool cover -func` rounds its total to
 	@# one decimal, so a handful of uncovered statements would still print 100.0%.
 	@# With -coverpkg a block repeats once per test binary; it is covered if any hit it.
@@ -226,13 +231,15 @@ _coverage-check-run:
 		END { for (b in n) { total += n[b]; if (!(b in hit) && n[b] > 0) { miss += n[b]; print "uncovered: " b " (" n[b] " stmts)" | "sort" } } \
 		close("sort"); \
 		if (miss > 0) { printf "Coverage is %.4f%% (%d of %d statements uncovered), required 100%%\n", 100 * (total - miss) / total, miss, total; exit 1 } \
-		printf "Coverage: 100%% (%d statements)\n", total }' coverage.out coverage-pluginsdk.out
+		printf "Coverage: 100%% (%d statements)\n", total }' $(COVER_DIR)/coverage.out $(COVER_DIR)/coverage-pluginsdk.out
 
 coverage-check: ## Run tests and enforce 100% coverage (via Docker on host, directly in CI)
 	@if [ "$$CI" = "true" ] || [ -f /.dockerenv ]; then \
 		$(MAKE) _coverage-check-run; \
 	else \
-		docker run --rm -v "$$(pwd)":/app -w /app golang:1.27 make _coverage-check-run; \
+		docker run --rm -v "$$(pwd)":/app -w /app \
+			-v loop-gomod:/go/pkg/mod -v loop-gocache:/root/.cache/go-build \
+			golang:1.27 make _coverage-check-run COVER_DIR=/tmp; \
 	fi
 
 prove-seccomp: ## Prove the agent gate's seccomp filter for amd64 + arm64 with the z3 SMT solver, over every syscall number (in the test-runner image unless z3 is installed)

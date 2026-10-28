@@ -569,6 +569,38 @@ func (s *EventsHubSuite) TestBroadcastChannelLocked() {
 	require.Equal(s.T(), true, data["locked"])
 }
 
+func (s *EventsHubSuite) TestBroadcastPromptSuggestion() {
+	hub := NewEventsHub(testLogger())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		hub.Register(conn, nil)
+		holdUntilClientDisconnects(conn)
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer conn.Close()
+
+	time.Sleep(50 * time.Millisecond)
+
+	hub.BroadcastPromptSuggestion("ch-1", events.PromptSuggestionEventData{Suggestion: "now add tests"})
+
+	_, msg, err := conn.ReadMessage()
+	require.NoError(s.T(), err)
+
+	var evt Event
+	require.NoError(s.T(), json.Unmarshal(msg, &evt))
+	require.Equal(s.T(), "agent.prompt_suggestion", evt.Type)
+	require.Equal(s.T(), "ch-1", evt.ChannelID)
+	require.Equal(s.T(), map[string]any{"suggestion": "now add tests"}, evt.Data)
+}
+
 func (s *EventsHubSuite) TestBroadcastChannelAgentConfig() {
 	hub := NewEventsHub(testLogger())
 
@@ -1608,4 +1640,17 @@ func (s *EventsHubSuite) TestObserve() {
 	require.Len(s.T(), seen, 2)
 	require.Equal(s.T(), EventAgentStatus, seen[0].Type)
 	require.NotZero(s.T(), seen[0].Timestamp)
+}
+
+func (s *EventsHubSuite) TestBroadcastChannelCI() {
+	hub := NewEventsHub(testLogger())
+	var seen []Event
+	hub.Observe(func(e Event) { seen = append(seen, e) })
+	data := events.CIEventData{ChannelID: "th-1", Kind: "pr", Number: 12}
+	hub.BroadcastChannelCI(data)
+	require.Len(s.T(), seen, 1)
+	require.Equal(s.T(), EventChannelCI, seen[0].Type)
+	require.Equal(s.T(), "th-1", seen[0].ChannelID)
+	require.Equal(s.T(), data, seen[0].Data)
+	require.True(s.T(), seen[0].Global)
 }

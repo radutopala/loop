@@ -19,6 +19,7 @@ import { draftText } from "./chatDrafts";
 import { LiveBar, useLiveStatus, useWarmLive } from "./LiveBar";
 import { footerLabel, liveIcon, liveIconTitle, shownBackground } from "./liveSession";
 import { MonitorsBar } from "./MonitorsBar";
+import { usePromptSuggestion } from "./promptSuggestion";
 
 function buildStyles(colors: ColorPalette): Record<string, React.CSSProperties> {
   return {
@@ -137,6 +138,7 @@ export function ChatView({
   const queuedEdit = useQueuedEdit(channelId, chatState.queuedMessages);
   const live = useLiveStatus(channelId, subscribeChatEvents, wsOpens);
   const warmLive = useWarmLive(subscribeChatEvents ? channelId : null, live);
+  const suggestion = usePromptSuggestion(channelId, subscribeChatEvents);
   const background = readOnlyNote === undefined ? shownBackground(live, chatState.backgroundTasks, isRunning) : null;
 
   // +fork on a bubble: the new thread opens, and for a user message its
@@ -300,6 +302,7 @@ export function ChatView({
             hasPendingAskUser={!!chatState.askUserQuestions}
             trustPending={trustPending}
             onReviewTrust={onReviewTrust}
+            suggestion={suggestion}
           />
         </div>
       )}

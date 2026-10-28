@@ -8,6 +8,9 @@
   // Claude binary path override (e.g. "/usr/local/bin/claude" or "claude-code")
   //"claude_bin_path": "",
 
+  // Prompt suggestions override: false stops offering Claude's predicted next prompt in this project's chats
+  //"claude_prompt_suggestions": true,
+
   // Backoff-retry policy override for transient API errors (rate limiting, overload, 5xx)
   //"claude_retry": { "max_attempts": 5, "backoff_base_sec": 5, "backoff_max_sec": 120, "session_limit_auto_continue": true },
 
@@ -196,6 +199,13 @@
   //    "description": "A chemical reaction, balanced step by step"
   //  }
   //],
+
+  // CI auto-fix and merge when ready for this project (each field overrides
+  // global when set; needs trust; see docs/ci.md)
+  //"ci": {
+  //  "auto_fix": false,
+  //  "merge_method": "rebase"
+  //},
 
   // Learn pass for this project (each field overrides global when set; see docs/chat.md#learn-from-a-run)
   //"learn": {

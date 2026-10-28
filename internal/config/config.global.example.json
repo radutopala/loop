@@ -43,6 +43,7 @@
   //"claude_model": "", // defaults to "claude-sonnet-5-5"; options: "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-sonnet-5", "claude-fable-5-1", "claude-fable-5", "claude-opus-4-8", "claude-haiku-5-5"; append "[1m]" (e.g. "claude-opus-5-5[1m]") for the 1M-token context window
   //"claude_effort": "", // reasoning-effort level passed to Claude as --effort; empty = unset (model default); options: "low", "medium", "high", "xhigh", "max"
   //"claude_bin_path": "claude",
+  //"claude_prompt_suggestions": true, // after each chat turn, ask Claude for a predicted next prompt and offer it in the composer (Tab accepts); one small extra request per turn
   //"claude_batch_disallowed_tools": ["ScheduleWakeup", "CronCreate", "CronDelete", "CronList", "Monitor", "ReportFindings"], // tools denied via --disallowedTools in batch (--print) runs; defaults assume a persistent harness that one-shot containers lack, so they'd park work that never resumes (ReportFindings would swallow review findings into a UI channel batch runs don't render)
   //"claude_retry": { // backoff-retry of batch agent runs that fail with a transient API error (rate limiting, overload,5xx); terminal errors (usage/quota, auth, billing) are never retried
   //  "max_attempts": 5,                  // extra attempts after the first failure; 0 disables
@@ -89,6 +90,19 @@
   // first use (sha256-verified). See docs/playground.md.
   //"playground_share": {
   //  "enabled": true
+  //},
+
+  // CI: Loop watches a thread's PR/MR checks. A failure on a commit the
+  // thread's agent made goes back to that agent to fix (auto_fix, on by
+  // default), at most max_attempts times per PR/MR; any other failure lights
+  // the thread's ci pill. merge_method is how "merge when ready" merges
+  // (squash, merge or rebase; empty picks the first the repo allows, squash
+  // first). poll_sec is how often running checks are polled. See docs/ci.md.
+  //"ci": {
+  //  "auto_fix": true,
+  //  "max_attempts": 3,
+  //  "merge_method": "squash",
+  //  "poll_sec": 30
   //},
 
   // Backup: zip ~/.loop/loop.db and the playgrounds into a directory on a

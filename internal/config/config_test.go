@@ -68,6 +68,7 @@ func (s *ConfigSuite) TestLoadDefaults() {
 	require.Equal(s.T(), 10*time.Minute, cfg.LiveSessionIdle)
 	require.True(s.T(), cfg.LiveSessions)
 	require.Empty(s.T(), cfg.LiveSessionPlatforms)
+	require.True(s.T(), cfg.ClaudePromptSuggestions)
 	require.Equal(s.T(), 30*time.Second, cfg.PollInterval)
 	require.Equal(s.T(), ":8222", cfg.APIAddr)
 	require.Equal(s.T(), "/home/testuser/.loop", cfg.LoopDir)
@@ -478,6 +479,21 @@ func (s *ConfigSuite) TestZeroNumericValues() {
 	// defaulting rather than be read as "unset".
 	require.Equal(s.T(), int64(0), cfg.Browser.MemoryMB)
 	require.Equal(s.T(), 0.0, cfg.Browser.CPUs)
+}
+
+func (s *ConfigSuite) TestClaudePromptSuggestionsOff() {
+	s.loader.readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			"platforms": ["discord"],
+			"discord_token": "tok",
+			"discord_app_id": "app",
+			"claude_prompt_suggestions": false
+		}`), nil
+	}
+
+	cfg, err := s.loader.load()
+	require.NoError(s.T(), err)
+	require.False(s.T(), cfg.ClaudePromptSuggestions)
 }
 
 func (s *ConfigSuite) TestLiveSessions() {

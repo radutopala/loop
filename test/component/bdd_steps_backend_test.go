@@ -215,6 +215,9 @@ func (tc *TestContext) assertJSONField(field, expected string) error {
 	}
 	val, ok := tc.LastJSON[field]
 	if !ok {
+		val, ok = jsonAt(tc.LastJSON, field)
+	}
+	if !ok {
 		return fmt.Errorf("JSON field %q not found in response: %s", field, string(tc.LastBody))
 	}
 	actual := fmt.Sprintf("%v", val)

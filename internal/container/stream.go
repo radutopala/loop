@@ -295,6 +295,9 @@ type streamCallbacks struct {
 	// onPrompt gets the user message of a turn started from outside the
 	// process's stdin, which the CLI replays with --replay-user-messages.
 	onPrompt func(text string)
+	// onSuggestion gets each prompt_suggestion: the next prompt the CLI
+	// predicts, written after the turn's result.
+	onSuggestion func(text string)
 }
 
 // any reports whether at least one callback is set. collectOutput uses it to
@@ -308,7 +311,8 @@ func (cb streamCallbacks) any() bool {
 	return cb.onTurn != nil || cb.onToolUse != nil || cb.onToolUseRaw != nil ||
 		cb.onActivity != nil || cb.onBackgroundTasks != nil || cb.onThinking != nil ||
 		cb.onToolResult != nil || cb.onSession != nil || cb.onTurnStart != nil ||
-		cb.onSystem != nil || cb.onControlResponse != nil || cb.onPrompt != nil
+		cb.onSystem != nil || cb.onControlResponse != nil || cb.onPrompt != nil ||
+		cb.onSuggestion != nil
 }
 
 // requestCallbacks are the stream callbacks req sets.
@@ -322,6 +326,7 @@ func requestCallbacks(req *agent.AgentRequest) streamCallbacks {
 		onThinking:        req.OnThinking,
 		onToolResult:      req.OnToolResult,
 		onSession:         req.OnSession,
+		onSuggestion:      req.OnSuggestion,
 	}
 }
 
@@ -730,6 +735,13 @@ func (st *streamState) dispatch(line []byte, cb streamCallbacks) *claudeResponse
 				return nil
 			}
 			cb.onActivity("tool_progress", fmt.Sprintf("%s — running %ds", evt.ToolName, int(evt.Elapsed)))
+		}
+	case "prompt_suggestion":
+		var evt struct {
+			Suggestion string `json:"suggestion"`
+		}
+		if cb.onSuggestion != nil && json.Unmarshal(line, &evt) == nil && evt.Suggestion != "" {
+			cb.onSuggestion(evt.Suggestion)
 		}
 	case "result":
 		var evt claudeResponse

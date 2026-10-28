@@ -508,6 +508,60 @@ Also emitted by [`POST /api/channels/{id}/rename`](api.md#post-apichannelsidrena
 
 ---
 
+### `channel.ci`
+
+The CI of a thread's PR/MR changed: its checks, an auto-fix sent or stopped, or a merge armed or done (see [ci.md](ci.md)). Broadcast globally, and only when something changed, so the sidebar's `ci` / `ci…` pills and the Git panel's CI tab update without re-fetching. An event with only `channel_id` means the branch no longer has a PR/MR.
+
+**Payload schema:**
+
+```json
+{
+  "channel_id": "thread-id",
+  "kind": "pr",
+  "number": 342,
+  "url": "https://github.com/example/repo/pull/342",
+  "head_sha": "4f1c2d9e8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e",
+  "checks": {"total": 7, "passed": 6, "failed": 1, "pending": 0},
+  "failed": [{"id": "123", "name": "lint", "group": "CI", "url": "https://github.com/example/repo/actions/runs/9/job/123", "run_id": "9"}],
+  "merge_state": "blocked",
+  "auto_merge": false,
+  "ci_attention": "failed",
+  "auto_fix": false,
+  "auto_fix_default": true,
+  "attempts": 0,
+  "max_attempts": 3,
+  "reason": "not_agent_commit",
+  "checkout_sha": "4f1c2d9e8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e",
+  "alert": "PR #342: lint failed"
+}
+```
+
+| Field              | Type   | Description |
+|--------------------|--------|-------------|
+| `channel_id`       | string | The thread |
+| `kind`             | string | `pr` (GitHub) or `mr` (GitLab) |
+| `number`           | int    | The PR number or MR IID |
+| `url`              | string | The PR/MR's web URL |
+| `head_sha`         | string | The head commit the checks ran on |
+| `checks`           | object | `total`, `passed`, `failed` and `pending` checks; a cancelled or skipped one counts only toward `total` |
+| `failed`           | array  | The failed checks: `id`, `name`, `group` (the workflow or stage), `url`, `run_id`, and `infra` for a GitLab runner failure |
+| `merge_state`      | string | `clean`, `blocked`, `behind`, `conflict`, `draft` or `unknown` |
+| `auto_merge`       | bool   | The forge's auto-merge is on |
+| `merged`, `closed` | bool   | The PR/MR was merged or closed |
+| `merge_armed`      | string | The method "merge when ready" was armed with; omitted when not armed |
+| `merge_methods`    | array  | The methods the repo allows; omitted once merged or closed |
+| `merge_method`     | string | The method a merge would use now |
+| `ci_attention`     | string | `failed` (lights the `ci` pill), `fixing` (`ci…`) or empty |
+| `auto_fix`         | bool   | The thread's effective auto-fix setting |
+| `auto_fix_default` | bool   | The config's `ci.auto_fix` |
+| `attempts`         | int    | Fixes sent for the current failure streak |
+| `max_attempts`     | int    | The config's `ci.max_attempts` |
+| `reason`           | string | Why the watcher last acted as it did on the failure: `not_agent_commit`, `auto_fix_off`, `max_attempts`, `no_new_commit`, `same_failure`, `infra_rerun`, `infra_again`, `fix_sent` or `fix_asked` (see [ci.md](ci.md#the-git-panel)); omitted when the checks pass or a new head's checks start running |
+| `checkout_sha`     | string | The commit the thread's checkout is at; omitted when it can't be read |
+| `alert`            | string | A new failure that needs the owner. It also adds a notification, so it's set on one event only |
+
+---
+
 ### `channel.agent_config`
 
 A channel's model/effort overrides changed via [`PATCH /api/channels/{id}/agent-config`](api.md#patch-apichannelsidagent-config). Broadcast globally so the sidebar's row info shows them without re-fetching `/api/channels`.
@@ -677,6 +731,20 @@ A channel's [live session](chat.md#live-sessions) started, changed or ended. The
 | `reason`     | string | Why it ended (when not running): `idle`, `config changed`, `session changed`, `scheduled run`, `one-shot run`, `stopped`, `closed`, `deleted`, `shutdown`, `stdin closed`, `interrupt timed out`, `exited`, `exited: …`, `restart failed: …` |
 
 A turn the session starts on its own, after a background task wakes it, runs with `agent.status` `trigger: "live"`.
+
+**Scope:** Channel.
+
+---
+
+### `agent.prompt_suggestion`
+
+The agent predicted the next prompt the user will send, after a chat turn's result. Only app chats ask for one, and only while [`claude_prompt_suggestions`](configuration.md) is on; see [prompt suggestions](chat.md#prompt-suggestions). Unlike `agent.activity`, it isn't a sign that a run is going: it arrives after the turn ended.
+
+**Payload schema:**
+
+```json
+{ "suggestion": "run the tests" }
+```
 
 **Scope:** Channel.
 
@@ -1201,6 +1269,7 @@ A plugin's [composer switch](plugins.md#composer-switches) changed in a chat: th
 | `BroadcastChannelCreated` | `channel.created` | `map[string]string{"channel_id": id}` | Channel |
 | `BroadcastChannelDeleted` | `channel.deleted` | `nil` | Channel |
 | `BroadcastChannelUpdated` | `channel.updated` | `ChannelUpdatedData` | Global |
+| `BroadcastChannelCI` | `channel.ci` | `events.CIEventData` | Global |
 | `BroadcastChannelAgentConfig` | `channel.agent_config` | `map[string]string{"model_override", "effort_override"}` | Global |
 | `BroadcastChannelLearn` | `channel.learn` | `map[string]string{"learn"}` | Global |
 | `BroadcastLearnStarted` | `learn.started` | `map[string]string{"learn_channel_id"}` | Global |

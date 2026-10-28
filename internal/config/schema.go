@@ -116,6 +116,14 @@ func buildSchema(goos string) *ConfigSchema {
 				XOrder:       3,
 				XPlaceholder: "claude",
 			},
+			"claude_prompt_suggestions": {
+				Type:        "boolean",
+				Title:       "Prompt Suggestions",
+				Description: "After each chat turn, ask Claude for a predicted next prompt and offer it in the composer (Tab accepts). Costs one small extra request per turn.",
+				Default:     true,
+				XSection:    "Claude",
+				XOrder:      4,
+			},
 			"claude_batch_disallowed_tools": {
 				Type:        "array",
 				Title:       "Batch Disallowed Tools",
@@ -387,6 +395,39 @@ func buildSchema(goos string) *ConfigSchema {
 						Title:       "Enabled",
 						Description: "Allow exposing a playground publicly over a cloudflared quick tunnel. Off by default.",
 						Default:     false,
+					},
+				},
+			},
+
+			"ci": {
+				Type:     "object",
+				XSection: "CI",
+				Properties: map[string]*SchemaProperty{
+					"auto_fix": {
+						Type:        "boolean",
+						Title:       "Auto-fix",
+						Description: "Send a failing check on the agent's own commit back to the thread's agent to fix. On by default.",
+						Default:     true,
+					},
+					"max_attempts": {
+						Type:         "integer",
+						Title:        "Max Attempts",
+						Description:  "Fixes a PR/MR gets before Loop stops and flags it. 3 by default.",
+						Default:      DefaultCIMaxAttempts,
+						XPlaceholder: strconv.Itoa(DefaultCIMaxAttempts),
+					},
+					"merge_method": {
+						Type:        "string",
+						Title:       "Merge Method",
+						Description: "How \"merge when ready\" merges. Empty: the first the repo allows, squash first.",
+						Enum:        []any{"", "squash", "merge", "rebase"},
+					},
+					"poll_sec": {
+						Type:         "integer",
+						Title:        "Poll Interval (sec)",
+						Description:  "How often a PR/MR's checks are polled while they run. 30 by default.",
+						Default:      DefaultCIPollSec,
+						XPlaceholder: strconv.Itoa(DefaultCIPollSec),
 					},
 				},
 			},

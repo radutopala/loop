@@ -774,6 +774,15 @@ func (r *DockerRunner) liveCallbacks(s *liveSession) streamCallbacks {
 				c.onToolResult(id, out, isErr)
 			}
 		},
+		onSuggestion: func(text string) {
+			// One that lands once the next turn has started is stale.
+			s.mu.Lock()
+			running := s.turn != nil
+			s.mu.Unlock()
+			if !running && s.hooks.Suggestion != nil {
+				s.hooks.Suggestion(text)
+			}
+		},
 		onBackgroundTasks: func(tasks []agent.BackgroundTask) {
 			s.mu.Lock()
 			s.background = tasks
