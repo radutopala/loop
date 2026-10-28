@@ -464,9 +464,9 @@ func (s *ReviewHandlerSuite) TestStats() {
 	s.store.On("GetChannel", mock.Anything, "ch2").Return(nil, errors.New("gone"))
 	within := func(pr, days int) any {
 		return mock.MatchedBy(func(f db.ReviewStatsFilter) bool {
-			age := time.Since(f.Since)
-			want := time.Duration(days) * 24 * time.Hour
-			return f.DirPath == "/repo" && f.PRNumber == pr && age >= want-time.Hour && age < want+time.Hour
+			// AddDate counts calendar days, which aren't 24h across a DST change.
+			drift := time.Since(f.Since) - time.Since(time.Now().AddDate(0, 0, -days))
+			return f.DirPath == "/repo" && f.PRNumber == pr && drift.Abs() < time.Minute
 		})
 	}
 	ms.On("ReviewStats", mock.Anything, within(7, 30)).Return(&db.ReviewStats{Runs: db.ReviewRunStats{Total: 3}}, nil)
