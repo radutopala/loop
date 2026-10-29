@@ -260,8 +260,8 @@ const unlistedKind = `(kind = '` + ChannelKindSide + `' OR ` + hiddenKind + `)`
 // deleteHiddenChildren deletes the hidden threads and side chats under
 // the channels parents selects (a placeholder or a subquery taking arg),
 // their messages and quality snapshots, as DeleteChannel does for any
-// channel, and the learn proposals, learn passes and explanations filed
-// for those channels.
+// channel, and the learn proposals, learn passes, explanations and
+// walkthroughs filed for those channels.
 func deleteHiddenChildren(ctx context.Context, tx *sql.Tx, parents string, arg string) error {
 	hiddenIDs := `SELECT channel_id FROM channels WHERE ` + unlistedKind + ` AND parent_id IN (` + parents + `)`
 	if _, err := tx.ExecContext(ctx, `DELETE FROM messages WHERE channel_id IN (`+hiddenIDs+`)`, arg); err != nil {
@@ -278,6 +278,9 @@ func deleteHiddenChildren(ctx context.Context, tx *sql.Tx, parents string, arg s
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM learn_passes WHERE channel_id IN (`+parents+`)`, arg); err != nil {
 		return fmt.Errorf("deleting learn passes: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM walkthroughs WHERE channel_id IN (`+parents+`)`, arg); err != nil {
+		return fmt.Errorf("deleting walkthroughs: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM channels WHERE `+unlistedKind+` AND parent_id IN (`+parents+`)`, arg); err != nil {
 		return fmt.Errorf("deleting hidden threads: %w", err)

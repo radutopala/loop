@@ -326,3 +326,13 @@ Right-clicking inside the CodeMirror editor area opens a custom context menu wit
 | Cut | Text selected | Copy and remove selection |
 | Select All | Always | Select entire document |
 | Find... | Always | Open the search panel |
+| Ask the agent about this | Text selected | Send the selection, with its file and lines, to the chat |
+
+## Walkthroughs
+
+An agent's `ui_walkthrough` walks you through code or text: each step highlights lines of a file, with the agent's explanation on a card above them. The editor opens each step's file in turn.
+
+- **Card:** Prev / Next (Alt+← / Alt+→), Play / Pause, Close (Esc), and Ask, which sends the step's lines to the chat.
+- **Play** moves to the next step on its own, at the pace the agent set or the last one (10 seconds a step by default), and stops on the last step; Play there starts over. Prev, Next, Close and typing in the file pause it.
+- **Changed code:** a step finds its lines by the text they held when the walkthrough was made; when that text is gone, it shows where the lines were, with a note.
+- **Walkthroughs menu:** the label at the right of the editor's header (`walkthroughs`, or `walkthrough 2/5` while one shows) lists the channel's walkthroughs, newest first, to reopen or delete. They're kept until the channel is deleted.

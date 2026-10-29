@@ -3248,7 +3248,7 @@ The connected windows and what each shows.
 }
 ```
 
-`plugin` is the panel a `plugin` pane shows, as `plugin/panel`. `busy` is an agent terminal that printed in the last 1.5s, e.g. the Claude TUI at work. `status` is `connecting`, `running`, `completed` or `failed`. `side` is the side view open beside the chat (`learn`, `explain` or `shell`), absent when none is.
+`plugin` is the panel a `plugin` pane shows, as `plugin/panel`. `busy` is an agent terminal that printed in the last 1.5s, e.g. the Claude TUI at work. `status` is `connecting`, `running`, `completed` or `failed`. `side` is the side view open beside the chat (`learn`, `explain` or `shell`), absent when none is. `walkthrough` is the walkthrough the channel's editor shows, `{id, title, step, steps}` with its step from 1, plus `playing: true` and `autoplay_sec` while it plays; `selection` is the editor's selection, `{path, start_line, end_line, text}` (text cut to 4000 characters). Each is absent when there's none.
 
 **Errors:** `400` invalid `after`.
 
@@ -3291,6 +3291,8 @@ Runs steps in a window, in order, until one fails.
 | `open_side` | `view` | Opens the side view beside the chat: `learn`, `explain` or `shell`. The result's `pane` is `side`. `shell` fails while the chat's container isn't running |
 | `close_side` | | Closes the side view |
 | `open_file` | `path`, `line?` | Opens a file of the channel's roots in the editor |
+| `open_walkthrough` | `walkthrough_id`, `walkthrough_step?`, `autoplay_sec?` | Shows step `walkthrough_step` (from 1, default 1) of one of the channel's [walkthroughs](#walkthroughs) in the editor, opening its file. With `autoplay_sec` (1 to 600) it moves to the next step every that many seconds until the last; without, it shows the step paused. Fails when the step's file can't be opened |
+| `close_walkthrough` | | Closes the walkthrough the editor shows |
 | `show_message` | `message_id` | Scrolls the channel's chat to the message (its `#id`) and highlights it, paging back through older messages and switching to a tab with a chat pane when needed. Fails when the chat has no such message. A message link, `loop://channel/<channel-id>/<message-id>`, is `select_channel` to the channel, then `show_message` |
 | `send_input` | `pane`, `text`, `submit?` | Types into an agent terminal or the Shell view, or queues the text as a chat pane's or the Learn view's learn thread's next message |
 | `read_output` | `pane`, `lines?` | The terminal's last `lines` (default 50, at most 2000), or a chat pane's, its messages as `author: text`. On the side view: the Shell view's terminal, the Learn view's proposals and learn thread, or the Explain view's explanations |
@@ -3322,6 +3324,56 @@ A command stays in one channel: the one its last `select_channel` opened, or els
 `send_input` refuses text for a `docker-agent` pane that contains a bracketed-paste marker (`ESC [200~` or `ESC [201~`), which would end the paste early.
 
 **Errors:** `400` empty steps, a step without an op, a bad timeout, or a terminal step on a host shell; `403` an agent's command outside its project; `404` no window, or no window `client_id`; `502` the window dropped; `504` the window didn't answer in time.
+
+---
+
+### Walkthroughs
+
+A walkthrough is a series of steps over the channel's files, each highlighting lines with an explanation, that the editor shows one at a time (`open_walkthrough`). A side chat's walkthroughs are kept under its parent channel, so every chat of the channel sees them; they're deleted with the channel. Agents can create, list and get them; only the owner can delete one. The `ui_walkthrough` MCP tool creates one and opens it.
+
+#### `POST /api/channels/{id}/walkthroughs`
+
+**Request:**
+```json
+{
+  "title": "How the request is handled",
+  "steps": [
+    {"path": "internal/api/server.go", "start_line": 40, "end_line": 52, "title": "Routing", "body": "The route is registered **here**."},
+    {"path": "internal/api/handler.go", "start_line": 10, "body": "Then the handler decodes the body."}
+  ]
+}
+```
+
+`title` is required (at most 200 bytes); there are 1 to 50 steps. Each step's `path` is a text file under one of the channel's dirs, relative to its first dir or absolute; `start_line` is from 1 and `end_line` defaults to it; `body` is Markdown (required, at most 8000 bytes); `title` is optional (at most 200 bytes). The text the lines hold now is kept as the step's `anchor`, so once the file changes the editor shows the step where that text moved to, or where the lines were, with a note.
+
+**Response (201):**
+```json
+{
+  "id": 3,
+  "channel_id": "ch-1",
+  "title": "How the request is handled",
+  "step_count": 2,
+  "steps": [
+    {"path": "internal/api/server.go", "start_line": 40, "end_line": 52, "anchor": "...", "title": "Routing", "body": "The route is registered **here**."},
+    {"path": "internal/api/handler.go", "start_line": 10, "end_line": 10, "anchor": "...", "body": "Then the handler decodes the body."}
+  ],
+  "created_at": "2026-10-29T10:00:00Z"
+}
+```
+
+**Errors:** `400` a missing or long title, no steps or too many, or a step (named by its number) whose file isn't in the channel's dirs, is binary or too large, or hasn't those lines; `404` no such channel.
+
+#### `GET /api/channels/{id}/walkthroughs`
+
+The channel's walkthroughs, newest first, without their steps.
+
+#### `GET /api/channels/{id}/walkthroughs/{wid}`
+
+One walkthrough, with its steps. **Errors:** `400` invalid id; `404` not one of the channel's.
+
+#### `DELETE /api/channels/{id}/walkthroughs/{wid}`
+
+Owner only. **Response:** `204`. **Errors:** `400` invalid id; `404` not one of the channel's.
 
 ---
 

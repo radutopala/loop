@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import type { Walkthrough } from "../api/walkthroughs";
 import type { SideView } from "../components/layout/LearnSplit";
 import type { PluginPaneOption } from "../plugins/PluginPanelsContext";
 import type { SessionStatus } from "../types";
@@ -177,6 +178,27 @@ class FakeHost implements UiHost {
   messages = new Set([7]);
   shown: string[] = [];
   showing: "hangs" | "fails" | null = null;
+  walkthroughs = new Map<number, Walkthrough>([
+    [
+      12,
+      {
+        id: 12,
+        channel_id: "c1",
+        title: "How the cache works",
+        created_at: "2026-10-29T10:00:00Z",
+        step_count: 3,
+        steps: [
+          { path: "main.go", start_line: 1, end_line: 4, title: "Entry" },
+          { path: "main.go", start_line: 10, end_line: 12 },
+          { path: "gone.go", start_line: 1, end_line: 2 },
+        ],
+      },
+    ],
+    [13, { id: 13, channel_id: "c1", title: "Empty", created_at: "2026-10-29T10:00:00Z", step_count: 0, steps: [] }],
+  ]);
+  walkthroughFails = "";
+  shownWalkthroughs: string[] = [];
+  closedWalkthroughs: string[] = [];
   pgs: PlaygroundPick[] = [
     { name: "board", scope: "global" },
     { name: "both", scope: "global" },
@@ -206,6 +228,18 @@ class FakeHost implements UiHost {
   async openFile(channelId: string, path: string, line?: number) {
     if (!this.files.has(path)) throw new Error(`no file "${path}" in the channel's roots`);
     this.opened.push(`${channelId} ${path}${line ? `:${line}` : ""}`);
+  }
+  async walkthrough(_channelId: string, id: number) {
+    if (this.walkthroughFails) throw new Error(this.walkthroughFails);
+    return this.walkthroughs.get(id) ?? null;
+  }
+  async showWalkthrough(channelId: string, w: Walkthrough, index: number, autoplaySec?: number) {
+    const step = w.steps?.[index];
+    if (!step || !this.files.has(step.path)) throw new Error(`no file "${step?.path}" in the channel's roots`);
+    this.shownWalkthroughs.push(`${channelId} ${w.id} ${index}${autoplaySec ? ` every ${autoplaySec}s` : ""}`);
+  }
+  closeWalkthrough(channelId: string) {
+    this.closedWalkthroughs.push(channelId);
   }
   showMessage(channelId: string, messageId: number) {
     if (this.showing === "hangs") return new Promise<boolean>(() => {});
@@ -641,6 +675,48 @@ describe("more steps", () => {
       { op: "open_file", ok: true },
     ]);
     expect(host.opened).toEqual(["c1 main.go:12", "c1 main.go"]);
+  });
+
+  it("opens a walkthrough of the open channel at a step", async () => {
+    expect(await run([{ op: "open_walkthrough", walkthrough_id: 12 }, { op: "open_walkthrough", walkthrough_id: 12, walkthrough_step: 2, autoplay_sec: 5 }, { op: "close_walkthrough" }])).toEqual([
+      { op: "open_walkthrough", ok: true },
+      { op: "open_walkthrough", ok: true },
+      { op: "close_walkthrough", ok: true },
+    ]);
+    expect(host.shownWalkthroughs).toEqual(["c1 12 0", "c1 12 1 every 5s"]);
+    expect(host.closedWalkthroughs).toEqual(["c1"]);
+  });
+
+  it("closes no walkthrough without an error", async () => {
+    expect(await run([{ op: "close_walkthrough" }])).toEqual([{ op: "close_walkthrough", ok: true }]);
+  });
+
+  it("fails opening a walkthrough when loading it does", async () => {
+    host.walkthroughFails = "Failed to load walkthrough 12: Internal Server Error";
+    expect(await run([{ op: "open_walkthrough", walkthrough_id: 12 }])).toEqual([{ op: "open_walkthrough", ok: false, error: "Failed to load walkthrough 12: Internal Server Error" }]);
+  });
+
+  it.each<{ name: string; step: UiStep; error: string }>([
+    { name: "without a walkthrough_id", step: { op: "open_walkthrough" }, error: "walkthrough_id is required" },
+    { name: "of walkthrough 0", step: { op: "open_walkthrough", walkthrough_id: 0 }, error: "walkthrough_id must be a whole number from 1" },
+    { name: "of a fraction", step: { op: "open_walkthrough", walkthrough_id: 1.5 }, error: "walkthrough_id must be a whole number from 1" },
+    { name: "at step 0", step: { op: "open_walkthrough", walkthrough_id: 12, walkthrough_step: 0 }, error: "walkthrough_step must be a whole number from 1" },
+    { name: "at a fractional step", step: { op: "open_walkthrough", walkthrough_id: 12, walkthrough_step: 1.5 }, error: "walkthrough_step must be a whole number from 1" },
+    { name: "playing every 0s", step: { op: "open_walkthrough", walkthrough_id: 12, autoplay_sec: 0 }, error: "autoplay_sec must be a whole number from 1 to 600" },
+    { name: "playing every 1.5s", step: { op: "open_walkthrough", walkthrough_id: 12, autoplay_sec: 1.5 }, error: "autoplay_sec must be a whole number from 1 to 600" },
+    { name: "playing every 601s", step: { op: "open_walkthrough", walkthrough_id: 12, autoplay_sec: 601 }, error: "autoplay_sec must be a whole number from 1 to 600" },
+    { name: "past its last step", step: { op: "open_walkthrough", walkthrough_id: 12, walkthrough_step: 4 }, error: "walkthrough 12 has 3 steps; walkthrough_step must be from 1 to 3" },
+    { name: "of another channel's", step: { op: "open_walkthrough", walkthrough_id: 7 }, error: "no walkthrough 7 in channel c1" },
+    { name: "with no steps", step: { op: "open_walkthrough", walkthrough_id: 13 }, error: "walkthrough 13 has no steps" },
+    { name: "at a step whose file is gone", step: { op: "open_walkthrough", walkthrough_id: 12, walkthrough_step: 3 }, error: `no file "gone.go" in the channel's roots` },
+  ])("refuses open_walkthrough $name", async ({ step, error }) => {
+    expect(await run([step])).toEqual([{ op: step.op, ok: false, error }]);
+    expect(host.shownWalkthroughs).toEqual([]);
+  });
+
+  it("refuses walkthrough ops with no channel open", async () => {
+    host.selected = null;
+    expect(await run([{ op: "close_walkthrough" }])).toEqual([{ op: "close_walkthrough", ok: false, error: "no channel is open; select_channel first" }]);
   });
 
   it("shows a message of the open channel's chat", async () => {

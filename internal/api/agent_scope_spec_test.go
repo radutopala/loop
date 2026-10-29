@@ -137,6 +137,9 @@ var worldRoutes = map[string]worldRoute{
 	"POST /api/workflows/runs/{id}/retry":  {target: "/api/workflows/runs/<run>/retry"},
 	"POST /api/workflows/runs/{id}/resume": {target: "/api/workflows/runs/<run>/resume", body: `{"response":"ok"}`},
 
+	"POST /api/channels/{id}/walkthroughs":                 {target: "/api/channels/<channel>/walkthroughs", body: `{"title":"t","steps":[{"path":"<dir>/README.md","start_line":1,"body":"b"}]}`},
+	"GET /api/channels/{id}/walkthroughs":                  {target: "/api/channels/<channel>/walkthroughs"},
+	"GET /api/channels/{id}/walkthroughs/{wid}":            {target: "/api/channels/<channel>/walkthroughs/<walkthrough>"},
 	"POST /api/channels/{id}/learn/proposals":              {target: "/api/channels/<learn>/learn/proposals", body: `{"withdraw":[{"id":<proposal>,"reason":"stale"}]}`},
 	"POST /api/channels/{id}/review/comments":              {target: "/api/channels/<channel>/review/comments", body: `{"findings":[{"path":"a.go","line":1,"body":"b"}]}`},
 	"POST /api/channels/{id}/review/load":                  {target: "/api/channels/<channel>/review/load", body: `{"pr_number":1}`},
@@ -192,6 +195,8 @@ func (w *scopeWorld) alphaValue(kind string) string {
 		return strconv.FormatInt(w.alphaTask, 10)
 	case "proposal":
 		return strconv.FormatInt(w.alphaProposal, 10)
+	case "walkthrough":
+		return strconv.FormatInt(w.alphaWalkthrough, 10)
 	case "dir":
 		return w.alphaDir
 	case "session":
@@ -221,6 +226,8 @@ func (w *scopeWorld) bravoValues(kind string) []string {
 		return []string{strconv.FormatInt(w.bravoTask, 10)}
 	case "proposal":
 		return []string{strconv.FormatInt(w.bravoProposal, 10)}
+	case "walkthrough":
+		return []string{strconv.FormatInt(w.bravoWalkthrough, 10)}
 	}
 	vals := []string{bravoChan, bravoThread, bravoSide, bravoLearn, w.bravoDir, w.bravoDir + "/README.md"}
 	switch kind {

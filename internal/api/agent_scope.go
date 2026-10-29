@@ -80,6 +80,10 @@ var agentRoutes = []string{
 	"POST /api/workflows/runs/{id}/retry",
 	"POST /api/workflows/runs/{id}/resume",
 
+	"POST /api/channels/{id}/walkthroughs",
+	"GET /api/channels/{id}/walkthroughs",
+	"GET /api/channels/{id}/walkthroughs/{wid}",
+
 	"POST /api/channels/{id}/learn/proposals",
 	"POST /api/channels/{id}/review/comments",
 	"POST /api/channels/{id}/review/load",

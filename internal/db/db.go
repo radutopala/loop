@@ -120,6 +120,10 @@ type Store interface {
 	UpdateExplanation(ctx context.Context, id int64, status, content, errText string) error
 	ListExplanations(ctx context.Context, channelID string) ([]*Explanation, error)
 	FailInterruptedExplanations(ctx context.Context) (int64, error)
+	CreateWalkthrough(ctx context.Context, w *Walkthrough) (*Walkthrough, error)
+	GetWalkthrough(ctx context.Context, id int64) (*Walkthrough, error)
+	ListWalkthroughs(ctx context.Context, channelID string) ([]*Walkthrough, error)
+	DeleteWalkthrough(ctx context.Context, channelID string, id int64) (bool, error)
 	InsertConfigRevision(ctx context.Context, rev *ConfigRevision, keep int) (bool, error)
 	ListConfigRevisions(ctx context.Context, path string) ([]*ConfigRevision, error)
 	GetConfigRevision(ctx context.Context, id int64) (*ConfigRevision, error)

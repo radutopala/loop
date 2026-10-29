@@ -1,8 +1,9 @@
 import { useEffect, useRef } from "react";
 import { getApiToken, getWsUrl, refreshApiToken, wsProtocols } from "../api/api";
-import { checkFilesExist } from "../api/files";
 import { fetchPlaygroundItems } from "../api/playground";
-import type { FileLinkOpenDetail } from "../components/chat/FileLink";
+import { fetchWalkthrough } from "../api/walkthroughs";
+import { closeWalkthrough, editorUiState, pauseWalkthrough, playWalkthrough, showWalkthrough } from "../hooks/walkthroughStore";
+import { openChannelFile } from "../utils/openChannelFile";
 import { DEFAULT_TIMEOUT_MS, runSteps } from "./executor";
 import { getChatInput, getSideReader, getTerminalInput, getWorkspace, subscribeUiChanged } from "./registry";
 import type { UiHost, UiStep } from "./types";
@@ -58,11 +59,15 @@ export function useUiBridge(selectedId: string | null, selectChannel: (id: strin
       chat: getChatInput,
       side: getSideReader,
       openFile: async (channelId, path, line) => {
-        const [found] = await checkFilesExist(channelId, [path]);
-        if (!found?.exists || found.root_index === undefined || found.rel_path === undefined) throw new Error(`no file "${path}" in the channel's roots`);
-        const detail: FileLinkOpenDetail = { channelId, target: { rootIndex: found.root_index, relPath: found.rel_path }, line: line ?? null };
-        window.dispatchEvent(new CustomEvent<FileLinkOpenDetail>("loop:open-file", { detail }));
+        await openChannelFile(channelId, path, line);
       },
+      walkthrough: fetchWalkthrough,
+      showWalkthrough: async (channelId, w, index, autoplaySec) => {
+        await showWalkthrough(channelId, { id: w.id, title: w.title, steps: w.steps ?? [] }, index, openChannelFile);
+        if (autoplaySec) playWalkthrough(channelId, openChannelFile, autoplaySec);
+        else pauseWalkthrough(channelId);
+      },
+      closeWalkthrough,
       showMessage: (ch, messageId) => showMessageRef.current(ch, messageId),
       playgrounds: async (channelId) => (await fetchPlaygroundItems(channelId)).map((p) => ({ name: p.name, scope: p.scope })),
       now: () => Date.now(),
@@ -85,6 +90,8 @@ export function useUiBridge(selectedId: string | null, selectChannel: (id: strin
         focused: document.hasFocus() && document.visibilityState === "visible",
         channel_id: channelId ?? "",
         ...(view ?? {}),
+        // The walkthrough the channel's editor shows, and its selection.
+        ...(channelId ? editorUiState(channelId) : {}),
       };
     };
 

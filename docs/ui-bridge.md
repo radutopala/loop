@@ -42,11 +42,11 @@ loop ui:run '[
 
 **HTTP.** `POST /api/ui/commands` takes `{client_id?, timeout?, steps}`. `GET /api/ui/state?after=N` waits for a state newer than version `N`, which is how `--watch` follows changes.
 
-**MCP.** Agents get the `ui_state` and `ui_run` tools. `ui_run`'s steps are typed, so a step with a bad op or field is refused before it reaches the window. Without a leading `select_channel`, the command runs in the agent's own channel.
+**MCP.** Agents get the `ui_state`, `ui_run` and `ui_walkthrough` tools. `ui_run`'s steps are typed, so a step with a bad op or field is refused before it reaches the window. Without a leading `select_channel`, the command runs in the agent's own channel.
 
 ## Steps
 
-There are steps for channels (`select_channel`), tabs (`set_tab`, `create_tab`, `rename_tab`, `remove_tab`), panes (`add_pane`, `replace_pane`, `remove_pane`, `maximize_pane`, `restore_pane`), the editor (`open_file`), the chat (`show_message`, which scrolls to a message), the side view beside the chat (`open_side`, `close_side`) and terminals and chats (`send_input`, `read_output`, `wait_for`). Pane steps work on canvas tabs too, where the panes are the tiles. The [API reference](api.md#post-apiuicommands) lists every field.
+There are steps for channels (`select_channel`), tabs (`set_tab`, `create_tab`, `rename_tab`, `remove_tab`), panes (`add_pane`, `replace_pane`, `remove_pane`, `maximize_pane`, `restore_pane`), the editor (`open_file`, and `open_walkthrough` / `close_walkthrough` for a walkthrough `ui_walkthrough` made), the chat (`show_message`, which scrolls to a message), the side view beside the chat (`open_side`, `close_side`) and terminals and chats (`send_input`, `read_output`, `wait_for`). Pane steps work on canvas tabs too, where the panes are the tiles. The [API reference](api.md#post-apiuicommands) lists every field.
 
 A `pane` is a pane id from the state, such as `docker-agent-1`, or a panel type, which means the first pane of that type.
 

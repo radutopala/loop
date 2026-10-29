@@ -1498,7 +1498,16 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
           );
         case "editor":
           return (
-            <EditorPanel key={`layout-editor-${channelId}`} channelId={channelId} dirPath={dirPath} branch={branch} embedded editorState={editorState} onClose={() => handleRemoveLeaf(leaf.id)} />
+            <EditorPanel
+              key={`layout-editor-${channelId}`}
+              channelId={channelId}
+              leafId={leaf.id}
+              dirPath={dirPath}
+              branch={branch}
+              embedded
+              editorState={editorState}
+              onClose={() => handleRemoveLeaf(leaf.id)}
+            />
           );
         case "file-tree":
           return (

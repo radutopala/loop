@@ -633,6 +633,29 @@ func (m *MockStore) FailInterruptedExplanations(ctx context.Context) (int64, err
 	return args.Get(0).(int64), args.Error(1)
 }
 
+func (m *MockStore) CreateWalkthrough(ctx context.Context, w *db.Walkthrough) (*db.Walkthrough, error) {
+	args := m.Called(ctx, w)
+	out, _ := args.Get(0).(*db.Walkthrough)
+	return out, args.Error(1)
+}
+
+func (m *MockStore) GetWalkthrough(ctx context.Context, id int64) (*db.Walkthrough, error) {
+	args := m.Called(ctx, id)
+	w, _ := args.Get(0).(*db.Walkthrough)
+	return w, args.Error(1)
+}
+
+func (m *MockStore) ListWalkthroughs(ctx context.Context, channelID string) ([]*db.Walkthrough, error) {
+	args := m.Called(ctx, channelID)
+	list, _ := args.Get(0).([]*db.Walkthrough)
+	return list, args.Error(1)
+}
+
+func (m *MockStore) DeleteWalkthrough(ctx context.Context, channelID string, id int64) (bool, error) {
+	args := m.Called(ctx, channelID, id)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *MockStore) InsertConfigRevision(ctx context.Context, rev *db.ConfigRevision, keep int) (bool, error) {
 	args := m.Called(ctx, rev, keep)
 	return args.Bool(0), args.Error(1)
