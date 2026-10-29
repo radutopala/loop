@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -210,7 +211,7 @@ func newSQLiteStoreWith(openFunc func(string, string) (*sql.DB, error), dsn stri
 		return nil, err
 	}
 
-	reader, err := openFunc("sqlite", dsn)
+	reader, err := openFunc("sqlite", readerDSN(dsn))
 	if err != nil {
 		writer.Close()
 		return nil, fmt.Errorf("opening reader database: %w", err)
@@ -220,18 +221,39 @@ func newSQLiteStoreWith(openFunc func(string, string) (*sql.DB, error), dsn stri
 	return &SQLiteStore{db: db, writer: writer, reader: reader, nowFunc: func() time.Time { return time.Now().UTC() }}, nil
 }
 
+// readerDSN is dsn with the reader pool's per-connection pragmas, which the
+// driver runs on each connection it opens: a PRAGMA run once on a pool sets
+// only the one connection it ran on. Readers wait out a writer's lock, and
+// keep initDB's page cache size.
+func readerDSN(dsn string) string {
+	sep := "?"
+	if strings.Contains(dsn, "?") {
+		sep = "&"
+	}
+	return fmt.Sprintf("%s%s_pragma=busy_timeout(%d)&_pragma=cache_size(%d)", dsn, sep, busyTimeoutMS, cacheSizeKB)
+}
+
 // WriterDB returns the underlying writer connection. This is used by
 // auxiliary migration runners (e.g. internal/fsmigrate) that track applied
 // versions in the same SQLite database. Returns nil for stores constructed
 // via NewSQLiteStoreFromDB without a *sql.DB writer.
 func (s *SQLiteStore) WriterDB() *sql.DB { return s.writer }
 
+// busyTimeoutMS and cacheSizeKB set the busy_timeout and cache_size pragmas
+// of every connection: negative cache_size is in KB, so a 32 MB page cache
+// (default ~2 MB) keeps more of the working set hot for read-heavy timeline /
+// channel listings.
+const (
+	busyTimeoutMS = 5000
+	cacheSizeKB   = -32768
+)
+
 // initDB configures pragmas and runs migrations on an open database connection.
 func initDB(sqlDB *sql.DB) error {
 	// busy_timeout goes first so every later statement, the WAL switch
 	// included, waits out a lock another connection still holds instead of
 	// failing with SQLITE_BUSY.
-	if _, err := sqlDB.Exec("PRAGMA busy_timeout=5000"); err != nil {
+	if _, err := sqlDB.Exec(fmt.Sprintf("PRAGMA busy_timeout=%d", busyTimeoutMS)); err != nil {
 		return fmt.Errorf("setting busy timeout: %w", err)
 	}
 
@@ -250,9 +272,7 @@ func initDB(sqlDB *sql.DB) error {
 		return fmt.Errorf("setting synchronous mode: %w", err)
 	}
 
-	// cache_size negative = KB; -32768 = 32 MB page cache (default ~2 MB) keeps
-	// more of the working set hot for read-heavy timeline / channel listings.
-	if _, err := sqlDB.Exec("PRAGMA cache_size=-32768"); err != nil {
+	if _, err := sqlDB.Exec(fmt.Sprintf("PRAGMA cache_size=%d", cacheSizeKB)); err != nil {
 		return fmt.Errorf("setting cache size: %w", err)
 	}
 

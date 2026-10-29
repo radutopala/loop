@@ -342,3 +342,38 @@ func (s *StoreSuite) TestGetScheduledTaskByTemplateNameNotFoundAndError() {
 	require.Error(s.T(), err)
 	require.Nil(s.T(), task)
 }
+
+func (s *StoreSuite) TestReaderDSN() {
+	tests := []struct {
+		name string
+		dsn  string
+		want string
+	}{
+		{"plain path", "/data/loop.db", "/data/loop.db?_pragma=busy_timeout(5000)&_pragma=cache_size(-32768)"},
+		{"with query", "file:loop.db?mode=ro", "file:loop.db?mode=ro&_pragma=busy_timeout(5000)&_pragma=cache_size(-32768)"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			require.Equal(s.T(), tt.want, readerDSN(tt.dsn))
+		})
+	}
+}
+
+func (s *StoreSuite) TestReaderConnectionsGetPragmas() {
+	store, err := NewSQLiteStore(filepath.Join(s.T().TempDir(), "loop.db"))
+	require.NoError(s.T(), err)
+	defer store.Close()
+
+	// Two connections held at once are two distinct pool connections.
+	ctx := context.Background()
+	for range 2 {
+		conn, err := store.reader.Conn(ctx)
+		require.NoError(s.T(), err)
+		defer conn.Close()
+		var timeout, cache int
+		require.NoError(s.T(), conn.QueryRowContext(ctx, "PRAGMA busy_timeout").Scan(&timeout))
+		require.NoError(s.T(), conn.QueryRowContext(ctx, "PRAGMA cache_size").Scan(&cache))
+		require.Equal(s.T(), busyTimeoutMS, timeout)
+		require.Equal(s.T(), cacheSizeKB, cache)
+	}
+}
