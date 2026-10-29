@@ -115,14 +115,15 @@ func (s *Server) prForgeFor(ctx context.Context, dirPath, parentDirPath string) 
 	if host == "" {
 		return nil
 	}
-	glabDir := s.expandHomePath(s.configs.glabConfigDir(dirPath, parentDirPath))
+	cfg := s.configs.merged(dirPath, parentDirPath)
+	glabDir := s.expandHomePath(glabConfigDirOf(cfg))
 	if s.prLookup.gitlab != nil && s.prLookup.gitlab.IsGitLabHost(host, glabDir) {
 		return &prForge{gitlab: s.prLookup.gitlab, glabDir: glabDir}
 	}
 	if s.prLookup.client == nil {
 		return nil
 	}
-	return &prForge{github: s.prLookup.client, ghUser: s.configs.ghUser(dirPath, parentDirPath)}
+	return &prForge{github: s.prLookup.client, ghUser: ghUserOf(cfg)}
 }
 
 // openPRs lists dirPath's open PRs, or MRs on GitLab; none without a forge.

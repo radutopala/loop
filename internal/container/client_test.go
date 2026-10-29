@@ -140,11 +140,6 @@ func (m *mockDockerAPI) BuildCachePrune(ctx context.Context, opts build.CachePru
 	return nil, args.Error(1)
 }
 
-func (m *mockDockerAPI) ImagesPrune(ctx context.Context, pruneFilters filters.Args) (image.PruneReport, error) {
-	args := m.Called(ctx, pruneFilters)
-	return args.Get(0).(image.PruneReport), args.Error(1)
-}
-
 func (m *mockDockerAPI) VolumesPrune(ctx context.Context, pruneFilters filters.Args) (volume.PruneReport, error) {
 	args := m.Called(ctx, pruneFilters)
 	return args.Get(0).(volume.PruneReport), args.Error(1)
@@ -813,29 +808,6 @@ func (s *ClientSuite) TestPruneBuildCacheError() {
 	_, err := s.client.PruneBuildCache(ctx, 720*time.Hour, false)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "pruning build cache")
-	require.Contains(s.T(), err.Error(), "daemon down")
-}
-
-func (s *ClientSuite) TestPruneDanglingImages() {
-	ctx := context.Background()
-	s.api.On("ImagesPrune", ctx, mock.MatchedBy(func(f filters.Args) bool {
-		v := f.Get("dangling")
-		return len(v) == 1 && v[0] == "true"
-	})).Return(image.PruneReport{SpaceReclaimed: 8192}, nil)
-
-	reclaimed, err := s.client.PruneDanglingImages(ctx)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), uint64(8192), reclaimed)
-	s.api.AssertExpectations(s.T())
-}
-
-func (s *ClientSuite) TestPruneDanglingImagesError() {
-	ctx := context.Background()
-	s.api.On("ImagesPrune", ctx, mock.Anything).Return(image.PruneReport{}, errors.New("daemon down"))
-
-	_, err := s.client.PruneDanglingImages(ctx)
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "pruning dangling images")
 	require.Contains(s.T(), err.Error(), "daemon down")
 }
 

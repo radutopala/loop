@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/embeddings"
@@ -51,6 +52,17 @@ type Indexer struct {
 	logger        *slog.Logger
 	maxChunkChars int
 	sys           indexerSystem
+
+	mu sync.Mutex
+	// stamps holds the stat of each file, by scope, as it was when last
+	// indexed without an error: a file that still stats the same isn't read
+	// again, so a periodic reindex of an unchanged tree costs only stats.
+	stamps map[stampKey]osutil.FileStamp
+}
+
+// stampKey is a file in the scope it's indexed under.
+type stampKey struct {
+	filePath, dirPath string
 }
 
 // NewIndexer creates a new memory indexer.
@@ -65,6 +77,7 @@ func NewIndexer(embedder embeddings.Embedder, store Store, logger *slog.Logger, 
 		logger:        logger,
 		maxChunkChars: maxChunkChars,
 		sys:           osutil.RealSystem{},
+		stamps:        map[stampKey]osutil.FileStamp{},
 	}
 }
 
@@ -102,6 +115,7 @@ func (idx *Indexer) Index(ctx context.Context, memoryPath, dirPath string, exclu
 	}
 
 	indexed := 0
+	seen := map[string]bool{}
 	err = idx.sys.WalkDir(memoryPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			idx.logger.Warn("walking memory dir", "path", path, "error", err)
@@ -116,6 +130,7 @@ func (idx *Indexer) Index(ctx context.Context, memoryPath, dirPath string, exclu
 		if d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
 			return nil
 		}
+		seen[path] = true
 		n, indexErr := idx.indexFile(ctx, path, dirPath)
 		if indexErr != nil {
 			idx.logger.Error("indexing memory file", "file", path, "error", indexErr)
@@ -127,7 +142,20 @@ func (idx *Indexer) Index(ctx context.Context, memoryPath, dirPath string, exclu
 	if err != nil {
 		return indexed, fmt.Errorf("walking memory dir: %w", err)
 	}
+	idx.forgetGone(memoryPath, dirPath, seen)
 	return indexed, nil
+}
+
+// forgetGone drops the stamps of the files under root, in dirPath's scope,
+// that a walk of root no longer found.
+func (idx *Indexer) forgetGone(root, dirPath string, seen map[string]bool) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	for k := range idx.stamps {
+		if k.dirPath == dirPath && isExcluded(k.filePath, []string{root}) && !seen[k.filePath] {
+			delete(idx.stamps, k)
+		}
+	}
 }
 
 // isExcluded checks whether path should be excluded based on excludePaths.
@@ -159,9 +187,37 @@ func (idx *Indexer) resolveExcludeSymlinks(paths []string) []string {
 	return resolved
 }
 
-// indexFile indexes a single .md file. Small files get a single row;
-// large files are split into fixed-size chunks with a header row for the hash.
+// indexFile indexes a single .md file, unless it stats as it did when last
+// indexed.
 func (idx *Indexer) indexFile(ctx context.Context, filePath, dirPath string) (int, error) {
+	key := stampKey{filePath, dirPath}
+	fi, statErr := idx.sys.Stat(filePath)
+	var stamp osutil.FileStamp
+	if statErr == nil {
+		stamp = osutil.StampOf(fi)
+	}
+	idx.mu.Lock()
+	was, ok := idx.stamps[key]
+	idx.mu.Unlock()
+	if statErr == nil && ok && was == stamp {
+		return 0, nil
+	}
+	n, err := idx.readAndIndex(ctx, filePath, dirPath)
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	// The stat is the one from before the read, so a write during it shows
+	// next time; a file that failed is read again next time.
+	if err != nil || statErr != nil {
+		delete(idx.stamps, key)
+	} else {
+		idx.stamps[key] = stamp
+	}
+	return n, err
+}
+
+// readAndIndex indexes a single .md file. Small files get a single row;
+// large files are split into fixed-size chunks with a header row for the hash.
+func (idx *Indexer) readAndIndex(ctx context.Context, filePath, dirPath string) (int, error) {
 	data, err := idx.sys.ReadFile(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {

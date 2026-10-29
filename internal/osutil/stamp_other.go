@@ -1,6 +1,6 @@
 //go:build !linux && !darwin
 
-package buildctx
+package osutil
 
 import "io/fs"
 

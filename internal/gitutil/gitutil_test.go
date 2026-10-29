@@ -363,7 +363,7 @@ func (s *GitUtilSuite) TestStatusRefreshesIndex() {
 // filterNames lists the filter drivers repoOverrides disarms in repo.
 func filterNames(repo string) []string {
 	var names []string
-	for _, kv := range repoOverrides(readConfig(context.Background(), repo)) {
+	for _, kv := range repoOverrides(newConfigCache().read(context.Background(), repo, os.Environ())) {
 		if name, ok := strings.CutSuffix(strings.TrimPrefix(kv[0], "filter."), ".clean"); ok && strings.HasPrefix(kv[0], "filter.") {
 			names = append(names, name)
 		}
@@ -372,7 +372,7 @@ func filterNames(repo string) []string {
 }
 
 func (s *GitUtilSuite) TestReadConfigNonRepo() {
-	require.Empty(s.T(), readConfig(context.Background(), s.T().TempDir()))
+	require.Empty(s.T(), newConfigCache().read(context.Background(), s.T().TempDir(), os.Environ()))
 }
 
 func (s *GitUtilSuite) TestFilterDriversFollowsIncludes() {
@@ -539,11 +539,11 @@ func (s *GitUtilSuite) TestParseConfig() {
 		{name: "empty", in: "", want: nil},
 		{
 			name: "entries",
-			in:   "system\x00credential.helper\nosxkeychain\x00local\x00filter.x.required\x00local\x00core.sshcommand\nssh -i a\nb\x00",
+			in:   "system\x00file:/etc/gitconfig\x00credential.helper\nosxkeychain\x00local\x00file:.git/config\x00filter.x.required\x00local\x00file:.git/config\x00core.sshcommand\nssh -i a\nb\x00",
 			want: []configEntry{
-				{scope: "system", key: "credential.helper", value: "osxkeychain"},
-				{scope: "local", key: "filter.x.required"},
-				{scope: "local", key: "core.sshcommand", value: "ssh -i a\nb"},
+				{scope: "system", origin: "file:/etc/gitconfig", key: "credential.helper", value: "osxkeychain"},
+				{scope: "local", origin: "file:.git/config", key: "filter.x.required"},
+				{scope: "local", origin: "file:.git/config", key: "core.sshcommand", value: "ssh -i a\nb"},
 			},
 		},
 	}
@@ -646,4 +646,45 @@ func (s *GitUtilSuite) TestRepoOverrides() {
 			require.Equal(s.T(), tc.want, repoOverrides(tc.in))
 		})
 	}
+}
+
+// TestMayBeRepo: only a dir git could find a repo from counts, by stats
+// alone.
+func (s *GitUtilSuite) TestMayBeRepo() {
+	s.T().Setenv("GIT_DIR", "")
+	root := s.T().TempDir()
+	repo := filepath.Join(root, "repo")
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(repo, ".git"), 0o755))
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(repo, "sub", "deeper"), 0o755))
+	worktree := filepath.Join(root, "worktree")
+	require.NoError(s.T(), os.MkdirAll(worktree, 0o755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(worktree, ".git"), []byte("gitdir: elsewhere\n"), 0o644))
+	bare := filepath.Join(root, "bare.git")
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(bare, "objects"), 0o755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(bare, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644))
+	headOnly := filepath.Join(root, "head-only")
+	require.NoError(s.T(), os.MkdirAll(headOnly, 0o755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(headOnly, "HEAD"), nil, 0o644))
+
+	tests := []struct {
+		name string
+		dir  string
+		want bool
+	}{
+		{"repo top", repo, true},
+		{"subdir", filepath.Join(repo, "sub", "deeper"), true},
+		{"worktree .git file", worktree, true},
+		{"bare git dir", bare, true},
+		{"HEAD without objects", headOnly, false},
+		{"plain dir", root, false},
+		{"missing", filepath.Join(root, "gone"), false},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			require.Equal(s.T(), tc.want, MayBeRepo(tc.dir))
+		})
+	}
+
+	s.T().Setenv("GIT_DIR", bare)
+	require.True(s.T(), MayBeRepo(filepath.Join(root, "gone")))
 }

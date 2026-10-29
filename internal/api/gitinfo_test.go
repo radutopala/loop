@@ -251,3 +251,131 @@ func (s *GitInfoSuite) TestGitOutputEmptyOutput() {
 	require.False(s.T(), ok)
 	require.Empty(s.T(), out)
 }
+
+// TestCollectGitStateKeepsCountsWhileUnchanged: a poll of a repo nothing
+// changed in keeps the last counts without diffing, and any edit to a
+// changed file, even one git status reports the same, counts again.
+func (s *GitInfoSuite) TestCollectGitStateKeepsCountsWhileUnchanged() {
+	dir := initGitRepo(s.T())
+	readme := filepath.Join(dir, "README.md")
+	// Files written in the index's second make git rewrite the index on
+	// every status to recheck them (racy git), so no two polls would
+	// match: date them earlier, the index's record of them too.
+	earlier := time.Now().Add(-5 * time.Second)
+	require.NoError(s.T(), os.Chtimes(readme, earlier, earlier))
+	s.git(dir, "update-index", "--refresh")
+	require.NoError(s.T(), os.WriteFile(readme, []byte("# Test\nmore\n"), 0o644))
+	require.NoError(s.T(), os.Chtimes(readme, earlier, earlier))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "new.txt"), []byte("x\n"), 0o644))
+
+	first := collectGitState(context.Background(), dir, "", gitState{})
+	require.NotEmpty(s.T(), first.diffStamp)
+	require.Equal(s.T(), 2+1, first.DiffAdditions)
+
+	// Counts a diff wouldn't give prove the diff didn't run.
+	planted := first
+	planted.DiffAdditions, planted.DiffDeletions = 100, 50
+	again := collectGitState(context.Background(), dir, "", planted)
+	require.Equal(s.T(), 100, again.DiffAdditions)
+	require.Equal(s.T(), 50, again.DiffDeletions)
+
+	later := time.Now().Add(2 * time.Second)
+	for _, edit := range []func(){
+		func() { require.NoError(s.T(), os.WriteFile(readme, []byte("# Test\nmore\nand more\n"), 0o644)) },
+		func() { require.NoError(s.T(), os.Chtimes(filepath.Join(dir, "new.txt"), later, later)) },
+		func() { s.git(dir, "add", "README.md") },
+	} {
+		edit()
+		st := collectGitState(context.Background(), dir, "", planted)
+		require.NotEqual(s.T(), 100, st.DiffAdditions)
+		planted.diffStamp = st.diffStamp
+	}
+}
+
+// TestCollectGitStateFailedDiffNotKept: counts short a diff that failed
+// aren't kept for the next poll.
+func (s *GitInfoSuite) TestCollectGitStateFailedDiffNotKept() {
+	dir := initGitRepo(s.T())
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Changed\n"), 0o644))
+	s.git(dir, "add", "README.md")
+	// git status compares object ids; the diff has to read the blob.
+	out, err := exec.Command("git", "-C", dir, "rev-parse", ":README.md").Output()
+	require.NoError(s.T(), err)
+	oid := string(out[:40])
+	require.NoError(s.T(), os.Remove(filepath.Join(dir, ".git", "objects", oid[:2], oid[2:])))
+	// Changed again, so git can't read the staged content from the file.
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Changed again\n"), 0o644))
+
+	st := collectGitState(context.Background(), dir, "", gitState{})
+	require.Len(s.T(), st.Commit, 7)
+	require.Empty(s.T(), st.diffStamp)
+}
+
+func (s *GitInfoSuite) TestShownDropsStamp() {
+	require.Equal(s.T(), gitState{Branch: "main"}, gitState{Branch: "main", diffStamp: "x"}.shown())
+}
+
+func (s *GitInfoSuite) TestStatusPaths() {
+	status := "# branch.oid abc\x00" +
+		"1 .M N... 100644 100644 100644 h1 h2 a file.txt\x00" +
+		"2 R. N... 100644 100644 100644 h1 h2 R100 new name.txt\x00" +
+		"1 old name.txt\x00" +
+		"u UU N... 100644 100644 100644 100644 h1 h2 h3 both.txt\x00" +
+		"? untracked dir/x.txt\x00" +
+		"1 short\x00" +
+		"! ignored.txt\x00"
+	require.Equal(s.T(), []string{"a file.txt", "new name.txt", "both.txt", "untracked dir/x.txt"}, statusPaths(status))
+}
+
+func (s *GitInfoSuite) TestIndexPath() {
+	tests := []struct {
+		name  string
+		setup func(dir string)
+		want  func(dir string) string
+	}{
+		{"repo", func(dir string) { require.NoError(s.T(), os.Mkdir(filepath.Join(dir, ".git"), 0o755)) },
+			func(dir string) string { return filepath.Join(dir, ".git", "index") }},
+		{"linked worktree", func(dir string) { s.writeGit(dir, "gitdir: /main/.git/worktrees/wt\n") },
+			func(string) string { return "/main/.git/worktrees/wt/index" }},
+		{"relative gitdir", func(dir string) { s.writeGit(dir, "gitdir: ../main/.git") },
+			func(dir string) string { return filepath.Join(dir, "..", "main", ".git", "index") }},
+		{"not a gitdir line", func(dir string) { s.writeGit(dir, "nonsense") }, nil},
+		{"too big", func(dir string) { s.writeGit(dir, string(make([]byte, maxGitFile+1))) }, nil},
+		{"symlink", func(dir string) {
+			require.NoError(s.T(), os.Symlink(filepath.Join(dir, "elsewhere"), filepath.Join(dir, ".git")))
+		}, nil},
+		{"none", func(string) {}, nil},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			dir := s.T().TempDir()
+			tc.setup(dir)
+			want := ""
+			if tc.want != nil {
+				want = filepath.Clean(tc.want(dir))
+			}
+			require.Equal(s.T(), want, indexPath(dir, os.ReadFile))
+		})
+	}
+
+	s.Run("unreadable", func() {
+		dir := s.T().TempDir()
+		s.writeGit(dir, "gitdir: /x")
+		require.Empty(s.T(), indexPath(dir, func(string) ([]byte, error) { return nil, os.ErrPermission }))
+	})
+}
+
+func (s *GitInfoSuite) writeGit(dir, content string) {
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, ".git"), []byte(content), 0o644))
+}
+
+// TestDiffStamp: no index, no stamp; a path that's gone still stamps.
+func (s *GitInfoSuite) TestDiffStamp() {
+	require.Empty(s.T(), diffStamp(s.T().TempDir(), ""))
+
+	dir := initGitRepo(s.T())
+	gone := diffStamp(dir, "? gone.txt\x00")
+	require.NotEmpty(s.T(), gone)
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "gone.txt"), nil, 0o644))
+	require.NotEqual(s.T(), gone, diffStamp(dir, "? gone.txt\x00"))
+}

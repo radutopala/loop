@@ -3,9 +3,10 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -104,6 +105,7 @@ func LoadWorktreeProjectConfig(worktreeDir, parentDir string, mainConfig *Config
 func NewProjectLoader(trust *TrustStore) *Loader {
 	l := newLoader()
 	l.trust = trust
+	l.projects = newProjectCache()
 	return l
 }
 
@@ -146,18 +148,17 @@ func (l *Loader) loadWorktreeProjectConfig(worktreeDir, parentDir string, mainCo
 	// The seeded parent dir is the project the worktree belongs to, so it
 	// needs no trust: worktree configs seeded before trust existed, or
 	// rewritten by an agent, keep it.
-	data, _ := l.readIn(worktreeDir, filepath.Join(worktreeDir, ".loop", "config.json"))
-	if parentDir != "" && seedsParentDir(data, parentDir) {
+	seeded, _ := l.projectConfig(worktreeDir)
+	if parentDir != "" && seedsParentDir(seeded, parentDir) {
 		worktreeMerged.ExtraDirs = unionExtraDirs(worktreeMerged.ExtraDirs, []string{parentDir})
 	}
 	return worktreeMerged, nil
 }
 
-// seedsParentDir reports whether the worktree config data lists parentDir
-// in extra_dirs.
-func seedsParentDir(data []byte, parentDir string) bool {
-	pc, err := parseProjectConfig(data)
-	if err != nil {
+// seedsParentDir reports whether the worktree config pc, nil for none,
+// lists parentDir in extra_dirs.
+func seedsParentDir(pc *projectConfig, parentDir string) bool {
+	if pc == nil {
 		return false
 	}
 	return slices.ContainsFunc(pc.ExtraDirs, func(d string) bool { return filepath.Clean(d) == filepath.Clean(parentDir) })
@@ -220,20 +221,28 @@ func unionExtraDirs(a, b []string) []string {
 	return out
 }
 
-func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config, error) {
-	projectConfigPath := filepath.Join(workDir, ".loop", "config.json")
-
-	data, err := l.readIn(workDir, projectConfigPath)
-	missing := os.IsNotExist(err)
-	if err != nil && !missing {
+// projectConfig decodes the project config file in workDir. A missing one
+// gives an error matching fs.ErrNotExist.
+func (l *Loader) projectConfig(workDir string) (*projectConfig, error) {
+	path := filepath.Join(workDir, ".loop", "config.json")
+	if l.projects != nil {
+		return l.projects.read(workDir, path)
+	}
+	data, err := l.readIn(workDir, path)
+	if err != nil {
 		return nil, fmt.Errorf("reading project config file: %w", err)
 	}
+	return parseProjectConfig(data)
+}
 
-	pc := &projectConfig{}
-	if !missing {
-		if pc, err = parseProjectConfig(data); err != nil {
-			return nil, err
-		}
+func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config, error) {
+	pc, err := l.projectConfig(workDir)
+	missing := errors.Is(err, fs.ErrNotExist)
+	if err != nil && !missing {
+		return nil, err
+	}
+	if missing {
+		pc = &projectConfig{}
 	}
 	// Until the owner trusts them, the fields that reach past the container
 	// keep their last trusted values. Gate rules go above the overridable

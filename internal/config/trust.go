@@ -271,6 +271,9 @@ var trustMu sync.Mutex
 type TrustStore struct {
 	userConfigDir func() (string, error)
 	readFile      func(string) ([]byte, error)
+	// stat stats the trust file, so an unchanged one isn't read again; nil
+	// reads it every time.
+	stat func(string) (os.FileInfo, error)
 	// readIn reads a project config without following a symlink out of
 	// the project.
 	readIn func(root, path string) ([]byte, error)
@@ -281,6 +284,20 @@ type TrustStore struct {
 	mkdirAll   func(string, os.FileMode) error
 	rename     func(string, string) error
 	now        func() time.Time
+
+	// file is the trust file as last parsed: every project config load
+	// checks it, and it changes only when the owner trusts something.
+	file trustFile
+}
+
+// trustFile is the trust file's content, what it parsed to, and what its
+// stat said when it was read.
+type trustFile struct {
+	mu      sync.Mutex
+	stamp   osutil.FileStamp
+	stamped bool
+	data    []byte
+	all     map[string]trustEntry
 }
 
 // NewTrustStore returns the TrustStore of this machine's user.
@@ -297,6 +314,7 @@ func NewTrustStoreIn(userConfigDir func() (string, error)) *TrustStore {
 	return &TrustStore{
 		userConfigDir: userConfigDir,
 		readFile:      os.ReadFile,
+		stat:          os.Stat,
 		readIn:        osutil.ReadFileIn,
 		buildFiles:    func(dir string) (buildctx.Files, error) { return projectBuildFiles(builds, dir) },
 		writeFile:     os.WriteFile,
@@ -314,11 +332,37 @@ func (s *TrustStore) path() (string, error) {
 	return filepath.Join(dir, "loop", "project-trust.json"), nil
 }
 
+// readAll returns the trust file's entries, a copy callers can add to and
+// write back.
 func (s *TrustStore) readAll() (map[string]trustEntry, error) {
+	s.file.mu.Lock()
+	defer s.file.mu.Unlock()
+	all, err := s.entries()
+	if err != nil {
+		return nil, err
+	}
+	return maps.Clone(all), nil
+}
+
+// entries returns the trust file's entries as last parsed, read again only
+// when its stat changed and parsed again only when its content did. The
+// caller holds s.file.mu and doesn't change what it gets.
+func (s *TrustStore) entries() (map[string]trustEntry, error) {
 	path, err := s.path()
 	if err != nil {
 		return nil, err
 	}
+	var stamp osutil.FileStamp
+	stamped := false
+	if s.stat != nil {
+		if fi, err := s.stat(path); err == nil {
+			stamp, stamped = osutil.StampOf(fi), true
+		}
+	}
+	if stamped && s.file.stamped && stamp == s.file.stamp {
+		return s.file.all, nil
+	}
+	// Stat before the read: a write during it shows in the next stat.
 	data, err := s.readFile(path)
 	if os.IsNotExist(err) {
 		return map[string]trustEntry{}, nil
@@ -326,11 +370,15 @@ func (s *TrustStore) readAll() (map[string]trustEntry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", path, err)
 	}
-	all := map[string]trustEntry{}
-	if err := json.Unmarshal(data, &all); err != nil {
-		return nil, fmt.Errorf("parsing %s: %w", path, err)
+	if s.file.all == nil || !bytes.Equal(data, s.file.data) {
+		all := map[string]trustEntry{}
+		if err := json.Unmarshal(data, &all); err != nil {
+			return nil, fmt.Errorf("parsing %s: %w", path, err)
+		}
+		s.file.data, s.file.all = data, all
 	}
-	return all, nil
+	s.file.stamp, s.file.stamped = stamp, stamped
+	return s.file.all, nil
 }
 
 func (s *TrustStore) writeAll(all map[string]trustEntry) error {
@@ -354,11 +402,13 @@ func (s *TrustStore) writeAll(all map[string]trustEntry) error {
 
 // approved returns the fields the owner last trusted for dir.
 func (s *TrustStore) approved(dir string) (trustedFields, bool, error) {
-	all, err := s.readAll()
+	s.file.mu.Lock()
+	all, err := s.entries()
+	e, ok := all[filepath.Clean(dir)]
+	s.file.mu.Unlock()
 	if err != nil {
 		return trustedFields{}, false, err
 	}
-	e, ok := all[filepath.Clean(dir)]
 	if !ok {
 		return trustedFields{}, false, nil
 	}
@@ -728,12 +778,12 @@ func indentJSON(canon []byte) string {
 // parseProjectConfig decodes a project config file. data is left as is
 // (hujson.Standardize rewrites its input in place).
 func parseProjectConfig(data []byte) (*projectConfig, error) {
-	standardJSON, err := hujson.Standardize(bytes.Clone(data))
+	std, err := hujson.Standardize(bytes.Clone(data))
 	if err != nil {
 		return nil, fmt.Errorf("parsing project config file: %w", err)
 	}
 	var pc projectConfig
-	if err := json.Unmarshal(standardJSON, &pc); err != nil {
+	if err := json.Unmarshal(std, &pc); err != nil {
 		return nil, fmt.Errorf("parsing project config file: %w", err)
 	}
 	return &pc, nil

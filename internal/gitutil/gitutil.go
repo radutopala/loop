@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -60,6 +61,33 @@ func Open(ctx context.Context, dir string) *Repo {
 	return &Repo{dir: dir, env: slices.Clip(Environ(ctx, dir))}
 }
 
+// MayBeRepo reports whether git run in dir could find a repo, from stats
+// alone: dir or a dir above it holds a .git or is a bare repo's git dir, or
+// GIT_DIR names one outright. False means no git command there can do more
+// than fail, so callers polling many dirs can skip the ones that aren't
+// repos without starting git.
+func MayBeRepo(dir string) bool {
+	if os.Getenv("GIT_DIR") != "" {
+		return true
+	}
+	if _, err := os.Stat(dir); err != nil {
+		return false
+	}
+	for d := filepath.Clean(dir); ; d = filepath.Dir(d) {
+		if exists(filepath.Join(d, ".git")) || exists(filepath.Join(d, "HEAD")) && exists(filepath.Join(d, "objects")) {
+			return true
+		}
+		if d == filepath.Dir(d) {
+			return false
+		}
+	}
+}
+
+func exists(path string) bool {
+	_, err := os.Lstat(path)
+	return err == nil
+}
+
 // Dir returns the directory the Repo runs git in.
 func (r *Repo) Dir() string {
 	return r.dir
@@ -87,7 +115,8 @@ func Command(ctx context.Context, dir string, args ...string) *exec.Cmd {
 // own config names (see repoOverrides), delivered through GIT_CONFIG_COUNT so
 // it also reaches git processes spawned by other tools (gh).
 func Environ(ctx context.Context, dir string) []string {
-	return buildEnviron(os.Environ(), repoOverrides(readConfig(ctx, dir)))
+	environ := os.Environ()
+	return buildEnviron(environ, repoOverrides(configs.read(ctx, dir, environ)))
 }
 
 // buildEnviron strips inherited variables that would override or smuggle in
@@ -120,9 +149,10 @@ func inheritedGitOverride(kv string) bool {
 	return strings.HasPrefix(name, "GIT_CONFIG_KEY_") || strings.HasPrefix(name, "GIT_CONFIG_VALUE_")
 }
 
-// configEntry is one key of the config git reads in a repo.
+// configEntry is one key of the config git reads in a repo, and the file it
+// came from ("file:" and its path).
 type configEntry struct {
-	scope, key, value string
+	scope, origin, key, value string
 }
 
 // fromHost reports whether the entry comes from the host's own config (global
@@ -132,34 +162,25 @@ func (e configEntry) fromHost() bool {
 	return e.scope == "global" || e.scope == "system"
 }
 
+// include reports whether the entry includes another config file.
+func (e configEntry) include() bool {
+	return e.key == "include.path" || strings.HasPrefix(e.key, "includeif.") && strings.HasSuffix(e.key, ".path")
+}
+
 // commandKeys matches the config keys that name a program git runs and that
 // repoOverrides disarms. git lowercases section and key names but keeps the
 // subsection (a remote name, a credential URL) as written.
-const commandKeys = `^(filter\..+|credential\.(.+\.)?helper|core\.sshcommand|core\.gitproxy|remote\..+\.(uploadpack|receivepack))$`
+const commandKeys = `filter\..+|credential\.(.+\.)?helper|core\.sshcommand|core\.gitproxy|remote\..+\.(uploadpack|receivepack)`
 
-// readConfig lists the entries of dir's config matching commandKeys, in the
-// order git reads them. `git config` only reads config files — it runs no
-// hooks, filters or fsmonitor — so it is safe to ask before hardening. A
-// non-repo dir, or one without such keys, yields none.
-func readConfig(ctx context.Context, dir string) []configEntry {
-	cmd := exec.CommandContext(ctx, "git", "config", "--null", "--show-scope", "--get-regexp", commandKeys)
-	cmd.Dir = dir
-	cmd.Env = buildEnviron(os.Environ(), nil)
-	out, err := cmd.Output()
-	if err != nil {
-		return nil
-	}
-	return parseConfig(string(out))
-}
-
-// parseConfig splits `--null --show-scope` output: NUL-terminated scope, then
-// NUL-terminated "key\nvalue" (a key set without a value has no newline).
+// parseConfig splits `--null --show-scope --show-origin` output:
+// NUL-terminated scope and origin, then NUL-terminated "key\nvalue" (a key
+// set without a value has no newline).
 func parseConfig(out string) []configEntry {
 	var entries []configEntry
 	fields := strings.Split(out, "\x00")
-	for i := 0; i+1 < len(fields); i += 2 {
-		key, value, _ := strings.Cut(fields[i+1], "\n")
-		entries = append(entries, configEntry{scope: fields[i], key: key, value: value})
+	for i := 0; i+2 < len(fields); i += 3 {
+		key, value, _ := strings.Cut(fields[i+2], "\n")
+		entries = append(entries, configEntry{scope: fields[i], origin: fields[i+1], key: key, value: value})
 	}
 	return entries
 }

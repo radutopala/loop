@@ -27,6 +27,7 @@ type DiskUsage struct {
 type DiskImage struct {
 	ID         string
 	Tags       []string
+	Digests    []string // repo@digest refs, as an image pulled by digest has
 	Labels     map[string]string
 	Containers int64 // -1 when the daemon didn't count them
 	Size       int64
@@ -87,7 +88,7 @@ func (c *Client) DiskUsage(ctx context.Context, volumeSizes bool) (*DiskUsage, e
 			continue
 		}
 		out.Images = append(out.Images, DiskImage{
-			ID: img.ID, Tags: img.RepoTags, Labels: img.Labels,
+			ID: img.ID, Tags: img.RepoTags, Digests: img.RepoDigests, Labels: img.Labels,
 			Containers: img.Containers, Size: img.Size, SharedSize: img.SharedSize,
 		})
 	}

@@ -19,7 +19,8 @@ func TestCachedReloaderSuite(t *testing.T) {
 	suite.Run(t, new(CachedReloaderSuite))
 }
 
-// fakeFileInfo implements just enough of fs.FileInfo for the mtime+size gate.
+// fakeFileInfo implements just enough of fs.FileInfo for the mtime+size
+// gate and a FileStamp.
 type fakeFileInfo struct {
 	os.FileInfo
 	mtime time.Time
@@ -28,6 +29,8 @@ type fakeFileInfo struct {
 
 func (f fakeFileInfo) ModTime() time.Time { return f.mtime }
 func (f fakeFileInfo) Size() int64        { return f.size }
+func (f fakeFileInfo) Mode() os.FileMode  { return 0 }
+func (f fakeFileInfo) Sys() any           { return nil }
 
 // newCachedForTest wires a CachedReloader against an in-memory config file
 // with injectable stat results and a parse counter.

@@ -82,17 +82,18 @@ func (s *Server) PRTarget(ctx context.Context, channelID string) (*prwatch.Targe
 	if resp.PR == nil {
 		return nil, nil
 	}
+	cfg := s.configs.merged(dir, parent)
 	t := &prwatch.Target{
 		Kind: forge.KindPR,
-		Ref:  forge.Ref{Dir: dir, Account: s.configs.ghUser(dir, parent), Number: resp.PR.Number},
+		Ref:  forge.Ref{Dir: dir, Account: ghUserOf(cfg), Number: resp.PR.Number},
 		URL:  resp.PR.URL,
 		PR:   config.DefaultPRConfig(),
 	}
 	if resp.PR.Kind == forge.KindMR {
 		t.Kind = forge.KindMR
-		t.Ref.Account = s.expandHomePath(s.configs.glabConfigDir(dir, parent))
+		t.Ref.Account = s.expandHomePath(glabConfigDirOf(cfg))
 	}
-	if cfg := s.configs.merged(dir, parent); cfg != nil {
+	if cfg != nil {
 		t.PR = cfg.PR
 	}
 	return t, nil

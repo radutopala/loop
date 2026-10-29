@@ -1066,7 +1066,14 @@ func (s *MainSuite) TestReclaimScope() {
 		return []container.ChildProject{{DirPath: "/proj", Image: "proj-agent:latest"}}, nil
 	}
 
-	scope, err := reclaimScope(st, cfg, projects)(context.Background())
+	plugins := func(context.Context) ([]string, error) { return []string{"example.com/plugin@sha256:aa"}, nil }
+
+	scope, err := reclaimScope(st, cfg, projects, plugins)(context.Background())
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"loop-agent:latest", "loop-chrome:latest", embeddings.OllamaImage, "proj-agent:latest", "example.com/plugin@sha256:aa"}, scope.KeepImages)
+
+	// Without plugins, only Loop's own images are kept.
+	scope, err = reclaimScope(st, cfg, projects, nil)(context.Background())
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), []string{"loop-agent:latest", "loop-chrome:latest", embeddings.OllamaImage, "proj-agent:latest"}, scope.KeepImages)
 
@@ -1092,18 +1099,63 @@ func (s *MainSuite) TestReclaimScopeErrors() {
 		name     string
 		store    error
 		projects error
+		plugins  error
 		wantErr  string
 	}{
 		{name: "store", store: errors.New("db down"), wantErr: "db down"},
 		{name: "projects", projects: errors.New("bad config"), wantErr: "bad config"},
+		{name: "plugins", plugins: errors.New("plugins down"), wantErr: "plugins down"},
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
 			st := new(mockChannelLister)
 			st.On("ListChannels", mock.Anything).Return([]*db.Channel{}, tt.store)
 			projects := func(context.Context) ([]container.ChildProject, error) { return nil, tt.projects }
-			_, err := reclaimScope(st, &config.Config{}, projects)(context.Background())
+			plugins := func(context.Context) ([]string, error) { return nil, tt.plugins }
+			_, err := reclaimScope(st, &config.Config{}, projects, plugins)(context.Background())
 			require.EqualError(s.T(), err, tt.wantErr)
+		})
+	}
+}
+
+type mockPluginStateLister struct {
+	mock.Mock
+}
+
+func (m *mockPluginStateLister) ListPluginStates(ctx context.Context) ([]*db.PluginState, error) {
+	args := m.Called(ctx)
+	return args.Get(0).([]*db.PluginState), args.Error(1)
+}
+
+func (s *MainSuite) TestPluginImagesLister() {
+	require.Nil(s.T(), pluginImagesLister(new(mockChannelLister)), "a store without plugins")
+
+	tests := []struct {
+		name    string
+		states  []*db.PluginState
+		err     error
+		want    []string
+		wantErr string
+	}{
+		{
+			name:   "installed plugins",
+			states: []*db.PluginState{{PluginID: "a", Image: "example.com/a@sha256:aa"}, {PluginID: "b", Image: "sha256:local"}},
+			want:   []string{"example.com/a@sha256:aa", "sha256:local"},
+		},
+		{name: "none", states: []*db.PluginState{}, want: []string{}},
+		{name: "store fails", states: []*db.PluginState(nil), err: errors.New("db down"), wantErr: "db down"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			ps := new(mockPluginStateLister)
+			ps.On("ListPluginStates", mock.Anything).Return(tt.states, tt.err)
+			got, err := pluginImagesLister(ps)(context.Background())
+			if tt.wantErr != "" {
+				require.EqualError(s.T(), err, tt.wantErr)
+				return
+			}
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tt.want, got)
 		})
 	}
 }
