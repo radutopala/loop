@@ -77,6 +77,7 @@ type jsonConfig struct {
 	Explain                    *jsonExplainConfig         `json:"explain"`
 	Plugins                    *PluginsConfig             `json:"plugins"`
 	Backup                     *jsonBackupConfig          `json:"backup"`
+	Pprof                      *PprofConfig               `json:"pprof"`
 }
 
 // jsonMemoryConfig is the JSON representation of the memory block.
@@ -489,6 +490,9 @@ func (l *Loader) parse() (*Config, error) {
 		},
 		Recipient: strings.TrimSpace(backup.Recipient),
 	}
+
+	pprof := cmp.Or(jc.Pprof, &PprofConfig{})
+	cfg.Pprof = PprofConfig{Enabled: pprof.Enabled, Addr: cmp.Or(strings.TrimSpace(pprof.Addr), DefaultPprofAddr)}
 
 	learn := cmp.Or(jc.Learn, &jsonLearnConfig{})
 	cfg.Learn = LearnConfig{

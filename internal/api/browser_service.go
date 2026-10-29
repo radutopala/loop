@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/radutopala/loop/internal/browsercookies"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/container"
+	"github.com/radutopala/loop/internal/osutil"
 )
 
 // errBrowserDisabled is returned instead of starting a browser for a channel
@@ -72,6 +74,7 @@ type browserService struct {
 	containerRegistry ContainerManager // mirrored from Server.SetContainerRegistry
 	keepAlive         time.Duration    // delay before removing idle browser containers
 	screenshotDir     string           // if set, write screenshots to this dir instead of base64
+	loopDir           string           // if set, docker sidecars save downloads under container.DownloadsDir
 
 	// carriesOwnerToken reports whether a URL is a signed-in UI link for this
 	// daemon (see apiauth.Authenticator.CarriesOwnerToken). Agents read and
@@ -195,6 +198,12 @@ func (s *browserService) setScreenshotDir(dir string) {
 	s.screenshotDir = dir
 }
 
+// setLoopDir turns on downloads for docker sidecars, saved under
+// container.DownloadsDir(dir, channelID).
+func (s *browserService) setLoopDir(dir string) {
+	s.loopDir = dir
+}
+
 // WithBrowserProviders configures the browser domain's docker and host
 // providers at construction. docker may be nil.
 func WithBrowserProviders(docker, host BrowserProvider) Option {
@@ -209,6 +218,12 @@ func WithBrowserKeepAlive(d time.Duration) Option {
 // WithScreenshotDir sets the directory for file-based screenshots.
 func WithScreenshotDir(dir string) Option {
 	return func(s *Server) { s.browser.setScreenshotDir(dir) }
+}
+
+// WithBrowserDownloads turns on downloads for docker sidecars. loopDir must
+// be the one the docker provider's EnableDownloads was given.
+func WithBrowserDownloads(loopDir string) Option {
+	return func(s *Server) { s.browser.setLoopDir(loopDir) }
 }
 
 // activeBrowserProvider returns the BrowserProvider for the given channel based on active mode.
@@ -250,7 +265,10 @@ func (s *browserService) getOrCreateCDPManager(channelID, mode string, provider 
 		RetryDelay:       cdpRetryDelay,
 	}
 	if isHost {
+		// The user's own Chrome keeps its own download settings.
 		cfg.MaxRetries = 1
+	} else if s.loopDir != "" {
+		cfg.DownloadDir = browser.ChromeDownloadsDir
 	}
 	mgr := browser.NewCDPManager(wsEndpoint, cfg, s.deps.logger)
 	s.cdpManagers[key] = mgr
@@ -749,6 +767,56 @@ func paramBool(params map[string]any, key string) bool {
 		return v
 	}
 	return false
+}
+
+// listDownloads lists what the channel's browser has downloaded. The dir is
+// mounted into the agent container at the same path, so the paths it names
+// are ones the agent can open.
+func (s *browserService) listDownloads(channelID string) browserActionResponse {
+	if s.modeFor(channelID) == "host" {
+		return browserActionResponse{Error: "in host mode downloads go wherever your own Chrome saves them, which the agent can't see"}
+	}
+	if s.loopDir == "" {
+		return browserActionResponse{Error: "downloads are off for this browser"}
+	}
+	// A channel id with nothing to keep has no dir of its own: it would name
+	// the dir that holds every channel's.
+	if container.SanitizeName(channelID) == "" {
+		return browserActionResponse{Error: fmt.Sprintf("channel %q has no downloads dir", channelID)}
+	}
+	dir := container.DownloadsDir(s.loopDir, channelID)
+	entries, err := readDownloads(filepath.Join(s.loopDir, "downloads"), dir)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return browserActionResponse{Error: fmt.Sprintf("reading downloads: %v", err)}
+	}
+	var b strings.Builder
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		// Chrome writes a download to <name>.crdownload and renames it when
+		// it completes.
+		if name, ok := strings.CutSuffix(e.Name(), ".crdownload"); ok {
+			fmt.Fprintf(&b, "- %s (still downloading, %d bytes so far)\n", filepath.Join(dir, name), info.Size())
+			continue
+		}
+		fmt.Fprintf(&b, "- %s (%d bytes)\n", filepath.Join(dir, e.Name()), info.Size())
+	}
+	if b.Len() == 0 {
+		return browserActionResponse{Result: "No downloads yet. The browser saves them to " + dir}
+	}
+	return browserActionResponse{Result: "Downloads in " + dir + ":\n" + b.String()}
+}
+
+// readDownloads lists dir, which may not lead out of parent.
+func readDownloads(parent, dir string) ([]fs.DirEntry, error) {
+	r, err := osutil.OpenRootIn(parent, dir)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	return fs.ReadDir(r.FS(), ".")
 }
 
 // readConsoleMessages reads captured console messages with optional filtering.

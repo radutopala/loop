@@ -135,6 +135,10 @@ func (m *mockCDPSession) SetCookies(ctx context.Context, cookies []Cookie) error
 	return m.Called(ctx, cookies).Error(0)
 }
 
+func (m *mockCDPSession) SetDownloadDir(ctx context.Context, dir string) error {
+	return m.Called(ctx, dir).Error(0)
+}
+
 type CDPManagerSuite struct {
 	suite.Suite
 }
@@ -162,10 +166,12 @@ func (s *CDPManagerSuite) TestNewCDPManager() {
 		DiscoverExisting: true,
 		MaxRetries:       5,
 		RetryDelay:       time.Second,
+		DownloadDir:      "/downloads",
 	}, slog.Default())
 	require.NotNil(s.T(), mgr)
 	require.Equal(s.T(), "ws://test:9222", mgr.WSEndpoint())
 	require.True(s.T(), mgr.DiscoverExisting())
+	require.Equal(s.T(), "/downloads", mgr.DownloadDir())
 	require.False(s.T(), mgr.IsConnected())
 	require.Nil(s.T(), mgr.ActiveClient())
 }
@@ -207,6 +213,29 @@ func (s *CDPManagerSuite) TestConnectActivationFailureIsNotFatal() {
 
 	require.NoError(s.T(), mgr.Connect(context.Background()))
 	require.True(s.T(), mgr.IsConnected())
+}
+
+func (s *CDPManagerSuite) TestConnectSetsDownloadDir() {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "set"},
+		// A browser that refuses downloads still browses.
+		{name: "failure is not fatal", err: errors.New("cdp gone")},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			mgr, mockClient := s.newTestManager(false)
+			mgr.cfg.DownloadDir = "/downloads"
+			mockClient.On("TargetID").Return("t1")
+			mockClient.On("SetDownloadDir", mock.Anything, "/downloads").Return(tt.err).Once()
+
+			require.NoError(s.T(), mgr.Connect(context.Background()))
+			require.True(s.T(), mgr.IsConnected())
+			mockClient.AssertExpectations(s.T())
+		})
+	}
 }
 
 func (s *CDPManagerSuite) TestConnectFailure() {

@@ -231,7 +231,8 @@ func (s *RunnerSuite) TestRunWithInvalidMount() {
 
 	s.setupMockRun(ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
 		// Invalid mount should be skipped; workDir + screenshots + playground
-		return len(cfg.Binds) == 3
+		// + downloads
+		return len(cfg.Binds) == 4
 	}), testContainerName, testJSONOK)
 
 	resp, err := s.runner.Run(ctx, req)

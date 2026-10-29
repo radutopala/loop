@@ -248,6 +248,19 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 		return pending
 	}
 
+	// Channels sharing a dir share its config, so it's loaded once per
+	// dir and parent.
+	reviewConfigs := make(map[[2]string]reviewSettings)
+	reviewFor := func(dir, parentDir string) reviewSettings {
+		key := [2]string{dir, parentDir}
+		rs, ok := reviewConfigs[key]
+		if !ok {
+			rs = s.configs.review(dir, parentDir)
+			reviewConfigs[key] = rs
+		}
+		return rs
+	}
+
 	resp := make([]channelResponse, 0, len(channels))
 	for _, ch := range channels {
 		if platformFilter != "" && string(ch.Platform) != platformFilter {
@@ -271,7 +284,7 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 				parentDirPath = parent.DirPath
 			}
 		}
-		reviewEnabled := s.configs.reviewEnabled(dirPath, parentDirPath)
+		reviewCfg := reviewFor(dirPath, parentDirPath)
 		rev := reviews[ch.ChannelID]
 		var lastActivity *time.Time
 		if at, ok := activity[ch.ChannelID]; ok {
@@ -311,8 +324,8 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 			Locked:              ch.Locked,
 			DiffAdditions:       git.DiffAdditions,
 			DiffDeletions:       git.DiffDeletions,
-			ReviewEnabled:       reviewEnabled,
-			ReviewMaxIterations: s.configs.reviewMaxIterations(dirPath, parentDirPath),
+			ReviewEnabled:       reviewCfg.enabled,
+			ReviewMaxIterations: reviewCfg.maxIterations,
 			ModelOverride:       ch.ModelOverride,
 			EffortOverride:      ch.EffortOverride,
 			TaskID:              ch.TaskID,

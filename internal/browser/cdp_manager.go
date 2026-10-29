@@ -31,6 +31,7 @@ type CDPManagerConfig struct {
 	DiscoverExisting bool          // if true, discover+track existing Chrome tabs on Connect
 	MaxRetries       int           // max retry attempts for CDP connection
 	RetryDelay       time.Duration // delay between retries
+	DownloadDir      string        // if set, where Chrome saves downloads (a path in Chrome's filesystem)
 }
 
 // CDPManager owns the CDP connection and all tab state for a single
@@ -108,6 +109,8 @@ type CDPSession interface {
 	NewContextForTarget(targetID string) (CDPSession, error)
 	// SetCookies installs cookies into the attached browser profile.
 	SetCookies(ctx context.Context, cookies []Cookie) error
+	// SetDownloadDir has Chrome save downloads into dir.
+	SetDownloadDir(ctx context.Context, dir string) error
 }
 
 // NewCDPManager creates a new CDPManager for the given WebSocket endpoint.
@@ -181,6 +184,14 @@ func (m *CDPManager) Connect(ctx context.Context) error {
 			if err := client.SwitchTarget(tid); err != nil {
 				m.logger.Warn("activating CDP target failed", "target_id", tid, "error", err)
 			}
+		}
+	}
+
+	if m.cfg.DownloadDir != "" {
+		// A browser that refuses downloads still browses, so a failure here
+		// is logged rather than failing the connection.
+		if err := client.SetDownloadDir(ctx, m.cfg.DownloadDir); err != nil {
+			m.logger.Warn("setting the download dir failed", "dir", m.cfg.DownloadDir, "error", err)
 		}
 	}
 
@@ -540,6 +551,11 @@ func (m *CDPManager) WSEndpoint() string {
 // DiscoverExisting returns the DiscoverExisting config flag.
 func (m *CDPManager) DiscoverExisting() bool {
 	return m.cfg.DiscoverExisting
+}
+
+// DownloadDir returns the DownloadDir config value.
+func (m *CDPManager) DownloadDir() string {
+	return m.cfg.DownloadDir
 }
 
 // SetCDPFactoryForTest overrides the CDP factory for testing.

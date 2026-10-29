@@ -63,13 +63,13 @@ func (s *BuildCtxSuite) TestFileDigest() {
 
 func (s *BuildCtxSuite) TestDigest() {
 	want := s.context()
-	got, err := Digest(s.root())
+	got, err := new(Cache).Digest(s.root())
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), want, got)
 }
 
 func (s *BuildCtxSuite) TestDigestEmpty() {
-	got, err := Digest(s.root())
+	got, err := new(Cache).Digest(s.root())
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), Files{}, got)
 }
@@ -84,7 +84,7 @@ func (s *BuildCtxSuite) TestSnapshot() {
 	copied, err := os.OpenRoot(dst)
 	require.NoError(s.T(), err)
 	defer copied.Close()
-	again, err := Digest(copied)
+	again, err := new(Cache).Digest(copied)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), want, again, "the copy fingerprints as the original")
 	fi, err := os.Stat(filepath.Join(dst, "empty"))
@@ -140,11 +140,79 @@ func (s *BuildCtxSuite) TestReadErrors() {
 				"Dockerfile": {Data: []byte("FROM x\n")},
 				"sub/l":      {Data: []byte("t"), Mode: fs.ModeSymlink},
 			}
-			nop := func(string) error { return nil }
-			_, err := walk(tt.fake, func(string, []byte, fs.FileMode) error { return nil }, func(string, string) error { return nil }, nop)
+			_, err := digest(tt.fake, readDigest)
 			require.ErrorIs(s.T(), err, boom)
 		})
 	}
+}
+
+func (s *BuildCtxSuite) TestCacheDigest() {
+	want := s.context()
+	var c Cache
+	got, err := c.Digest(s.root())
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), want, got)
+
+	// The same bytes in place, with the old modification time put back,
+	// still read again: the write changed the file's change time.
+	p := filepath.Join(s.dir, "Dockerfile")
+	fi, err := os.Stat(p)
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), os.WriteFile(p, []byte("FROM loop-other\n"), 0o644))
+	require.NoError(s.T(), os.Chtimes(p, fi.ModTime(), fi.ModTime()))
+	want["Dockerfile"] = FileDigest([]byte("FROM loop-other\n"), 0o644)
+	got, err = c.Digest(s.root())
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), want, got)
+}
+
+// TestCacheReadsOnlyChanges: a file whose stat is as it was isn't read
+// again, a changed one is, and a failed walk keeps what the cache knew.
+func (s *BuildCtxSuite) TestCacheReadsOnlyChanges() {
+	boom := errors.New("boom")
+	files := fstest.MapFS{
+		"Dockerfile": {Data: []byte("FROM x\n")},
+		"gone":       {Data: []byte("bye")},
+	}
+	var c Cache
+	got, err := c.digest("/ctx", fakeTree{MapFS: files})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), Files{
+		"Dockerfile": FileDigest([]byte("FROM x\n"), 0),
+		"gone":       FileDigest([]byte("bye"), 0),
+	}, got)
+
+	// Reading fails from here on, so only what the cache has can answer.
+	delete(files, "gone")
+	unread := fakeTree{MapFS: files, readErr: boom}
+	got, err = c.digest("/ctx", unread)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), Files{"Dockerfile": FileDigest([]byte("FROM x\n"), 0)}, got)
+
+	// Another context with the same names is its own.
+	_, err = c.digest("/other", unread)
+	require.ErrorIs(s.T(), err, boom)
+
+	files["Dockerfile"] = &fstest.MapFile{Data: []byte("FROM yy\n")}
+	_, err = c.digest("/ctx", unread)
+	require.ErrorIs(s.T(), err, boom)
+
+	// The removed file went from the cache, and the failed walk changed
+	// nothing in it.
+	files["gone"] = &fstest.MapFile{Data: []byte("bye")}
+	files["Dockerfile"] = &fstest.MapFile{Data: []byte("FROM x\n")}
+	_, err = c.digest("/ctx", unread)
+	require.ErrorIs(s.T(), err, boom)
+	delete(files, "gone")
+	got, err = c.digest("/ctx", unread)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), Files{"Dockerfile": FileDigest([]byte("FROM x\n"), 0)}, got)
+}
+
+func (s *BuildCtxSuite) TestSnapshotReadError() {
+	boom := errors.New("boom")
+	_, err := copyTo(s.T().TempDir())("f", failingFile{readErr: boom}, nil)
+	require.ErrorIs(s.T(), err, boom)
 }
 
 // fakeTree is a MapFS that fails where told to.

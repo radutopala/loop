@@ -334,6 +334,17 @@ type jsonPlaygroundShareConfig struct {
 	Enabled *bool `json:"enabled"`
 }
 
+// PprofConfig serves Go's net/http/pprof profiles of the daemon on their own
+// listener. Global only; the daemon picks a change up without a restart.
+type PprofConfig struct {
+	Enabled bool   `json:"enabled"`
+	Addr    string `json:"addr"`
+}
+
+// DefaultPprofAddr is where the pprof listener binds when pprof.addr is unset:
+// loopback only, since the profiles show the daemon's command line and code.
+const DefaultPprofAddr = "127.0.0.1:6060"
+
 // Default backup schedule: one backup a day, at most one an hour, and the
 // retention tiers' defaults: the newest 3, then the newest of each of the
 // last 7 days, 4 weeks and 6 months.
@@ -639,6 +650,7 @@ type Config struct {
 	PlaygroundShare            PlaygroundShareConfig
 	PR                         PRConfig
 	Backup                     BackupConfig
+	Pprof                      PprofConfig
 	Learn                      LearnConfig
 	Explain                    ExplainConfig
 	Plugins                    PluginsConfig

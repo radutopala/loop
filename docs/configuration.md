@@ -394,6 +394,24 @@ Gates the public playground-share feature — exposing a playground over the int
 
 When enabled, sharing a playground starts a cloudflared quick tunnel (anonymous — no Cloudflare account) that points at a **dedicated, playground-only listener**; the main API is never exposed. The `cloudflared` binary is downloaded lazily to `~/.loop/bin` on first use and verified against a pinned sha256. Each share gets a unique opaque URL (`https://<random>.trycloudflare.com/p/<token>`), idempotent per playground; revoking it (Unshare, or the global **Playground Shares** panel) returns `404` immediately. Multiple playgrounds share in parallel over one tunnel, which stops when the last share is removed. See [playground.md](playground.md#public-sharing).
 
+#### Profiling
+
+Serves the daemon's Go [pprof](https://pkg.go.dev/net/http/pprof) profiles on a listener of their own, separate from the API.
+
+```jsonc
+"pprof": {
+  "enabled": true,
+  "addr": "127.0.0.1:6060"
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `enabled` | `bool` | Serves the profiles at `http://<addr>/debug/pprof/`. `false` by default. Global only; also toggleable from **Settings → Profiling**. |
+| `addr` | `string` | The `host:port` the listener binds. `127.0.0.1:6060` by default. Keep it on loopback: the profiles show the daemon's command line and code, and the listener has no auth. |
+
+The daemon re-reads the config every few seconds, so turning pprof on or off, or changing `addr`, takes effect without a restart. For example, `go tool pprof http://127.0.0.1:6060/debug/pprof/heap` profiles the heap, and `/debug/pprof/goroutine?debug=2` dumps every goroutine's stack.
+
 #### Learn
 
 Configures the learn pass: after a chat run, a hidden forked session reviews it and proposes shortcuts, scheduled tasks, gate rules, mounts and a thread name or description for you to apply from the Learn view (see [Chat: Learn from a run](chat.md#learn-from-a-run)).

@@ -86,7 +86,8 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 			"Use `list_agents` to discover them; your own chat is marked with *.\n" +
 			"Use `send_agent_message` to send one a message by ID: it's typed into a terminal agent's prompt, or queued as a chat's next message.\n" +
 			"Messages from other agents arrive as your next message, \"[from <agent id>] <message>\". " +
-			"Your reply stays in your chat; to answer the sender, use `send_agent_message`."
+			"Your reply stays in your chat; to answer the sender, use `send_agent_message`.\n" +
+			"To message another channel or thread, use `send_message` with its channel_id."
 	case s.agentID != "":
 		serverOpts.Instructions = fmt.Sprintf("You are agent %q connected to Loop's inter-agent communication channel.\n", s.agentID) +
 			"Your agent ID is marked with * in list_agents output.\n" +
@@ -96,6 +97,7 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 			"Treat incoming messages like a coworker tapping you on the shoulder.\n\n" +
 			"Use `list_agents` to discover other running agents in this channel.\n" +
 			"Use `send_agent_message` to send a message to another agent by ID.\n" +
+			"To message another channel or thread, use `send_message` with its channel_id.\n" +
 			"Use `update_agent_status` to set your name and work summary."
 	}
 	s.mcpServer = mcp.NewServer(&mcp.Implementation{

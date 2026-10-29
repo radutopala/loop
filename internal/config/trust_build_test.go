@@ -146,23 +146,23 @@ func (s *TrustSuite) TestBuildContextErrors() {
 // following a link out of the project.
 func (s *TrustSuite) TestProjectBuildFiles() {
 	dir := s.T().TempDir()
-	got, err := projectBuildFiles(dir)
+	got, err := projectBuildFiles(&buildctx.Cache{}, dir)
 	require.NoError(s.T(), err)
 	require.Nil(s.T(), got, "no .loop/container")
 
 	ctx := filepath.Join(dir, ".loop", "container")
 	require.NoError(s.T(), os.MkdirAll(ctx, 0o755))
-	got, err = projectBuildFiles(dir)
+	got, err = projectBuildFiles(&buildctx.Cache{}, dir)
 	require.NoError(s.T(), err)
 	require.Nil(s.T(), got, "an empty context is none")
 
 	require.NoError(s.T(), os.WriteFile(filepath.Join(ctx, "Dockerfile"), []byte("FROM x\n"), 0o644))
-	got, err = projectBuildFiles(dir)
+	got, err = projectBuildFiles(&buildctx.Cache{}, dir)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), buildctx.Files{"Dockerfile": buildctx.FileDigest([]byte("FROM x\n"), 0o644)}, got)
 
 	require.NoError(s.T(), os.RemoveAll(ctx))
 	require.NoError(s.T(), os.Symlink(s.T().TempDir(), ctx))
-	_, err = projectBuildFiles(dir)
+	_, err = projectBuildFiles(&buildctx.Cache{}, dir)
 	require.Error(s.T(), err, "a link out of the project")
 }

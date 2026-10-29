@@ -485,7 +485,7 @@ When browser is enabled, a `loop-browser` MCP server is registered in the contai
 }
 ```
 
-The MCP server proxies all 19 browser tools (navigate, screenshot, click, type, tabs, etc.) through `POST /api/browser/action` on the host API. Chrome is started lazily on first action. Screenshots can be returned as file paths (via a shared screenshots directory) instead of base64 for better performance.
+The MCP server proxies all 21 browser tools (navigate, screenshot, click, type, tabs, etc.) through `POST /api/browser/action` on the host API. Chrome is started lazily on first action. Screenshots can be returned as file paths (via a shared screenshots directory) instead of base64 for better performance. Downloads land in `<LoopDir>/downloads/<channel>`, which the Chrome container mounts read-write at `/downloads` and the agent container mounts read-only at the same host path; see [Browser: Downloads](browser.md#downloads).
 
 ### Idle Timeout
 

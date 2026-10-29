@@ -254,7 +254,7 @@ func (s *Server) handleSendAgentMessage(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if s.agentRegistry.Get(group, toAgentID) == nil {
-		http.Error(w, "agent "+toAgentID+" not found in channel "+group, http.StatusNotFound)
+		http.Error(w, "agent "+toAgentID+" not found in channel "+group+"; to message another channel or thread, use send_message with its channel_id", http.StatusNotFound)
 		return
 	}
 

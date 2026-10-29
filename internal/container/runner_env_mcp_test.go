@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"slices"
 
@@ -453,6 +454,25 @@ func (s *RunnerSuite) TestRunWithScreenshotDirBind() {
 	})
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "ok", resp.Response)
+}
+
+func (s *RunnerSuite) TestRunWithDownloadsDirBind() {
+	// The channel's browser downloads are always bind-mounted read-only.
+	ctx := context.Background()
+
+	downloadsDir := filepath.Join(s.cfg.LoopDir, "downloads", "ch-1")
+
+	s.setupMockRun(ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		return slices.Contains(cfg.Binds, downloadsDir+":"+downloadsDir+":ro")
+	}), testContainerName, testJSONOK)
+
+	resp, err := s.runner.Run(ctx, &agent.AgentRequest{
+		ChannelID: "ch-1",
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hi"}},
+	})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ok", resp.Response)
+	s.sys.AssertCalled(s.T(), "MkdirAll", downloadsDir, os.FileMode(0o755))
 }
 
 func (s *RunnerSuite) TestRunWithDirPath() {

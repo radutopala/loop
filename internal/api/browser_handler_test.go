@@ -683,6 +683,10 @@ func (m *mockCDPSession) SetCookies(ctx context.Context, cookies []browser.Cooki
 	return m.Called(ctx, cookies).Error(0)
 }
 
+func (m *mockCDPSession) SetDownloadDir(ctx context.Context, dir string) error {
+	return m.Called(ctx, dir).Error(0)
+}
+
 // --- Helper: start browser and get WS with CDP mock ---
 
 // newTestCDPManager creates a CDPManager with a mock factory for testing.

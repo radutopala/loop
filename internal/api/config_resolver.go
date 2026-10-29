@@ -93,21 +93,30 @@ func (c *configResolver) glabConfigDir(workdir, parentDirPath string) string {
 // reviewEnabled mirrors ghUser for the review.enabled flag. Returns false on
 // any config-load error so a broken config doesn't silently expose the panel.
 func (c *configResolver) reviewEnabled(workdir, parentDirPath string) bool {
-	cfg := c.merged(workdir, parentDirPath)
-	if cfg == nil {
-		return false
-	}
-	return cfg.Review.Enabled
+	return c.review(workdir, parentDirPath).enabled
 }
 
 // reviewMaxIterations mirrors ghUser for review.max_iterations: the passes a
 // review runs when its start gives none. The default on a config-load error.
 func (c *configResolver) reviewMaxIterations(workdir, parentDirPath string) int {
+	return c.review(workdir, parentDirPath).maxIterations
+}
+
+// reviewSettings is what the channel list shows of a workdir's review
+// config.
+type reviewSettings struct {
+	enabled       bool
+	maxIterations int
+}
+
+// review returns reviewEnabled and reviewMaxIterations from one load of the
+// workdir's config.
+func (c *configResolver) review(workdir, parentDirPath string) reviewSettings {
 	cfg := c.merged(workdir, parentDirPath)
 	if cfg == nil {
-		return config.DefaultReviewMaxIterations
+		return reviewSettings{maxIterations: config.DefaultReviewMaxIterations}
 	}
-	return cfg.Review.ReviewIterations()
+	return reviewSettings{enabled: cfg.Review.Enabled, maxIterations: cfg.Review.ReviewIterations()}
 }
 
 // reviewUpdateBase mirrors ghUser for review.update_base: whether a review

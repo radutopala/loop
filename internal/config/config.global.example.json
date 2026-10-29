@@ -92,6 +92,15 @@
   //  "enabled": true
   //},
 
+  // Profiling: serve the daemon's Go pprof profiles at
+  // http://<addr>/debug/pprof/, on a listener of their own. Disabled by
+  // default; turning it on or off takes effect without a restart. Keep addr on
+  // loopback: the listener has no auth.
+  //"pprof": {
+  //  "enabled": true,
+  //  "addr": "127.0.0.1:6060"
+  //},
+
   // PR: Loop watches a thread's PR/MR checks. A failure on a commit the
   // thread's agent made goes back to that agent to fix (auto_fix, on by
   // default), at most max_attempts times per PR/MR; any other failure lights

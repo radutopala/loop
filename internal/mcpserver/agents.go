@@ -48,7 +48,7 @@ func (s *Server) registerAgentTools() {
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "send_agent_message",
-		Description: "Send a message to another agent in this channel. A terminal agent gets it typed into its terminal as a prompt; a chat gets it queued as its next message. The call fails when a terminal agent has no terminal to type into.",
+		Description: "Send a message to another agent in this channel. A terminal agent gets it typed into its terminal as a prompt; a chat gets it queued as its next message. The call fails when a terminal agent has no terminal to type into. It only reaches the agents list_agents shows; to message another channel or thread, use send_message with its channel_id.",
 	}, s.handleSendAgentMessage)
 
 	if s.agentSender {

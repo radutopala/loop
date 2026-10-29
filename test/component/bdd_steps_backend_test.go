@@ -110,6 +110,10 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^the second of the newest backup in "([^"]*)" has passed$`, tc.waitPastNewestBackup)
 	ctx.Step(`^I create a backup key$`, tc.createBackupKey)
 	ctx.Step(`^I remove the global backup config$`, tc.removeGlobalBackupConfig)
+	ctx.Step(`^I set the global pprof config to:$`, tc.setGlobalPprofConfig)
+	ctx.Step(`^I remove the global pprof config$`, tc.removeGlobalPprofConfig)
+	ctx.Step(`^the daemon should soon serve pprof on "([^"]*)"$`, tc.waitForPprofServing)
+	ctx.Step(`^nothing should soon listen on "([^"]*)"$`, tc.waitForPprofClosed)
 
 	// WebSocket steps
 	ctx.Step(`^I connect to the events WebSocket$`, tc.connectEventsWS)
