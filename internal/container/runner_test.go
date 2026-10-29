@@ -111,11 +111,6 @@ func (m *MockDockerClient) PruneBuildCache(ctx context.Context, unusedFor time.D
 	return args.Get(0).(uint64), args.Error(1)
 }
 
-func (m *MockDockerClient) PruneDanglingImages(ctx context.Context) (uint64, error) {
-	args := m.Called(ctx)
-	return args.Get(0).(uint64), args.Error(1)
-}
-
 func (m *MockDockerClient) PruneAnonymousVolumes(ctx context.Context) (uint64, error) {
 	args := m.Called(ctx)
 	return args.Get(0).(uint64), args.Error(1)

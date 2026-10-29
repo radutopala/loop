@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/radutopala/loop/internal/osutil"
 )
 
 // Files is a build context's fingerprint: each file's slash path in the
@@ -53,23 +55,8 @@ type Cache struct {
 }
 
 type cachedFile struct {
-	stat   statKey
+	stat   osutil.FileStamp
 	digest string
-}
-
-// statKey is what a file's stat says of its content: any write changes
-// it. The change time and inode can't be set back the way a write's
-// modification time can; where the OS has neither, they're zero.
-type statKey struct {
-	size         int64
-	mode         fs.FileMode
-	mtime, ctime int64
-	ino          uint64
-}
-
-func statKeyOf(fi fs.FileInfo) statKey {
-	ino, ctime := inodeAndCtime(fi)
-	return statKey{size: fi.Size(), mode: fi.Mode(), mtime: fi.ModTime().UnixNano(), ctime: ctime, ino: ino}
 }
 
 // Digest fingerprints the context in r.
@@ -83,7 +70,7 @@ func (c *Cache) digest(dir string, t tree) (Files, error) {
 	c.mu.Unlock()
 	seen := map[string]cachedFile{}
 	files, err := digest(t, func(name string, f fs.File, fi fs.FileInfo) (string, error) {
-		k := statKeyOf(fi)
+		k := osutil.StampOf(fi)
 		if was, ok := last[name]; ok && was.stat == k {
 			seen[name] = was
 			return was.digest, nil

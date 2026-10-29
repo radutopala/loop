@@ -134,6 +134,17 @@ func (s *ManagerSuite) TestEnsureUnderGateQuiet() {
 	require.Equal(s.T(), []string{"/opt/loop/loop", "syscallwrap", "--", "/plugin"}, []string(cfg.Entrypoint))
 }
 
+func (s *ManagerSuite) TestEnsureUnderGatePullsMissingImage() {
+	s.useGate(nil)
+	s.docker.On("ImageInspect", s.ctx, s.plugin.Image).Return(image.InspectResponse{}, errImageGone).Once()
+	s.expectPull()
+	s.docker.On("ImageInspect", s.ctx, s.plugin.Image).Return(imageInfo("1000", nil, []string{"/plugin"}), nil).Once()
+	s.expectStart("c1", "40001")
+	s.expectRow(db.PluginContainerRunning, "c1", 40001, "")
+	_, err := s.m.Ensure(s.ctx, s.plugin, s.channel)
+	require.NoError(s.T(), err)
+}
+
 func (s *ManagerSuite) TestEnsureGateFailures() {
 	boom := errors.New("boom")
 	inspect := func(info image.InspectResponse, err error) func() {
@@ -156,6 +167,10 @@ func (s *ManagerSuite) TestEnsureGateFailures() {
 	}{
 		{name: "binary", binErr: boom, setup: func() {}, wantErr: "finding the plugin gate: boom"},
 		{name: "inspect", setup: inspect(image.InspectResponse{}, boom), wantErr: "inspecting the plugin image: boom"},
+		{name: "pull missing image", setup: func() {
+			inspect(image.InspectResponse{}, errImageGone)()
+			s.docker.On("ImagePull", s.ctx, s.plugin.Image, image.PullOptions{}).Return(nil, boom).Once()
+		}, wantErr: "pulling the missing plugin image: pulling example.com/cogtest@sha256:aa: boom"},
 		{name: "no config", setup: inspect(image.InspectResponse{}, nil), wantErr: "the plugin image has no USER to run as"},
 		{name: "no user", setup: func() {
 			// Without a daemon uid, as on Windows, the image's USER is used.

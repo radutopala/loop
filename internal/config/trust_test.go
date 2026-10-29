@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -458,7 +459,7 @@ func (s *TrustSuite) TestWorktreeParentDirNeedsNoTrust() {
 	require.NoError(s.T(), err)
 	require.Empty(s.T(), merged.ExtraDirs)
 
-	require.False(s.T(), seedsParentDir([]byte(`{not hjson`), "/proj"))
+	require.False(s.T(), seedsParentDir(nil, "/proj"))
 }
 
 func (s *TrustSuite) TestParseProjectConfigLeavesInput() {
@@ -467,6 +468,72 @@ func (s *TrustSuite) TestParseProjectConfigLeavesInput() {
 	_, err := parseProjectConfig(data)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), orig, string(data))
+}
+
+// TestNewProjectLoaderKeepsDecodes: the loader NewProjectLoader returns
+// keeps what it decoded; the package-level loads keep nothing.
+func (s *TrustSuite) TestNewProjectLoaderKeepsDecodes() {
+	require.NotNil(s.T(), NewProjectLoader(nil).projects)
+	require.Nil(s.T(), newLoader().projects)
+}
+
+// TestTrustFileStatGated: a trust file whose stat is unchanged isn't read
+// again; a changed stat, or a failed one, reads it.
+func (s *TrustSuite) TestTrustFileStatGated() {
+	reads := 0
+	readFile := s.store.readFile
+	s.store.readFile = func(p string) ([]byte, error) {
+		reads++
+		return readFile(p)
+	}
+	fi := fakeFileInfo{mtime: time.Unix(1, 0), size: 1}
+	var statErr error
+	s.store.stat = func(string) (os.FileInfo, error) { return fi, statErr }
+	s.files[trustPath] = []byte(`{"/a": {"fields": {}}}`)
+
+	_, ok, err := s.store.approved("/a")
+	require.NoError(s.T(), err)
+	require.True(s.T(), ok)
+	s.files[trustPath] = []byte(`{}`)
+	_, ok, err = s.store.approved("/a")
+	require.NoError(s.T(), err)
+	require.True(s.T(), ok, "unchanged stat: the last read stands")
+	require.Equal(s.T(), 1, reads)
+
+	fi.mtime = time.Unix(2, 0)
+	_, ok, err = s.store.approved("/a")
+	require.NoError(s.T(), err)
+	require.False(s.T(), ok)
+	require.Equal(s.T(), 2, reads)
+
+	statErr = os.ErrPermission
+	_, _, err = s.store.approved("/a")
+	require.NoError(s.T(), err)
+	_, _, err = s.store.approved("/a")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 4, reads, "no stat: read every time")
+}
+
+// TestTrustFileParsedOnce: an unchanged trust file isn't parsed again, and
+// each caller gets its own copy to change.
+func (s *TrustSuite) TestTrustFileParsedOnce() {
+	s.files[trustPath] = []byte(`{"/a": {"fields": {}}}`)
+	all, err := s.store.readAll()
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), all, "/a")
+	all["/b"] = trustEntry{}
+
+	// Planted in the cache: an unchanged file returns it without parsing.
+	s.store.file.all["/planted"] = trustEntry{}
+	all, err = s.store.readAll()
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), all, "/planted")
+	require.NotContains(s.T(), all, "/b", "a caller's change stays its own")
+
+	s.files[trustPath] = []byte(`{"/c": {"fields": {}}}`)
+	all, err = s.store.readAll()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"/c"}, slices.Collect(maps.Keys(all)))
 }
 
 // ruleIndex returns the index of the first file rule naming path with the

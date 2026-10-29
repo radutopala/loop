@@ -10,7 +10,9 @@ import (
 // is Loop's to keep or to drop.
 type ReclaimScope struct {
 	// KeepImages are image refs never removed as unused, whether a container
-	// uses them or not: the agent, Chrome and project images say.
+	// uses them or not: the agent, Chrome and project images say. An image
+	// ID or digest ref keeps that image whether it's tagged or not, as a
+	// plugin's, pinned to one of them, often isn't.
 	KeepImages []string
 	// OrphanVolume reports whether a volume belongs to something Loop no
 	// longer has, a deleted channel's Chrome profile say. Nil means none do.
@@ -64,11 +66,12 @@ func (r ReclaimResult) withTotal() ReclaimResult {
 }
 
 // reclaimPlan is what reclaiming space would remove, read from the daemon's
-// disk usage.
+// disk usage. Each image's Tags are the refs removing it untags.
 type reclaimPlan struct {
-	estimate      Reclaimable
-	unusedImages  []DiskImage
-	orphanVolumes []DiskVolume
+	estimate       Reclaimable
+	danglingImages []DiskImage
+	unusedImages   []DiskImage
+	orphanVolumes  []DiskVolume
 }
 
 // Reclaimable estimates what ReclaimSpace would free. Sizing the volumes is
@@ -93,20 +96,30 @@ func (m *ImageLifecycleManager) planReclaim(ctx context.Context, volumeSizes boo
 	if err != nil {
 		return nil, err
 	}
-	keep := map[string]bool{}
+	keep, keepDigests := map[string]bool{}, map[string]bool{}
 	for _, ref := range append([]string{m.imageName, m.sidecarImage}, scope.KeepImages...) {
-		if ref != "" {
-			keep[normalizeImageRef(ref)] = true
+		if ref == "" {
+			continue
+		}
+		keep[normalizeImageRef(ref)] = true
+		if _, digest, ok := strings.Cut(ref, "@"); ok {
+			keepDigests[digest] = true
 		}
 	}
 	plan := &reclaimPlan{estimate: Reclaimable{VolumesSized: volumeSizes, BuildCache: du.BuildCache, UnusedImageTags: []string{}, OrphanVolumeList: []string{}}}
 	for _, img := range du.Images {
-		if img.Containers != 0 {
+		if img.Containers != 0 || keep[img.ID] || keptDigest(img.Digests, keepDigests) {
 			continue
 		}
 		tags := realTags(img.Tags)
 		switch {
 		case len(tags) == 0:
+			// Untagged, it's removed by its digest refs, or by ID when it
+			// has none, as a local build doesn't.
+			if img.Tags = realTags(img.Digests); len(img.Tags) == 0 {
+				img.Tags = []string{img.ID}
+			}
+			plan.danglingImages = append(plan.danglingImages, img)
 			plan.estimate.DanglingImages += img.UniqueSize()
 		case !keptImage(img, tags, keep):
 			img.Tags = tags
@@ -134,10 +147,19 @@ func (m *ImageLifecycleManager) planReclaim(ctx context.Context, volumeSizes boo
 	return plan, nil
 }
 
-// realTags drops the "<none>:<none>" placeholder older daemons report for an
-// untagged image.
+// realTags drops the "<none>:<none>" and "<none>@<none>" placeholders older
+// daemons report for an untagged image.
 func realTags(tags []string) []string {
 	return slices.DeleteFunc(slices.Clone(tags), func(t string) bool { return strings.HasPrefix(t, "<none>") })
+}
+
+// keptDigest reports whether one of an image's repo@digest refs has a digest
+// the scope keeps.
+func keptDigest(digests []string, keep map[string]bool) bool {
+	return slices.ContainsFunc(digests, func(ref string) bool {
+		_, digest, _ := strings.Cut(ref, "@")
+		return keep[digest]
+	})
 }
 
 // keptImage reports whether an image is one of Loop's: one the scope keeps,
@@ -151,11 +173,12 @@ func keptImage(img DiskImage, tags []string, keep map[string]bool) bool {
 
 // ReclaimSpace frees Docker disk: every BuildKit cache entry not in use by a
 // running build (unusedFor=0, all), the unused images when opted in, dangling
-// images, the anonymous volumes no container uses and the scope's orphan
-// volumes, returning the bytes freed by each (the orphans are counted). Build-cache pruning is
-// daemon-global, not scoped to Loop's builds. Named volumes other than
-// orphans are never touched. When a step fails, what the earlier ones freed
-// is still reported alongside the error so nothing looks silently lost.
+// images but for those the scope keeps by digest, the anonymous volumes no
+// container uses and the scope's orphan volumes, returning the bytes freed by
+// each (the orphans are counted). Build-cache pruning is daemon-global, not
+// scoped to Loop's builds. Named volumes other than orphans are never
+// touched. When a step fails, what the earlier ones freed is still reported
+// alongside the error so nothing looks silently lost.
 //
 // This is the action reached for when Docker is out of room, so it prunes
 // reusable cache too: the alternative left most of the disk unreclaimed, which
@@ -172,12 +195,9 @@ func (m *ImageLifecycleManager) ReclaimSpace(ctx context.Context, opts ReclaimOp
 	}
 	res.BuildCacheReclaimed = freed
 	if opts.UnusedImages {
-		res.UnusedImagesReclaimed = m.removeUnusedImages(ctx, plan.unusedImages)
+		res.UnusedImagesReclaimed = m.removeImages(ctx, plan.unusedImages)
 	}
-	if freed, err = m.client.PruneDanglingImages(ctx); err != nil {
-		return res.withTotal(), err
-	}
-	res.ImagesReclaimed = freed
+	res.ImagesReclaimed = m.removeImages(ctx, plan.danglingImages)
 	if freed, err = m.client.PruneAnonymousVolumes(ctx); err != nil {
 		return res.withTotal(), err
 	}
@@ -192,10 +212,10 @@ func (m *ImageLifecycleManager) ReclaimSpace(ctx context.Context, opts ReclaimOp
 	return res.withTotal(), nil
 }
 
-// removeUnusedImages removes each image by untagging all its tags, and
-// returns the bytes of the ones gone. An image that fails, one a container
-// started using since say, stays.
-func (m *ImageLifecycleManager) removeUnusedImages(ctx context.Context, images []DiskImage) uint64 {
+// removeImages removes each image by untagging all its tags, and returns the
+// bytes of the ones gone. An image that fails, one a container started using
+// since say, stays.
+func (m *ImageLifecycleManager) removeImages(ctx context.Context, images []DiskImage) uint64 {
 	var freed uint64
 	for _, img := range images {
 		removed := true

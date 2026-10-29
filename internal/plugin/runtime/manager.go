@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	cerrdefs "github.com/containerd/errdefs"
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
@@ -46,6 +47,7 @@ type DockerClient interface {
 	ContainerList(ctx context.Context, options containertypes.ListOptions) ([]containertypes.Summary, error)
 	ContainerLogs(ctx context.Context, container string, options containertypes.LogsOptions) (io.ReadCloser, error)
 	ImageInspect(ctx context.Context, imageID string, opts ...client.ImageInspectOption) (image.InspectResponse, error)
+	ImagePull(ctx context.Context, refStr string, options image.PullOptions) (io.ReadCloser, error)
 }
 
 // Store records each plugin container's state.
@@ -379,6 +381,11 @@ func (m *Manager) start(ctx context.Context, p Plugin, ch Channel) (*instance, e
 		}
 	}
 	resp, err := m.api.ContainerCreate(ctx, cfg, host, nil, nil, name)
+	if pulled, perr := m.pullMissing(ctx, p, err); perr != nil {
+		return nil, perr
+	} else if pulled {
+		resp, err = m.api.ContainerCreate(ctx, cfg, host, nil, nil, name)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("creating the plugin container: %w", err)
 	}
@@ -389,6 +396,21 @@ func (m *Manager) start(ctx context.Context, p Plugin, ch Channel) (*instance, e
 	}
 	m.logger.Info("plugin container started", "plugin_id", id, "channel_id", ch.ID, "container_id", resp.ID, "url", inst.endpoint.URL)
 	return inst, nil
+}
+
+// pullMissing pulls p's image again when err says Docker no longer has it,
+// as after a prune: the image is pinned to its digest, so it's still the one
+// the owner approved. A dev install's image, a local build pinned to its ID,
+// can't be pulled. It reports whether it pulled.
+func (m *Manager) pullMissing(ctx context.Context, p Plugin, err error) (bool, error) {
+	if !cerrdefs.IsNotFound(err) || !strings.Contains(p.Image, "@") {
+		return false, nil
+	}
+	m.logger.Info("pulling the missing plugin image again", "plugin_id", p.Manifest.ID, "image", p.Image)
+	if err := plugin.PullImage(ctx, m.api, p.Image); err != nil {
+		return false, fmt.Errorf("pulling the missing plugin image: %w", err)
+	}
+	return true, nil
 }
 
 // boot issues a created container its token, writes its run dir, starts it

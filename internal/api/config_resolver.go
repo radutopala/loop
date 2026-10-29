@@ -18,6 +18,16 @@ type configResolver struct {
 	loadWorktree func(string, string, *config.Config) (*config.Config, error)
 }
 
+// WithConfigLoaders sets the loaders the server resolves configs with: load
+// for the global config, project and worktree for the layers over it. Ones
+// that keep what they parsed save reparsing unchanged files on every
+// request.
+func WithConfigLoaders(load func() (*config.Config, error), project func(string, *config.Config) (*config.Config, error), worktree func(string, string, *config.Config) (*config.Config, error)) Option {
+	return func(s *Server) {
+		s.configs.load, s.configs.loadProject, s.configs.loadWorktree = load, project, worktree
+	}
+}
+
 // merged returns the layered config for the workdir: global for "", global →
 // project for a plain workdir, global → parent project → worktree when
 // parentDirPath is set. Returns nil on a global-load error; project/worktree
@@ -73,7 +83,11 @@ func (c *configResolver) worktreeLoader() func(string, string, *config.Config) (
 // ghUser returns the gh CLI user for the channel's workdir, or "" (use gh's
 // active account) on any load error.
 func (c *configResolver) ghUser(workdir, parentDirPath string) string {
-	cfg := c.merged(workdir, parentDirPath)
+	return ghUserOf(c.merged(workdir, parentDirPath))
+}
+
+// ghUserOf returns cfg's gh CLI user, "" for a nil cfg.
+func ghUserOf(cfg *config.Config) string {
 	if cfg == nil {
 		return ""
 	}
@@ -83,7 +97,11 @@ func (c *configResolver) ghUser(workdir, parentDirPath string) string {
 // glabConfigDir returns the glab config dir for the channel's workdir, or ""
 // (glab's default) on any load error.
 func (c *configResolver) glabConfigDir(workdir, parentDirPath string) string {
-	cfg := c.merged(workdir, parentDirPath)
+	return glabConfigDirOf(c.merged(workdir, parentDirPath))
+}
+
+// glabConfigDirOf returns cfg's glab config dir, "" for a nil cfg.
+func glabConfigDirOf(cfg *config.Config) string {
 	if cfg == nil {
 		return ""
 	}

@@ -24,6 +24,16 @@ func ReadFileIn(root, path string) ([]byte, error) {
 	return data, err
 }
 
+// OpenFileIn opens path under root to read. The caller closes it.
+func OpenFileIn(root, path string) (*os.File, error) {
+	var f *os.File
+	err := inRoot(root, path, func(r *os.Root, rel string) (err error) {
+		f, err = r.Open(rel)
+		return err
+	})
+	return f, err
+}
+
 // WriteFileIn writes path under root, creating it with perm if missing.
 func WriteFileIn(root, path string, data []byte, perm os.FileMode) error {
 	return inRoot(root, path, func(r *os.Root, rel string) error {

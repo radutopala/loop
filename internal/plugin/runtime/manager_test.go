@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -11,9 +12,11 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
+	cerrdefs "github.com/containerd/errdefs"
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
@@ -67,6 +70,12 @@ func (m *mockDocker) ContainerLogs(ctx context.Context, id string, options conta
 
 func (m *mockDocker) VolumeRemove(ctx context.Context, id string, force bool) error {
 	return m.Called(ctx, id, force).Error(0)
+}
+
+func (m *mockDocker) ImagePull(ctx context.Context, ref string, options image.PullOptions) (io.ReadCloser, error) {
+	args := m.Called(ctx, ref, options)
+	rc, _ := args.Get(0).(io.ReadCloser)
+	return rc, args.Error(1)
 }
 
 func (m *mockDocker) ImageInspect(ctx context.Context, id string, _ ...client.ImageInspectOption) (image.InspectResponse, error) {
@@ -304,6 +313,25 @@ func (s *ManagerSuite) TestEnsureRemovesLeftoverByName() {
 	require.NoError(s.T(), err)
 }
 
+// errImageGone is Docker's answer for an image it doesn't have.
+var errImageGone = fmt.Errorf("no such image: example.com/cogtest@sha256:aa: %w", cerrdefs.ErrNotFound)
+
+// expectPull expects the plugin's image to be pulled.
+func (s *ManagerSuite) expectPull() {
+	s.docker.On("ImagePull", s.ctx, s.plugin.Image, image.PullOptions{}).Return(io.NopCloser(strings.NewReader(`{"status":"done"}`)), nil).Once()
+}
+
+func (s *ManagerSuite) TestEnsurePullsMissingImage() {
+	s.docker.On("ContainerCreate", s.ctx, mock.Anything, mock.Anything, (*network.NetworkingConfig)(nil), (*ocispec.Platform)(nil), name).
+		Return(containertypes.CreateResponse{}, errImageGone).Once()
+	s.expectPull()
+	s.expectStart("c1", "40001")
+	s.expectRow(db.PluginContainerRunning, "c1", 40001, "")
+
+	_, err := s.m.Ensure(s.ctx, s.plugin, s.channel)
+	require.NoError(s.T(), err)
+}
+
 func (s *ManagerSuite) TestEnsureFailures() {
 	boom := errors.New("boom")
 	created := func() {
@@ -358,6 +386,21 @@ func (s *ManagerSuite) TestEnsureFailures() {
 			s.expectNoLeftover()
 			s.docker.On("ContainerCreate", s.ctx, mock.Anything, mock.Anything, mock.Anything, mock.Anything, name).Return(containertypes.CreateResponse{}, boom).Once()
 		}, wantErr: "creating the plugin container: boom"},
+		{name: "pull missing image", setup: func() {
+			s.expectNoLeftover()
+			s.docker.On("ContainerCreate", s.ctx, mock.Anything, mock.Anything, mock.Anything, mock.Anything, name).Return(containertypes.CreateResponse{}, errImageGone).Once()
+			s.docker.On("ImagePull", s.ctx, s.plugin.Image, image.PullOptions{}).Return(nil, boom).Once()
+		}, wantErr: "pulling the missing plugin image: pulling example.com/cogtest@sha256:aa: boom"},
+		{name: "image still missing", setup: func() {
+			s.expectNoLeftover()
+			s.docker.On("ContainerCreate", s.ctx, mock.Anything, mock.Anything, mock.Anything, mock.Anything, name).Return(containertypes.CreateResponse{}, errImageGone).Twice()
+			s.expectPull()
+		}, wantErr: "creating the plugin container: no such image"},
+		{name: "dev image missing isn't pulled", setup: func() {
+			s.plugin.Image = "sha256:local"
+			s.expectNoLeftover()
+			s.docker.On("ContainerCreate", s.ctx, mock.Anything, mock.Anything, mock.Anything, mock.Anything, name).Return(containertypes.CreateResponse{}, errImageGone).Once()
+		}, wantErr: "creating the plugin container: no such image"},
 		{name: "token", discard: true, setup: func() {
 			created()
 			s.tokens.On("IssuePlugin", "c1", "ch1", "/work", "cogtest").Return("", boom).Once()

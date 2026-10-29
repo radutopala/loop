@@ -689,6 +689,10 @@ func (a *app) serve() error {
 		logger.Warn("review prompt resolve failed, using built-in default", "error", reviewErr)
 		reviewPrompt = ""
 	}
+	// One trust store and project loader for the API and workflows, so the
+	// files they parse are parsed again only when they change.
+	trust := config.NewTrustStoreIn(a.userConfigDir)
+	projects := config.NewProjectLoader(trust)
 	serverOpts := []api.Option{
 		api.WithGitHubLookup(ghClient),
 		api.WithGitLabLookup(glClient),
@@ -705,7 +709,8 @@ func (a *app) serve() error {
 		api.WithReviewVerifyTimeout(15 * time.Minute),
 		api.WithAuth(auth.deps),
 		api.WithWorkflowBashLocal(cfg.WorkflowBashLocal),
-		api.WithProjectTrust(config.NewTrustStoreIn(a.userConfigDir)),
+		api.WithProjectTrust(trust),
+		api.WithConfigLoaders(reloadConfig, projects.LoadProject, projects.LoadWorktreeProject),
 		api.WithConfigHistory(store),
 		api.WithReviewHistory(store),
 		api.WithContainerKeepAlive(cfg.ContainerKeepAlive),
@@ -875,7 +880,7 @@ func (a *app) serve() error {
 	childImages := container.NewChildImageManager(dockerClient, cfg.ContainerImage,
 		listChildProjects, lifecycleMgr.BeginBuild, logger)
 	childImages.SetBuildTrust(config.NewTrustStoreIn(a.userConfigDir))
-	lifecycleMgr.SetReclaimScope(reclaimScope(store, cfg, listChildProjects))
+	lifecycleMgr.SetReclaimScope(reclaimScope(store, cfg, listChildProjects, pluginImagesLister(store)))
 	lifecycleMgr.SetChildRebuilder(childImages.RebuildStale)
 	runner.SetImageGate(lifecycleMgr, a.version, cfg.ContainerImage)
 	runner.SetMissingImageBuilder(childImages)
@@ -913,7 +918,7 @@ func (a *app) serve() error {
 	if plug != nil {
 		wfOpts = append(wfOpts, workflow.WithPlugins(workflowPlugins{svc: plug.service}))
 	}
-	wfEngine := workflow.NewEngine(store, runner, bashRunner, eventsHub, workflowsFromConfig(cfg, reloadConfig, config.NewProjectLoader(config.NewTrustStoreIn(a.userConfigDir))), cfg.LoopDir, cfg.WorkflowConcurrency, logger, wfOpts...)
+	wfEngine := workflow.NewEngine(store, runner, bashRunner, eventsHub, workflowsFromConfig(cfg, reloadConfig, projects), cfg.LoopDir, cfg.WorkflowConcurrency, logger, wfOpts...)
 	if err := wfEngine.RecoverRuns(ctx); err != nil {
 		logger.Error("failed to recover workflow runs", "error", err)
 	}
@@ -1291,11 +1296,36 @@ func childProjectsLister(store channelLister, cfg *config.Config, loadProject fu
 	}
 }
 
+// pluginStateLister lists the installed plugins.
+type pluginStateLister interface {
+	ListPluginStates(ctx context.Context) ([]*db.PluginState, error)
+}
+
+// pluginImagesLister lists the images the installed plugins are pinned to,
+// or is nil when store doesn't keep plugins.
+func pluginImagesLister(store any) func(context.Context) ([]string, error) {
+	ps, ok := store.(pluginStateLister)
+	if !ok {
+		return nil
+	}
+	return func(ctx context.Context) ([]string, error) {
+		states, err := ps.ListPluginStates(ctx)
+		if err != nil {
+			return nil, err
+		}
+		images := make([]string, 0, len(states))
+		for _, st := range states {
+			images = append(images, st.Image)
+		}
+		return images, nil
+	}
+}
+
 // reclaimScope tells reclaiming Docker space what's Loop's: its agent,
-// Chrome, embeddings and project images stay even when no container uses
-// them, and the Chrome profile volumes of channels that are gone are
-// orphans.
-func reclaimScope(store channelLister, cfg *config.Config, listChildProjects func(context.Context) ([]container.ChildProject, error)) func(context.Context) (container.ReclaimScope, error) {
+// Chrome, embeddings, project and installed plugin images stay even when no
+// container uses them, and the Chrome profile volumes of channels that are
+// gone are orphans. listPluginImages may be nil.
+func reclaimScope(store channelLister, cfg *config.Config, listChildProjects func(context.Context) ([]container.ChildProject, error), listPluginImages func(context.Context) ([]string, error)) func(context.Context) (container.ReclaimScope, error) {
 	return func(ctx context.Context) (container.ReclaimScope, error) {
 		chs, err := store.ListChannels(ctx)
 		if err != nil {
@@ -1308,6 +1338,13 @@ func reclaimScope(store channelLister, cfg *config.Config, listChildProjects fun
 		keep := []string{cfg.ContainerImage, cfg.Browser.ChromeImage, embeddings.OllamaImage}
 		for _, p := range projects {
 			keep = append(keep, p.Image)
+		}
+		if listPluginImages != nil {
+			images, err := listPluginImages(ctx)
+			if err != nil {
+				return container.ReclaimScope{}, err
+			}
+			keep = append(keep, images...)
 		}
 		profiles := make(map[string]bool, len(chs))
 		for _, ch := range chs {

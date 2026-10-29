@@ -6,7 +6,6 @@ package install
 import (
 	"archive/tar"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -106,7 +105,7 @@ func NewInstaller(docker DockerClient, store Store, root, loopVersion string) *I
 // its /loop-plugin dir and validates it, without installing anything.
 func (in *Installer) Inspect(ctx context.Context, ref string, dev bool) (*Candidate, error) {
 	if !dev {
-		if err := in.pull(ctx, ref); err != nil {
+		if err := plugin.PullImage(ctx, in.docker, ref); err != nil {
 			return nil, err
 		}
 	}
@@ -155,29 +154,6 @@ func (in *Installer) Inspect(ctx context.Context, ref string, dev bool) (*Candid
 		return nil, fmt.Errorf("reading the installed plugin: %w", err)
 	}
 	return c, nil
-}
-
-// pull pulls ref, failing on an error the pull reports in its stream.
-func (in *Installer) pull(ctx context.Context, ref string) error {
-	body, err := in.docker.ImagePull(ctx, ref, image.PullOptions{})
-	if err != nil {
-		return fmt.Errorf("pulling %s: %w", ref, err)
-	}
-	defer body.Close()
-	dec := json.NewDecoder(body)
-	for {
-		var msg struct {
-			Error string `json:"error"`
-		}
-		if err := dec.Decode(&msg); err == io.EOF {
-			return nil
-		} else if err != nil {
-			return fmt.Errorf("pulling %s: %w", ref, err)
-		}
-		if msg.Error != "" {
-			return fmt.Errorf("pulling %s: %s", ref, msg.Error)
-		}
-	}
 }
 
 // pinned returns ref's repo pinned to the digest it was pulled at.

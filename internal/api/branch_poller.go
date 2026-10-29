@@ -32,6 +32,16 @@ type gitState struct {
 	SyncBase   string
 	BaseAhead  int
 	BaseBehind int
+
+	// diffStamp is what the diff counts were taken from (see diffStamp),
+	// for the next poll; it isn't part of the state.
+	diffStamp string
+}
+
+// shown is st without what's only kept for the next poll.
+func (st gitState) shown() gitState {
+	st.diffStamp = ""
+	return st
 }
 
 // BranchPoller polls each channel's workdir for branch/commit/diff changes
@@ -146,10 +156,10 @@ func (p *BranchPoller) tick(ctx context.Context, prime bool) {
 
 		p.mu.Lock()
 		prev, known := p.state[ch.ChannelID]
-		p.state[ch.ChannelID] = next
+		p.state[ch.ChannelID] = next.shown()
 		p.mu.Unlock()
 
-		if prime || (known && prev == next) {
+		if prime || (known && prev == next.shown()) {
 			continue
 		}
 		// A channel first seen after the prime tick is broadcast too: the

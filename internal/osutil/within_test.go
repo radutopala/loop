@@ -1,6 +1,7 @@
 package osutil
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -72,6 +73,22 @@ func (s *WithinSuite) TestReadFileIn() {
 	}
 	_, err := ReadFileIn(filepath.Join(s.root, "missing"), filepath.Join(s.root, "missing", "x"))
 	s.Require().ErrorIs(err, os.ErrNotExist)
+}
+
+func (s *WithinSuite) TestOpenFileIn() {
+	f, err := OpenFileIn(s.root, s.in("inside.md"))
+	s.Require().NoError(err)
+	got, err := io.ReadAll(f)
+	s.Require().NoError(f.Close())
+	s.Require().NoError(err)
+	s.Require().NotEmpty(got)
+	for name, path := range s.escapes() {
+		s.Run(name, func() {
+			f, err := OpenFileIn(s.root, path)
+			s.Require().Error(err)
+			s.Require().Nil(f)
+		})
+	}
 }
 
 func (s *WithinSuite) TestWriteFileIn() {

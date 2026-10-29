@@ -224,6 +224,9 @@ type Loader struct {
 	// trust gates the project config fields that need the owner's trust;
 	// nil applies them as written.
 	trust *TrustStore
+	// projects keeps the project config files this loader decoded; nil
+	// keeps none, reading each through readIn.
+	projects *projectCache
 }
 
 func newLoader() *Loader {

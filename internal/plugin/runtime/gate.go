@@ -84,6 +84,11 @@ func (m *Manager) applyGate(ctx context.Context, p Plugin, ch Channel, cfg *cont
 		return fmt.Errorf("finding the plugin gate: %w", err)
 	}
 	info, err := m.api.ImageInspect(ctx, p.Image)
+	if pulled, perr := m.pullMissing(ctx, p, err); perr != nil {
+		return perr
+	} else if pulled {
+		info, err = m.api.ImageInspect(ctx, p.Image)
+	}
 	if err != nil {
 		return fmt.Errorf("inspecting the plugin image: %w", err)
 	}

@@ -54,7 +54,6 @@ type dockerAPI interface {
 	VolumeList(ctx context.Context, options volume.ListOptions) (volume.ListResponse, error)
 	VolumeRemove(ctx context.Context, volumeID string, force bool) error
 	BuildCachePrune(ctx context.Context, opts build.CachePruneOptions) (*build.CachePruneReport, error)
-	ImagesPrune(ctx context.Context, pruneFilters filters.Args) (image.PruneReport, error)
 	VolumesPrune(ctx context.Context, pruneFilters filters.Args) (volume.PruneReport, error)
 	DiskUsage(ctx context.Context, options types.DiskUsageOptions) (types.DiskUsage, error)
 	Events(ctx context.Context, options events.ListOptions) (<-chan events.Message, <-chan error)
@@ -650,20 +649,6 @@ func (c *Client) PruneBuildCache(ctx context.Context, unusedFor time.Duration, a
 	}
 	if report == nil {
 		return 0, nil
-	}
-	return report.SpaceReclaimed, nil
-}
-
-// PruneDanglingImages removes dangling (untagged) images and returns the
-// number of bytes reclaimed. Scoped to dangling images so tagged images still
-// referenced by Loop (loop-agent, project images) are preserved — the common
-// case is layers orphaned by repeated image rebuilds.
-func (c *Client) PruneDanglingImages(ctx context.Context) (uint64, error) {
-	f := filters.NewArgs()
-	f.Add("dangling", "true")
-	report, err := c.api.ImagesPrune(ctx, f)
-	if err != nil {
-		return 0, fmt.Errorf("pruning dangling images: %w", err)
 	}
 	return report.SpaceReclaimed, nil
 }

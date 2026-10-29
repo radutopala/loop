@@ -5,13 +5,16 @@ import (
 	"errors"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/embeddings"
+	"github.com/radutopala/loop/internal/osutil"
 	"github.com/radutopala/loop/internal/testutil"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -133,6 +136,83 @@ func (s *IndexerSuite) TestIndexSkipsUpToDate() {
 	n, err := s.indexer.Index(ctx, "/memory", "", nil)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 0, n)
+}
+
+func (s *IndexerSuite) TestIndexRereadsOnlyChanged() {
+	tests := []struct {
+		name string
+		// second changes the file's stat before the second pass.
+		second func(st *fakeFileInfo)
+		// failFirst fails the first pass's embed.
+		failFirst bool
+		statErr   error
+		reads     int
+	}{
+		{name: "unchanged", reads: 1},
+		{name: "written", second: func(st *fakeFileInfo) { st.size++ }, reads: 2},
+		{name: "first pass failed", failFirst: true, reads: 2},
+		{name: "unstatable", statErr: errors.New("stat failed"), reads: 2},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			ctx := context.Background()
+			file := &fakeFileInfo{name: "a.md", size: 7}
+			stat := s.sys.Override("Stat", mock.Anything)
+			stat.Run(func(args mock.Arguments) {
+				switch {
+				case args.String(0) == "/memory":
+					stat.ReturnArguments = mock.Arguments{&fakeFileInfo{name: "memory", isDir: true}, nil}
+				case tt.statErr != nil:
+					stat.ReturnArguments = mock.Arguments{nil, tt.statErr}
+				default:
+					stat.ReturnArguments = mock.Arguments{file, nil}
+				}
+			})
+			s.mockWalkDir([]string{"/memory/a.md"})
+			reads := 0
+			read := s.sys.Override("ReadFile", "/memory/a.md").Return([]byte("content"), nil)
+			read.Run(func(mock.Arguments) { reads++ })
+			s.store.On("GetMemoryFileHash", ctx, "/memory/a.md", "").Return("", nil)
+			if tt.failFirst {
+				s.embedder.On("Embed", ctx, mock.Anything).Return([][]float32(nil), errors.New("embed failed")).Once()
+			}
+			s.expectEmbed(ctx)
+
+			_, err := s.indexer.Index(ctx, "/memory", "", nil)
+			require.NoError(s.T(), err)
+			if tt.second != nil {
+				tt.second(file)
+			}
+			_, err = s.indexer.Index(ctx, "/memory", "", nil)
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tt.reads, reads)
+		})
+	}
+}
+
+func (s *IndexerSuite) TestIndexForgetsRemovedFiles() {
+	ctx := context.Background()
+	s.stubFS([]string{"/memory/a.md", "/memory/b.md"}, "content")
+	s.store.On("GetMemoryFileHash", ctx, mock.Anything, "/proj").Return("", nil)
+	s.expectEmbed(ctx)
+	other := map[stampKey]osutil.FileStamp{
+		{"/memory/b.md", "/other"}:   {},
+		{"/elsewhere/b.md", "/proj"}: {},
+	}
+	maps.Copy(s.indexer.stamps, other)
+
+	_, err := s.indexer.Index(ctx, "/memory", "/proj", nil)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), s.indexer.stamps, 4)
+
+	s.mockWalkDir([]string{"/memory/a.md"})
+	_, err = s.indexer.Index(ctx, "/memory", "/proj", nil)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []stampKey{{"/elsewhere/b.md", "/proj"}, {"/memory/a.md", "/proj"}, {"/memory/b.md", "/other"}},
+		slices.SortedFunc(maps.Keys(s.indexer.stamps), func(a, b stampKey) int {
+			return strings.Compare(a.filePath+a.dirPath, b.filePath+b.dirPath)
+		}))
 }
 
 func (s *IndexerSuite) TestIndexNonExistentDir() {
@@ -727,10 +807,11 @@ func (f *fakeDirEntry) Info() (fs.FileInfo, error) { return nil, nil }
 type fakeFileInfo struct {
 	name  string
 	isDir bool
+	size  int64
 }
 
 func (f *fakeFileInfo) Name() string       { return f.name }
-func (f *fakeFileInfo) Size() int64        { return 0 }
+func (f *fakeFileInfo) Size() int64        { return f.size }
 func (f *fakeFileInfo) Mode() fs.FileMode  { return 0 }
 func (f *fakeFileInfo) ModTime() time.Time { return time.Time{} }
 func (f *fakeFileInfo) IsDir() bool        { return f.isDir }

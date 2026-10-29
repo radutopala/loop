@@ -20,7 +20,7 @@ func (s *ClientSuite) TestDiskUsage() {
 	s.api.On("DiskUsage", ctx, types.DiskUsageOptions{Types: []types.DiskUsageObject{types.ImageObject, types.BuildCacheObject, types.VolumeObject}}).Return(types.DiskUsage{
 		Images: []*image.Summary{
 			nil,
-			{ID: "img", RepoTags: []string{"a:1"}, Labels: map[string]string{"k": "v"}, Containers: 2, Size: 300, SharedSize: 100},
+			{ID: "img", RepoTags: []string{"a:1"}, RepoDigests: []string{"a@sha256:aa"}, Labels: map[string]string{"k": "v"}, Containers: 2, Size: 300, SharedSize: 100},
 		},
 		Volumes: []*volume.Volume{
 			nil,
@@ -33,7 +33,7 @@ func (s *ClientSuite) TestDiskUsage() {
 	du, err := s.client.DiskUsage(ctx, true)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), &DiskUsage{
-		Images: []DiskImage{{ID: "img", Tags: []string{"a:1"}, Labels: map[string]string{"k": "v"}, Containers: 2, Size: 300, SharedSize: 100}},
+		Images: []DiskImage{{ID: "img", Tags: []string{"a:1"}, Digests: []string{"a@sha256:aa"}, Labels: map[string]string{"k": "v"}, Containers: 2, Size: 300, SharedSize: 100}},
 		Volumes: []DiskVolume{
 			{Name: "sized", Labels: map[string]string{anonymousVolumeLabel: ""}, RefCount: 1, Size: 50},
 			{Name: "unsized", RefCount: -1, Size: -1},

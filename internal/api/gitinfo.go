@@ -8,6 +8,8 @@ package api
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/radutopala/loop/internal/gitutil"
@@ -24,17 +26,20 @@ import (
 // A non-repo dir returns the zero value, matching the previous behavior of
 // the individual helpers.
 //
+// The diffs and untracked reads are skipped, prev's counts kept, while
+// nothing they read has changed (see diffStamp).
+//
 // On top of that it names the commit's subject — reusing prev's when the
 // commit hasn't moved, so a steady repo costs no extra subprocess — and, when
 // base is set (a worktree thread's base branch), counts the commits HEAD is
 // ahead of and behind it.
 func collectGitState(ctx context.Context, dir, base string, prev gitState) gitState {
-	if dir == "" {
+	if dir == "" || !gitutil.MayBeRepo(dir) {
 		return gitState{}
 	}
 	// One config read for every git command this poll runs.
 	repo := gitutil.Open(ctx, dir)
-	st := statusState(ctx, repo)
+	st := statusState(ctx, repo, prev)
 	if st.Commit == "" {
 		return st
 	}
@@ -52,7 +57,7 @@ func collectGitState(ctx context.Context, dir, base string, prev gitState) gitSt
 }
 
 // statusState is collectGitState's branch, commit, upstream and diff part.
-func statusState(ctx context.Context, repo *gitutil.Repo) gitState {
+func statusState(ctx context.Context, repo *gitutil.Repo, prev gitState) gitState {
 
 	// --untracked-files=all lists files inside untracked directories
 	// individually (parity with `ls-files --others`); -z avoids path quoting.
@@ -73,6 +78,11 @@ func statusState(ctx context.Context, repo *gitutil.Repo) gitState {
 		return refState(ctx, repo)
 	}
 	st, untracked := parseStatusV2(string(out))
+	st.diffStamp = diffStamp(repo.Dir(), string(out))
+	if st.diffStamp != "" && st.diffStamp == prev.diffStamp {
+		st.DiffAdditions, st.DiffDeletions = prev.DiffAdditions, prev.DiffDeletions
+		return st
+	}
 
 	// Tracked line counts: staged (index vs HEAD) then unstaged (worktree vs index).
 	for _, args := range [][]string{
@@ -80,11 +90,15 @@ func statusState(ctx context.Context, repo *gitutil.Repo) gitState {
 		{"diff", "--no-ext-diff", "--no-textconv", "--shortstat"},
 	} {
 		cmd := repo.Command(ctx, args...)
-		if out, err := cmd.Output(); err == nil {
-			add, del := parseShortstat(string(out))
-			st.DiffAdditions += add
-			st.DiffDeletions += del
+		out, err := cmd.Output()
+		if err != nil {
+			// Counts that are short a diff aren't kept.
+			st.diffStamp = ""
+			continue
 		}
+		add, del := parseShortstat(string(out))
+		st.DiffAdditions += add
+		st.DiffDeletions += del
 	}
 
 	// Untracked files count like the panel does (binary-aware).
@@ -178,4 +192,101 @@ func parseShortstat(out string) (add, del int) {
 		}
 	}
 	return add, del
+}
+
+// diffStamp sums up what the diff counts of the repo in dir read, given its
+// `git status --porcelain=v2 -z` output: that output (HEAD, and which paths
+// differ from it), the index, and each path the output names. Paths it
+// doesn't name match the index, so they add nothing. "" when the index
+// can't be found, so the counts are always taken again.
+func diffStamp(dir, status string) string {
+	index := indexPath(dir, os.ReadFile)
+	if index == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(status)
+	writeStat(&b, os.Stat, index)
+	for _, p := range statusPaths(status) {
+		path := filepath.Join(dir, p)
+		// The link itself for git, what it leads to for an untracked read.
+		writeStat(&b, os.Lstat, path)
+		writeStat(&b, os.Stat, path)
+	}
+	return b.String()
+}
+
+// writeStat adds what stat says of path's content to b.
+func writeStat(b *strings.Builder, stat func(string) (os.FileInfo, error), path string) {
+	fi, err := stat(path)
+	if err != nil {
+		b.WriteString("\x00-")
+		return
+	}
+	fmt.Fprintf(b, "\x00%d %d %s", fi.Size(), fi.ModTime().UnixNano(), fi.Mode())
+}
+
+// statusPaths returns the paths `git status --porcelain=v2 -z` output names
+// as changed, unmerged or untracked.
+func statusPaths(status string) []string {
+	var paths []string
+	origin := false
+	for line := range strings.SplitSeq(status, "\x00") {
+		if origin {
+			// A rename's original path, the record after it: not a line.
+			origin = false
+			continue
+		}
+		// Each kind of line has a fixed number of fields, the path last.
+		var n int
+		switch {
+		case strings.HasPrefix(line, "1 "):
+			n = 9
+		case strings.HasPrefix(line, "2 "):
+			n, origin = 10, true
+		case strings.HasPrefix(line, "u "):
+			n = 11
+		case strings.HasPrefix(line, "? "):
+			n = 2
+		default:
+			continue
+		}
+		if f := strings.SplitN(line, " ", n); len(f) == n {
+			paths = append(paths, f[n-1])
+		}
+	}
+	return paths
+}
+
+// maxGitFile bounds the .git file of a linked worktree indexPath reads.
+const maxGitFile = 4096
+
+// indexPath returns the index file of the repo whose top level is dir: in
+// .git, or in the dir a linked worktree's .git file names. "" for anything
+// else, a dir inside a repo included. readFile reads the .git file.
+func indexPath(dir string, readFile func(string) ([]byte, error)) string {
+	dotGit := filepath.Join(dir, ".git")
+	fi, err := os.Lstat(dotGit)
+	switch {
+	case err != nil:
+		return ""
+	case fi.IsDir():
+		return filepath.Join(dotGit, "index")
+	case !fi.Mode().IsRegular() || fi.Size() > maxGitFile:
+		// Only a plain, small file is read: the agent can write the
+		// checkout, and reading a FIFO would block.
+		return ""
+	}
+	data, err := readFile(dotGit)
+	if err != nil {
+		return ""
+	}
+	gitDir, ok := strings.CutPrefix(strings.TrimSpace(string(data)), "gitdir: ")
+	if !ok {
+		return ""
+	}
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(dir, gitDir)
+	}
+	return filepath.Join(gitDir, "index")
 }

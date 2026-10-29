@@ -1,4 +1,4 @@
-package buildctx
+package osutil
 
 import (
 	"io/fs"
