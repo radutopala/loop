@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/radutopala/loop/internal/browsercookies"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/container"
+	"github.com/radutopala/loop/internal/osutil"
 )
 
 // errBrowserDisabled is returned instead of starting a browser for a channel
@@ -777,8 +779,13 @@ func (s *browserService) listDownloads(channelID string) browserActionResponse {
 	if s.loopDir == "" {
 		return browserActionResponse{Error: "downloads are off for this browser"}
 	}
+	// A channel id with nothing to keep has no dir of its own: it would name
+	// the dir that holds every channel's.
+	if container.SanitizeName(channelID) == "" {
+		return browserActionResponse{Error: fmt.Sprintf("channel %q has no downloads dir", channelID)}
+	}
 	dir := container.DownloadsDir(s.loopDir, channelID)
-	entries, err := os.ReadDir(dir)
+	entries, err := readDownloads(filepath.Join(s.loopDir, "downloads"), dir)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return browserActionResponse{Error: fmt.Sprintf("reading downloads: %v", err)}
 	}
@@ -800,6 +807,16 @@ func (s *browserService) listDownloads(channelID string) browserActionResponse {
 		return browserActionResponse{Result: "No downloads yet. The browser saves them to " + dir}
 	}
 	return browserActionResponse{Result: "Downloads in " + dir + ":\n" + b.String()}
+}
+
+// readDownloads lists dir, which may not lead out of parent.
+func readDownloads(parent, dir string) ([]fs.DirEntry, error) {
+	r, err := osutil.OpenRootIn(parent, dir)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	return fs.ReadDir(r.FS(), ".")
 }
 
 // readConsoleMessages reads captured console messages with optional filtering.

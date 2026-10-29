@@ -93,3 +93,36 @@ func (s *BrowserHandlerSuite) TestListDownloadsReadError() {
 	resp := s.srv.browser.listDownloads("ch-1")
 	require.Contains(s.T(), resp.Error, "reading downloads:")
 }
+
+func (s *BrowserHandlerSuite) TestListDownloadsRefused() {
+	tests := []struct {
+		name      string
+		channelID string
+		setup     func(loopDir string)
+		err       string
+	}{
+		{name: "no name left", channelID: "!!!", err: `channel "!!!" has no downloads dir`},
+		{
+			// The dir is a link out of the downloads dir.
+			name:      "link out",
+			channelID: "ch-1",
+			setup: func(loopDir string) {
+				require.NoError(s.T(), os.MkdirAll(filepath.Join(loopDir, "downloads"), 0o755))
+				require.NoError(s.T(), os.Symlink(s.T().TempDir(), container.DownloadsDir(loopDir, "ch-1")))
+			},
+			err: "reading downloads:",
+		},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			loopDir := s.T().TempDir()
+			if tt.setup != nil {
+				tt.setup(loopDir)
+			}
+			s.srv.browser.setLoopDir(loopDir)
+			resp := s.srv.browser.listDownloads(tt.channelID)
+			require.Empty(s.T(), resp.Result)
+			require.Contains(s.T(), resp.Error, tt.err)
+		})
+	}
+}
