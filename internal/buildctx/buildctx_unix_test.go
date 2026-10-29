@@ -12,6 +12,6 @@ import (
 func (s *BuildCtxSuite) TestFIFORefused() {
 	s.write("Dockerfile", "FROM x\n", 0o644)
 	require.NoError(s.T(), syscall.Mkfifo(filepath.Join(s.dir, "pipe"), 0o644))
-	_, err := Digest(s.root())
+	_, err := new(Cache).Digest(s.root())
 	require.ErrorIs(s.T(), err, errNotRegular)
 }

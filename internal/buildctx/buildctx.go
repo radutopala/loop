@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 // Files is a build context's fingerprint: each file's slash path in the
@@ -29,10 +30,79 @@ func FileDigest(data []byte, mode fs.FileMode) string {
 	return d
 }
 
-// Digest fingerprints the context in r.
-func Digest(r *os.Root) (Files, error) {
+// digest fingerprints t, each file by file.
+func digest(t tree, file func(name string, f fs.File, fi fs.FileInfo) (string, error)) (Files, error) {
 	nop := func(string) error { return nil }
-	return walk(rootTree{r}, func(string, []byte, fs.FileMode) error { return nil }, func(string, string) error { return nil }, nop)
+	return walk(t, file, func(string, string) error { return nil }, nop)
+}
+
+// readDigest reads f to fingerprint it.
+func readDigest(_ string, f fs.File, fi fs.FileInfo) (string, error) {
+	data, err := io.ReadAll(f)
+	return FileDigest(data, fi.Mode()), err
+}
+
+// Cache fingerprints contexts, reading again only the files whose stat
+// changed since it last read them: a context of large binaries costs a few
+// stats while it stays as it is.
+type Cache struct {
+	mu sync.Mutex
+	// dirs holds, for each context by its dir, what each file there was
+	// when last read.
+	dirs map[string]map[string]cachedFile
+}
+
+type cachedFile struct {
+	stat   statKey
+	digest string
+}
+
+// statKey is what a file's stat says of its content: any write changes
+// it. The change time and inode can't be set back the way a write's
+// modification time can; where the OS has neither, they're zero.
+type statKey struct {
+	size         int64
+	mode         fs.FileMode
+	mtime, ctime int64
+	ino          uint64
+}
+
+func statKeyOf(fi fs.FileInfo) statKey {
+	ino, ctime := inodeAndCtime(fi)
+	return statKey{size: fi.Size(), mode: fi.Mode(), mtime: fi.ModTime().UnixNano(), ctime: ctime, ino: ino}
+}
+
+// Digest fingerprints the context in r.
+func (c *Cache) Digest(r *os.Root) (Files, error) {
+	return c.digest(r.Name(), rootTree{r})
+}
+
+func (c *Cache) digest(dir string, t tree) (Files, error) {
+	c.mu.Lock()
+	last := c.dirs[dir]
+	c.mu.Unlock()
+	seen := map[string]cachedFile{}
+	files, err := digest(t, func(name string, f fs.File, fi fs.FileInfo) (string, error) {
+		k := statKeyOf(fi)
+		if was, ok := last[name]; ok && was.stat == k {
+			seen[name] = was
+			return was.digest, nil
+		}
+		d, err := readDigest(name, f, fi)
+		seen[name] = cachedFile{stat: k, digest: d}
+		return d, err
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Only what the context has now is kept, so a removed file's goes.
+	c.mu.Lock()
+	if c.dirs == nil {
+		c.dirs = map[string]map[string]cachedFile{}
+	}
+	c.dirs[dir] = seen
+	c.mu.Unlock()
+	return files, nil
 }
 
 // Snapshot copies the context in r to dst, an empty dir, and fingerprints
@@ -40,12 +110,20 @@ func Digest(r *os.Root) (Files, error) {
 // context changes meanwhile.
 func Snapshot(r *os.Root, dst string) (Files, error) {
 	at := func(name string) string { return filepath.Join(dst, filepath.FromSlash(name)) }
-	return walk(rootTree{r},
-		func(name string, data []byte, mode fs.FileMode) error {
-			return os.WriteFile(at(name), data, mode&0o777)
-		},
+	return walk(rootTree{r}, copyTo(dst),
 		func(name, target string) error { return os.Symlink(target, at(name)) },
 		func(name string) error { return os.Mkdir(at(name), 0o700) })
+}
+
+// copyTo fingerprints each file it's handed as it copies it into dst.
+func copyTo(dst string) func(name string, f fs.File, fi fs.FileInfo) (string, error) {
+	return func(name string, f fs.File, fi fs.FileInfo) (string, error) {
+		data, err := io.ReadAll(f)
+		if err != nil {
+			return "", err
+		}
+		return FileDigest(data, fi.Mode()), os.WriteFile(filepath.Join(dst, filepath.FromSlash(name)), data, fi.Mode()&0o777)
+	}
 }
 
 // tree is the context walk reads: an os.Root, or a fake in tests.
@@ -68,10 +146,11 @@ func (t rootTree) OpenFile(name string) (fs.File, error) {
 	return t.r.OpenFile(name, os.O_RDONLY|nonblock, 0)
 }
 
-// walk fingerprints every file and symlink in t, handing each to file or
-// link, and each dir below the top to dir, parents first. Anything else (a
-// FIFO, a device) is refused.
-func walk(t tree, file func(name string, data []byte, mode fs.FileMode) error, link func(name, target string) error, dir func(name string) error) (Files, error) {
+// walk fingerprints every file and symlink in t: each file by what file
+// returns for it, opened, each symlink handed to link, and each dir below
+// the top to dir, parents first. Anything else (a FIFO, a device) is
+// refused.
+func walk(t tree, file func(name string, f fs.File, fi fs.FileInfo) (string, error), link func(name, target string) error, dir func(name string) error) (Files, error) {
 	files := Files{}
 	err := fs.WalkDir(t, ".", func(name string, d fs.DirEntry, err error) error {
 		switch {
@@ -89,12 +168,13 @@ func walk(t tree, file func(name string, data []byte, mode fs.FileMode) error, l
 			files[name] = "symlink:" + target
 			return link(name, target)
 		}
-		data, mode, err := readFile(t, name)
+		f, fi, err := openFile(t, name)
 		if err != nil {
 			return err
 		}
-		files[name] = FileDigest(data, mode)
-		return file(name, data, mode)
+		defer f.Close()
+		files[name], err = file(name, f, fi)
+		return err
 	})
 	if err != nil {
 		return nil, err
@@ -106,22 +186,21 @@ func walk(t tree, file func(name string, data []byte, mode fs.FileMode) error, l
 // a symlink.
 var errNotRegular = errors.New("not a regular file")
 
-// readFile reads name in t, with the mode of what it opened, which must
-// be a regular file: it checks the file it opened, not the entry it was
-// listed as, so one swapped in after the listing is refused too.
-func readFile(t tree, name string) ([]byte, fs.FileMode, error) {
+// openFile opens name in t, which must be a regular file: it checks the
+// file it opened, not the entry it was listed as, so one swapped in after
+// the listing is refused too.
+func openFile(t tree, name string) (fs.File, fs.FileInfo, error) {
 	f, err := t.OpenFile(name)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, err
 	}
-	defer f.Close()
 	fi, err := f.Stat()
+	if err == nil && !fi.Mode().IsRegular() {
+		err = &fs.PathError{Op: "read", Path: name, Err: errNotRegular}
+	}
 	if err != nil {
-		return nil, 0, err
+		f.Close()
+		return nil, nil, err
 	}
-	if !fi.Mode().IsRegular() {
-		return nil, 0, &fs.PathError{Op: "read", Path: name, Err: errNotRegular}
-	}
-	data, err := io.ReadAll(f)
-	return data, fi.Mode(), err
+	return f, fi, nil
 }

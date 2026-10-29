@@ -291,11 +291,14 @@ func NewTrustStore() *TrustStore {
 // NewTrustStoreIn returns a TrustStore that keeps its file under the dir
 // userConfigDir returns.
 func NewTrustStoreIn(userConfigDir func() (string, error)) *TrustStore {
+	// Each status check fingerprints the build context; the cache saves
+	// reading its files again while they stay as they are.
+	builds := &buildctx.Cache{}
 	return &TrustStore{
 		userConfigDir: userConfigDir,
 		readFile:      os.ReadFile,
 		readIn:        osutil.ReadFileIn,
-		buildFiles:    projectBuildFiles,
+		buildFiles:    func(dir string) (buildctx.Files, error) { return projectBuildFiles(builds, dir) },
 		writeFile:     os.WriteFile,
 		mkdirAll:      os.MkdirAll,
 		rename:        os.Rename,
@@ -425,9 +428,10 @@ func (s *TrustStore) withBuild(dir string, f *trustedFields) error {
 // buildContextRel is the project image's build context, in the project dir.
 var buildContextRel = filepath.Join(".loop", "container")
 
-// projectBuildFiles fingerprints the build context of the project in dir,
-// without following a link out of it. A project without one has none.
-func projectBuildFiles(dir string) (buildctx.Files, error) {
+// projectBuildFiles fingerprints the build context of the project in dir
+// through c, without following a link out of it. A project without one has
+// none.
+func projectBuildFiles(c *buildctx.Cache, dir string) (buildctx.Files, error) {
 	r, err := osutil.OpenRootIn(dir, filepath.Join(dir, buildContextRel))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
@@ -436,7 +440,7 @@ func projectBuildFiles(dir string) (buildctx.Files, error) {
 		return nil, err
 	}
 	defer r.Close()
-	files, err := buildctx.Digest(r)
+	files, err := c.Digest(r)
 	if len(files) == 0 {
 		return nil, err
 	}

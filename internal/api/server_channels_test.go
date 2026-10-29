@@ -1202,6 +1202,36 @@ func (s *ServerSuite) TestSearchChannelsReviewEnabledWorktreeUsesParentDir() {
 	}
 }
 
+// TestSearchChannelsLoadsReviewConfigOncePerDir: channels sharing a dir
+// share one config load, however many of them the list has.
+func (s *ServerSuite) TestSearchChannelsLoadsReviewConfigOncePerDir() {
+	channels := []*db.Channel{
+		{ChannelID: "a", Name: "a", DirPath: "/proj", Platform: types.PlatformLocal},
+		{ChannelID: "b", Name: "b", DirPath: "/proj", Platform: types.PlatformLocal},
+		{ChannelID: "c", Name: "c", DirPath: "/other", Platform: types.PlatformLocal},
+	}
+	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+	s.store.On("ChannelActivity", mock.Anything).Return(map[string]time.Time{}, nil)
+	s.srv.configs.load = func() (*config.Config, error) { return &config.Config{}, nil }
+	loads := map[string]int{}
+	s.srv.configs.loadProject = func(dir string, c *config.Config) (*config.Config, error) {
+		loads[dir]++
+		out := *c
+		out.Review.Enabled = dir == "/proj"
+		return &out, nil
+	}
+
+	rec := s.testRequest("GET", "/api/channels", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	var resp []channelResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp, 3)
+	require.Equal(s.T(), map[string]int{"/proj": 1, "/other": 1}, loads)
+	for _, r := range resp {
+		require.Equal(s.T(), r.DirPath == "/proj", r.ReviewEnabled, r.ChannelID)
+	}
+}
+
 // TestSearchChannelsRootDirPath covers every shape of worktree chain: only
 // channels inside one carry the checkout it was cut from, resolved from the
 // listed channels alone.
