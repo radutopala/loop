@@ -751,6 +751,11 @@ func (r *DockerRunner) createAndStartContainer(
 	playgroundDir := filepath.Join(baseCfg.LoopDir, "playground")
 	binds = append(binds, playgroundDir+":"+playgroundDir)
 
+	// Bind-mount the channel's browser downloads, read-only: Chrome writes
+	// them, the agent only reads.
+	downloadsDir := DownloadsDir(baseCfg.LoopDir, channelID)
+	binds = append(binds, downloadsDir+":"+downloadsDir+":ro")
+
 	containerName = r.containerName(channelID, dirPath)
 
 	// Per-container bearer token authenticates HTTP callbacks from the
@@ -887,7 +892,7 @@ func (r *DockerRunner) createAndStartContainer(
 	// Docker creates a missing bind source on its own, but the docker proxy
 	// of a Loop agent container rejects one, so a daemon run from inside an
 	// agent could never start its agents.
-	for _, d := range []string{screenshotDir, playgroundDir} {
+	for _, d := range []string{screenshotDir, playgroundDir, downloadsDir} {
 		if err := r.sys.MkdirAll(d, 0o755); err != nil {
 			return "", "", "", false, fmt.Errorf("creating %s: %w", d, err)
 		}

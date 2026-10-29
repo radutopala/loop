@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/chromedp/cdproto/accessibility"
+	cdpbrowser "github.com/chromedp/cdproto/browser"
 	"github.com/chromedp/cdproto/cdp"
 	cdpdom "github.com/chromedp/cdproto/dom"
 	"github.com/chromedp/cdproto/network"
@@ -903,6 +904,25 @@ func (s *CDPSuite) TestAlive() {
 	s.client.ctx = ctx
 	cancel()
 	require.False(s.T(), s.client.Alive())
+}
+
+// --- SetDownloadDir ---
+
+func (s *CDPSuite) TestSetDownloadDir() {
+	var got []chromedp.Action
+	s.setRunFn(func(_ context.Context, actions ...chromedp.Action) error {
+		got = actions
+		return nil
+	})
+	require.NoError(s.T(), s.client.SetDownloadDir(context.Background(), "/downloads"))
+	require.Equal(s.T(), []chromedp.Action{
+		cdpbrowser.SetDownloadBehavior(cdpbrowser.SetDownloadBehaviorBehaviorAllow).WithDownloadPath("/downloads"),
+	}, got)
+}
+
+func (s *CDPSuite) TestSetDownloadDirError() {
+	s.setRunFn(func(_ context.Context, _ ...chromedp.Action) error { return errors.New("connection gone") })
+	require.Error(s.T(), s.client.SetDownloadDir(context.Background(), "/downloads"))
 }
 
 // --- CloseBrowser ---

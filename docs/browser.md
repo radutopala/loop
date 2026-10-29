@@ -47,6 +47,7 @@ Frontend (Electron)
 - CDP endpoint: `ws://127.0.0.1:{hostPort}` (random mapped port)
 - All tabs shown in UI (only agent-tracked tabs)
 - Persistent per-channel profile (see [Agent profile](#agent-profile))
+- Downloads land where the agent can read them (see [Downloads](#downloads))
 
 ### Host Mode
 - Connects to user's local Chrome via CDP
@@ -352,6 +353,31 @@ missing it submits a form yet fails to insert a newline in a textarea. Text is
 suppressed when a non-Shift modifier is held, so <kbd>Ctrl</kbd>+<kbd>Enter</kbd>
 stays a shortcut instead of typing a newline.
 
+## Downloads
+
+In Docker mode the browser downloads by default. When the daemon connects to
+the sidecar, it sends CDP `Browser.setDownloadBehavior` with `allow` and
+`/downloads`, which applies to every tab in that Chrome, including tabs opened
+later.
+
+- On the host, `/downloads` is `<LoopDir>/downloads/<channel>`. The daemon
+  creates it before it starts the sidecar and binds it there read-write.
+- The agent container mounts the same dir read-only at the same host path, so
+  the agent reads a file by the path `list_downloads` gives it.
+- `list_downloads` lists the files with their full paths and sizes. Chrome
+  writes a file as `<name>.crdownload` until it is complete, and the tool shows
+  those as still downloading.
+- Files stay until you delete them. The dir isn't cleared when the sidecar
+  stops.
+- A sidecar created before downloads were on has no `/downloads` mount, and
+  Chrome would save into the container's own filesystem. The daemon removes
+  such a container instead of starting it again, and creates a new one. Logins
+  survive, since the profile is a named volume.
+
+Host mode is left alone: your own Chrome saves downloads wherever it is set to,
+which the agent can't see, and `list_downloads` says so. `loop mcp-host-browser`
+has no `list_downloads` tool.
+
 ## MCP Browser Tools
 
 ### Proxy Mode (agent containers)
@@ -374,7 +400,7 @@ Agent containers run `loop mcp-browser` which proxies all tool calls via `POST /
 Requires `chrome://inspect/#remote-debugging` enabled in Chrome.
 
 ### Available Tools
-`navigate`, `read_page`, `computer`, `form_input`, `screenshot`, `save_screenshot`, `go_back`, `go_forward`, `reload`, `evaluate`, `list_tabs`, `new_tab`, `switch_tab`, `close_tab`, `page_info`, `get_page_text`, `find`, `read_console_messages`, `read_network_requests`, `resize_window`
+`navigate`, `read_page`, `computer`, `form_input`, `screenshot`, `save_screenshot`, `go_back`, `go_forward`, `reload`, `evaluate`, `list_tabs`, `new_tab`, `switch_tab`, `close_tab`, `page_info`, `get_page_text`, `find`, `read_console_messages`, `read_network_requests`, `resize_window`, `list_downloads` (proxy mode only)
 
 ### Waiting for a page
 Pages that build their content with script after loading can be read too early. `navigate`, `screenshot`, `save_screenshot` and `computer` take `wait_for_selector` and/or `wait_for_text`, with `wait_timeout_ms` (default 10000, max 60000). The tool polls the page every 250 ms through `evaluate_js` until it matches, and fails with a timeout error if it never does. `computer` waits after acting, except for `wait` and `screenshot`, which wait first; `computer` `wait` without either pauses for `duration` ms.

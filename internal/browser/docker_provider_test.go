@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
 	"slices"
 	"testing"
 	"time"
@@ -218,6 +219,46 @@ func (s *ManagerSuite) TestContainerMountsProfileAndExtensions() {
 	require.Equal(s.T(), "/profile", mounts[0].Target)
 	require.Equal(s.T(), mount.TypeBind, mounts[1].Type)
 	require.Equal(s.T(), "/extensions/0", mounts[1].Target)
+}
+
+func (s *ManagerSuite) TestContainerMountsDownloads() {
+	s.mgr.EnableDownloads("/home/u/.loop")
+	mounts := s.mgr.containerMounts(s.mgr.defaults, "C123")
+	require.Equal(s.T(), []mount.Mount{{
+		Type:   mount.TypeBind,
+		Source: "/home/u/.loop/downloads/c123",
+		Target: "/downloads",
+	}}, mounts)
+}
+
+func (s *ManagerSuite) TestEnsureBrowserCreatesDownloadsDir() {
+	ctx := context.Background()
+	s.mgr.EnableDownloads("/home/u/.loop")
+	var made []string
+	s.mgr.mkdirAll = func(p string, _ os.FileMode) error {
+		made = append(made, p)
+		return nil
+	}
+
+	s.api.On("ContainerList", ctx, mock.Anything).
+		Return([]containertypes.Summary{}, nil)
+	s.api.On("ContainerCreate", ctx, mock.Anything, mock.Anything, (*network.NetworkingConfig)(nil), (*ocispec.Platform)(nil), "loop-chrome-ch-1").
+		Return(containertypes.CreateResponse{}, errors.New("create boom"))
+
+	require.ErrorContains(s.T(), s.mgr.EnsureBrowser(ctx, "ch-1", ""), "creating chrome container")
+	require.Equal(s.T(), []string{"/home/u/.loop/downloads/ch-1"}, made)
+}
+
+func (s *ManagerSuite) TestEnsureBrowserDownloadsDirError() {
+	ctx := context.Background()
+	s.mgr.EnableDownloads("/home/u/.loop")
+	s.mgr.mkdirAll = func(string, os.FileMode) error { return errors.New("eacces") }
+
+	s.api.On("ContainerList", ctx, mock.Anything).
+		Return([]containertypes.Summary{}, nil)
+
+	require.ErrorContains(s.T(), s.mgr.EnsureBrowser(ctx, "ch-1", ""), "creating downloads dir: eacces")
+	s.api.AssertNotCalled(s.T(), "ContainerCreate", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 func (s *ManagerSuite) TestContainerMountsNoneConfigured() {
@@ -1344,4 +1385,87 @@ func (s *ManagerSuite) TestEnsureBrowserImageBuildWaitInterrupted() {
 	err := s.mgr.EnsureBrowser(ctx, "ch-1", "")
 	require.ErrorContains(s.T(), err, "waiting for the image build: context canceled")
 	s.api.AssertNotCalled(s.T(), "ContainerCreate", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (s *ManagerSuite) TestEnsureBrowserRecreatesContainerWithoutDownloads() {
+	withDownloads := func(port string) containertypes.InspectResponse {
+		resp := inspectResponseWithPort(port)
+		resp.Mounts = []containertypes.MountPoint{{Destination: "/profile"}, {Destination: ChromeDownloadsDir}}
+		return resp
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(s.T(), err)
+	defer ln.Close()
+	_, port, _ := net.SplitHostPort(ln.Addr().String())
+
+	tests := []struct {
+		name       string
+		inspect    containertypes.InspectResponse
+		inspectErr error
+		wantID     string
+	}{
+		{name: "has the mount", inspect: withDownloads(port), wantID: "old-ctr"},
+		{name: "created before downloads", inspect: inspectResponseWithPort(port), wantID: "new-ctr"},
+		{name: "inspect fails", inspectErr: errors.New("gone"), wantID: "new-ctr"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			ctx := context.Background()
+			s.mgr.EnableDownloads(s.T().TempDir())
+			reg := new(mockContainerRegistry)
+			s.mgr.SetContainerRegistry(reg)
+			reg.On("FindByChannelAndType", "ch-1", container.ContainerTypeChrome).Return((*container.ContainerInfo)(nil))
+			reg.On("Unregister", "old-ctr").Maybe()
+			reg.On("Register", mock.Anything).Once()
+
+			s.api.On("ContainerList", ctx, mock.Anything).
+				Return([]containertypes.Summary{{ID: "old-ctr", State: "exited"}}, nil)
+			s.api.On("ContainerInspect", ctx, "old-ctr").Return(tt.inspect, tt.inspectErr)
+			s.api.On("ContainerStart", ctx, "old-ctr", containertypes.StartOptions{}).Return(nil).Maybe()
+			s.api.On("ContainerRemove", ctx, "old-ctr", containertypes.RemoveOptions{Force: true, RemoveVolumes: true}).Return(nil).Maybe()
+			s.api.On("ContainerCreate", ctx, mock.Anything, mock.Anything, (*network.NetworkingConfig)(nil), (*ocispec.Platform)(nil), "loop-chrome-ch-1").
+				Return(containertypes.CreateResponse{ID: "new-ctr"}, nil).Maybe()
+			s.api.On("ContainerStart", ctx, "new-ctr", containertypes.StartOptions{}).Return(nil).Maybe()
+			s.api.On("ContainerInspect", ctx, "new-ctr").Return(withDownloads(port), nil).Maybe()
+
+			require.NoError(s.T(), s.mgr.EnsureBrowser(ctx, "ch-1", ""))
+			cid, ok := s.mgr.GetContainerID("ch-1")
+			require.True(s.T(), ok)
+			require.Equal(s.T(), tt.wantID, cid)
+			if tt.wantID == "new-ctr" {
+				// Not started again, but replaced, with its profile volume kept.
+				s.api.AssertNotCalled(s.T(), "ContainerStart", ctx, "old-ctr", containertypes.StartOptions{})
+				s.api.AssertCalled(s.T(), "ContainerRemove", ctx, "old-ctr", containertypes.RemoveOptions{Force: true, RemoveVolumes: true})
+				reg.AssertCalled(s.T(), "Unregister", "old-ctr")
+			} else {
+				s.api.AssertNotCalled(s.T(), "ContainerRemove", mock.Anything, mock.Anything, mock.Anything)
+			}
+		})
+	}
+}
+
+func (s *ManagerSuite) TestEnsureBrowserRegistryReplacesContainerWithoutDownloads() {
+	ctx := context.Background()
+	s.mgr.EnableDownloads(s.T().TempDir())
+	reg := new(mockContainerRegistry)
+	s.mgr.SetContainerRegistry(reg)
+	reg.On("FindByChannelAndType", "ch-1", container.ContainerTypeChrome).
+		Return(&container.ContainerInfo{ContainerID: "reg-ctr", ChannelID: "ch-1", Type: container.ContainerTypeChrome})
+	reg.On("Unregister", "reg-ctr").Once()
+	reg.On("Register", mock.Anything).Once()
+
+	// Running and reachable, but without the downloads mount.
+	s.api.On("ContainerInspect", ctx, "reg-ctr").Return(inspectResponseWithPort("1"), nil)
+	s.api.On("ContainerRemove", ctx, "reg-ctr", containertypes.RemoveOptions{Force: true, RemoveVolumes: true}).Return(nil)
+	s.api.On("ContainerList", ctx, mock.Anything).Return([]containertypes.Summary{}, nil)
+	s.api.On("ContainerCreate", ctx, mock.Anything, mock.Anything, (*network.NetworkingConfig)(nil), (*ocispec.Platform)(nil), "loop-chrome-ch-1").
+		Return(containertypes.CreateResponse{ID: "new-ctr"}, nil)
+	s.api.On("ContainerStart", ctx, "new-ctr", containertypes.StartOptions{}).Return(nil)
+	s.api.On("ContainerInspect", ctx, "new-ctr").Return(inspectResponseWithPort("49300"), nil)
+
+	require.NoError(s.T(), s.mgr.EnsureBrowser(ctx, "ch-1", ""))
+	cid, _ := s.mgr.GetContainerID("ch-1")
+	require.Equal(s.T(), "new-ctr", cid)
+	reg.AssertExpectations(s.T())
 }

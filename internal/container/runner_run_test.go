@@ -964,9 +964,9 @@ func (s *RunnerSuite) TestRunMkdirAllBindSourceError() {
 }
 
 func (s *RunnerSuite) TestRunMkdirAllMCPSubdirError() {
-	// workDir, screenshots and playground mkdirs succeed, but .loop subdir
-	// fails inside writeMCPConfig.
-	s.sys.Override("MkdirAll", mock.Anything, mock.Anything).Return(nil).Times(3)
+	// workDir, screenshots, playground and downloads mkdirs succeed, but
+	// .loop subdir fails inside writeMCPConfig.
+	s.sys.Override("MkdirAll", mock.Anything, mock.Anything).Return(nil).Times(4)
 	s.sys.On("MkdirAll", mock.Anything, mock.Anything).Return(errors.New("mkdir subdir fail"))
 
 	ctx := context.Background()

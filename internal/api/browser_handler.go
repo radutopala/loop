@@ -847,6 +847,13 @@ func (s *browserService) handleBrowserAction(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Listing downloads reads a dir: it needs no browser, so it doesn't
+	// start one.
+	if req.Action == "list_downloads" {
+		writeJSON(w, s.listDownloads(req.ChannelID))
+		return
+	}
+
 	cdpCl, err := s.getBrowserCDP(r.Context(), req.ChannelID)
 	if err != nil {
 		writeJSON(w, browserActionResponse{Error: err.Error()})

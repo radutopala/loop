@@ -58,6 +58,13 @@ type DockerProvider struct {
 	// field.
 	getenv func(string) string
 
+	// loopDir roots each channel's downloads dir; empty mounts none.
+	loopDir string
+
+	// mkdirAll creates the downloads dir before the sidecar mounts it.
+	// Overridable in tests via the struct field.
+	mkdirAll func(string, os.FileMode) error
+
 	// settingsFor resolves one channel's settings at container-create time.
 	// The browser block is per-project config while the provider is a single
 	// daemon-lifetime object, so anything baked in at construction can only
@@ -135,6 +142,10 @@ const (
 	// by position keeps IDs — and therefore each extension's stored state —
 	// stable across sidecar restarts.
 	chromeExtensionsDir = "/extensions"
+
+	// ChromeDownloadsDir is where the channel's downloads dir is mounted
+	// inside the sidecar, and where Chrome is told to save downloads.
+	ChromeDownloadsDir = "/downloads"
 )
 
 // DockerProviderConfig describes the Chrome sidecars a DockerProvider creates.
@@ -169,6 +180,7 @@ func NewDockerProvider(api DockerClient, cfg DockerProviderConfig, logger *slog.
 		logger:         logger,
 		inContainer:    inDockerContainer(),
 		getenv:         os.Getenv,
+		mkdirAll:       os.MkdirAll,
 		defaults: ChannelSettings{
 			Image:          cfg.Image,
 			PersistProfile: cfg.PersistProfile,
@@ -313,7 +325,8 @@ func (m *DockerProvider) profileMounts(cs ChannelSettings, channelID string) []m
 // containerMounts returns everything the sidecar mounts: the profile volume
 // plus one read-only bind per configured extension. Read-only because Chrome
 // only ever reads an unpacked extension, and a sidecar the agent drives should
-// not be able to rewrite code on the host.
+// not be able to rewrite code on the host. Last comes the channel's writable
+// downloads dir, when one is configured.
 func (m *DockerProvider) containerMounts(cs ChannelSettings, channelID string) []mount.Mount {
 	mounts := m.profileMounts(cs, channelID)
 	for i, dir := range extensionDirs(cs.Extensions) {
@@ -324,7 +337,21 @@ func (m *DockerProvider) containerMounts(cs ChannelSettings, channelID string) [
 			ReadOnly: true,
 		})
 	}
+	if m.loopDir != "" {
+		mounts = append(mounts, mount.Mount{
+			Type:   mount.TypeBind,
+			Source: container.DownloadsDir(m.loopDir, channelID),
+			Target: ChromeDownloadsDir,
+		})
+	}
 	return mounts
+}
+
+// EnableDownloads has every sidecar created from now on mount its channel's
+// container.DownloadsDir(loopDir, channelID) at ChromeDownloadsDir, for
+// Chrome to save downloads into.
+func (m *DockerProvider) EnableDownloads(loopDir string) {
+	m.loopDir = loopDir
 }
 
 // RemoveProfile deletes a channel's persistent Chrome profile volume, wiping
@@ -386,7 +413,7 @@ func (m *DockerProvider) EnsureBrowser(ctx context.Context, channelID, _ string)
 	// Avoids a Docker list query by using the container ID from the in-memory registry.
 	if m.registry != nil {
 		if info := m.registry.FindByChannelAndType(channelID, container.ContainerTypeChrome); info != nil {
-			if m.isContainerRunning(ctx, info.ContainerID) {
+			if m.isContainerRunning(ctx, info.ContainerID) && !m.lacksDownloads(ctx, info.ContainerID) {
 				if port, err := m.getHostPort(ctx, info.ContainerID); err == nil {
 					addr := m.resolveCDPHostPort(ctx, info.ContainerID, port)
 					if isChromeReachable(addr) {
@@ -456,6 +483,14 @@ func (m *DockerProvider) EnsureBrowser(ctx context.Context, channelID, _ string)
 		})
 		if err != nil {
 			return fmt.Errorf("waiting for the image build: %w", err)
+		}
+	}
+
+	// Docker creates a missing bind source on its own, but the docker proxy
+	// of a Loop agent container rejects one.
+	if m.loopDir != "" {
+		if err := m.mkdirAll(container.DownloadsDir(m.loopDir, channelID), 0o755); err != nil {
+			return fmt.Errorf("creating downloads dir: %w", err)
 		}
 	}
 
@@ -663,6 +698,14 @@ func (m *DockerProvider) findExistingChrome(ctx context.Context, containerName s
 		return "", ""
 	}
 	c := containers[0]
+	if m.lacksDownloads(ctx, c.ID) {
+		m.logger.Info("removing Chrome container created without the downloads mount", "container_id", c.ID)
+		_ = m.api.ContainerRemove(ctx, c.ID, containertypes.RemoveOptions{Force: true, RemoveVolumes: true})
+		if m.registry != nil {
+			m.registry.Unregister(c.ID)
+		}
+		return "", ""
+	}
 	// Start it if stopped.
 	if c.State != "running" {
 		if err := m.api.ContainerStart(ctx, c.ID, containertypes.StartOptions{}); err != nil {
@@ -671,6 +714,26 @@ func (m *DockerProvider) findExistingChrome(ctx context.Context, containerName s
 	}
 	port, _ := m.getHostPort(ctx, c.ID)
 	return c.ID, port
+}
+
+// lacksDownloads reports whether downloads are on but containerID, created
+// before they were, has no downloads mount. Chrome would save into its own
+// filesystem there, where the agent never sees the file, so it isn't reused.
+// The profile is a named volume, so logins survive the new container.
+func (m *DockerProvider) lacksDownloads(ctx context.Context, containerID string) bool {
+	if m.loopDir == "" {
+		return false
+	}
+	info, err := m.api.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return true
+	}
+	for _, mp := range info.Mounts {
+		if mp.Destination == ChromeDownloadsDir {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *DockerProvider) getHostPort(ctx context.Context, containerID string) (string, error) {

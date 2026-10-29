@@ -748,6 +748,8 @@ func (a *app) serve() error {
 			logger.Warn("browser docker provider unavailable", "error", browserErr)
 		} else if dp, ok := dockerProvider.(*browser.DockerProvider); ok {
 			dp.SetContainerRegistry(containerReg)
+			dp.EnableDownloads(cfg.LoopDir)
+			serverOpts = append(serverOpts, api.WithBrowserDownloads(cfg.LoopDir))
 			chromeProvider = dp
 		}
 

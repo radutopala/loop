@@ -81,6 +81,7 @@ func New(apiURL, channelID string, logger *slog.Logger) *Server {
 	}, &mcp.ServerOptions{Logger: logger})
 
 	s.registerTools()
+	s.registerDownloadTools()
 	return s
 }
 
@@ -884,6 +885,21 @@ func (s *Server) captureScreenshot(ctx context.Context) ([]byte, error) {
 		return nil, fmt.Errorf("screenshot decode failed: %v", err)
 	}
 	return data, nil
+}
+
+// registerDownloadTools adds the tools that read the downloads dir the daemon
+// shares with the agent container. Only the daemon-backed server has one.
+func (s *Server) registerDownloadTools() {
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "list_downloads",
+		Description: "List the files the browser has downloaded, with their full paths, which you can read directly. Downloads are on by default: clicking a download link saves the file there. A file still downloading is marked as such; call again until it is done.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+		resp, err := s.callAction(ctx, "list_downloads", nil)
+		if err != nil {
+			return errorResult(fmt.Sprintf("list downloads failed: %v", err)), nil, nil
+		}
+		return textResult(resp.Result), nil, nil
+	})
 }
 
 func textResult(text string) *mcp.CallToolResult {

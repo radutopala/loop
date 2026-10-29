@@ -324,6 +324,13 @@ func ChromeHostname(channelID string) string {
 	return ChromeContainerPrefix + SanitizeName(channelID)
 }
 
+// DownloadsDir is the host directory a channel's Chrome sidecar saves
+// downloads into. The agent container mounts it at the same path, so a file
+// the browser downloads is one the agent can open.
+func DownloadsDir(loopDir, channelID string) string {
+	return filepath.Join(loopDir, "downloads", SanitizeName(channelID))
+}
+
 // proxyEnvKeys pairs each proxy variable's upper- and lower-case spellings,
 // in the order they are emitted. Both are set from one resolved value: tools
 // in the container disagree about which spelling they read.

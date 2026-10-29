@@ -618,6 +618,14 @@ func (c *CDPClient) CloseBrowser(ctx context.Context) error {
 	}))
 }
 
+// SetDownloadDir has Chrome save downloads into dir, under the name the site
+// suggests, instead of refusing them as headless Chrome does by default.
+func (c *CDPClient) SetDownloadDir(ctx context.Context, dir string) error {
+	return runBoundedFor(ctx, c.commandDeadline(), func() error {
+		return c.runFn(c.ctx, cdpbrowser.SetDownloadBehavior(cdpbrowser.SetDownloadBehaviorBehaviorAllow).WithDownloadPath(dir))
+	})
+}
+
 // Close shuts down the CDP connection and closes the page target.
 func (c *CDPClient) Close() {
 	c.mu.Lock()
