@@ -1,3 +1,4 @@
+import type { Walkthrough } from "../api/walkthroughs";
 import type { SideView } from "../components/layout/LearnSplit";
 import type { PluginPaneOption } from "../plugins/PluginPanelsContext";
 import type { SessionStatus } from "../types";
@@ -39,6 +40,12 @@ export interface UiStep {
   scope?: string;
   /** open_side: the side view to open beside the chat. */
   view?: string;
+  /** open_walkthrough: the walkthrough of the channel to open. */
+  walkthrough_id?: number;
+  /** open_walkthrough: the step to open it at, from 1. */
+  walkthrough_step?: number;
+  /** open_walkthrough: play it, a step every this many seconds. */
+  autoplay_sec?: number;
 }
 
 /** What a step did: the pane it made or typed into, or why it failed. */
@@ -184,6 +191,15 @@ export interface UiHost {
   /** Scrolls channelId's chat to a message and highlights it; false when
    *  the chat has no such message. */
   showMessage(channelId: string, messageId: number): Promise<boolean>;
+  /** A walkthrough of the channel, with its steps; null when the channel
+   *  has no such walkthrough. */
+  walkthrough(channelId: string, id: number): Promise<Walkthrough | null>;
+  /** Opens step index (from 0) of a walkthrough in the channel's editor: its
+   *  file, then the step over it, playing it every autoplaySec seconds when
+   *  given; rejects when there's no such file. */
+  showWalkthrough(channelId: string, walkthrough: Walkthrough, index: number, autoplaySec?: number): Promise<void>;
+  /** Closes the walkthrough the channel's editor shows, if it shows one. */
+  closeWalkthrough(channelId: string): void;
   /** The playgrounds a channel's playground panes can show. */
   playgrounds(channelId: string): Promise<PlaygroundPick[]>;
   now(): number;

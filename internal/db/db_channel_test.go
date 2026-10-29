@@ -420,6 +420,7 @@ var deleteChannelSteps = []deleteStep{
 	{`DELETE FROM learn_proposals WHERE channel_id IN \(\?\)`, "deleting learn proposals"},
 	{`DELETE FROM explanations WHERE channel_id IN \(\?\)`, "deleting explanations"},
 	{`DELETE FROM learn_passes WHERE channel_id IN \(\?\)`, "deleting learn passes"},
+	{`DELETE FROM walkthroughs WHERE channel_id IN \(\?\)`, "deleting walkthroughs"},
 	{`DELETE FROM channels WHERE ` + unlistedKindRe + ` AND parent_id IN \(\?\)`, "deleting hidden threads"},
 	{`DELETE FROM channels WHERE channel_id = \?`, ""},
 }
@@ -436,6 +437,7 @@ var deleteChildrenSteps = []deleteStep{
 	{`DELETE FROM learn_proposals WHERE channel_id IN \(` + childIDs + `\)`, "deleting learn proposals"},
 	{`DELETE FROM explanations WHERE channel_id IN \(` + childIDs + `\)`, "deleting explanations"},
 	{`DELETE FROM learn_passes WHERE channel_id IN \(` + childIDs + `\)`, "deleting learn passes"},
+	{`DELETE FROM walkthroughs WHERE channel_id IN \(` + childIDs + `\)`, "deleting walkthroughs"},
 	{`DELETE FROM channels WHERE ` + unlistedKindRe + ` AND parent_id IN \(` + childIDs + `\)`, "deleting hidden threads"},
 	{`DELETE FROM messages WHERE channel_id IN \(` + childIDs + `\)`, "deleting messages for child channels"},
 	{`DELETE FROM quality_snapshots WHERE channel_id IN \(` + childIDs + `\)`, "deleting quality snapshots for child channels"},

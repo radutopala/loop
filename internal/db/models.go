@@ -519,3 +519,28 @@ type Explanation struct {
 	Prompt       string `json:"prompt,omitempty"`
 	Reply        string `json:"reply,omitempty"`
 }
+
+// Walkthrough is a guided tour over files that an agent shows in the app's
+// editor: steps shown one at a time, each a highlighted line range with an
+// explanation on top. Steps is nil in a listing, which has StepCount.
+type Walkthrough struct {
+	ID        int64             `json:"id"`
+	ChannelID string            `json:"channel_id"`
+	Title     string            `json:"title"`
+	StepCount int               `json:"step_count"`
+	Steps     []WalkthroughStep `json:"steps,omitempty"`
+	CreatedAt time.Time         `json:"created_at"`
+}
+
+// WalkthroughStep is one step of a Walkthrough: lines StartLine to EndLine
+// (from 1, inclusive) of the file at Path, as the agent named it. Anchor is
+// the text those lines held when the walkthrough was made, which the editor
+// finds the step by once the file has changed.
+type WalkthroughStep struct {
+	Path      string `json:"path"`
+	StartLine int    `json:"start_line"`
+	EndLine   int    `json:"end_line"`
+	Anchor    string `json:"anchor"`
+	Title     string `json:"title,omitempty"`
+	Body      string `json:"body"`
+}

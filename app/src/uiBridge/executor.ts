@@ -29,6 +29,9 @@ export const WAIT_QUIET_MS = 2000;
 export const DEFAULT_LINES = 50;
 export const MAX_LINES = 2000;
 
+/** The slowest pace open_walkthrough plays at, in seconds a step. */
+const MAX_AUTOPLAY_SEC = 600;
+
 const POLL_MS = 50;
 
 const PASTE_START = "\x1b[200~";
@@ -340,6 +343,33 @@ async function runStep(step: UiStep, run: Run): Promise<StepOutput> {
       await host.openFile(channelId, step.path, step.line).catch((err) => {
         throw new StepError(err instanceof Error ? err.message : String(err));
       });
+      return {};
+    }
+    case "open_walkthrough": {
+      const { channelId } = workspaceOf(run);
+      const id = step.walkthrough_id;
+      if (id === undefined) throw new StepError("walkthrough_id is required");
+      if (!Number.isInteger(id) || id < 1) throw new StepError("walkthrough_id must be a whole number from 1");
+      const n = step.walkthrough_step ?? 1;
+      if (!Number.isInteger(n) || n < 1) throw new StepError("walkthrough_step must be a whole number from 1");
+      const sec = step.autoplay_sec;
+      if (sec !== undefined && (!Number.isInteger(sec) || sec < 1 || sec > MAX_AUTOPLAY_SEC)) throw new StepError(`autoplay_sec must be a whole number from 1 to ${MAX_AUTOPLAY_SEC}`);
+      const walkthrough = await host.walkthrough(channelId, id).catch((err) => {
+        throw new StepError(err instanceof Error ? err.message : String(err));
+      });
+      if (!walkthrough) throw new StepError(`no walkthrough ${id} in channel ${channelId}`);
+      const count = walkthrough.steps?.length ?? 0;
+      if (count === 0) throw new StepError(`walkthrough ${id} has no steps`);
+      if (n > count) throw new StepError(`walkthrough ${id} has ${count} step${count === 1 ? "" : "s"}; walkthrough_step must be from 1 to ${count}`);
+      stillOn(run);
+      await host.showWalkthrough(channelId, walkthrough, n - 1, sec).catch((err) => {
+        throw new StepError(err instanceof Error ? err.message : String(err));
+      });
+      return {};
+    }
+    case "close_walkthrough": {
+      const { channelId } = workspaceOf(run);
+      host.closeWalkthrough(channelId);
       return {};
     }
     case "show_message": {

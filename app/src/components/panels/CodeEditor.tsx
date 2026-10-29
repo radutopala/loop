@@ -27,6 +27,16 @@ import { emptyGitLineChanges, type GitLineChanges, gitChangeGutterExtension, set
 import { GitChangeOverview } from "./editorGitOverview";
 import { langIdFor } from "./editorLanguage";
 import { buildEditorTheme } from "./editorTheme";
+import {
+  selectedRange,
+  setWalkthroughCard,
+  shownWalkthroughRange,
+  type WalkthroughCard,
+  type WalkthroughHandlers,
+  type WalkthroughRange,
+  walkthroughExtension,
+  walkthroughTheme,
+} from "./editorWalkthrough";
 import { buildMarkdownStyles } from "./FilePanel";
 import { withBaseHref } from "./htmlPreview";
 
@@ -159,6 +169,15 @@ interface CodeEditorProps {
   onMediaError?: () => void;
   /** VCS change markers for the open file (added/modified/deleted lines vs git HEAD). */
   gitChanges?: GitLineChanges | null;
+  /** The walkthrough step to show over the file, if it's the step's file. */
+  walkthrough?: WalkthroughCard | null;
+  /** What the walkthrough card's buttons and keys do. */
+  walkthroughHandlers?: WalkthroughHandlers;
+  /** Called with the selection (null when empty) as it changes. */
+  onSelectionChange?: (selection: WalkthroughRange | null) => void;
+  /** Asks the agent about the selected lines; the context menu offers it
+   *  when set. */
+  onAskAgent?: (selection: WalkthroughRange) => void;
 }
 
 export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function CodeEditor(
@@ -181,6 +200,10 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
     imageURL,
     onMediaError,
     gitChanges,
+    walkthrough,
+    walkthroughHandlers,
+    onSelectionChange,
+    onAskAgent,
   },
   ref,
 ) {
@@ -201,6 +224,20 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
   selectedRelPathRef.current = selectedRelPath;
   const gitChangesRef = useRef(gitChanges);
   gitChangesRef.current = gitChanges;
+  const onSelectionChangeRef = useRef(onSelectionChange);
+  onSelectionChangeRef.current = onSelectionChange;
+  const walkthroughHandlersRef = useRef(walkthroughHandlers);
+  walkthroughHandlersRef.current = walkthroughHandlers;
+  // The card's handlers for the life of the component: they call the latest
+  // ones given.
+  const cardHandlers = useRef<WalkthroughHandlers>({
+    prev: () => walkthroughHandlersRef.current?.prev(),
+    next: () => walkthroughHandlersRef.current?.next(),
+    close: () => walkthroughHandlersRef.current?.close(),
+    ask: (range) => walkthroughHandlersRef.current?.ask(range),
+    togglePlay: () => walkthroughHandlersRef.current?.togglePlay(),
+    pause: () => walkthroughHandlersRef.current?.pause(),
+  });
 
   const isMd = selectedRelPath ? isMarkdownFile(selectedRelPath) : false;
   const isHtml = selectedRelPath ? isHtmlFile(selectedRelPath) : false;
@@ -305,9 +342,11 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       gitChangeGutterExtension,
       history(),
       search({ top: true }),
-      themeCompartment.current.of(buildEditorTheme(colors, fontSizes.editor)),
+      themeCompartment.current.of([buildEditorTheme(colors, fontSizes.editor), walkthroughTheme(colors)]),
+      walkthroughExtension(cardHandlers.current),
       keymap.of([...defaultKeymap, ...historyKeymap, ...foldKeymap, ...searchKeymap, indentWithTab]),
       EditorView.updateListener.of((update) => {
+        if (update.selectionSet || update.docChanged) onSelectionChangeRef.current?.(selectedRange(update.state));
         if (update.docChanged) {
           if (!update.transactions.some((tr) => tr.annotation(contentReplaced))) onDocChangedRef.current();
           const curRel = selectedRelPathRef.current;
@@ -363,6 +402,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       scroller?.removeEventListener("scroll", onEditorScroll);
       view.destroy();
       viewRef.current = null;
+      onSelectionChangeRef.current?.(null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileContent, isBinary, selectedPath]);
@@ -371,7 +411,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
   useEffect(() => {
     if (viewRef.current) {
       viewRef.current.dispatch({
-        effects: themeCompartment.current.reconfigure(buildEditorTheme(colors, fontSizes.editor)),
+        effects: themeCompartment.current.reconfigure([buildEditorTheme(colors, fontSizes.editor), walkthroughTheme(colors)]),
       });
     }
   }, [colors, fontSizes.editor]);
@@ -382,6 +422,30 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       viewRef.current.dispatch({ effects: setGitLineChanges.of(gitChanges ?? emptyGitLineChanges()) });
     }
   }, [gitChanges]);
+
+  // Show the walkthrough's step over the file, once the file is in the view,
+  // and bring it into view: the card above the step's lines.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({ effects: setWalkthroughCard.of(walkthrough ?? null) });
+    if (!walkthrough) return;
+    // A card outside the viewport isn't drawn yet, so a step far down the
+    // file is scrolled to first, then again with room for its card.
+    let id = 0;
+    const reveal = (again: boolean) => {
+      id = requestAnimationFrame(() => {
+        if (viewRef.current !== view) return;
+        const shown = shownWalkthroughRange(view.state);
+        if (!shown) return;
+        const card = view.dom.querySelector<HTMLElement>(".cm-walkthrough-card");
+        view.dispatch({ effects: EditorView.scrollIntoView(view.state.doc.line(shown.start_line).from, { y: "start", yMargin: (card?.offsetHeight ?? 0) + 16 }) });
+        if (!card && again) reveal(false);
+      });
+    };
+    reveal(true);
+    return () => cancelAnimationFrame(id);
+  }, [walkthrough, fileContent, isBinary, selectedPath]);
 
   const getEditorMenuItems = (): MenuItem[] => {
     const view = viewRef.current;
@@ -406,6 +470,16 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
             view.dispatch({ changes: { from: view.state.selection.main.from, to: view.state.selection.main.to, insert: "" } });
           }
         },
+      });
+    }
+    const selected = view && onAskAgent ? selectedRange(view.state) : null;
+    if (view && selected && onAskAgent) {
+      // The ask quotes the whole selection, cutting it short itself.
+      const { from, to } = view.state.selection.main;
+      items.push({
+        label: "Ask the agent about this",
+        separator: true,
+        onClick: () => onAskAgent({ ...selected, text: view.state.sliceDoc(from, to) }),
       });
     }
     items.push({

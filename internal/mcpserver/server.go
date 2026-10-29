@@ -278,7 +278,7 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "ui_state",
-		Description: "Read the Loop desktop app's windows: which is focused, the channel each shows, its layout tabs, the panes of the open tab (id, panel, session status, busy) and the side view open beside the chat (side: learn, explain or shell). A window showing a channel outside this project shows no state. Call it before ui_run to learn the pane ids.",
+		Description: "Read the Loop desktop app's windows: which is focused, the channel each shows, its layout tabs, the panes of the open tab (id, panel, session status, busy) and the side view open beside the chat (side: learn, explain or shell), the walkthrough open in the editor (walkthrough: id, title, step, steps, and playing with autoplay_sec while it plays) and the text the user has selected in the editor (selection: path, start_line, end_line, text). A window showing a channel outside this project shows no state. Call it before ui_run to learn the pane ids.",
 	}, s.handleUIState)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
@@ -286,6 +286,12 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 		Description: "Drive the Loop desktop app window the user last focused: open a channel of this project, switch layout tabs, add, replace, remove or maximize panes, open a file in the editor, scroll the chat to a message (show_message; for a loop://channel/<channel-id>/<message-id> link, select_channel then show_message), show a playground in a pane, and type into, read or wait on an agent terminal (docker-agent or docker-shell panes, never host shells), or queue a message in a chat pane (chat or chat-side) and read or wait for its reply, or open the side view beside the chat (open_side: learn, explain or shell, a shell in the chat's own container) and read it as the pane side. The steps run in order until one fails; without a select_channel first, they run in this channel. Desktop app only. Moving the user's window is visible to them: do it when they asked to see something.",
 		InputSchema: uiRunSchema(),
 	}, s.handleUIRun)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "ui_walkthrough",
+		Description: "Walk the user through code or text in the Loop desktop app's editor: each step highlights lines of a file in this project, with your explanation on a card over them, and the user steps through with next and previous, or it plays at a pace you set (autoplay_sec). Use it when the user asks you to explain or walk them through code, a change you made, or a document. It opens in the window the user last focused, in this channel; it's kept until the channel is deleted, so the user can reopen it from the editor's walkthroughs menu (or you, with ui_run open_walkthrough). Desktop app only; on Slack or Discord answer in text.",
+		InputSchema: uiWalkthroughSchema(),
+	}, s.handleUIWalkthrough)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "playground",

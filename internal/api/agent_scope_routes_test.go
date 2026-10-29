@@ -91,6 +91,9 @@ var agentRouteScopes = map[string]routeScope{
 	"POST /api/workflows/runs/{id}/retry":  {path: "run"},
 	"POST /api/workflows/runs/{id}/resume": {path: "run"},
 
+	"POST /api/channels/{id}/walkthroughs":                 {path: "channel"},
+	"GET /api/channels/{id}/walkthroughs":                  {path: "channel"},
+	"GET /api/channels/{id}/walkthroughs/{wid}":            {path: "channel"},
 	"POST /api/channels/{id}/learn/proposals":              {path: "channel"},
 	"POST /api/channels/{id}/review/comments":              {path: "channel"},
 	"POST /api/channels/{id}/review/load":                  {path: "channel"},
@@ -132,6 +135,7 @@ var unscopedWildcards = map[string]string{
 	"POST /api/agents/{id}/message id":                         "an agent of the body's channel_id",
 	"DELETE /api/messages/{id} id":                             "a queued message of the query's channel_id",
 	"DELETE /api/channels/{id}/monitors/{mid} mid":             "a monitor of channel {id}",
+	"GET /api/channels/{id}/walkthroughs/{wid} wid":            "a walkthrough of channel {id}",
 	"DELETE /api/channels/{id}/review/comments/{cid} cid":      "a comment of channel {id}'s review",
 	"PATCH /api/channels/{id}/review/comments/{cid} cid":       "a comment of channel {id}'s review",
 	"POST /api/channels/{id}/review/comments/{cid}/push cid":   "a comment of channel {id}'s review",

@@ -307,6 +307,8 @@ type scopeWorld struct {
 	bravoTask          int64
 	alphaProposal      int64
 	bravoProposal      int64
+	alphaWalkthrough   int64
+	bravoWalkthrough   int64
 	// stateStmt is bravoState's query; state is what it last read.
 	stateStmt *sql.Stmt
 	state     string
@@ -351,6 +353,18 @@ func newScopeWorld(t require.TestingT, tmp string, migrated []byte, stateQuery s
 		_, err = w.store.FileLearnProposals(ctx, l.parent, []*db.LearnProposal{p}, nil)
 		require.NoError(t, err)
 		*l.proposal = p.ID
+	}
+
+	for _, wt := range []struct {
+		channel, title string
+		id             *int64
+	}{
+		{alphaChan, "alpha tour", &w.alphaWalkthrough},
+		{bravoChan, bravoSecret + " tour", &w.bravoWalkthrough},
+	} {
+		created, err := w.store.CreateWalkthrough(ctx, &db.Walkthrough{ChannelID: wt.channel, Title: wt.title, Steps: []db.WalkthroughStep{{Path: "README.md", StartLine: 1, EndLine: 1, Body: wt.title}}})
+		require.NoError(t, err)
+		*wt.id = created.ID
 	}
 
 	sched := scheduler.NewTaskScheduler(w.store, nil, time.Hour, slog.New(slog.NewTextHandler(io.Discard, nil)))

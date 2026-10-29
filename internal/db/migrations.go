@@ -689,6 +689,17 @@ var migrations = []migration{
 	// loop-pr.
 	sqlMigration(`ALTER TABLE ci_state RENAME TO pr_state`),
 	sqlMigration(`UPDATE messages SET author_id = 'loop-pr' WHERE author_id = 'loop-ci'`),
+	// walkthroughs holds the guided tours over files an agent shows in the
+	// app's editor, one row each, kept until their channel is deleted.
+	// steps is a JSON array of WalkthroughStep.
+	sqlMigration(`CREATE TABLE IF NOT EXISTS walkthroughs (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		channel_id TEXT NOT NULL,
+		title      TEXT NOT NULL,
+		steps      TEXT NOT NULL,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`),
+	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_walkthroughs_channel ON walkthroughs(channel_id, id)`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the

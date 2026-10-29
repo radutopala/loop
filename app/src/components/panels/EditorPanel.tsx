@@ -1,14 +1,20 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { buildRawFileBase } from "../../api/files";
 import { tabDescriptions } from "../../hooks/editorPaths";
 import { useContentCapsEpoch } from "../../hooks/useContentCapsEpoch";
 import type { EditorStateApi } from "../../hooks/useEditorState";
+import { closeWalkthrough, getOpenWalkthrough, goToStep, pauseWalkthrough, playWalkthrough, setEditorSelection, useOpenWalkthrough } from "../../hooks/walkthroughStore";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
+import { logErr } from "../../utils/log";
+import { openChannelFile } from "../../utils/openChannelFile";
 import { ContextMenu } from "../shared/ContextMenu";
+import { askAgent, askMessage } from "./askAgent";
 import { CodeEditor, isHtmlFile, isMarkdownFile } from "./CodeEditor";
 import { FileIcon, parsePathKey } from "./EditorFileTree";
+import type { WalkthroughCard, WalkthroughHandlers, WalkthroughRange } from "./editorWalkthrough";
 import { FilePanel } from "./FilePanel";
+import { WalkthroughsBadge } from "./WalkthroughsMenu";
 
 // useHtmlBaseURL resolves the <base href> of an HTML preview: a content link
 // to the file's directory, minted asynchronously. It resolves again whenever
@@ -43,6 +49,8 @@ function useHtmlBaseURL(file: { channelId: string; path: string; root: number } 
 
 interface EditorPanelProps {
   channelId: string;
+  /** The pane's leaf id, for the labels in its header. */
+  leafId?: string;
   dirPath: string;
   branch: string;
   editorState: EditorStateApi;
@@ -57,7 +65,10 @@ interface EditorPanelProps {
 
 type PreviewMode = "editor" | "both" | "preview";
 
-export function EditorPanel({ dirPath, branch, editorState, embedded, ...panelProps }: EditorPanelProps) {
+/** Opens a walkthrough step's file in the channel's editor. */
+const openStepFile = (channelId: string, path: string) => openChannelFile(channelId, path);
+
+export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ...panelProps }: EditorPanelProps) {
   const { colors } = useTheme();
   const {
     roots,
@@ -117,6 +128,67 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, ...panelPr
     const { rootIndex, relativePath } = parsePathKey(tab);
     return (roots.find((r) => r.index === rootIndex)?.path ?? dirPath) + "/" + relativePath;
   };
+  const { channelId } = panelProps;
+  const absolutePathRef = useRef(absolutePath);
+  absolutePathRef.current = absolutePath;
+  const selectedPathRef = useRef(selectedPath);
+  selectedPathRef.current = selectedPath;
+
+  // The walkthrough step shows over its file, once that's the file open.
+  const walkthrough = useOpenWalkthrough(channelId);
+  const walkthroughCard = useMemo((): WalkthroughCard | null => {
+    if (!walkthrough || !selectedPath) return null;
+    const { rootIndex, relativePath } = parsePathKey(selectedPath);
+    if (walkthrough.target.rootIndex !== rootIndex || walkthrough.target.relPath !== relativePath) return null;
+    const step = walkthrough.steps[walkthrough.step];
+    if (!step) return null;
+    return { walkthroughTitle: walkthrough.title, index: walkthrough.step, count: walkthrough.steps.length, step, notice: walkthrough.notice, playing: walkthrough.playing };
+  }, [walkthrough, selectedPath]);
+  const walkthroughHandlers = useMemo((): WalkthroughHandlers => {
+    const go = (delta: number) => {
+      pauseWalkthrough(channelId);
+      const w = getOpenWalkthrough(channelId);
+      if (w) void goToStep(channelId, w.step + delta, openStepFile);
+    };
+    return {
+      prev: () => go(-1),
+      next: () => go(1),
+      close: () => closeWalkthrough(channelId),
+      // Play from the last step starts it over.
+      togglePlay: () => {
+        const w = getOpenWalkthrough(channelId);
+        if (!w) return;
+        if (w.playing) pauseWalkthrough(channelId);
+        else if (w.step < w.steps.length - 1) playWalkthrough(channelId, openStepFile);
+        else void goToStep(channelId, 0, openStepFile).then(() => playWalkthrough(channelId, openStepFile));
+      },
+      pause: () => pauseWalkthrough(channelId),
+      ask: (range) => {
+        const w = getOpenWalkthrough(channelId);
+        const step = w?.steps[w.step];
+        if (!w || !step) return;
+        askAgent(channelId, askMessage(step.path, range.start_line, range.end_line, range.text, step.title || w.title)).catch(logErr("asking the agent about a walkthrough step"));
+      },
+    };
+  }, [channelId]);
+
+  // ui_state reports the selection with the file's path, as open_file takes it.
+  const handleSelectionChange = useCallback(
+    (range: WalkthroughRange | null) => {
+      const tab = selectedPathRef.current;
+      setEditorSelection(channelId, range && tab ? { path: absolutePathRef.current(tab), ...range } : null);
+    },
+    [channelId],
+  );
+  useEffect(() => () => setEditorSelection(channelId, null), [channelId]);
+  const handleAskAgent = useCallback(
+    (range: WalkthroughRange) => {
+      const tab = selectedPathRef.current;
+      if (!tab) return;
+      askAgent(channelId, askMessage(absolutePathRef.current(tab), range.start_line, range.end_line, range.text)).catch(logErr("asking the agent about the selection"));
+    },
+    [channelId],
+  );
 
   const tabMenuItems = () => {
     if (!tabMenu) return [];
@@ -343,9 +415,14 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, ...panelPr
             imageURL={imageURL}
             onMediaError={editorState.retryMedia}
             gitChanges={gitChanges}
+            walkthrough={walkthroughCard}
+            walkthroughHandlers={walkthroughHandlers}
+            onSelectionChange={handleSelectionChange}
+            onAskAgent={handleAskAgent}
           />
         </div>
       </div>
+      {leafId && <WalkthroughsBadge leafId={leafId} channelId={channelId} open={walkthrough} />}
       {tabMenu && <ContextMenu x={tabMenu.x} y={tabMenu.y} items={tabMenuItems()} onClose={() => setTabMenu(null)} />}
     </FilePanel>
   );

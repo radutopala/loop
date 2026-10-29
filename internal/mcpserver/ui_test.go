@@ -122,6 +122,9 @@ func (s *MCPServerSuite) TestUIRunErrors() {
 		{name: "line 0", args: map[string]any{"steps": []any{map[string]any{"op": "open_file", "path": "a.go", "line": 0}}}, want: "/line"},
 		{name: "message 0", args: map[string]any{"steps": []any{map[string]any{"op": "show_message", "message_id": 0}}}, want: "/message_id"},
 		{name: "negative quiet_ms", args: map[string]any{"steps": []any{map[string]any{"op": "wait_for", "pane": "chat", "quiet_ms": -1}}}, want: "/quiet_ms"},
+		{name: "walkthrough 0", args: map[string]any{"steps": []any{map[string]any{"op": "open_walkthrough", "walkthrough_id": 0}}}, want: "/walkthrough_id"},
+		{name: "autoplay 0", args: map[string]any{"steps": []any{map[string]any{"op": "open_walkthrough", "walkthrough_id": 1, "autoplay_sec": 0}}}, want: "/autoplay_sec"},
+		{name: "walkthrough step 0", args: map[string]any{"steps": []any{map[string]any{"op": "open_walkthrough", "walkthrough_id": 1, "walkthrough_step": 0}}}, want: "/walkthrough_step"},
 		{name: "unknown field", args: map[string]any{"steps": []any{map[string]any{"op": "set_tab", "tabb": "Git"}}}, want: "tabb"},
 		{
 			name: "network error",
@@ -163,6 +166,139 @@ func (s *MCPServerSuite) TestUIRunErrors() {
 				args = map[string]any{"steps": []any{map[string]any{"op": "restore_pane"}}}
 			}
 			text, isError := s.callTool("ui_run", args)
+			require.True(s.T(), isError)
+			require.Contains(s.T(), text, tt.want)
+		})
+	}
+}
+
+// --- ui_walkthrough tool ---
+
+var walkthroughArgs = map[string]any{
+	"title":     "Tour",
+	"steps":     []any{map[string]any{"path": "main.go", "start_line": 3, "end_line": 4, "title": "Entry", "body": "Starts here."}},
+	"client_id": "w1",
+}
+
+// walkthroughDo answers the walkthrough's create with create, then its
+// ui command with command.
+func (s *MCPServerSuite) walkthroughDo(create, command func(*http.Request) (*http.Response, error)) func(*http.Request) (*http.Response, error) {
+	return func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path == "/api/ui/commands" {
+			return command(req)
+		}
+		return create(req)
+	}
+}
+
+func (s *MCPServerSuite) TestUIWalkthrough() {
+	created := func(req *http.Request) (*http.Response, error) {
+		require.Equal(s.T(), "POST", req.Method)
+		require.Equal(s.T(), "/api/channels/test-channel/walkthroughs", req.URL.Path)
+		body, _ := io.ReadAll(req.Body)
+		require.JSONEq(s.T(), `{"title":"Tour","steps":[{"path":"main.go","start_line":3,"end_line":4,"title":"Entry","body":"Starts here."}]}`, string(body))
+		return jsonResponse(http.StatusCreated, `{"id":7,"title":"Tour"}`), nil
+	}
+	tests := []struct {
+		name    string
+		args    map[string]any
+		command func(*http.Request) (*http.Response, error)
+		want    string
+	}{
+		{
+			name: "opened",
+			command: func(req *http.Request) (*http.Response, error) {
+				body, _ := io.ReadAll(req.Body)
+				require.JSONEq(s.T(), `{"client_id":"w1","steps":[{"op":"select_channel","channel_id":"test-channel"},{"op":"open_walkthrough","walkthrough_id":7}]}`, string(body))
+				return jsonResponse(http.StatusOK, `{"client_id":"w1","results":[{"ok":true},{"ok":true}]}`), nil
+			},
+			want: "Saved as walkthrough 7, open in the app's editor.",
+		},
+		{
+			name: "played",
+			args: map[string]any{"title": "Tour", "steps": walkthroughArgs["steps"], "autoplay_sec": 5},
+			command: func(req *http.Request) (*http.Response, error) {
+				body, _ := io.ReadAll(req.Body)
+				require.JSONEq(s.T(), `{"client_id":"","steps":[{"op":"select_channel","channel_id":"test-channel"},{"op":"open_walkthrough","walkthrough_id":7,"autoplay_sec":5}]}`, string(body))
+				return jsonResponse(http.StatusOK, `{"results":[{"ok":true},{"ok":true}]}`), nil
+			},
+			want: "Saved as walkthrough 7, open in the app's editor.",
+		},
+		{
+			name: "no window",
+			command: func(*http.Request) (*http.Response, error) {
+				return stringResponse(http.StatusNotFound, "no app window is connected"), nil
+			},
+			want: "Saved as walkthrough 7; no app window is open",
+		},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			args := tt.args
+			if args == nil {
+				args = walkthroughArgs
+			}
+			s.httpClient.doFunc = s.walkthroughDo(created, tt.command)
+			text, isError := s.callTool("ui_walkthrough", args)
+			require.False(s.T(), isError, text)
+			require.Contains(s.T(), text, tt.want)
+		})
+	}
+}
+
+func (s *MCPServerSuite) TestUIWalkthroughErrors() {
+	created := func(*http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusCreated, `{"id":7}`), nil
+	}
+	ok := func(*http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{"results":[{"ok":true}]}`), nil
+	}
+	refused := func(*http.Request) (*http.Response, error) { return nil, errors.New("refused") }
+	tests := []struct {
+		name            string
+		args            map[string]any
+		create, command func(*http.Request) (*http.Response, error)
+		want            string
+	}{
+		{name: "no steps", args: map[string]any{"title": "T", "steps": []any{}}, want: "minItems"},
+		{name: "autoplay 0", args: map[string]any{"title": "T", "steps": walkthroughArgs["steps"], "autoplay_sec": 0}, want: "/autoplay_sec"},
+		{name: "autoplay too slow", args: map[string]any{"title": "T", "steps": walkthroughArgs["steps"], "autoplay_sec": 601}, want: "/autoplay_sec"},
+		{name: "line 0", args: map[string]any{"title": "T", "steps": []any{map[string]any{"path": "a", "start_line": 0, "body": "b"}}}, want: "/start_line"},
+		{name: "create network error", create: refused, command: ok, want: "calling API: "},
+		{
+			name: "create api error", command: ok, want: "API error (status 400): step 1: no file",
+			create: func(*http.Request) (*http.Response, error) {
+				return stringResponse(http.StatusBadRequest, "step 1: no file"), nil
+			},
+		},
+		{
+			name: "create bad response", command: ok, want: "decoding response: ",
+			create: func(*http.Request) (*http.Response, error) { return stringResponse(http.StatusCreated, "nope"), nil },
+		},
+		{name: "command network error", create: created, command: refused, want: "Saved as walkthrough 7, but opening it failed: calling API: "},
+		{
+			name: "command api error", create: created, want: "Saved as walkthrough 7, but opening it failed: API error (status 403): no",
+			command: func(*http.Request) (*http.Response, error) { return stringResponse(http.StatusForbidden, "no"), nil },
+		},
+		{
+			name: "command bad response", create: created, want: "but opening it failed: nope",
+			command: func(*http.Request) (*http.Response, error) { return stringResponse(http.StatusOK, "nope"), nil },
+		},
+		{
+			name: "step fails", create: created, want: `but opening it failed: {"results":[{"ok":false,"error":"no walkthrough 7"}]}`,
+			command: func(*http.Request) (*http.Response, error) {
+				return jsonResponse(http.StatusOK, `{"results":[{"ok":false,"error":"no walkthrough 7"}]}`), nil
+			},
+		},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.httpClient.doFunc = s.walkthroughDo(tt.create, tt.command)
+			args := tt.args
+			if args == nil {
+				args = walkthroughArgs
+			}
+			text, isError := s.callTool("ui_walkthrough", args)
 			require.True(s.T(), isError)
 			require.Contains(s.T(), text, tt.want)
 		})

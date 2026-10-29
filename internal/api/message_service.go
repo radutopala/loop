@@ -59,6 +59,10 @@ type ChannelLister interface {
 	ListPluginThreads(ctx context.Context, pluginID string) ([]*db.Channel, error)
 	UpdateChannelExplainOverride(ctx context.Context, channelID, value string) error
 	ListExplanations(ctx context.Context, channelID string) ([]*db.Explanation, error)
+	CreateWalkthrough(ctx context.Context, w *db.Walkthrough) (*db.Walkthrough, error)
+	GetWalkthrough(ctx context.Context, id int64) (*db.Walkthrough, error)
+	ListWalkthroughs(ctx context.Context, channelID string) ([]*db.Walkthrough, error)
+	DeleteWalkthrough(ctx context.Context, channelID string, id int64) (bool, error)
 	FileLearnProposals(ctx context.Context, channelID string, proposals []*db.LearnProposal, withdraw []db.LearnWithdrawal) ([]*db.LearnProposal, error)
 	ListLearnProposals(ctx context.Context, channelID string) ([]*db.LearnProposal, error)
 	GetLearnProposal(ctx context.Context, id int64) (*db.LearnProposal, error)

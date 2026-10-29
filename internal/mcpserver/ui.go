@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -47,7 +48,7 @@ func shiftPaneRefs(steps []uiRunStep) []uiRunStep {
 // uiRunStep is a step of ui_run, as the app's window runs it. Pointers keep
 // a false or 0 the agent gives.
 type uiRunStep struct {
-	Op        uiOp        `json:"op" jsonschema:"select_channel {channel_id}, set_tab {tab}, create_tab {tab?, canvas?}, rename_tab {tab, name}, remove_tab {tab}, replace_pane {pane, panel, open_mode?, item?, scope?}, add_pane {panel, next_to?, direction?, side?, open_mode?, item?, scope?}, remove_pane {pane}, maximize_pane {pane}, restore_pane, open_file {path, line?}, show_message {message_id}, open_side {view}, close_side, send_input {pane, text, submit?}, read_output {pane, lines?}, wait_for {pane, match?, quiet_ms?, lines?}"`
+	Op        uiOp        `json:"op" jsonschema:"select_channel {channel_id}, set_tab {tab}, create_tab {tab?, canvas?}, rename_tab {tab, name}, remove_tab {tab}, replace_pane {pane, panel, open_mode?, item?, scope?}, add_pane {panel, next_to?, direction?, side?, open_mode?, item?, scope?}, remove_pane {pane}, maximize_pane {pane}, restore_pane, open_file {path, line?}, show_message {message_id}, open_side {view}, close_side, send_input {pane, text, submit?}, read_output {pane, lines?}, wait_for {pane, match?, quiet_ms?, lines?}, open_walkthrough {walkthrough_id, walkthrough_step?, autoplay_sec?}, close_walkthrough"`
 	ChannelID string      `json:"channel_id,omitempty" jsonschema:"select_channel: a channel, thread or worktree thread of this project"`
 	Tab       string      `json:"tab,omitempty" jsonschema:"set_tab, rename_tab, remove_tab: a layout tab (from ui_state); create_tab: the new tab's name (default the next Layout N)"`
 	Name      string      `json:"name,omitempty" jsonschema:"rename_tab: the tab's new name"`
@@ -69,6 +70,10 @@ type uiRunStep struct {
 	Lines     *int        `json:"lines,omitempty" jsonschema:"read_output, wait_for: how many of the terminal's (or chat's messages') last lines (default 50, at most 2000)"`
 	Match     string      `json:"match,omitempty" jsonschema:"wait_for: a regular expression (multiline, RE2 syntax: no lookarounds or backreferences) the last lines must match"`
 	QuietMS   *int        `json:"quiet_ms,omitempty" jsonschema:"wait_for without match: how long the terminal must be quiet, or a chat idle when no send_input queued a message in it, in ms (default 2000)"`
+
+	WalkthroughID   *int64 `json:"walkthrough_id,omitempty" jsonschema:"open_walkthrough: a walkthrough of the open channel (from ui_walkthrough), to show in the editor again"`
+	WalkthroughStep *int   `json:"walkthrough_step,omitempty" jsonschema:"open_walkthrough: the step to show, from 1 (default 1)"`
+	AutoplaySec     *int   `json:"autoplay_sec,omitempty" jsonschema:"open_walkthrough: play it, moving to the next step every this many seconds until the last, or until the user pauses or steps through it themselves (default: the user steps through)"`
 }
 
 // The step fields that take one of a few values have types of their own,
@@ -91,6 +96,7 @@ var (
 		"select_channel", "set_tab", "create_tab", "rename_tab", "remove_tab",
 		"replace_pane", "add_pane", "remove_pane", "maximize_pane", "restore_pane",
 		"open_file", "show_message", "open_side", "close_side", "send_input", "read_output", "wait_for",
+		"open_walkthrough", "close_walkthrough",
 	}
 	uiPanels = []any{
 		"chat", "chat-side", "editor", "file-tree", "memory", "git", "docker-agent", "docker-shell", "host-shell",
@@ -124,6 +130,9 @@ func uiRunSchema() *jsonschema.Schema {
 	step["line"].Minimum = jsonschema.Ptr(1.0)
 	step["message_id"].Minimum = jsonschema.Ptr(1.0)
 	step["quiet_ms"].Minimum = jsonschema.Ptr(0.0)
+	step["walkthrough_id"].Minimum = jsonschema.Ptr(1.0)
+	step["walkthrough_step"].Minimum = jsonschema.Ptr(1.0)
+	step["autoplay_sec"].Minimum, step["autoplay_sec"].Maximum = jsonschema.Ptr(1.0), jsonschema.Ptr(float64(maxAutoplaySec))
 	return schema
 }
 
@@ -156,8 +165,16 @@ func (s *Server) handleUIRun(_ context.Context, _ *mcp.CallToolRequest, input ui
 	if status != http.StatusOK {
 		return errorResult(fmt.Sprintf("API error (status %d): %s", status, string(respBody))), nil, nil
 	}
+	failed, err := uiRunFailed(respBody)
+	if err != nil {
+		return errorResult(fmt.Sprintf("decoding response: %v", err)), nil, nil
+	}
+	return &mcp.CallToolResult{IsError: failed, Content: []mcp.Content{&mcp.TextContent{Text: string(respBody)}}}, nil, nil
+}
 
-	// A failed step makes the call an error, with the results as they are.
+// uiRunFailed reports whether a step of the window's reply to a command
+// failed, which makes the call an error, with the results as they are.
+func uiRunFailed(respBody []byte) (bool, error) {
 	var reply struct {
 		Results []struct {
 			OK bool `json:"ok"`
@@ -165,11 +182,83 @@ func (s *Server) handleUIRun(_ context.Context, _ *mcp.CallToolRequest, input ui
 		Error string `json:"error"`
 	}
 	if err := json.Unmarshal(respBody, &reply); err != nil {
-		return errorResult(fmt.Sprintf("decoding response: %v", err)), nil, nil
+		return false, err
 	}
 	failed := reply.Error != ""
 	for _, r := range reply.Results {
 		failed = failed || !r.OK
 	}
-	return &mcp.CallToolResult{IsError: failed, Content: []mcp.Content{&mcp.TextContent{Text: string(respBody)}}}, nil, nil
+	return failed, nil
+}
+
+type uiWalkthroughInput struct {
+	Title       string              `json:"title" jsonschema:"What the walkthrough explains, shown on its card and in the editor's walkthroughs menu"`
+	Steps       []uiWalkthroughStep `json:"steps" jsonschema:"The steps, shown one at a time in order (at most 50)"`
+	AutoplaySec *int                `json:"autoplay_sec,omitempty" jsonschema:"Play it, moving to the next step every this many seconds until the last, or until the user pauses or steps through it themselves (default: the user steps through)"`
+	ClientID    string              `json:"client_id,omitempty" jsonschema:"The window (from ui_state); empty for the one the user last focused"`
+}
+
+// maxAutoplaySec is the longest a played walkthrough shows a step.
+const maxAutoplaySec = 600
+
+type uiWalkthroughStep struct {
+	Path      string `json:"path" jsonschema:"A text file in one of the channel's roots, relative to the channel's dir or absolute"`
+	StartLine int    `json:"start_line" jsonschema:"The first line the step highlights, from 1"`
+	EndLine   int    `json:"end_line,omitempty" jsonschema:"The last line it highlights (default start_line)"`
+	Title     string `json:"title,omitempty" jsonschema:"A short heading for the step"`
+	Body      string `json:"body" jsonschema:"The explanation shown over the lines, in Markdown (at most 8000 bytes)"`
+}
+
+// uiWalkthroughSchema is ui_walkthrough's input schema, with the API's
+// bounds on its steps.
+func uiWalkthroughSchema() *jsonschema.Schema {
+	schema, _ := jsonschema.For[uiWalkthroughInput](nil) // a struct of plain fields infers
+	schema.Properties["steps"].MinItems = jsonschema.Ptr(1)
+	schema.Properties["steps"].MaxItems = jsonschema.Ptr(50)
+	step := schema.Properties["steps"].Items.Properties
+	step["start_line"].Minimum = jsonschema.Ptr(1.0)
+	step["end_line"].Minimum = jsonschema.Ptr(1.0)
+	schema.Properties["autoplay_sec"].Minimum, schema.Properties["autoplay_sec"].Maximum = jsonschema.Ptr(1.0), jsonschema.Ptr(float64(maxAutoplaySec))
+	return schema
+}
+
+// handleUIWalkthrough saves a walkthrough in this channel and opens it in
+// the app's editor. It's kept until the channel is deleted, so it can be
+// opened again when no window is open now.
+func (s *Server) handleUIWalkthrough(_ context.Context, _ *mcp.CallToolRequest, input uiWalkthroughInput) (*mcp.CallToolResult, any, error) {
+	s.logger.Info("mcp tool call", "tool", "ui_walkthrough", "steps", len(input.Steps))
+	body, _ := json.Marshal(map[string]any{"title": input.Title, "steps": input.Steps})
+	respBody, status, err := s.doRequest("POST", s.apiURL+"/api/channels/"+url.PathEscape(s.channelID)+"/walkthroughs", body)
+	if err != nil {
+		return errorResult(fmt.Sprintf("calling API: %v", err)), nil, nil
+	}
+	if status != http.StatusCreated {
+		return errorResult(fmt.Sprintf("API error (status %d): %s", status, string(respBody))), nil, nil
+	}
+	var created struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal(respBody, &created); err != nil {
+		return errorResult(fmt.Sprintf("decoding response: %v", err)), nil, nil
+	}
+	saved := fmt.Sprintf("Saved as walkthrough %d", created.ID)
+
+	steps := []uiRunStep{
+		{Op: "select_channel", ChannelID: s.channelID},
+		{Op: "open_walkthrough", WalkthroughID: &created.ID, AutoplaySec: input.AutoplaySec},
+	}
+	body, _ = json.Marshal(map[string]any{"steps": steps, "client_id": input.ClientID})
+	respBody, status, err = s.doRequest("POST", s.apiURL+"/api/ui/commands", body)
+	switch {
+	case err != nil:
+		return errorResult(fmt.Sprintf("%s, but opening it failed: calling API: %v", saved, err)), nil, nil
+	case status == http.StatusNotFound:
+		return textResult(saved + "; no app window is open to show it. Open it later with ui_run open_walkthrough, or the user can from the editor's walkthroughs menu."), nil, nil
+	case status != http.StatusOK:
+		return errorResult(fmt.Sprintf("%s, but opening it failed: API error (status %d): %s", saved, status, string(respBody))), nil, nil
+	}
+	if failed, err := uiRunFailed(respBody); err != nil || failed {
+		return errorResult(fmt.Sprintf("%s, but opening it failed: %s", saved, string(respBody))), nil, nil
+	}
+	return textResult(saved + ", open in the app's editor."), nil, nil
 }

@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -78,6 +79,9 @@ type parityTool struct {
 	// responses are bodies the API answers, by route pattern, where a
 	// later request depends on them; "{}" otherwise.
 	responses map[string]string
+	// statuses are the statuses the API answers, by route pattern, where a
+	// later request depends on one other than 200.
+	statuses map[string]int
 	// noAPI says why the tool calls no API at all.
 	noAPI string
 }
@@ -168,6 +172,7 @@ func parityTools() map[string]parityTool {
 		"toggle_task":              {},
 		"ui_run":                   {},
 		"ui_state":                 {},
+		"ui_walkthrough":           {responses: map[string]string{"POST /api/channels/{id}/walkthroughs": `{"id":1}`}, statuses: map[string]int{"POST /api/channels/{id}/walkthroughs": http.StatusCreated}},
 		"update_agent_status":      {},
 		"update_review_comment":    {},
 	}
@@ -210,6 +215,7 @@ type parityAPI struct {
 	mu        sync.Mutex
 	requests  []parityRequest
 	responses map[string]string
+	statuses  map[string]int
 }
 
 func newParityAPI(patterns []string) *parityAPI {
@@ -226,6 +232,7 @@ func (a *parityAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	a.requests = append(a.requests, parityRequest{method: r.Method, path: r.URL.Path, query: r.URL.Query(), body: body, pattern: pattern})
 	resp, ok := a.responses[pattern]
+	status := a.statuses[pattern]
 	a.mu.Unlock()
 	if pattern == "" {
 		http.NotFound(w, r)
@@ -234,17 +241,19 @@ func (a *parityAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		resp = "{}"
 	}
+	w.WriteHeader(cmp.Or(status, http.StatusOK))
 	_, _ = w.Write([]byte(resp))
 }
 
-// take returns the requests since the last take and sets the responses of
-// the next call.
-func (a *parityAPI) take(responses map[string]string) []parityRequest {
+// take returns the requests since the last take and sets the responses and
+// statuses of the next call.
+func (a *parityAPI) take(responses map[string]string, statuses map[string]int) []parityRequest {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	reqs := a.requests
 	a.requests = nil
 	a.responses = responses
+	a.statuses = statuses
 	return reqs
 }
 
@@ -383,7 +392,7 @@ func mcpParityCalls(t require.TestingT, client func(http.Client) mcpserver.HTTPC
 	require.NoError(t, err)
 
 	srv.RegisterAgent()
-	calls := []parityCall{{tool: "(agent registration)", requests: api.take(nil)}}
+	calls := []parityCall{{tool: "(agent registration)", requests: api.take(nil, nil)}}
 	fixtures := parityTools()
 	for _, tool := range res.Tools {
 		fx := fixtures[tool.Name]
@@ -408,10 +417,10 @@ func mcpParityCalls(t require.TestingT, client func(http.Client) mcpserver.HTTPC
 					gen.values[name] = fmt.Sprint(v)
 				}
 			}
-			api.take(fx.responses)
+			api.take(fx.responses, fx.statuses)
 			res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: tool.Name, Arguments: args})
 			require.NoError(t, err, tool.Name)
-			call := parityCall{tool: tool.Name, values: gen.values, requests: api.take(nil)}
+			call := parityCall{tool: tool.Name, values: gen.values, requests: api.take(nil, nil)}
 			if text, ok := res.Content[0].(*mcp.TextContent); ok {
 				call.answer = text.Text
 			}
@@ -419,7 +428,7 @@ func mcpParityCalls(t require.TestingT, client func(http.Client) mcpserver.HTTPC
 		}
 	}
 	srv.UnregisterAgent()
-	return append(calls, parityCall{tool: "(agent unregistration)", requests: api.take(nil)})
+	return append(calls, parityCall{tool: "(agent unregistration)", requests: api.take(nil, nil)})
 }
 
 // handlerReads is what a route's handler reads of a request.
