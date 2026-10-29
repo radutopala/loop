@@ -39,6 +39,7 @@ import (
 	"github.com/radutopala/loop/internal/monitor"
 	"github.com/radutopala/loop/internal/orchestrator"
 	"github.com/radutopala/loop/internal/osutil"
+	"github.com/radutopala/loop/internal/pprofserver"
 	"github.com/radutopala/loop/internal/quality/engine"
 	"github.com/radutopala/loop/internal/quality/evolution"
 	"github.com/radutopala/loop/internal/quality/graph"
@@ -288,6 +289,10 @@ type channelLister interface {
 }
 
 const defaultReindexInterval = 5 * time.Minute
+
+// pprofSyncInterval is how often the daemon re-reads the pprof config block,
+// so turning it on or off takes effect without a restart.
+const pprofSyncInterval = 5 * time.Second
 
 func (m *multiDirIndexer) reindexAll(ctx context.Context, store channelLister) {
 	channels, err := store.ListChannels(ctx)
@@ -834,6 +839,7 @@ func (a *app) serve() error {
 	})
 	apiSrv.SetBackup(backups)
 	go backups.Run(ctx, time.Minute)
+	go pprofserver.New(reloadConfig, logger).Run(ctx, pprofSyncInterval)
 	containerReg.SetBroadcaster(eventsHub)
 	// Unconditional: the local bot renders ask/plan cards through the hub
 	// even when no gate is enabled.

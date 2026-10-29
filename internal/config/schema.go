@@ -509,6 +509,30 @@ func buildSchema(goos string) *ConfigSchema {
 				},
 			},
 
+			// ── Profiling section (nested object) ──
+			"pprof": {
+				Type:        "object",
+				XSection:    "Profiling",
+				XGlobalOnly: true,
+				Properties: map[string]*SchemaProperty{
+					"enabled": {
+						Type:        "boolean",
+						Title:       "Enabled",
+						Description: "Serve the daemon's Go pprof profiles at /debug/pprof/ on the address below. Off by default; turning it on or off takes effect without a restart.",
+						XOrder:      1,
+						Default:     false,
+					},
+					"addr": {
+						Type:         "string",
+						Title:        "Address",
+						Description:  "The host:port the pprof listener binds. Keep it on loopback: the profiles show the daemon's command line and code.",
+						Default:      DefaultPprofAddr,
+						XPlaceholder: DefaultPprofAddr,
+						XOrder:       2,
+					},
+				},
+			},
+
 			// ── Review section (nested object) ──
 			"review": {
 				Type:     "object",

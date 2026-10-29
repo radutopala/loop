@@ -506,6 +506,28 @@ func (s *ConfigSuite) TestPlaygroundShareDefaultsDisabled() {
 	require.False(s.T(), cfg.PlaygroundShare.Enabled)
 }
 
+func (s *ConfigSuite) TestPprofConfigLoad() {
+	tests := []struct {
+		name  string
+		pprof string
+		want  PprofConfig
+	}{
+		{"unset", ``, PprofConfig{Addr: DefaultPprofAddr}},
+		{"enabled, default addr", `, "pprof": {"enabled": true, "addr": " "}`, PprofConfig{Enabled: true, Addr: DefaultPprofAddr}},
+		{"addr set", `, "pprof": {"enabled": true, "addr": " localhost:7070 "}`, PprofConfig{Enabled: true, Addr: "localhost:7070"}},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.loader.readFile = func(_ string) ([]byte, error) {
+				return []byte(`{"platforms": ["discord"], "discord_token": "t", "discord_app_id": "a"` + tt.pprof + `}`), nil
+			}
+			cfg, err := s.loader.load()
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tt.want, cfg.Pprof)
+		})
+	}
+}
+
 func (s *ConfigSuite) TestBackupConfigLoad() {
 	defaults := BackupRetention{KeepLast: DefaultBackupKeepLast, KeepDaily: DefaultBackupKeepDaily, KeepWeekly: DefaultBackupKeepWeekly, KeepMonthly: DefaultBackupKeepMonthly}
 	tests := []struct {
