@@ -83,7 +83,7 @@ When a terminal pane has an `agent_id`, the Loop MCP server inside the container
 | Tool | Description |
 |------|-------------|
 | `list_agents` | List all active agents in the current channel with status and work summaries |
-| `send_agent_message` | Send a message to another agent by ID: typed into a terminal agent's terminal, or queued as a chat's next message |
+| `send_agent_message` | Send a message to another agent by ID: typed into a terminal agent's terminal, or queued as a chat's next message. Only reaches this channel's agents; for another channel or thread, use `send_message` with its `channel_id` |
 | `update_agent_status` | Update this agent's display name and work summary |
 
 ### Instructions

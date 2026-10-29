@@ -135,7 +135,7 @@ Enabled for Swarm/Canvas terminal agents. Messages are typed into the target age
 | Tool | Description |
 |------|-------------|
 | `list_agents` | List the agents in the current channel, its chats and terminal agents, with status and work summaries |
-| `send_agent_message` | Send a message to another agent by ID as `[from <agent id>] <message>`: typed into a terminal agent's terminal, or queued as a chat's next message; fails when a terminal agent has no terminal |
+| `send_agent_message` | Send a message to another agent by ID as `[from <agent id>] <message>`: typed into a terminal agent's terminal, or queued as a chat's next message; fails when a terminal agent has no terminal. Only reaches the agents of its own channel; another channel or thread takes `send_message` |
 | `update_agent_status` | Update this agent's display name and work summary (visible to other agents and frontend) |
 
 When `--agent-id` is set, the server also sets instructions telling Claude how to use the agent tools and how messages from other agents arrive.
