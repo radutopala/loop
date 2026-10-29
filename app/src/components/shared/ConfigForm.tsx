@@ -4,6 +4,7 @@ import { useTheme } from "../../ThemeContext";
 import type { ColorPalette } from "../../theme";
 import { builtinThemes, fonts } from "../../theme";
 import { mountToggles, syncConfigMounts } from "./configMounts";
+import { JSONCodeEditor } from "./JSONCodeEditor";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -282,7 +283,6 @@ export const ConfigForm = forwardRef<ConfigFormHandle, ConfigFormProps>(function
   const [, setDirtyRaw] = useState(false);
   const [, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const setDirty = (v: boolean) => {
     setDirtyRaw(v);
@@ -470,7 +470,6 @@ export const ConfigForm = forwardRef<ConfigFormHandle, ConfigFormProps>(function
             setJsonDraft(v);
             setDirty(true);
           }}
-          textareaRef={textareaRef}
           onSave={handleSave}
           error={error}
           fillHeight={jsonOnly}
@@ -511,7 +510,6 @@ function JSONView({
   colors,
   draft,
   onChange,
-  textareaRef,
   onSave,
   error,
   fillHeight,
@@ -519,51 +517,22 @@ function JSONView({
   colors: ColorPalette;
   draft: string;
   onChange: (v: string) => void;
-  textareaRef: React.RefObject<HTMLTextAreaElement | null>;
   onSave: () => void;
   error: string | null;
   fillHeight?: boolean;
 }) {
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === "s") {
-      e.preventDefault();
-      onSave();
-    }
-    if (e.key === "Tab") {
-      e.preventDefault();
-      const ta = textareaRef.current;
-      if (!ta) return;
-      const s = ta.selectionStart,
-        end = ta.selectionEnd;
-      onChange(draft.substring(0, s) + "  " + draft.substring(end));
-      setTimeout(() => {
-        ta.selectionStart = ta.selectionEnd = s + 2;
-      }, 0);
-    }
-  };
   return (
     <div style={fillHeight ? { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 } : undefined}>
-      <textarea
-        ref={textareaRef}
-        value={draft}
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={handleKeyDown}
-        spellCheck={false}
+      <div
         style={{
-          width: "100%",
-          ...(fillHeight ? { flex: 1, minHeight: 0, resize: "none" } : { minHeight: 200, maxHeight: 500, resize: "vertical" }),
-          backgroundColor: colors.bg,
+          ...(fillHeight ? { flex: 1, minHeight: 0 } : { height: 300, minHeight: 200, maxHeight: 500, resize: "vertical" }),
           border: `1px solid ${error ? colors.error : colors.border}`,
           borderRadius: 8,
-          padding: "10px 12px",
-          fontSize: 12,
-          fontFamily: fonts.mono,
-          color: colors.text,
-          lineHeight: 1.5,
-          outline: "none",
-          boxSizing: "border-box",
+          overflow: "hidden",
         }}
-      />
+      >
+        <JSONCodeEditor value={draft} onChange={onChange} onSave={onSave} colors={colors} />
+      </div>
       <div style={{ fontSize: 10, color: colors.textDim, marginTop: 4, textAlign: "right", flexShrink: 0 }}>{navigator.platform.includes("Mac") ? "\u2318S" : "Ctrl+S"} to save</div>
     </div>
   );
