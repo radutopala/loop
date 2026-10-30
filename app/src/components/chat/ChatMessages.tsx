@@ -256,9 +256,11 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
     if (!container || !el) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const observer = new IntersectionObserver(
-      ([entry]) => {
+      (entries) => {
         clearTimeout(timer);
-        if (entry?.isIntersecting) timer = setTimeout(() => setHighlightedMsgId(null), HIGHLIGHT_IN_VIEW_MS);
+        // A busy page can hand over several changes at once, oldest first;
+        // only the newest says where the message is now.
+        if (entries.at(-1)?.isIntersecting) timer = setTimeout(() => setHighlightedMsgId(null), HIGHLIGHT_IN_VIEW_MS);
       },
       { root: container },
     );
