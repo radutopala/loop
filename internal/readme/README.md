@@ -1161,6 +1161,7 @@ In headless/Linux environments where Electron can't launch, `LOOP_NO_ELECTRON=1 
 | `playground_file` | Manage files within a playground (create/update/read/delete/list) |
 | `ui_state` | The desktop app's windows: open channel, layout tab and panes, with agent terminals' status |
 | `ui_run` | Drive a desktop app window: channels, tabs, panes, files, and typing into or reading agent terminals (never host shells) |
+| `ui_walkthrough` | Walk the user through code in the desktop app's editor: a card over lines of one or more files per step, stepped through by the user or played at a set pace |
 | `chat_component` | Show a component inline in the desktop chat: a template (`math`, `canvas`, `react`, or one from config) filled with HTML/CSS/JS |
 | `prompt_shortcut` | Manage prompt shortcuts (list, add, update, delete) in global or project scope |
 | `bash_shortcut` | Manage bash shortcuts (list, add, update, delete) in global or project scope |

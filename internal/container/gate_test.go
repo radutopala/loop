@@ -581,12 +581,14 @@ func (s *GateSuite) TestWriteGatePolicyFilePinsSelfDenyFirst() {
 	require.NoError(s.T(), json.Unmarshal(captured, &got))
 	require.Equal(s.T(), []string{"/etc/loop/**"}, got.FileRules[0].Paths)
 	require.Equal(s.T(), types.DecisionDeny, got.FileRules[0].Decision, "self-deny wins over a config allow on the same path")
-	// Then the pinned project-config approve. The config allow is the list's
-	// first Allow, so the workspace allow lands ahead of it.
-	require.Equal(s.T(), types.DecisionApprove, got.FileRules[1].Decision)
-	require.Equal(s.T(), "/host/work/.loop/config.json", got.FileRules[1].Paths[1])
-	require.Equal(s.T(), "workspace fast-path", got.FileRules[2].Message)
-	require.Equal(s.T(), types.DecisionAllow, got.FileRules[3].Decision)
+	// Then the pinned workspace Claude settings deny and project-config
+	// approve. The config allow is the list's first Allow, so the workspace
+	// allow lands ahead of it.
+	require.Equal(s.T(), "claude settings file is read-only to the agent", got.FileRules[1].Message)
+	require.Equal(s.T(), types.DecisionApprove, got.FileRules[2].Decision)
+	require.Equal(s.T(), "/host/work/.loop/config.json", got.FileRules[2].Paths[1])
+	require.Equal(s.T(), "workspace fast-path", got.FileRules[3].Message)
+	require.Equal(s.T(), types.DecisionAllow, got.FileRules[4].Decision)
 	require.Empty(s.T(), got.GitGuardRoots, "no binds, no guard roots")
 }
 
@@ -616,6 +618,76 @@ func (s *GateSuite) TestInjectProjectConfigRule() {
 			require.Equal(s.T(), in[0], out[1])
 		})
 	}
+}
+
+func (s *GateSuite) TestInjectClaudeSettingsRule() {
+	in := []types.FileRule{{Paths: []string{"/w/**"}, Decision: types.DecisionAllow}}
+	require.Equal(s.T(), in, injectClaudeSettingsRule(in, "", ""))
+
+	cases := []struct {
+		name            string
+		workDir, parent string
+		want            []string
+	}{
+		{"workspace", "/w", "", []string{"/w/**/.claude/settings.json", "/w/**/.claude/settings.local.json"}},
+		{"parent same as workDir", "/w", "/w", []string{"/w/**/.claude/settings.json", "/w/**/.claude/settings.local.json"}},
+		{"worktree", "/p/wt", "/p", []string{
+			"/p/wt/**/.claude/settings.json", "/p/wt/**/.claude/settings.local.json",
+			"/p/**/.claude/settings.json", "/p/**/.claude/settings.local.json",
+		}},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			out := injectClaudeSettingsRule(in, tc.workDir, tc.parent)
+			require.Len(s.T(), out, 2)
+			require.Equal(s.T(), tc.want, out[0].Paths)
+			require.Equal(s.T(), []string{"write", "create", "delete", "chmod", "link"}, out[0].Operations)
+			require.Equal(s.T(), types.DecisionDeny, out[0].Decision)
+			require.Equal(s.T(), in[0], out[1])
+		})
+	}
+}
+
+// The default rule names host trees and the workspace deny is pinned per
+// container, so a module cache that ships a .claude/settings.json unpacks,
+// while the host's and the workspace's settings stay read-only — even under a
+// trusted project allow, which the merge puts ahead of the overridable denies.
+func (s *GateSuite) TestGateFileRulesClaudeSettingsScope() {
+	rules := slices.Concat(
+		[]types.FileRule{{Paths: []string{"/**"}, Operations: []string{"create", "write"}, Decision: types.DecisionAllow, Message: "project allow"}},
+		config.DefaultGateFileRules(),
+	)
+	cfg := &config.Config{Gates: config.GatesConfig{Agentgate: config.AgentgateConfig{FileRules: rules}}}
+	policy, err := agentgate.CompilePolicy(types.DecisionAllow, nil, nil, GateFileRules(cfg, "/opt/work", ""))
+	require.NoError(s.T(), err)
+
+	cases := []struct {
+		path string
+		want types.Decision
+	}{
+		{"/go/pkg/mod/example.com/dep@v1.0.0/.claude/settings.json", types.DecisionAllow},
+		{"/opt/work/.claude/settings.json", types.DecisionDeny},
+		{"/opt/work/sub/.claude/settings.local.json", types.DecisionDeny},
+		{"/opt/work/.claude/CLAUDE.md", types.DecisionAllow},
+	}
+	for _, tc := range cases {
+		s.Run(tc.path, func() {
+			require.Equal(s.T(), tc.want, policy.MatchFile("create", tc.path).Decision)
+		})
+	}
+
+	defaults, err := agentgate.CompilePolicy(types.DecisionAllow, nil, nil, config.DefaultGateFileRules())
+	require.NoError(s.T(), err)
+	for _, p := range []string{
+		"/root/.claude/settings.json",
+		"/home/dev/.claude/settings.local.json",
+		"/Users/dev/.claude/settings.json",
+		"/Users/dev/src/repo/.claude/settings.json",
+	} {
+		require.Equal(s.T(), types.DecisionDeny, defaults.MatchFile("write", p).Decision, p)
+	}
+	require.Equal(s.T(), types.DecisionAllow,
+		defaults.MatchFile("create", "/go/pkg/mod/x@v1/.claude/settings.json").Decision)
 }
 
 // --- injectWorkspaceRmRfRule ---
