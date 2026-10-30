@@ -16,18 +16,24 @@ export interface PillSpec {
   color: "warning" | "active" | "error";
   /** What the pill waits on, beside its label in the bell's menu. */
   hint: string;
+  /**
+   * An agent or review is held until you act, so the session tops Recent.
+   * The PR pills aren't: a PR can sit with them for days while nothing is
+   * held, so their sessions keep their place by activity.
+   */
+  blocking: boolean;
 }
 
 /** Render order matches the pre-unification hardcoded order. */
 export const SIDEBAR_PILLS: PillSpec[] = [
-  { kind: "gate", label: "gate", color: "warning", hint: "an approval" },
-  { kind: "rev", label: "rev", color: "active", hint: "a review session" },
-  { kind: "ask", label: "ask", color: "warning", hint: "a question" },
-  { kind: "plan", label: "plan", color: "warning", hint: "a plan to approve" },
-  { kind: "trust", label: "trust", color: "warning", hint: "a config to trust" },
-  { kind: "ci", label: "ci", color: "error", hint: "a CI failure" },
-  { kind: "conflict", label: "cnf", color: "error", hint: "a merge conflict" },
-  { kind: "comment", label: "cmt", color: "warning", hint: "review comments" },
+  { kind: "gate", label: "gate", color: "warning", hint: "an approval", blocking: true },
+  { kind: "rev", label: "rev", color: "active", hint: "a review session", blocking: true },
+  { kind: "ask", label: "ask", color: "warning", hint: "a question", blocking: true },
+  { kind: "plan", label: "plan", color: "warning", hint: "a plan to approve", blocking: true },
+  { kind: "trust", label: "trust", color: "warning", hint: "a config to trust", blocking: true },
+  { kind: "ci", label: "ci", color: "error", hint: "a CI failure", blocking: false },
+  { kind: "conflict", label: "cnf", color: "error", hint: "a merge conflict", blocking: false },
+  { kind: "comment", label: "cmt", color: "warning", hint: "review comments", blocking: false },
 ];
 
 /**
@@ -50,7 +56,7 @@ export function useShownPills(): PillSpec[] {
  * running review isn't waiting on you, so the needs-you filter and Recent's
  * waiting group leave it out.
  */
-export const REVIEWING_PILL: Omit<PillSpec, "kind" | "hint"> = { label: "rev…", color: "active" };
+export const REVIEWING_PILL: Omit<PillSpec, "kind" | "hint" | "blocking"> = { label: "rev…", color: "active" };
 
 /**
  * The rows the trust pill lights: a project's config waiting for trust is one
@@ -66,7 +72,7 @@ export function trustPillIds(channels: ReadonlyArray<Pick<Channel, "id" | "paren
  * REVIEWING_PILL it isn't a PillKind: it's being handled, not waiting on you.
  * It goes with the ci pill when that's turned off.
  */
-export function fixingPill(attention: Channel["pr_attention"], shown: ReadonlyArray<PillSpec>): Omit<PillSpec, "kind" | "hint"> | undefined {
+export function fixingPill(attention: Channel["pr_attention"], shown: ReadonlyArray<PillSpec>): Omit<PillSpec, "kind" | "hint" | "blocking"> | undefined {
   if (attention === "fixing" && shown.some((p) => p.kind === "ci")) return { label: "ci…", color: "active" };
   return undefined;
 }
