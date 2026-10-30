@@ -76,6 +76,8 @@ Each row shows:
 - its uncommitted diff (`+N -N`), the unread dot and its status pills;
 - how long ago it was active (`now`, `12m`, `30h`; hours up to 48, so the whole Recent window reads in hours), unless it's active now or a pill is shown.
 
+Several pills that need you stack as a deck, in both tabs: the most urgent on top (in the bell's order, `gate` first and `cmt` last), with the edges of the others peeking out behind it. Hovering the row lays them out side by side. `rev…`, `ci…`, plugin badges and the notification count stay beside the deck.
+
 Clicking a row opens the session; right-clicking opens the same context menu as the tree, and hovering shows the row's details popup.
 
 Tabs at the top of the list switch between Recent and Tree (the channel tree); the open tab is stored in `localStorage` under `loop-sidebar-tab`, and it's Tree until you pick one. With nothing active in the last 48 hours there's nothing to switch to, so only the tree shows, without tabs; the task toggle stays at the right and applies to Tree. A search or the task filter that empties Recent keeps the tabs, and Recent says no sessions match. Selection mode hides the tabs and shows the tree. The search box filters Recent by name or parent names, and it's hidden in selection mode.
