@@ -133,8 +133,12 @@ func (s *ConfigSuite) TestDefaultGateFileRulesClaudeConfigNarrowScope() {
 
 	// Must protect: claude settings files the agent should not mutate.
 	for _, want := range []string{
-		"**/.claude/settings.json",
-		"**/.claude/settings.local.json",
+		"/root/.claude/settings.json",
+		"/root/.claude/settings.local.json",
+		"/home/**/.claude/settings.json",
+		"/home/**/.claude/settings.local.json",
+		"/Users/**/.claude/settings.json",
+		"/Users/**/.claude/settings.local.json",
 	} {
 		require.Contains(s.T(), claudeRule.Paths, want,
 			"claude settings deny rule missing sensitive path %q", want)
@@ -148,6 +152,8 @@ func (s *ConfigSuite) TestDefaultGateFileRulesClaudeConfigNarrowScope() {
 	// `/work/.mcp.json` trip legitimate test fixtures and onboarding flows
 	// that write a fresh .mcp.json into scratch dirs.
 	for _, p := range claudeRule.Paths {
+		require.NotEqual(s.T(), "**/.claude/settings.json", p,
+			"filename-anywhere deny caught package caches holding a dependency's .claude/settings.json; scope to host trees")
 		require.NotEqual(s.T(), "**/.claude/**", p,
 			"broad **/.claude/** deny is a regression; scope to individual settings files")
 		require.NotEqual(s.T(), "**/.claude/CLAUDE.md", p,

@@ -1049,7 +1049,7 @@ func (r *DockerRunner) writeGatePolicyFile(cfg *config.Config, channelID, workDi
 // in workDir runs under: cfg's, with the workspace allow and the project
 // config and policy self-denies in place.
 func GateFileRules(cfg *config.Config, workDir, parentDirPath string) []types.FileRule {
-	return injectPolicySelfDenyRule(injectProjectConfigRule(injectWorkspaceRule(cfg.Gates.Agentgate.FileRules, workDir, parentDirPath), workDir, parentDirPath))
+	return injectPolicySelfDenyRule(injectClaudeSettingsRule(injectProjectConfigRule(injectWorkspaceRule(cfg.Gates.Agentgate.FileRules, workDir, parentDirPath), workDir, parentDirPath), workDir, parentDirPath))
 }
 
 // policyChannelKey returns the sanitized channel-directory name used as the
@@ -1366,6 +1366,33 @@ func injectProjectConfigRule(rules []types.FileRule, workDir, parentDirPath stri
 		Operations: []string{"write", "create", "delete", "chmod", "chown", "link"},
 		Decision:   types.DecisionApprove,
 		Message:    "project config: loop builds the next container from .loop/config.json and .loop/container/",
+	}
+	return append([]types.FileRule{rule}, rules...)
+}
+
+// injectClaudeSettingsRule prepends a Deny on Claude settings files anywhere
+// in the workspace. The default rule only covers home-dir trees, and a
+// workspace may sit elsewhere; a settings file there would add hooks and
+// permission allows to the next host session opened in the repo. Prepended
+// after the merge like injectPolicySelfDenyRule, so no config layer can
+// precede it.
+func injectClaudeSettingsRule(rules []types.FileRule, workDir, parentDirPath string) []types.FileRule {
+	if workDir == "" {
+		return rules
+	}
+	roots := []string{workDir}
+	if parentDirPath != "" && parentDirPath != workDir {
+		roots = append(roots, parentDirPath)
+	}
+	var paths []string
+	for _, root := range roots {
+		paths = append(paths, root+"/**/.claude/settings.json", root+"/**/.claude/settings.local.json")
+	}
+	rule := types.FileRule{
+		Paths:      paths,
+		Operations: []string{"write", "create", "delete", "chmod", "link"},
+		Decision:   types.DecisionDeny,
+		Message:    "claude settings file is read-only to the agent",
 	}
 	return append([]types.FileRule{rule}, rules...)
 }

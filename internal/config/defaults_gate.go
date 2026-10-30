@@ -150,9 +150,22 @@ func DefaultGateFileRules() []types.FileRule {
 			// legitimately update their own memory files and per-project MCP
 			// configs as part of normal work; the only truly off-limits
 			// surface is the harness's own permission/setting files.
+			//
+			// Scoped to the trees that reach the host: ~/.claude and any repo
+			// under a home dir (host dirs are bind-mounted at their real path),
+			// where a settings file adds hooks and permission allows to every
+			// host session opened there. A `**/` glob also caught copies no
+			// Claude session reads: a dependency that ships a .claude/
+			// settings.json failed to unpack into a package cache such as
+			// /go/pkg/mod with EPERM. Workspaces outside a home dir get the same
+			// deny pinned per container (see container.injectClaudeSettingsRule).
 			Paths: []string{
-				"**/.claude/settings.json",
-				"**/.claude/settings.local.json",
+				"/root/.claude/settings.json",
+				"/root/.claude/settings.local.json",
+				"/home/**/.claude/settings.json",
+				"/home/**/.claude/settings.local.json",
+				"/Users/**/.claude/settings.json",
+				"/Users/**/.claude/settings.local.json",
 			},
 			Operations: []string{"write", "create", "delete", "chmod"},
 			Decision:   types.DecisionDeny,
