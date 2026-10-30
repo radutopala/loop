@@ -48,13 +48,22 @@ func envInt(key string, def int) int {
 
 func initializeScenario(ctx *godog.ScenarioContext) {
 	tc := NewTestContext()
+	var scenario string
 
 	ctx.Before(func(ctx context.Context, sc *godog.Scenario) (context.Context, error) {
+		scenario = sc.Name
 		resp, err := tc.HTTPClient.Get(tc.BaseURL + "/api/health")
 		if err != nil {
 			return ctx, fmt.Errorf("server not reachable at %s: %w", tc.BaseURL, err)
 		}
 		resp.Body.Close()
+		return ctx, nil
+	})
+
+	ctx.StepContext().After(func(ctx context.Context, st *godog.Step, status godog.StepResultStatus, err error) (context.Context, error) {
+		if err != nil && tc.chromeTab != nil {
+			tc.chromeTab.reportLost(scenario, st.Text)
+		}
 		return ctx, nil
 	})
 

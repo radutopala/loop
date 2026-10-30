@@ -3,6 +3,7 @@
 package component
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -37,6 +38,50 @@ var chromeManager struct {
 	browserCancel context.CancelFunc // cancel for browserCtx
 	started       bool
 	remote        bool // true when using remote allocator (host browser mode)
+	// output keeps the tail of what the launched Chromium processes print, so
+	// a tab that loses its browser can show why. chromedp drops it otherwise.
+	output *chromeOutput
+}
+
+// chromeOutputMax is how much of Chromium's output chromeOutput keeps.
+const chromeOutputMax = 32 << 10
+
+// chromeOutput keeps the last chromeOutputMax bytes written to it, each line
+// stamped with the time it arrived.
+type chromeOutput struct {
+	mu      sync.Mutex
+	buf     []byte
+	partial bool // the last write ended mid-line
+}
+
+func (o *chromeOutput) Write(p []byte) (int, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	for _, line := range bytes.SplitAfter(p, []byte("\n")) {
+		if len(line) == 0 {
+			continue
+		}
+		// The container has no D-Bus, and Chromium says so on every launch;
+		// those lines would push the useful ones out of the tail.
+		if !o.partial && bytes.Contains(line, []byte("ERROR:dbus/")) && line[len(line)-1] == '\n' {
+			continue
+		}
+		if !o.partial {
+			o.buf = append(o.buf, time.Now().UTC().Format("15:04:05.000 ")...)
+		}
+		o.buf = append(o.buf, line...)
+		o.partial = line[len(line)-1] != '\n'
+	}
+	if over := len(o.buf) - chromeOutputMax; over > 0 {
+		o.buf = append(o.buf[:0], o.buf[over:]...)
+	}
+	return len(p), nil
+}
+
+func (o *chromeOutput) String() string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return string(o.buf)
 }
 
 // ensureChrome starts a headless Chromium process or connects to a host
@@ -111,6 +156,9 @@ func ensureChrome() error {
 		opts = append(opts, chromedp.Flag("force-device-scale-factor", scale))
 	}
 
+	chromeManager.output = &chromeOutput{}
+	opts = append(opts, chromedp.CombinedOutput(chromeManager.output))
+
 	chromeManager.allocCtx, chromeManager.allocCancel = chromedp.NewExecAllocator(
 		context.Background(), opts...)
 	chromeManager.started = true
@@ -139,6 +187,50 @@ type chromeTab struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	rec    *screencastRecorder // non-nil while a docs-capture recording is active
+	// budget is the scenario's timeout, the parent of ctx.
+	budget   context.Context
+	opened   time.Time
+	reported bool
+}
+
+// lost reports whether chromedp dropped the tab because its browser
+// connection closed: chromedp cancels the tab on its own then, while the
+// scenario's budget still runs. A timeout ends both with DeadlineExceeded,
+// and close cancels the budget too.
+func (t *chromeTab) lost() bool {
+	return errors.Is(t.ctx.Err(), context.Canceled) && t.budget.Err() == nil
+}
+
+// reportLost prints, once per tab, what is known about a lost browser:
+// how long it ran, the machine's free memory, the Chromium processes still
+// around and the tail of Chromium's output.
+func (t *chromeTab) reportLost(scenario, step string) {
+	if t.reported || !t.lost() {
+		return
+	}
+	t.reported = true
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n=== browser connection lost in %q at %q, %s after the tab opened\n", scenario, step, time.Since(t.opened).Round(time.Millisecond))
+	if mem, err := os.ReadFile("/proc/meminfo"); err == nil {
+		for _, line := range strings.Split(string(mem), "\n") {
+			if strings.HasPrefix(line, "MemTotal:") || strings.HasPrefix(line, "MemAvailable:") {
+				fmt.Fprintf(&b, "%s\n", line)
+			}
+		}
+	}
+	if out, err := exec.Command("ps", "-eo", "pid,ppid,stat,rss,etimes,args").Output(); err == nil {
+		b.WriteString("Chromium processes:\n")
+		for _, line := range strings.Split(string(out), "\n") {
+			if strings.Contains(line, "chrom") {
+				fmt.Fprintf(&b, "  %.200s\n", line)
+			}
+		}
+	}
+	if chromeManager.output != nil {
+		fmt.Fprintf(&b, "Chromium output (last %d KiB, UTC):\n%s", chromeOutputMax>>10, chromeManager.output.String())
+	}
+	b.WriteString("=== end of browser report\n")
+	fmt.Fprint(os.Stderr, b.String())
 }
 
 func (t *chromeTab) close() {
@@ -376,7 +468,7 @@ func (tc *TestContext) ensureChromeTab() error {
 	}
 	timeoutCtx, timeoutCancel := context.WithTimeout(parentCtx, scenarioTimeout)
 	ctx, cancel := chromedp.NewContext(timeoutCtx)
-	tc.chromeTab = &chromeTab{ctx: ctx, cancel: func() { cancel(); timeoutCancel() }}
+	tc.chromeTab = &chromeTab{ctx: ctx, cancel: func() { cancel(); timeoutCancel() }, budget: timeoutCtx, opened: time.Now()}
 	// Surface browser console warnings/errors and uncaught exceptions to the
 	// test log. Many UI actions swallow failures (e.g. a fetch .catch that only
 	// console.warns), so without this a silently-broken step just times out with
