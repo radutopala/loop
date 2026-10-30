@@ -61,10 +61,26 @@ func (s *SQLiteStore) GetDueTasks(ctx context.Context, now time.Time) ([]*Schedu
 	return scanScheduledTasks(rows)
 }
 
+// UpdateScheduledTask writes task's settings. The running flag is left to
+// Claim/ReleaseScheduledTaskRunning: written from a copy read mid-run, it
+// would mark a run that has since ended as running.
 func (s *SQLiteStore) UpdateScheduledTask(ctx context.Context, task *ScheduledTask) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE scheduled_tasks SET schedule = ?, type = ?, prompt = ?, enabled = ?, next_run_at = ?, updated_at = ?, auto_delete_sec = ?, thread_id = ?, worktree = ?, origin_branch = ?, update_before_run = ?, running = ?, workflow_name = ?, workflow_inputs = ?, bash_script = ? WHERE id = ?`,
-		task.Schedule, string(task.Type), task.Prompt, boolToInt(task.Enabled), task.NextRunAt, s.nowFunc(), task.AutoDeleteSec, task.ThreadID, boolToInt(task.Worktree), task.OriginBranch, boolToInt(task.UpdateBeforeRun), boolToInt(task.Running), task.WorkflowName, task.WorkflowInputs, task.BashScript, task.ID,
+		`UPDATE scheduled_tasks SET schedule = ?, type = ?, prompt = ?, enabled = ?, next_run_at = ?, updated_at = ?, auto_delete_sec = ?, thread_id = ?, worktree = ?, origin_branch = ?, update_before_run = ?, workflow_name = ?, workflow_inputs = ?, bash_script = ? WHERE id = ?`,
+		task.Schedule, string(task.Type), task.Prompt, boolToInt(task.Enabled), task.NextRunAt, s.nowFunc(), task.AutoDeleteSec, task.ThreadID, boolToInt(task.Worktree), task.OriginBranch, boolToInt(task.UpdateBeforeRun), task.WorkflowName, task.WorkflowInputs, task.BashScript, task.ID,
+	)
+	return err
+}
+
+// AdvanceScheduledTask records a finished run of task, the copy the run
+// started from: next_run_at becomes task.NextRunAt, and a false task.Enabled
+// disables the task. Every other setting keeps what it is now, so an edit
+// made during the run stands. Nothing changes once the task's schedule or
+// type differ from task's: the edit that changed them set the next run.
+func (s *SQLiteStore) AdvanceScheduledTask(ctx context.Context, task *ScheduledTask) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE scheduled_tasks SET next_run_at = ?, enabled = CASE WHEN ? = 0 THEN 0 ELSE enabled END, updated_at = ? WHERE id = ? AND schedule = ? AND type = ?`,
+		task.NextRunAt, boolToInt(task.Enabled), s.nowFunc(), task.ID, task.Schedule, string(task.Type),
 	)
 	return err
 }

@@ -313,7 +313,9 @@ func (s *TaskScheduler) executeAndUpdate(ctx context.Context, task *db.Scheduled
 		task.Enabled = false
 	}
 
-	if err := s.store.UpdateScheduledTask(ctx, task); err != nil {
+	// task is the copy read before the run: write back only the next run, so
+	// an edit made while it ran isn't reverted.
+	if err := s.store.AdvanceScheduledTask(ctx, task); err != nil {
 		s.logger.Error("failed to update scheduled task", "task_id", task.ID, "error", err)
 	}
 }

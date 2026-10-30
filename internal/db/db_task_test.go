@@ -94,8 +94,9 @@ func (s *StoreSuite) TestUpdateScheduledTask() {
 		ID: 1, Schedule: "0 * * * *", Type: TaskTypeInterval,
 		Prompt: "updated prompt", Enabled: false, NextRunAt: time.Now().UTC(),
 	}
-	s.mock.ExpectExec(`UPDATE scheduled_tasks SET`).
-		WithArgs(task.Schedule, "interval", task.Prompt, 0, sqlmock.AnyArg(), sqlmock.AnyArg(), 0, "", 0, "", 0, 0, "", "", "", task.ID).
+	// The running flag isn't written: Claim/Release own it.
+	s.mock.ExpectExec(`UPDATE scheduled_tasks SET schedule = \?, .*update_before_run = \?, workflow_name = \?`).
+		WithArgs(task.Schedule, "interval", task.Prompt, 0, sqlmock.AnyArg(), sqlmock.AnyArg(), 0, "", 0, "", 0, "", "", "", task.ID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	err := s.store.UpdateScheduledTask(context.Background(), task)
@@ -103,10 +104,55 @@ func (s *StoreSuite) TestUpdateScheduledTask() {
 }
 
 func (s *StoreSuite) TestUpdateScheduledTaskError() {
+	task := &ScheduledTask{ID: 1, Type: TaskTypeCron, NextRunAt: time.Now().UTC()}
 	s.mock.ExpectExec(`UPDATE scheduled_tasks SET`).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs("", "cron", "", 0, sqlmock.AnyArg(), sqlmock.AnyArg(), 0, "", 0, "", 0, "", "", "", task.ID).
 		WillReturnError(sql.ErrConnDone)
-	require.Error(s.T(), s.store.UpdateScheduledTask(context.Background(), &ScheduledTask{ID: 1, Type: TaskTypeCron, NextRunAt: time.Now().UTC()}))
+	require.ErrorIs(s.T(), s.store.UpdateScheduledTask(context.Background(), task), sql.ErrConnDone)
+}
+
+func (s *StoreSuite) TestAdvanceScheduledTask() {
+	next := time.Now().UTC().Add(time.Hour)
+	tests := []struct {
+		name    string
+		task    *ScheduledTask
+		enabled int
+		err     error
+	}{
+		{
+			name:    "recurring task keeps its enabled flag",
+			task:    &ScheduledTask{ID: 3, Schedule: "1h", Type: TaskTypeInterval, Enabled: true, NextRunAt: next},
+			enabled: 1,
+		},
+		{
+			name:    "once task is disabled",
+			task:    &ScheduledTask{ID: 4, Schedule: "2026-02-09T14:30:00Z", Type: TaskTypeOnce, Enabled: false, NextRunAt: next},
+			enabled: 0,
+		},
+		{
+			name:    "error",
+			task:    &ScheduledTask{ID: 5, Schedule: "0 * * * *", Type: TaskTypeCron, Enabled: true, NextRunAt: next},
+			enabled: 1,
+			err:     sql.ErrConnDone,
+		},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			// Only next_run_at moves, enabled can only turn off, and only while
+			// the schedule and type are still the ones the run started from.
+			exp := s.mock.ExpectExec(`UPDATE scheduled_tasks SET next_run_at = \?, enabled = CASE WHEN \? = 0 THEN 0 ELSE enabled END, updated_at = \? WHERE id = \? AND schedule = \? AND type = \?$`).
+				WithArgs(next, tt.enabled, sqlmock.AnyArg(), tt.task.ID, tt.task.Schedule, string(tt.task.Type))
+			if tt.err != nil {
+				exp.WillReturnError(tt.err)
+				require.ErrorIs(s.T(), s.store.AdvanceScheduledTask(context.Background(), tt.task), tt.err)
+				require.NoError(s.T(), s.mock.ExpectationsWereMet())
+				return
+			}
+			exp.WillReturnResult(sqlmock.NewResult(0, 1))
+			require.NoError(s.T(), s.store.AdvanceScheduledTask(context.Background(), tt.task))
+			require.NoError(s.T(), s.mock.ExpectationsWereMet())
+		})
+	}
 }
 
 func (s *StoreSuite) TestDeleteScheduledTask() {
