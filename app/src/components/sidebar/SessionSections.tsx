@@ -8,7 +8,7 @@ import { fixingPill, REVIEWING_PILL, SIDEBAR_PILLS, useShownPills } from "./pill
 import { RowInfoPopup } from "./RowInfoPopup";
 import { useRevealSelected } from "./reveal";
 import { SessionKindIcon } from "./SessionKindIcon";
-import { StatusPill } from "./StatusPill";
+import { PillDeck, StatusPill } from "./StatusPill";
 import { relativeTime, sessionContext, sessionName } from "./sessions";
 
 export type SectionKey = "recent" | "tree";
@@ -337,11 +337,11 @@ function SessionRow({ channel, context, selected, unread, running, pills, traili
           </span>
         )}
         {unread && !selected && <span style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: "#5b9cf5", flexShrink: 0 }} />}
-        {shown
-          .filter((p) => pills.includes(p.kind))
-          .map((p) => (
-            <StatusPill key={p.kind} label={p.label} color={colors[p.color]} />
-          ))}
+        <PillDeck
+          pills={shown.filter((p) => pills.includes(p.kind)).map((p) => ({ key: p.kind, label: p.label, color: colors[p.color] }))}
+          open={hovered}
+          background={selected ? colors.selectedBg : colors.sidebar}
+        />
         {channel.review_running && <StatusPill label={REVIEWING_PILL.label} color={colors[REVIEWING_PILL.color]} />}
         {fixing && <StatusPill label={fixing.label} color={colors[fixing.color]} />}
         {!waiting && trailing && <span style={{ flexShrink: 0, fontSize: 10, fontFamily: fonts.mono, color: colors.textDisabled }}>{trailing}</span>}

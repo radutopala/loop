@@ -456,6 +456,8 @@ export function Sidebar({
   // or waiting on you stays. Each tab has its own filter.
   const hidden = (c: Channel, section: SectionKey) => hideTasks[section] && isTaskThread(c) && !isRunning(c.id) && pillsFor(c.id).length === 0;
   const lit = (id: string) => pillsFor(id).length > 0;
+  // Only a pill that holds an agent or review puts a session on top of Recent.
+  const held = (id: string) => pills.some((p) => p.blocking && pillsRef?.current?.get(p.kind)?.has(id));
   // Select mode is about picking rows to delete, so the needs-you filter
   // steps aside for it rather than hiding rows you might want to pick.
   const needsYou = needsYouOnly && !selectMode;
@@ -520,7 +522,7 @@ export function Sidebar({
   const isUnread = (id: string) => unreadIdsRef?.current?.has(id) ?? false;
   const matchesQuery = (c: Channel) => !query || sessionName(c).toLowerCase().includes(query) || sessionContext(c, byId).toLowerCase().includes(query);
   const now = Date.now();
-  const active = selectMode ? [] : activeSessions(channels, isRunning, lit).filter((c) => matchesQuery(c) && (!needsYou || lit(c.id)));
+  const active = selectMode ? [] : activeSessions(channels, isRunning, held).filter((c) => matchesQuery(c) && (!needsYou || lit(c.id)));
   for (const c of active) seenActiveAtRef.current.set(c.id, now);
   const lastActivity = (c: Channel): number | undefined => Math.max(c.last_activity_at ?? 0, seenActiveAtRef.current.get(c.id) ?? 0) || undefined;
   const allRecent = selectMode ? [] : recentSessions(channels, lastActivity, now);

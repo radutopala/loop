@@ -11,7 +11,7 @@ import { fixingPill, pluginBadgeTitle, REVIEWING_PILL, useShownPills } from "./p
 import { RowInfoPopup } from "./RowInfoPopup";
 import { useExpandToSelected, useRevealSelected } from "./reveal";
 import { SidebarWorktreeButton } from "./SidebarWorktreeButton";
-import { StatusPill } from "./StatusPill";
+import { PillDeck, StatusPill } from "./StatusPill";
 import { ThreadItem, type ThreadReorder } from "./ThreadItem";
 
 interface ChannelItemProps {
@@ -205,11 +205,11 @@ export function ChannelItem({
           >
             {channel.name || channel.dir_path?.split("/").pop() || channel.id}
           </span>
-          {pills
-            .filter((p) => pillsRef?.current?.get(p.kind)?.has(channel.id))
-            .map((p) => (
-              <StatusPill key={p.kind} label={p.label} color={colors[p.color]} />
-            ))}
+          <PillDeck
+            pills={pills.filter((p) => pillsRef?.current?.get(p.kind)?.has(channel.id)).map((p) => ({ key: p.kind, label: p.label, color: colors[p.color] }))}
+            open={hovered}
+            background={selected ? colors.selectedBg : colors.sidebar}
+          />
           {channel.review_running && <StatusPill label={REVIEWING_PILL.label} color={colors[REVIEWING_PILL.color]} />}
           {fixing && <StatusPill label={fixing.label} color={colors[fixing.color]} />}
           {channel.plugin_badges?.map((b) => (

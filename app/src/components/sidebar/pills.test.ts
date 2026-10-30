@@ -14,6 +14,13 @@ describe("shownPills", () => {
   });
 });
 
+describe("SIDEBAR_PILLS blocking", () => {
+  it("holds an agent or review for the waiting pills, not for the PR ones", () => {
+    expect(SIDEBAR_PILLS.filter((p) => p.blocking).map((p) => p.kind)).toEqual(["gate", "rev", "ask", "plan", "trust"]);
+    expect(SIDEBAR_PILLS.filter((p) => !p.blocking).map((p) => p.kind)).toEqual(["ci", "conflict", "comment"]);
+  });
+});
+
 describe("trustPillIds", () => {
   it("lights a project's top-level row only", () => {
     const ids = trustPillIds([

@@ -10,7 +10,7 @@ import { fixingPill, pluginBadgeTitle, REVIEWING_PILL, useShownPills } from "./p
 import { RowInfoPopup } from "./RowInfoPopup";
 import { useExpandToSelected, useRevealSelected } from "./reveal";
 import { SessionKindIcon } from "./SessionKindIcon";
-import { StatusPill } from "./StatusPill";
+import { PillDeck, StatusPill } from "./StatusPill";
 import { sessionName } from "./sessions";
 
 /** Drag-to-reorder wiring for threads/worktrees under a common parent. */
@@ -258,9 +258,13 @@ export function ThreadItem({
               }}
             />
           )}
-          {activePills.map((p, i) => (
-            <StatusPill key={p.kind} label={p.label} color={colors[p.color]} marginLeft={isUnread || i > 0 || thread.diff_additions > 0 || thread.diff_deletions > 0 ? 4 : "auto"} />
-          ))}
+          <PillDeck
+            pills={activePills.map((p) => ({ key: p.kind, label: p.label, color: colors[p.color] }))}
+            open={hovered}
+            background={selected ? colors.selectedBg : colors.sidebar}
+            marginLeft={isUnread || thread.diff_additions > 0 || thread.diff_deletions > 0 ? 4 : "auto"}
+            spacing={4}
+          />
           {reviewing && (
             <StatusPill
               label={REVIEWING_PILL.label}

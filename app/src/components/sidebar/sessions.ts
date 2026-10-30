@@ -40,17 +40,18 @@ function listed(channel: Channel): boolean {
 }
 
 /**
- * The sessions that top Recent: those waiting on the user (an approval, a
- * question, a plan, a ready review), then those with an agent or a review
- * running. A container that's only idling doesn't count: nothing is
- * happening in it.
+ * The sessions that top Recent: those holding an agent or review on the
+ * user (an approval, a question, a plan, a ready review), then those with an
+ * agent or a review running. A container that's only idling doesn't count:
+ * nothing is happening in it, and neither does a PR waiting on a CI fix, a
+ * conflict or review comments, which can sit for days.
  */
-export function activeSessions(channels: Channel[], isRunning: (id: string) => boolean, needsYou: (id: string) => boolean): Channel[] {
+export function activeSessions(channels: Channel[], isRunning: (id: string) => boolean, held: (id: string) => boolean): Channel[] {
   const waiting: Channel[] = [];
   const running: Channel[] = [];
   for (const c of channels) {
     if (!listed(c)) continue;
-    if (needsYou(c.id)) waiting.push(c);
+    if (held(c.id)) waiting.push(c);
     else if (isRunning(c.id)) running.push(c);
   }
   return [...waiting, ...running];

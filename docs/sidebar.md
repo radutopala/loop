@@ -65,7 +65,7 @@ The Recent tab lists sessions (channels and threads alike) wherever they sit in 
 
 | Tab | Holds | Order |
 |---------|-------|-------|
-| **Recent** | Sessions with activity in the last 48 hours, including the active ones: those waiting on you (an approval, a question, a plan, a ready review) or with an agent or a review running. A container that's only idling doesn't count as active. | Newest first; an active session counts as active now, so the active ones come first |
+| **Recent** | Sessions with activity in the last 48 hours, including the active ones: those waiting on you (an approval, a question, a plan, a ready review, a config to trust) or with an agent or a review running. A container that's only idling doesn't count as active, and neither does a PR's `ci`, `cnf` or `cmt` pill: a PR can sit with one for days while nothing is held. | Newest first; an active session counts as active now, so the active ones come first, waiting before running |
 | **Tree** | The channel tree, unchanged | As described in [Channel Ordering](#channel-ordering) |
 
 Activity is the time of the channel's newest message (`last_activity_at` from [`GET /api/channels`](api.md#get-apichannels)). A session that just stopped being active keeps that moment as its activity, so it doesn't drop down the list before the next channel refresh brings its newest message's time.
@@ -75,6 +75,8 @@ Each row shows:
 - its name (task threads lose their marker prefix), in bold when unread, and below it the names of its parents, e.g. `loop-dc6a › updates`;
 - its uncommitted diff (`+N -N`), the unread dot and its status pills;
 - how long ago it was active (`now`, `12m`, `30h`; hours up to 48, so the whole Recent window reads in hours), unless it's active now or a pill is shown.
+
+Several pills that need you stack as a deck, in both tabs: the most urgent on top (in the bell's order, `gate` first and `cmt` last), with the edges of the others peeking out behind it. Hovering the row lays them out side by side. `rev…`, `ci…`, plugin badges and the notification count stay beside the deck.
 
 Clicking a row opens the session; right-clicking opens the same context menu as the tree, and hovering shows the row's details popup.
 
@@ -110,7 +112,7 @@ The clock button at the right of the tabs hides task threads from the open tab; 
 
 The bell at the right of the tabs narrows both tabs to the sessions with a lit pill: `gate` (an approval), `ask` (a question), `plan` (a plan to approve), `rev` (a review session open), `trust` (a project config to trust), `ci` (a [CI failure](pr.md) no agent is fixing), `cnf` (a PR/MR with a [merge conflict](pr.md#merge-conflicts)) and `cmt` (a PR/MR with [unresolved review comments](pr.md#unresolved-review-threads)). The tree keeps the channels and threads that lead to a lit row, so it still reads as a tree, and drops their other threads; a lit row's own unlit threads go too. Recent keeps only the lit sessions. With nothing lit, the tree says *Nothing needs you right now*. A running agent or review (`rev…`), or an agent fixing CI (`ci…`), doesn't count: it isn't waiting on you. The filter combines with the search and the task toggle, and steps aside in selection mode so every row can be picked. The choice is stored in `localStorage` under `loop-sidebar-needs-you`.
 
-Right-click the bell to pick the pills. A pill you turn off no longer shows on rows, and doesn't count as needing you, so it neither keeps a row under the bell nor tops Recent. Turning off `ci` also hides `ci…`. Every pill is on until you change it. The kinds turned off are kept in the global config's [`desktop.hidden_pills`](configuration.md#desktop-electron-app), which Settings → Desktop also edits.
+Right-click the bell to pick the pills. A pill you turn off no longer shows on rows, and doesn't count as needing you, so it neither keeps a row under the bell nor, for the pills that top it, tops Recent. Turning off `ci` also hides `ci…`. Every pill is on until you change it. The kinds turned off are kept in the global config's [`desktop.hidden_pills`](configuration.md#desktop-electron-app), which Settings → Desktop also edits.
 
 Resting the pointer on a control in the tab bar shows a card like a row's info. The bell's card says whether the list shows all sessions or only the ones that need you, and lists every pill with what it waits on, marking the ones turned off. The task toggle's card says whether task threads are shown or hidden in each tab. A tab's card says what it lists, how many sessions Recent has, and how the bell and the task toggle are set for it.
 
