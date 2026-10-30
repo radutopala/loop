@@ -336,7 +336,7 @@ func (s *SchedulerSuite) TestPollLoopExecutesTask() {
 	s.store.On("UpdateTaskRunLog", mock.Anything, mock.MatchedBy(func(trl *db.TaskRunLog) bool {
 		return trl.Status == db.RunStatusSuccess && trl.ResponseText == "done"
 	})).Return(nil)
-	s.store.On("UpdateScheduledTask", mock.Anything, mock.MatchedBy(func(t *db.ScheduledTask) bool {
+	s.store.On("AdvanceScheduledTask", mock.Anything, mock.MatchedBy(func(t *db.ScheduledTask) bool {
 		return t.ID == 1 && !t.NextRunAt.IsZero()
 	})).Return(nil)
 
@@ -367,7 +367,7 @@ func (s *SchedulerSuite) TestPollLoopLongTaskDoesNotHoldBackOthers() {
 	s.store.On("ReleaseScheduledTaskRunning", mock.Anything, int64(2)).Return(nil)
 	s.store.On("InsertTaskRunLog", mock.Anything, mock.Anything).Return(int64(10), nil)
 	s.store.On("UpdateTaskRunLog", mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpdateScheduledTask", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("AdvanceScheduledTask", mock.Anything, mock.Anything).Return(nil)
 	// The slow run only finishes once the next one has run: run one after
 	// the other, they never would.
 	s.executor.On("ExecuteTask", mock.Anything, slow).Return("done", nil).Run(func(mock.Arguments) {
@@ -403,7 +403,7 @@ func (s *SchedulerSuite) TestPollLoopDoesNotRestartATaskInFlight() {
 	s.store.On("ReleaseScheduledTaskRunning", mock.Anything, int64(1)).Return(nil)
 	s.store.On("InsertTaskRunLog", mock.Anything, mock.Anything).Return(int64(10), nil)
 	s.store.On("UpdateTaskRunLog", mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpdateScheduledTask", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("AdvanceScheduledTask", mock.Anything, mock.Anything).Return(nil)
 	s.executor.On("ExecuteTask", mock.Anything, task).Return("done", nil).Run(func(args mock.Arguments) {
 		signal(args)
 		<-release
@@ -446,7 +446,7 @@ func (s *SchedulerSuite) TestPollLoopExecutorError() {
 	s.store.On("UpdateTaskRunLog", mock.Anything, mock.MatchedBy(func(trl *db.TaskRunLog) bool {
 		return trl.Status == db.RunStatusFailed && trl.ErrorText == "exec failed"
 	})).Return(nil)
-	s.store.On("UpdateScheduledTask", mock.Anything, mock.MatchedBy(func(t *db.ScheduledTask) bool {
+	s.store.On("AdvanceScheduledTask", mock.Anything, mock.MatchedBy(func(t *db.ScheduledTask) bool {
 		return t.ID == 2
 	})).Return(nil)
 
@@ -511,7 +511,7 @@ func (s *SchedulerSuite) TestPollLoopNextRunCountsFromFinish() {
 			setupDueTasks(store, []*db.ScheduledTask{task})
 			store.On("InsertTaskRunLog", mock.Anything, mock.Anything).Return(int64(10), nil)
 			store.On("UpdateTaskRunLog", mock.Anything, mock.Anything).Return(nil)
-			store.On("UpdateScheduledTask", mock.Anything, mock.Anything).Return(nil).Run(func(args mock.Arguments) {
+			store.On("AdvanceScheduledTask", mock.Anything, mock.Anything).Return(nil).Run(func(args mock.Arguments) {
 				updated <- args.Get(1).(*db.ScheduledTask).NextRunAt
 			}).Once()
 			executor.On("ExecuteTask", mock.Anything, task).Return("done", tt.execErr).Run(func(mock.Arguments) {
@@ -546,7 +546,7 @@ func (s *SchedulerSuite) TestPollLoopOnceTaskDisabled() {
 	s.store.On("UpdateTaskRunLog", mock.Anything, mock.MatchedBy(func(trl *db.TaskRunLog) bool {
 		return trl.Status == db.RunStatusSuccess
 	})).Return(nil)
-	s.store.On("UpdateScheduledTask", mock.Anything, mock.MatchedBy(func(t *db.ScheduledTask) bool {
+	s.store.On("AdvanceScheduledTask", mock.Anything, mock.MatchedBy(func(t *db.ScheduledTask) bool {
 		return t.ID == 3 && !t.Enabled
 	})).Return(nil)
 
@@ -616,7 +616,7 @@ func (s *SchedulerSuite) TestPollLoopUpdateRunLogError() {
 	s.store.On("InsertTaskRunLog", mock.Anything, mock.Anything).Return(int64(50), nil)
 	s.executor.On("ExecuteTask", mock.Anything, task).Return("ok", nil)
 	s.store.On("UpdateTaskRunLog", mock.Anything, mock.Anything).Return(errors.New("update log fail")).Run(signal)
-	s.store.On("UpdateScheduledTask", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("AdvanceScheduledTask", mock.Anything, mock.Anything).Return(nil)
 
 	ts := NewTaskScheduler(s.store, s.executor, 10*time.Millisecond, s.logger)
 	err := ts.Start(context.Background())
@@ -632,7 +632,7 @@ func (s *SchedulerSuite) TestPollLoopUpdateRunLogError() {
 	require.NoError(s.T(), err)
 }
 
-func (s *SchedulerSuite) TestPollLoopUpdateScheduledTaskError() {
+func (s *SchedulerSuite) TestPollLoopAdvanceScheduledTaskError() {
 	task := &db.ScheduledTask{
 		ID: 6, ChannelID: "ch1", Schedule: "10m",
 		Type: db.TaskTypeInterval, Enabled: true,
@@ -643,7 +643,7 @@ func (s *SchedulerSuite) TestPollLoopUpdateScheduledTaskError() {
 	s.store.On("InsertTaskRunLog", mock.Anything, mock.Anything).Return(int64(60), nil)
 	s.executor.On("ExecuteTask", mock.Anything, task).Return("ok", nil)
 	s.store.On("UpdateTaskRunLog", mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpdateScheduledTask", mock.Anything, mock.Anything).Return(errors.New("update task fail")).Run(signal)
+	s.store.On("AdvanceScheduledTask", mock.Anything, mock.Anything).Return(errors.New("update task fail")).Run(signal)
 
 	ts := NewTaskScheduler(s.store, s.executor, 10*time.Millisecond, s.logger)
 	err := ts.Start(context.Background())
@@ -693,8 +693,8 @@ func (s *SchedulerSuite) TestPollLoopParseError() {
 			err = ts.Stop()
 			require.NoError(s.T(), err)
 
-			// UpdateScheduledTask should NOT be called because schedule parse fails
-			store.AssertNotCalled(s.T(), "UpdateScheduledTask", mock.Anything, mock.Anything)
+			// AdvanceScheduledTask should NOT be called because schedule parse fails
+			store.AssertNotCalled(s.T(), "AdvanceScheduledTask", mock.Anything, mock.Anything)
 		})
 	}
 }
@@ -1100,7 +1100,7 @@ func (s *SchedulerSuite) TestTaskRunCompletedEventBroadcast() {
 	s.store.On("InsertTaskRunLog", mock.Anything, mock.Anything).Return(int64(10), nil)
 	s.executor.On("ExecuteTask", mock.Anything, task).Return("done", nil)
 	s.store.On("UpdateTaskRunLog", mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpdateScheduledTask", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("AdvanceScheduledTask", mock.Anything, mock.Anything).Return(nil)
 
 	bc := new(mockTaskEventBroadcaster)
 	bc.On("BroadcastTaskRunCompleted", events.TaskRunEventData{
@@ -1140,7 +1140,7 @@ func (s *SchedulerSuite) TestTaskRunFailedEventBroadcast() {
 	s.store.On("InsertTaskRunLog", mock.Anything, mock.Anything).Return(int64(20), nil)
 	s.executor.On("ExecuteTask", mock.Anything, task).Return("", errors.New("exec failed"))
 	s.store.On("UpdateTaskRunLog", mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpdateScheduledTask", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("AdvanceScheduledTask", mock.Anything, mock.Anything).Return(nil)
 
 	bc := new(mockTaskEventBroadcaster)
 	bc.On("BroadcastTaskRunCompleted", events.TaskRunEventData{
@@ -1196,8 +1196,8 @@ func (s *SchedulerSuite) TestRunNowSuccess() {
 	err := ts.RunNow(context.Background(), 5)
 	require.NoError(s.T(), err)
 
-	// UpdateScheduledTask must NOT be called — RunNow does not update the schedule.
-	s.store.AssertNotCalled(s.T(), "UpdateScheduledTask", mock.Anything, mock.Anything)
+	// AdvanceScheduledTask must NOT be called — RunNow does not update the schedule.
+	s.store.AssertNotCalled(s.T(), "AdvanceScheduledTask", mock.Anything, mock.Anything)
 	s.store.AssertExpectations(s.T())
 	s.executor.AssertExpectations(s.T())
 }
@@ -1272,7 +1272,7 @@ func (s *SchedulerSuite) TestRunNowExecutorError() {
 	err := ts.RunNow(context.Background(), 8)
 	require.NoError(s.T(), err)
 
-	s.store.AssertNotCalled(s.T(), "UpdateScheduledTask", mock.Anything, mock.Anything)
+	s.store.AssertNotCalled(s.T(), "AdvanceScheduledTask", mock.Anything, mock.Anything)
 }
 
 func (s *SchedulerSuite) TestRunNowDisabledTask() {

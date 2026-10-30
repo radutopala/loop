@@ -64,6 +64,7 @@ type Store interface {
 	CreateScheduledTask(ctx context.Context, task *ScheduledTask) (int64, error)
 	GetDueTasks(ctx context.Context, now time.Time) ([]*ScheduledTask, error)
 	UpdateScheduledTask(ctx context.Context, task *ScheduledTask) error
+	AdvanceScheduledTask(ctx context.Context, task *ScheduledTask) error
 	DeleteScheduledTask(ctx context.Context, id int64) error
 	ListScheduledTasks(ctx context.Context, channelID string) ([]*ScheduledTask, error)
 	ListAllScheduledTasks(ctx context.Context) ([]*ScheduledTask, error)

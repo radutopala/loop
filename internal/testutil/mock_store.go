@@ -268,6 +268,10 @@ func (m *MockStore) UpdateScheduledTask(ctx context.Context, task *db.ScheduledT
 	return m.Called(ctx, task).Error(0)
 }
 
+func (m *MockStore) AdvanceScheduledTask(ctx context.Context, task *db.ScheduledTask) error {
+	return m.Called(ctx, task).Error(0)
+}
+
 func (m *MockStore) DeleteScheduledTask(ctx context.Context, id int64) error {
 	return m.Called(ctx, id).Error(0)
 }
