@@ -546,7 +546,7 @@ func (s *TaskExecutorSuite) TestStreamingLocalFirstRunRunsInThread() {
 	// First thread insert is the prompt as a user message; the agent reply follows.
 	require.Len(s.T(), inserted, 2)
 	require.False(s.T(), inserted[0].IsBot, "prompt must be a user message")
-	require.Equal(s.T(), "summarise the notes", inserted[0].Content)
+	require.Equal(s.T(), "task #130\nsummarise the notes", inserted[0].Content)
 	require.Equal(s.T(), "scheduled-task", inserted[0].AuthorID)
 	require.Equal(s.T(), "thread-fr", inserted[0].ChannelID)
 	require.Equal(s.T(), int64(77), inserted[0].ChatID)
