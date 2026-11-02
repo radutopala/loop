@@ -276,7 +276,6 @@ function SessionRow({ channel, context, selected, unread, running, pills, traili
   const rowRef = useRef<HTMLButtonElement>(null);
   useRevealSelected(rowRef, selected);
   const shown = useShownPills();
-  const waiting = pills.length > 0;
   const fixing = fixingPill(channel.pr_attention, shown);
   return (
     <div style={{ margin: "0 8px" }}>
@@ -307,12 +306,12 @@ function SessionRow({ channel, context, selected, unread, running, pills, traili
           cursor: "pointer",
         }}
       >
-        {/* Status on top, the thread's kind icon under it. */}
+        {/* A spinner while running (what it waits on is in its pills), the
+            thread's kind icon under it. */}
         <span style={{ width: 12, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, flexShrink: 0 }}>
-          {waiting ? (
-            <span style={{ width: 7, height: 7, borderRadius: "50%", backgroundColor: colors.warning }} />
-          ) : running ? (
+          {running && (
             <span
+              data-testid="session-running"
               style={{
                 width: 8,
                 height: 8,
@@ -322,7 +321,7 @@ function SessionRow({ channel, context, selected, unread, running, pills, traili
                 animation: "spin 1s linear infinite",
               }}
             />
-          ) : null}
+          )}
           <SessionKindIcon channel={channel} showPlainThread />
         </span>
         <span style={{ display: "flex", flexDirection: "column", minWidth: 0, flex: 1 }}>
@@ -344,7 +343,7 @@ function SessionRow({ channel, context, selected, unread, running, pills, traili
         />
         {channel.review_running && <StatusPill label={REVIEWING_PILL.label} color={colors[REVIEWING_PILL.color]} />}
         {fixing && <StatusPill label={fixing.label} color={colors[fixing.color]} />}
-        {!waiting && trailing && <span style={{ flexShrink: 0, fontSize: 10, fontFamily: fonts.mono, color: colors.textDisabled }}>{trailing}</span>}
+        {pills.length === 0 && trailing && <span style={{ flexShrink: 0, fontSize: 10, fontFamily: fonts.mono, color: colors.textDisabled }}>{trailing}</span>}
       </button>
     </div>
   );
