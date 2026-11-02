@@ -50,6 +50,17 @@ Feature: Per-source gate approval routing
     # it, not an orchestrator run — so deny-and-stop is withheld there.
     And the page should not contain text "Deny & stop run"
 
+  Scenario: A pane's gate covers its footer, so the card doesn't move when it appears
+    # The footer (shortcuts, Continue) shows once its shortcuts load or the
+    # session runs. A card centred above it moved when it did, and a click
+    # on the deny caret right then missed.
+    Given I add a prompt shortcut "bdd-gate-footer" with prompt "Run make lint" via API
+    When I add a "Chat Terminal" panel
+    Then I wait for "button[data-testid^='terminal-shortcuts-btn-']" to be visible
+    When I inject a gate.approval_requested event with req_id "gate-term-footer", source "terminal:newest-docker-agent", and target "/tmp/bdd-gate-term-footer.txt"
+    Then I wait for text "/tmp/bdd-gate-term-footer.txt" to appear
+    And the element "[data-testid='pane-gate-overlay']" covers the element "button[data-testid^='terminal-shortcuts-btn-']"
+
   Scenario: Gate for a non-existent terminal pane renders nowhere
     # source="terminal:agent-99" doesn't match any pane (the layout has none
     # of that id) and is not "chat" — so neither ChatMessages nor any

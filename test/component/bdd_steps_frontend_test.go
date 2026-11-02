@@ -379,6 +379,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^the Learn dock sits right of the chat's tile, the same size$`, tc.waitLearnDockBesideChat)
 	ctx.Step(`^I note where the chat's tile is$`, tc.noteChatTile)
 	ctx.Step(`^the sidebar's tab bar covers a thread's tree line scrolled under it$`, tc.assertTabBarCoversTreeLine)
+	ctx.Step(`^the element "([^"]*)" covers the element "([^"]*)"$`, tc.assertElementCovers)
 	ctx.Step(`^I drag the Learn dock's header by (-?\d+)px, (-?\d+)px$`, tc.dragLearnDockHeader)
 	ctx.Step(`^the chat's tile moved by (-?\d+)px, (-?\d+)px$`, tc.assertChatTileMoved)
 	ctx.Step(`^the composer in "([^"]*)" is the one I tagged$`, tc.assertTaggedComposer)
@@ -2736,6 +2737,28 @@ func (tc *TestContext) assertTabBarCoversTreeLine() error {
 	}
 	if got != "" {
 		return fmt.Errorf("the tab bar doesn't cover the tree line: %s", got)
+	}
+	return nil
+}
+
+// assertElementCovers checks that top is drawn over the middle of below: the
+// element hit there is top or inside it.
+func (tc *TestContext) assertElementCovers(top, below string) error {
+	var got string
+	js := fmt.Sprintf(`(() => {
+		const top = document.querySelector(%q);
+		const below = document.querySelector(%q);
+		if (!top || !below) return "missing: " + (top ? %q : %q);
+		const r = below.getBoundingClientRect();
+		const el = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+		if (!el) return "nothing at the point";
+		return top.contains(el) ? "" : "on top: " + (el.tagName + " " + (el.getAttribute("data-testid") || "")).trim();
+	})()`, top, below, below, top)
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &got)); err != nil {
+		return err
+	}
+	if got != "" {
+		return fmt.Errorf("%s doesn't cover %s: %s", top, below, got)
 	}
 	return nil
 }
