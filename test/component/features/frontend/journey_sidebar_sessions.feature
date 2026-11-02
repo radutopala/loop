@@ -58,6 +58,29 @@ Feature: Recent sessions in the sidebar
     When I click on "[data-testid='sidebar-recent'] [data-testid='sidebar-session-row']"
     Then I wait for "textarea" to be visible
 
+  Scenario: A running session keeps its spinner in Recent next to its pills
+    Given I set up a test channel via API for git repo "bdd-sessions-pr"
+    And the channel's repo has origin "https://github.com/example/repo.git"
+    And gh reports PR #7 with a failing "lint" check
+    And the channel list should soon show the current channel's "pr_attention" as "failed"
+    And I open the app in a browser
+    And I wait for text "bdd-sessions-pr" to appear
+
+    When I inject an agent.status running event
+    And I click on "[data-testid='sidebar-tab-recent']"
+    Then I wait up to "5s" for "[data-testid='sidebar-recent'] [data-pill='ci']" to be visible
+    And the element "[data-testid='sidebar-recent'] [data-testid='session-running']" should be visible
+
+    # An approval holds the agent: its gate pill says so, the run still spins.
+    When I inject a gate.approval_requested event with req_id "bdd-sessions-pr-gate", source "chat", and target "/tmp/bdd-sessions-pr.txt"
+    Then I wait up to "5s" for "[data-testid='sidebar-recent'] [data-pill='gate']" to be visible
+    And the element "[data-testid='sidebar-recent'] [data-testid='session-running']" should be visible
+
+    # The run ends: no spinner, the pills stay.
+    When I inject an agent.status completed event
+    Then I wait up to "5s" for "[data-testid='sidebar-recent'] [data-testid='session-running']" to disappear
+    And the element "[data-testid='sidebar-recent'] [data-pill='ci']" should be visible
+
   Scenario: A running review keeps a session in Recent with a rev… pill
     Given I set up a test channel via API for git repo "bdd-sessions-review"
     And I open the app in a browser
