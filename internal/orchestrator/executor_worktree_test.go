@@ -613,7 +613,8 @@ func (s *TaskExecutorSuite) TestWorktreeUpdateBeforeRunSystemPrompt() {
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		msg := req.Messages[0].Content
-		return strings.Contains(msg, "git rebase origin/main") &&
+		return strings.HasPrefix(msg, "task #10\nBefore starting work") &&
+			strings.Contains(msg, "git rebase origin/main") &&
 			strings.Contains(msg, "git fetch origin main") &&
 			strings.Contains(msg, "git stash") &&
 			strings.HasSuffix(msg, "build") &&
@@ -646,7 +647,7 @@ func (s *TaskExecutorSuite) TestWorktreeNoUpdatePromptWhenDisabled() {
 	s.executor.SetWorktreeCreator(&worktree.Creator{Sys: &mockWorktreeSys{}})
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
-		return req.Messages[0].Content == "build" && !strings.Contains(req.Messages[0].Content, "git rebase")
+		return req.Messages[0].Content == "task #10\nbuild" && !strings.Contains(req.Messages[0].Content, "git rebase")
 	})).Return(&agent.AgentResponse{Response: "done", SessionID: "s3"}, nil)
 	s.store.On("UpdateSessionID", s.ctx, "thread-1", "s3").Return(nil)
 	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
@@ -772,7 +773,7 @@ func (s *TaskExecutorSuite) TestWorktreeFirstRunInjectsPromptIntoWorktreeThread(
 	// The prompt landed in the worktree thread as a user message, ahead of the reply.
 	require.GreaterOrEqual(s.T(), len(inserted), 2)
 	require.False(s.T(), inserted[0].IsBot)
-	require.Equal(s.T(), "build the thing", inserted[0].Content)
+	require.Equal(s.T(), "task #10\nbuild the thing", inserted[0].Content)
 	require.Equal(s.T(), "wt-thread", inserted[0].ChannelID)
 	require.Equal(s.T(), 1, insertedBeforeRun, "the prompt is stored before the run starts")
 	require.True(s.T(), inserted[1].IsBot)

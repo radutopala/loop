@@ -326,6 +326,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	if task.UpdateBeforeRun && task.OriginBranch != "" {
 		prompt = fmt.Sprintf("Before starting work, update your worktree to the latest origin/%s:\n1. git stash (if there are uncommitted changes)\n2. git fetch origin %s\n3. git rebase origin/%s (this keeps your previous commits on top of latest origin)\n4. git stash pop (if you stashed changes in step 1)\nHandle any merge conflicts if they arise.\n\n%s", task.OriginBranch, task.OriginBranch, task.OriginBranch, task.Prompt)
 	}
+	prompt = taskPromptWithHeader(task.ID, prompt)
 
 	req := &agent.AgentRequest{
 		SessionID:   sessionID,
@@ -437,7 +438,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		// ahead of the response). Use the raw task.Prompt, not the
 		// UpdateBeforeRun-augmented `prompt`, so the git-rebase preamble stays
 		// out of the chat.
-		storeUserTaskPrompt(ctx, e.store, e.events, threadID, task.Prompt)
+		storeUserTaskPrompt(ctx, e.store, e.events, threadID, taskPromptWithHeader(task.ID, task.Prompt))
 	}
 	// Created before the callbacks: a card's tool_result cancels the run.
 	runCtx, runCancel := context.WithTimeout(ctx, containerTimeout)

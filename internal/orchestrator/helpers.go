@@ -73,6 +73,13 @@ func StoreSystemNotice(ctx context.Context, store db.Store, broadcaster events.B
 // out of the ClaimNextPending drain queue (which requires is_processed=0 AND
 // is_triggered=1), so it can never be picked up and re-executed. Either store
 // or broadcaster may be nil.
+// taskPromptWithHeader puts a "task #N" line above a task's prompt, the way a
+// prompt shortcut is sent as "#name" above its prompt, so the agent and the
+// thread both see which task the run is for.
+func taskPromptWithHeader(taskID int64, prompt string) string {
+	return fmt.Sprintf("task #%d\n%s", taskID, prompt)
+}
+
 func storeUserTaskPrompt(ctx context.Context, store db.Store, broadcaster events.Broadcaster, channelID, content string) {
 	storeUserPrompt(ctx, store, broadcaster, channelID, "scheduled-task", "scheduled task", content)
 }

@@ -128,7 +128,7 @@ func (s *TaskExecutorSuite) TestHappyPathWithSession() {
 			req.DirPath == "/home/user/project" &&
 			len(req.Messages) == 1 &&
 			req.Messages[0].Role == "user" &&
-			req.Messages[0].Content == "do stuff"
+			req.Messages[0].Content == "task #1\ndo stuff"
 	})).Return(&agent.AgentResponse{
 		Response:  "done!",
 		SessionID: "new-session",
