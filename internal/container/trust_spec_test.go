@@ -587,6 +587,12 @@ func FuzzContainerTrust(f *testing.F) {
 		if json.Unmarshal([]byte(base), &c) != nil || c == nil || json.Unmarshal([]byte(value), &v) != nil {
 			return
 		}
+		// The owner can't trust a base that doesn't parse as a project
+		// config (a field of the wrong type): Trust refuses it. ProjectPlugins
+		// parses the whole file.
+		if _, err := config.ProjectPlugins(c.bytes()); err != nil {
+			return
+		}
 		fl := fields[field%uint(len(fields))]
 		current := c.with(fl.keys(), v).bytes()
 		for _, layout := range specLayouts {
