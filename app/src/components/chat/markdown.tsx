@@ -14,21 +14,43 @@ import { parseTableBlock, startsTable, type TableAlign, tableToHTML, tableToTSV 
 import { findMathBlock, inlineMathPattern, inlineMathTeX, isInlineMath, renderMath } from "./math";
 
 // Link opens a web link in a new window, and a loop://channel/ link to a
-// channel or a message in the app itself.
+// channel or a message in the app itself. Hovering shows a button that copies
+// the link's address (a loop:// link copies as loop://, so it can be shared).
 function Link({ href, children }: { href: string; children: React.ReactNode }) {
+  const { colors } = useTheme();
+  const [hovered, setHovered] = useState(false);
   const style = { color: "#6ba3f7", textDecoration: "underline" };
   const inApp = inAppHref(href);
-  if (inApp) {
-    return (
-      <a href={inApp} style={style}>
-        {children}
-      </a>
-    );
-  }
   return (
-    <a href={href} target="_blank" rel="noopener noreferrer" style={style}>
-      {children}
-    </a>
+    <span style={{ position: "relative" }} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+      {inApp ? (
+        <a href={inApp} style={style}>
+          {children}
+        </a>
+      ) : (
+        <a href={href} target="_blank" rel="noopener noreferrer" style={style}>
+          {children}
+        </a>
+      )}
+      {/* Floats past the link's end, over the text after it, so showing it
+          doesn't reflow the line. */}
+      <CopyButton
+        text={href}
+        visible={hovered}
+        title="Copy link"
+        testId="link-copy"
+        style={{
+          position: "absolute",
+          left: "100%",
+          top: "50%",
+          transform: "translateY(-50%)",
+          background: colors.surface,
+          border: `1px solid ${colors.border}`,
+          pointerEvents: hovered ? "auto" : "none",
+          zIndex: 1,
+        }}
+      />
+    </span>
   );
 }
 
