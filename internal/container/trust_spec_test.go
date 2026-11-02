@@ -295,6 +295,15 @@ func containerTrustRuns(t *testing.T, newLoader loaderFor, layout specLayout, ba
 	return want, got
 }
 
+// trustable reports whether the owner can trust base. Trust refuses a file
+// that doesn't parse as a project config, such as one with a field of the
+// wrong type.
+func trustable(t *testing.T, base []byte) bool {
+	p := newSpecProject(t, specLayouts[0], trustOf)
+	p.write(base)
+	return p.store.Trust(p.configDir(), "") == nil
+}
+
 // runDiff returns the lines of two runs that differ, "-" for want's and
 // "+" for got's, or nil when the property holds: the runs are equal, or got
 // was refused before anything reached the host or a container, because the
@@ -585,6 +594,9 @@ func FuzzContainerTrust(f *testing.F) {
 		var c specConfig
 		var v any
 		if json.Unmarshal([]byte(base), &c) != nil || c == nil || json.Unmarshal([]byte(value), &v) != nil {
+			return
+		}
+		if !trustable(t, c.bytes()) {
 			return
 		}
 		fl := fields[field%uint(len(fields))]

@@ -735,7 +735,7 @@ func (p PluginsConfig) EnabledFor(id string) bool {
 func (p *PluginsConfig) UnmarshalJSON(data []byte) error {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
+		return fmt.Errorf("plugins: %w", err)
 	}
 	var own struct {
 		Enabled    bool   `json:"enabled"`
@@ -743,7 +743,7 @@ func (p *PluginsConfig) UnmarshalJSON(data []byte) error {
 		DailyRuns  int    `json:"daily_runs"`
 	}
 	if err := json.Unmarshal(data, &own); err != nil {
-		return err
+		return fmt.Errorf("plugins: %w", err)
 	}
 	p.Enabled, p.GateBinary, p.DailyRuns, p.ByID = own.Enabled, own.GateBinary, own.DailyRuns, nil
 	for id, v := range raw {

@@ -721,6 +721,9 @@ func (s *TrustSuite) TestProjectPlugins() {
 }`, want: PluginsConfig{ByID: map[string]PluginConfig{"echo": {Enabled: &on}}}},
 		{name: "no plugins", data: `{"mounts": []}`},
 		{name: "not json", data: `{`, wantErr: "parsing project config file"},
+		{name: "plugins not an object", data: `{"plugins": []}`, wantErr: "parsing project config file: plugins: json: cannot unmarshal array"},
+		{name: "own key of the wrong type", data: `{"plugins": {"daily_runs": "50"}}`, wantErr: "parsing project config file: plugins: json: cannot unmarshal string"},
+		{name: "plugin config of the wrong type", data: `{"plugins": {"echo": []}}`, wantErr: "parsing project config file: plugins.echo: json: cannot unmarshal array"},
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
