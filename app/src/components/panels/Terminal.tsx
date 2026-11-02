@@ -352,7 +352,7 @@ export function Terminal({
   }
 
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden" }}>
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden", position: "relative" }}>
       {hideActions && instanceId ? (
         <PaneHeaderStatus leafId={instanceId} status={status} elapsed={elapsed} />
       ) : (
@@ -372,40 +372,6 @@ export function Terminal({
         <div style={{ padding: "8px 0 8px 12px", width: "100%", height: "100%", boxSizing: "border-box" }}>
           <div ref={terminalRef} style={{ width: "100%", height: "100%" }} />
         </div>
-        {gateApproval && channelId && (
-          <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              backgroundColor: "rgba(0, 0, 0, 0.55)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              padding: 16,
-              zIndex: 10,
-            }}
-          >
-            <div style={{ width: "100%", maxWidth: 520, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", borderRadius: 8 }}>
-              <ApprovalCard
-                data={gateApproval}
-                channelId={channelId}
-                onResolved={onGateApprovalResolved}
-                onDenyWithPrompt={(text) => {
-                  // Bracketed-paste so multi-line prompts arrive atomically
-                  // in the TUI. Routes the typed text into THIS pane's stdin
-                  // instead of posting to chat.
-                  sendInput(`\x1b[200~${text}\x1b[201~`);
-                  // Arm the quiescence-based submit instead of using a fixed
-                  // timeout: onData resets the idle timer on every byte from
-                  // the container, so \r fires the moment the TUI stops
-                  // emitting output (= back at the input prompt).
-                  pendingSubmitRef.current = { idleTimer: null };
-                }}
-                style={{ margin: 0 }}
-              />
-            </div>
-          </div>
-        )}
       </div>
       {instanceId && (
         <TerminalShortcuts
@@ -416,6 +382,44 @@ export function Terminal({
           showPrompts={target === "agent" && !cmd}
           onContinue={target === "agent" && !cmd && status === "running" ? () => handleShortcutPick("continue") : undefined}
         />
+      )}
+      {/* Over the whole pane, footer included, so the card's place doesn't
+          depend on the footer: it appears once the session runs, and a card
+          centred above it would jump mid-click. */}
+      {gateApproval && channelId && (
+        <div
+          data-testid="pane-gate-overlay"
+          style={{
+            position: "absolute",
+            inset: 0,
+            backgroundColor: "rgba(0, 0, 0, 0.55)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+            zIndex: 10,
+          }}
+        >
+          <div style={{ width: "100%", maxWidth: 520, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", borderRadius: 8 }}>
+            <ApprovalCard
+              data={gateApproval}
+              channelId={channelId}
+              onResolved={onGateApprovalResolved}
+              onDenyWithPrompt={(text) => {
+                // Bracketed-paste so multi-line prompts arrive atomically
+                // in the TUI. Routes the typed text into THIS pane's stdin
+                // instead of posting to chat.
+                sendInput(`\x1b[200~${text}\x1b[201~`);
+                // Arm the quiescence-based submit instead of using a fixed
+                // timeout: onData resets the idle timer on every byte from
+                // the container, so \r fires the moment the TUI stops
+                // emitting output (= back at the input prompt).
+                pendingSubmitRef.current = { idleTimer: null };
+              }}
+              style={{ margin: 0 }}
+            />
+          </div>
+        </div>
       )}
     </div>
   );
