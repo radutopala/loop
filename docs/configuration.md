@@ -552,7 +552,8 @@ Available at both global and project level. Project values override global value
   "embeddings": {
     "provider": "ollama",
     "model": "nomic-embed-text",
-    "ollama_url": "http://localhost:11434"
+    "ollama_url": "http://localhost:11434",
+    "ollama_cpus": 2
   }
 }
 ```
@@ -566,6 +567,7 @@ Available at both global and project level. Project values override global value
 | `memory.embeddings.provider` | `string` | `""` | Embedding provider. Currently only `"ollama"` is supported. |
 | `memory.embeddings.model` | `string` | `""` | Embedding model name (e.g. `"nomic-embed-text"`). |
 | `memory.embeddings.ollama_url` | `string` | `"http://localhost:11434"` | Ollama API endpoint. |
+| `memory.embeddings.ollama_cpus` | `number` | `2` | CPUs the Ollama container may use. Ollama also runs at a lower CPU priority than agent containers, so a re-index doesn't take over the machine. A change applies when the container next starts. |
 
 #### Quality
 
@@ -954,7 +956,8 @@ The AWS CLI saves a token in `~/.aws/sso/cache` or `~/.aws/cli/cache` by writing
     "embeddings": {
       "provider": "ollama",
       "model": "nomic-embed-text"
-      //"ollama_url": "http://localhost:11434"
+      //"ollama_url": "http://localhost:11434",
+      //"ollama_cpus": 2
     }
   },
 

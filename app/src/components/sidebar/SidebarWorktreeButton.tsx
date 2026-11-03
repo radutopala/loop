@@ -26,8 +26,11 @@ export function SidebarWorktreeButton({ channelId, onCreateWorktree, onOpenPR }:
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const { prs, error: prsError } = useOpenPRs(channelId, open && !!onOpenPR);
-  const hasPRs = !!onOpenPR && showsPRs(prs, prsError);
+  const { prs, error: prsError, forge } = useOpenPRs(channelId, open && !!onOpenPR);
+  const hasPRs = !!onOpenPR && showsPRs(prs, prsError, forge);
+  // Tall only with PRs to list, or while they load: a section saying there
+  // are none needs just its line.
+  const tall = hasPRs && (prs === null || prs.length > 0);
 
   useEffect(() => {
     if (!open) return;
@@ -105,8 +108,8 @@ export function SidebarWorktreeButton({ channelId, onCreateWorktree, onOpenPR }:
               zIndex: 1000,
               minWidth: hasPRs ? 340 : 260,
               maxWidth: 480,
-              maxHeight: hasPRs ? undefined : "min(360px, 60vh)",
-              height: hasPRs ? "min(400px, 70vh)" : undefined,
+              maxHeight: tall ? undefined : "min(360px, 60vh)",
+              height: tall ? "min(400px, 70vh)" : undefined,
               // Portaled outside the app root, so it doesn't inherit the app's font.
               fontFamily: fonts.sans,
               display: "flex",
@@ -189,6 +192,7 @@ export function SidebarWorktreeButton({ channelId, onCreateWorktree, onOpenPR }:
                   testId="sidebar-worktree-prs"
                   prs={prs}
                   error={prsError}
+                  forge={forge}
                   search={search}
                   worktrees={branchInfo?.worktrees}
                   onPick={(pr, existing) => {

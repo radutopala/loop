@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -29,6 +31,12 @@ const (
 	ollamaIdleTimeout       = 5 * time.Minute
 	ollamaMarkerFile        = "ollama-last-used"
 	ollamaIdleCheckInterval = 1 * time.Minute
+	// defaultOllamaCPUs caps the container's CPU use: a re-index embeds many
+	// chunks back to back, which otherwise takes every core of the Docker VM.
+	defaultOllamaCPUs = 2.0
+	// ollamaCPUShares is below Docker's default 1024, so agent containers win
+	// when the CPUs are contended.
+	ollamaCPUShares = "256"
 )
 
 // HTTPClient abstracts HTTP calls for testability.
@@ -42,8 +50,16 @@ type Commander interface {
 }
 
 type ollamaEmbedRequest struct {
-	Model string   `json:"model"`
-	Input []string `json:"input"`
+	Model   string             `json:"model"`
+	Input   []string           `json:"input"`
+	Options ollamaEmbedOptions `json:"options"`
+}
+
+// ollamaEmbedOptions are the model options sent with each embed request.
+type ollamaEmbedOptions struct {
+	// NumThread matches the container's CPU cap, so ollama doesn't run more
+	// threads than it has CPUs for.
+	NumThread int `json:"num_thread"`
 }
 
 type ollamaEmbedResponse struct {
@@ -55,6 +71,7 @@ type OllamaEmbedder struct {
 	model             string
 	url               string
 	dims              int
+	cpus              float64
 	httpClient        HTTPClient
 	commander         Commander
 	logger            *slog.Logger
@@ -79,6 +96,16 @@ func WithOllamaURL(url string) OllamaOption {
 // WithOllamaModel sets the embedding model name.
 func WithOllamaModel(model string) OllamaOption {
 	return func(e *OllamaEmbedder) { e.model = model }
+}
+
+// WithOllamaCPUs caps the CPUs the Ollama container may use. Zero or less
+// keeps the default.
+func WithOllamaCPUs(cpus float64) OllamaOption {
+	return func(e *OllamaEmbedder) {
+		if cpus > 0 {
+			e.cpus = cpus
+		}
+	}
 }
 
 // WithOllamaHTTPClient sets the HTTP client.
@@ -122,6 +149,7 @@ func NewOllamaEmbedder(opts ...OllamaOption) *OllamaEmbedder {
 		model:             defaultOllamaModel,
 		url:               defaultOllamaURL,
 		dims:              defaultOllamaDims,
+		cpus:              defaultOllamaCPUs,
 		httpClient:        http.DefaultClient,
 		commander:         &ExecCommander{},
 		logger:            slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -148,7 +176,7 @@ func (e *OllamaEmbedder) Embed(ctx context.Context, texts []string) ([][]float32
 		return nil, fmt.Errorf("ollama ensure model: %w", err)
 	}
 
-	body, _ := json.Marshal(ollamaEmbedRequest{Model: e.model, Input: texts})
+	body, _ := json.Marshal(ollamaEmbedRequest{Model: e.model, Input: texts, Options: ollamaEmbedOptions{NumThread: e.numThread()}})
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.url+"/api/embed", bytes.NewReader(body))
 	if err != nil {
@@ -178,6 +206,11 @@ func (e *OllamaEmbedder) Embed(ctx context.Context, texts []string) ([][]float32
 
 	e.touchMarkerFile()
 	return result.Embeddings, nil
+}
+
+// numThread is the CPU cap rounded up to whole threads.
+func (e *OllamaEmbedder) numThread() int {
+	return int(math.Ceil(e.cpus))
 }
 
 // touchMarkerFile updates the idle-timeout marker file so the daemon knows
@@ -245,6 +278,8 @@ func (e *OllamaEmbedder) ensureRunning(ctx context.Context) error {
 		"--name", ollamaContainerName,
 		"-v", ollamaVolumeName+":/root/.ollama",
 		"-p", "11434:11434",
+		"--cpus", strconv.FormatFloat(e.cpus, 'f', -1, 64),
+		"--cpu-shares", ollamaCPUShares,
 		OllamaImage,
 	); err != nil {
 		return fmt.Errorf("docker run ollama: %w", err)

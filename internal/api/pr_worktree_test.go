@@ -37,6 +37,15 @@ func (s *ServerSuite) TestChannelOpenPRs() {
 			wantBody: `"number":12`,
 		},
 		{
+			name: "GitHub without open PRs",
+			setup: func(dir string, gh *mockGitHubLookup, gl *mockGitLabLookup) {
+				gl.On("IsGitLabHost", "github.com", "").Return(false)
+				gh.On("ListOpenPRs", mock.Anything, dir, "").Return(nil, nil)
+			},
+			wantCode: http.StatusOK,
+			wantBody: `{"prs":[],"forge":"github"}`,
+		},
+		{
 			name:   "GitLab MRs",
 			origin: "https://gitlab.com/group/repo.git",
 			setup: func(dir string, gh *mockGitHubLookup, gl *mockGitLabLookup) {
@@ -45,7 +54,7 @@ func (s *ServerSuite) TestChannelOpenPRs() {
 					Return([]githubapi.PRInfo{{Number: 7, Kind: "mr"}}, nil)
 			},
 			wantCode: http.StatusOK,
-			wantBody: `"kind":"mr"`,
+			wantBody: `"kind":"mr"}],"forge":"gitlab"}`,
 		},
 		{
 			name:     "no origin",

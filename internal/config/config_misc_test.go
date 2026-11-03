@@ -351,7 +351,8 @@ func (s *ConfigSuite) TestMemoryConfigOllamaCustomURL() {
 				"embeddings": {
 					"provider": "ollama",
 					"model": "nomic-embed-text",
-					"ollama_url": "http://gpu-server:11434"
+					"ollama_url": "http://gpu-server:11434",
+					"ollama_cpus": 1.5
 				}
 			}
 		}`), nil
@@ -360,6 +361,7 @@ func (s *ConfigSuite) TestMemoryConfigOllamaCustomURL() {
 	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "http://gpu-server:11434", cfg.Memory.Embeddings.OllamaURL)
+	require.InDelta(s.T(), 1.5, cfg.Memory.Embeddings.OllamaCPUs, 0)
 }
 
 func (s *ConfigSuite) TestLoadPublicWrapper() {

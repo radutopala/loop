@@ -521,9 +521,10 @@ func (l *Loader) parse() (*Config, error) {
 		cfg.Memory.ReindexIntervalSec = jc.Memory.ReindexIntervalSec
 		if jc.Memory.Embeddings != nil {
 			cfg.Memory.Embeddings = EmbeddingsConfig{
-				Provider:  jc.Memory.Embeddings.Provider,
-				Model:     jc.Memory.Embeddings.Model,
-				OllamaURL: stringDefault(jc.Memory.Embeddings.OllamaURL, "http://localhost:11434"),
+				Provider:   jc.Memory.Embeddings.Provider,
+				Model:      jc.Memory.Embeddings.Model,
+				OllamaURL:  stringDefault(jc.Memory.Embeddings.OllamaURL, "http://localhost:11434"),
+				OllamaCPUs: jc.Memory.Embeddings.OllamaCPUs,
 			}
 		}
 	}

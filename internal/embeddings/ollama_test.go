@@ -2,6 +2,7 @@ package embeddings
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -118,6 +119,8 @@ func (s *OllamaSuite) TestEmbedStartsContainer() {
 		"--name", "loop-ollama",
 		"-v", "loop-ollama:/root/.ollama",
 		"-p", "11434:11434",
+		"--cpus", "2",
+		"--cpu-shares", "256",
 		"ollama/ollama:latest",
 	).Return([]byte("containerid\n"), nil)
 	// Health check.
@@ -158,6 +161,8 @@ func (s *OllamaSuite) TestEmbedDockerRunFails() {
 		"--name", "loop-ollama",
 		"-v", "loop-ollama:/root/.ollama",
 		"-p", "11434:11434",
+		"--cpus", "2",
+		"--cpu-shares", "256",
 		"ollama/ollama:latest",
 	).Return([]byte(""), errors.New("docker daemon not running"))
 
@@ -299,6 +304,8 @@ func (s *OllamaSuite) TestWaitForReadyTimeout() {
 		"--name", "loop-ollama",
 		"-v", "loop-ollama:/root/.ollama",
 		"-p", "11434:11434",
+		"--cpus", "2",
+		"--cpu-shares", "256",
 		"ollama/ollama:latest",
 	).Return([]byte("cid\n"), nil)
 	// Health check always fails.
@@ -361,6 +368,8 @@ func (s *OllamaSuite) TestWaitForReadyInvalidURL() {
 		"--name", "loop-ollama",
 		"-v", "loop-ollama:/root/.ollama",
 		"-p", "11434:11434",
+		"--cpus", "2",
+		"--cpu-shares", "256",
 		"ollama/ollama:latest",
 	).Return([]byte("cid\n"), nil)
 
@@ -373,6 +382,7 @@ func (s *OllamaSuite) TestNewOllamaEmbedderDefaults() {
 	require.Equal(s.T(), "nomic-embed-text", e.model)
 	require.Equal(s.T(), "http://localhost:11434", e.url)
 	require.Equal(s.T(), 768, e.dims)
+	require.InDelta(s.T(), 2.0, e.cpus, 0)
 	require.NotNil(s.T(), e.httpClient)
 	require.NotNil(s.T(), e.commander)
 	require.NotNil(s.T(), e.logger)
@@ -399,6 +409,49 @@ func (s *OllamaSuite) TestWithOllamaOptions() {
 // --- resolveContainerURL tests ---
 
 const inspectIPFormat = "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}"
+
+func (s *OllamaSuite) TestWithOllamaCPUs() {
+	tests := []struct {
+		name       string
+		cpus       float64
+		wantCPUs   float64
+		wantThread int
+	}{
+		{name: "set", cpus: 4, wantCPUs: 4, wantThread: 4},
+		{name: "fractional rounds threads up", cpus: 1.5, wantCPUs: 1.5, wantThread: 2},
+		{name: "zero keeps the default", cpus: 0, wantCPUs: 2, wantThread: 2},
+		{name: "negative keeps the default", cpus: -1, wantCPUs: 2, wantThread: 2},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			e := NewOllamaEmbedder(WithOllamaCPUs(tt.cpus))
+			require.InDelta(s.T(), tt.wantCPUs, e.cpus, 0)
+			require.Equal(s.T(), tt.wantThread, e.numThread())
+		})
+	}
+}
+
+func (s *OllamaSuite) TestEmbedSendsCPUCapAsThreads() {
+	ctx := context.Background()
+	e := s.newEmbedder()
+	WithOllamaCPUs(3)(e)
+
+	s.cmd.On("Run", ctx, "docker", "inspect", "--format", "{{.State.Running}}", "loop-ollama").
+		Return([]byte("true\n"), nil)
+	s.cmd.On("Run", ctx, "docker", "exec", "loop-ollama", "ollama", "list").
+		Return([]byte("nomic-embed-text"), nil)
+	var body ollamaEmbedRequest
+	s.http.On("Do", mock.MatchedBy(func(r *http.Request) bool {
+		return r.URL.Path == "/api/embed" && json.NewDecoder(r.Body).Decode(&body) == nil
+	})).Return(&http.Response{
+		StatusCode: 200,
+		Body:       io.NopCloser(strings.NewReader(`{"embeddings":[[0.1]]}`)),
+	}, nil)
+
+	_, err := e.Embed(ctx, []string{"hello"})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), ollamaEmbedOptions{NumThread: 3}, body.Options)
+}
 
 func (s *OllamaSuite) TestResolveContainerURLBridgeIP() {
 	ctx := context.Background()
@@ -458,6 +511,8 @@ func (s *OllamaSuite) TestEnsureRunningSwitchesToBridgeURL() {
 		"--name", "loop-ollama",
 		"-v", "loop-ollama:/root/.ollama",
 		"-p", "11434:11434",
+		"--cpus", "2",
+		"--cpu-shares", "256",
 		"ollama/ollama:latest",
 	).Return([]byte("cid\n"), nil)
 	s.cmd.On("Run", ctx, "docker", "inspect", "-f", inspectIPFormat, "loop-ollama").

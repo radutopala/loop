@@ -239,7 +239,8 @@ open pull requests (merge requests on GitLab) in a section of their own,
 below the branches; the search filters both, matching a PR's number, title
 or branch. Picking a PR checks it out on its own branch (`gh pr checkout`,
 `glab mr checkout`) in a new `pr-N` worktree thread, so pushes from it
-update the PR. Each PR row's label says what a pick does:
+update the PR. With none open, the section stays and says so. Each PR
+row's label says what a pick does:
 
 | Label | When | Pick |
 |---|---|---|

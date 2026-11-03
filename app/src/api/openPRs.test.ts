@@ -17,9 +17,9 @@ afterEach(() => {
 });
 
 describe("fetchOpenPRs", () => {
-  it("returns the repo's open PRs", async () => {
-    fetchMock.mockResolvedValue(new Response(JSON.stringify({ prs: [{ number: 12, head_ref: "feat/x", base_ref: "main" }] })));
-    expect(await fetchOpenPRs("ch1")).toEqual([{ number: 12, head_ref: "feat/x", base_ref: "main" }]);
+  it("returns the repo's open PRs and forge", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ prs: [{ number: 12, head_ref: "feat/x", base_ref: "main" }], forge: "github" })));
+    expect(await fetchOpenPRs("ch1")).toEqual({ prs: [{ number: 12, head_ref: "feat/x", base_ref: "main" }], forge: "github" });
     expect(fetchMock.mock.calls[0]![0]).toBe("http://localhost:8222/api/channels/ch1/prs");
   });
 

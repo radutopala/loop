@@ -36,27 +36,39 @@ export function prAction(pr: PRInfo, existing: WorktreeInfo | undefined): { labe
 
 /**
  * showsPRs reports whether a picker has a PR section: while loading, on a
- * failed listing, or with some open. A repo without PRs gets none.
+ * failed listing, with some open, or for a repo on a forge with none open.
+ * A repo without a forge to list PRs from gets none.
  */
-export function showsPRs(prs: PRInfo[] | null, error: string | null): boolean {
-  return prs === null || prs.length > 0 || !!error;
+export function showsPRs(prs: PRInfo[] | null, error: string | null, forge?: string): boolean {
+  return prs === null || prs.length > 0 || !!error || !!forge;
+}
+
+/** emptyPRsNote is a PR section's note when nothing shows: none open in the
+ *  repo, or none matching the search. */
+export function emptyPRsNote(prs: PRInfo[], forge?: string): string {
+  if (prs.length > 0) return "No matching PRs";
+  return forge === "gitlab" ? "No open merge requests" : "No open pull requests";
 }
 
 /**
  * useOpenPRs loads channelId's open PRs (MRs on GitLab) each time enabled
  * turns on: null while loading, with error set when the listing failed.
  */
-export function useOpenPRs(channelId: string, enabled: boolean): { prs: PRInfo[] | null; error: string | null } {
+export function useOpenPRs(channelId: string, enabled: boolean): { prs: PRInfo[] | null; error: string | null; forge?: string } {
   const [prs, setPRs] = useState<PRInfo[] | null>(null);
+  const [forge, setForge] = useState<string | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
     setPRs(null);
+    setForge(undefined);
     setError(null);
     fetchOpenPRs(channelId)
-      .then((list) => {
-        if (!cancelled) setPRs(list);
+      .then((listed) => {
+        if (cancelled) return;
+        setPRs(listed.prs);
+        setForge(listed.forge);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -67,7 +79,7 @@ export function useOpenPRs(channelId: string, enabled: boolean): { prs: PRInfo[]
       cancelled = true;
     };
   }, [channelId, enabled]);
-  return { prs, error };
+  return { prs, error, forge };
 }
 
 /**
@@ -104,6 +116,7 @@ export function SectionHeader({ children }: { children: string }) {
 export function OpenPRRows({
   prs,
   error,
+  forge,
   search,
   worktrees,
   onPick,
@@ -111,21 +124,23 @@ export function OpenPRRows({
 }: {
   prs: PRInfo[] | null;
   error: string | null;
+  /** The repo's forge, for its section title and note when it has none open. */
+  forge?: string;
   search: string;
   worktrees: WorktreeInfo[] | undefined;
   onPick: (pr: PRInfo, existing?: WorktreeInfo) => void;
   testId: string;
 }) {
   const { colors } = useTheme();
-  if (!showsPRs(prs, error)) return null;
+  if (!showsPRs(prs, error, forge)) return null;
   const shown = prs?.filter((pr) => matchesPR(pr, search)) ?? [];
   const note = (text: string) => <div style={{ padding: "4px 12px 6px", color: colors.textDim, fontSize: 12, whiteSpace: "pre-wrap" }}>{text}</div>;
   return (
     <div data-testid={testId}>
-      <SectionHeader>{prs?.[0]?.kind === "mr" ? "Merge requests" : "Pull requests"}</SectionHeader>
+      <SectionHeader>{prs?.[0]?.kind === "mr" || forge === "gitlab" ? "Merge requests" : "Pull requests"}</SectionHeader>
       {!prs && note("Loading…")}
       {error && note(error)}
-      {prs && !error && shown.length === 0 && note("No matching PRs")}
+      {prs && !error && shown.length === 0 && note(emptyPRsNote(prs, forge))}
       {shown.map((pr) => {
         const existing = prWorktree(pr, worktrees);
         const action = prAction(pr, existing);

@@ -200,7 +200,8 @@
     "embeddings": {
       "provider": "ollama",
       "model": "nomic-embed-text"
-      //"ollama_url": "http://localhost:11434"
+      //"ollama_url": "http://localhost:11434",
+      //"ollama_cpus": 2
     }
   },
 

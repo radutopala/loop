@@ -737,6 +737,12 @@ func buildSchema(goos string) *ConfigSchema {
 								Title:        "Ollama URL",
 								XPlaceholder: "http://localhost:11434",
 							},
+							"ollama_cpus": {
+								Type:         "number",
+								Title:        "Ollama CPUs",
+								Description:  "CPUs the Ollama container may use",
+								XPlaceholder: "2",
+							},
 						},
 					},
 				},

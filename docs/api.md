@@ -2221,11 +2221,12 @@ List the open pull requests of the channel's repo: GitHub PRs via `gh pr list`, 
       "title": "Fix the login redirect",
       "is_draft": false
     }
-  ]
+  ],
+  "forge": "github"
 }
 ```
 
-Each entry has the fields of [`GET /api/channels/{id}/pr`](#get-apichannelsidpr)'s `pr`, `kind: "mr"` included on GitLab. A channel without a directory or a repo without a GitHub or GitLab `origin` gets `{"prs": []}`.
+Each entry has the fields of [`GET /api/channels/{id}/pr`](#get-apichannelsidpr)'s `pr`, `kind: "mr"` included on GitLab. `forge` is `github` or `gitlab`, the forge the list came from, so an empty list on one means no PR is open. A channel without a directory or a repo without a GitHub or GitLab `origin` gets `{"prs": []}`, with no `forge`.
 
 **Errors:** `404` if channel not found, `502` when `gh`/`glab` fails (the body is its error).
 

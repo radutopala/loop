@@ -209,6 +209,7 @@ func (a *app) defaultNewEmbedder(cfg *config.Config) (embeddings.Embedder, error
 		opts := []embeddings.OllamaOption{
 			embeddings.WithOllamaURL(cfg.Memory.Embeddings.OllamaURL),
 			embeddings.WithOllamaLoopDir(cfg.LoopDir),
+			embeddings.WithOllamaCPUs(cfg.Memory.Embeddings.OllamaCPUs),
 		}
 		if cfg.Memory.Embeddings.Model != "" {
 			opts = append(opts, embeddings.WithOllamaModel(cfg.Memory.Embeddings.Model))

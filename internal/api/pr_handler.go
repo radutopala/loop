@@ -108,6 +108,14 @@ type prForge struct {
 	ghUser  string
 }
 
+// name is the forge's name: gitlab or github.
+func (f *prForge) name() string {
+	if f.gitlab != nil {
+		return "gitlab"
+	}
+	return "github"
+}
+
 // prForgeFor picks dirPath's forge from its origin's host; nil when it has
 // no origin, or no client serves it.
 func (s *Server) prForgeFor(ctx context.Context, dirPath, parentDirPath string) *prForge {
@@ -126,16 +134,21 @@ func (s *Server) prForgeFor(ctx context.Context, dirPath, parentDirPath string) 
 	return &prForge{github: s.prLookup.client, ghUser: ghUserOf(cfg)}
 }
 
-// openPRs lists dirPath's open PRs, or MRs on GitLab; none without a forge.
-func (s *Server) openPRs(ctx context.Context, dirPath, parentDirPath string) ([]githubapi.PRInfo, error) {
+// openPRs lists dirPath's open PRs, or MRs on GitLab, with the forge's name;
+// none and "" without a forge.
+func (s *Server) openPRs(ctx context.Context, dirPath, parentDirPath string) ([]githubapi.PRInfo, string, error) {
 	f := s.prForgeFor(ctx, dirPath, parentDirPath)
-	switch {
-	case f == nil:
-		return nil, nil
-	case f.gitlab != nil:
-		return f.gitlab.ListOpenMRs(ctx, dirPath, f.glabDir)
+	if f == nil {
+		return nil, "", nil
 	}
-	return f.github.ListOpenPRs(ctx, dirPath, f.ghUser)
+	var prs []githubapi.PRInfo
+	var err error
+	if f.gitlab != nil {
+		prs, err = f.gitlab.ListOpenMRs(ctx, dirPath, f.glabDir)
+	} else {
+		prs, err = f.github.ListOpenPRs(ctx, dirPath, f.ghUser)
+	}
+	return prs, f.name(), err
 }
 
 // checkoutPR checks PR (or MR) number of dirPath's repo out in worktreePath,
@@ -149,6 +162,13 @@ func (s *Server) checkoutPR(ctx context.Context, dirPath, parentDirPath, worktre
 		return f.gitlab.CheckoutMR(ctx, worktreePath, f.glabDir, number)
 	}
 	return f.github.CheckoutPR(ctx, worktreePath, f.ghUser, number)
+}
+
+// openPRsResponse is a repo's open PRs, and its forge (github or gitlab),
+// empty when the repo has none to list PRs from.
+type openPRsResponse struct {
+	PRs   []githubapi.PRInfo `json:"prs"`
+	Forge string             `json:"forge,omitempty"`
 }
 
 // handleChannelOpenPRs lists the open PRs (MRs on GitLab) of the channel's
@@ -167,16 +187,17 @@ func (s *Server) handleChannelOpenPRs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "channel not found", http.StatusNotFound)
 		return
 	}
-	prs := []githubapi.PRInfo{}
+	resp := openPRsResponse{PRs: []githubapi.PRInfo{}}
 	if ch.DirPath != "" {
-		listed, err := s.openPRs(r.Context(), ch.DirPath, s.workspace.resolveParentDirPath(r.Context(), channelID))
+		listed, forge, err := s.openPRs(r.Context(), ch.DirPath, s.workspace.resolveParentDirPath(r.Context(), channelID))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
-		prs = append(prs, listed...)
+		resp.PRs = append(resp.PRs, listed...)
+		resp.Forge = forge
 	}
-	writeHTTPJSON(w, http.StatusOK, map[string]any{"prs": prs}, s.logger)
+	writeHTTPJSON(w, http.StatusOK, resp, s.logger)
 }
 
 // gitRemoteHost returns the host of dir's origin remote, or "".
