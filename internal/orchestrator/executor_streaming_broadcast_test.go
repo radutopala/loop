@@ -707,3 +707,88 @@ func (s *TaskExecutorSuite) TestStreamingInviteErrorsAreLogged() {
 	require.Equal(s.T(), "Turn 1", resp)
 	s.bot.AssertExpectations(s.T())
 }
+
+// TestStreamingPromptSuggestion asserts a task run asks for a prompt
+// suggestion only on a local, visible channel, and broadcasts it to the run's
+// thread, where the composer offers it.
+func (s *TaskExecutorSuite) TestStreamingPromptSuggestion() {
+	tests := []struct {
+		name string
+		kind string
+		want bool
+	}{
+		{name: "local channel", want: true},
+		{name: "hidden channel", kind: db.ChannelKindLearn, want: false},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			eb := new(MockEventBroadcaster)
+			s.executor.SetEventBroadcaster(eb)
+			allowStatusBroadcasts(eb)
+
+			task := &db.ScheduledTask{
+				ID: 82, ChannelID: "ch82", Prompt: "suggest me",
+				Type: db.TaskTypeOnce, Schedule: "10s",
+			}
+			parent := &db.Channel{ID: 302, ChannelID: "ch82", Platform: types.PlatformLocal, DirPath: "/work", Kind: tt.kind}
+			s.store.On("GetChannel", mock.Anything, "ch82").Return(parent, nil)
+			s.expectTaskThread(task, "thread-82", true, &db.Channel{ID: 303, ChannelID: "thread-82"})
+			s.allowBotInserts()
+			allowTaskPromptBroadcast(eb)
+			s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil).Maybe()
+
+			s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+				require.Equal(s.T(), tt.want, req.Suggest)
+				require.Equal(s.T(), tt.want, req.OnSuggestion != nil)
+				if req.OnSuggestion != nil {
+					req.OnSuggestion("run the tests")
+				}
+				req.OnTurn("Turn 1", agent.TurnRef{})
+				return true
+			})).Return(&agent.AgentResponse{Response: "Turn 1", SessionID: "sess-sug"}, nil)
+			s.store.On("UpdateSessionID", s.ctx, "thread-82", "sess-sug").Return(nil)
+
+			eb.On("BroadcastChannelCreated", "ch82", "thread-82").Once()
+			eb.On("BroadcastMessageCreated", "thread-82", mock.Anything).Maybe()
+			if tt.want {
+				eb.On("BroadcastPromptSuggestion", "thread-82", events.PromptSuggestionEventData{Suggestion: "run the tests"}).Once()
+			}
+
+			_, err := s.executor.ExecuteTask(s.ctx, task)
+			require.NoError(s.T(), err)
+			if !tt.want {
+				eb.AssertNotCalled(s.T(), "BroadcastPromptSuggestion", mock.Anything, mock.Anything)
+			}
+			eb.AssertExpectations(s.T())
+		})
+	}
+}
+
+// TestStreamingPromptSuggestionNonLocal asserts a Discord/Slack task run asks
+// for no suggestion: there's no composer to offer it in.
+func (s *TaskExecutorSuite) TestStreamingPromptSuggestionNonLocal() {
+	eb := new(MockEventBroadcaster)
+	s.executor.SetEventBroadcaster(eb)
+	allowStatusBroadcasts(eb)
+
+	task := &db.ScheduledTask{
+		ID: 83, ChannelID: "ch83", Prompt: "no suggestion",
+		Type: db.TaskTypeCron, Schedule: "0 * * * *",
+	}
+	s.store.On("GetChannel", mock.Anything, "ch83").Return(nil, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(83)).Return(&db.ScheduledTask{ID: 83, Type: db.TaskTypeCron}, nil)
+	s.expectTaskThread(task, "thread-83", false, nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil).Maybe()
+	eb.On("BroadcastChannelCreated", "ch83", "thread-83").Once()
+	eb.On("BroadcastMessageCreated", "thread-83", mock.Anything).Maybe()
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		return !req.Suggest && req.OnSuggestion == nil
+	})).Return(&agent.AgentResponse{Response: "done", SessionID: "sess-ns"}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "thread-83", "sess-ns").Return(nil)
+
+	_, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	s.runner.AssertExpectations(s.T())
+}

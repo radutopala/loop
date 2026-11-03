@@ -501,6 +501,15 @@ export async function fetchComposerHistory(channelId: string, limit = 100): Prom
   return data.messages ?? [];
 }
 
+/** The channel's latest prompt suggestion, kept by the daemon until its next
+ *  run starts; "" when it has none. */
+export async function fetchPromptSuggestion(channelId: string): Promise<string> {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/prompt-suggestion`);
+  if (!res.ok) throw new Error(`Failed to fetch the prompt suggestion: ${res.statusText}`);
+  const data = await res.json();
+  return data.suggestion ?? "";
+}
+
 /** A channel's model/effort overrides plus the config defaults they fall back to. */
 export interface AgentConfig {
   model: string;

@@ -576,6 +576,13 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		req.OnBackgroundTasks = func(tasks []agent.BackgroundTask) {
 			e.events.BroadcastAgentActivity(activityTarget(), backgroundData(tasks))
 		}
+		// Only the app's composer offers a suggestion, as for a chat run.
+		req.Suggest = isLocal && !db.IsHiddenKind(channel.Kind)
+		if req.Suggest {
+			req.OnSuggestion = func(text string) {
+				e.events.BroadcastPromptSuggestion(activityTarget(), events.PromptSuggestionEventData{Suggestion: text})
+			}
+		}
 	}
 
 	// Generate a unique run ID so the frontend can distinguish concurrent runs

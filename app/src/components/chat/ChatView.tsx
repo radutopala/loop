@@ -138,7 +138,7 @@ export function ChatView({
   const queuedEdit = useQueuedEdit(channelId, chatState.queuedMessages);
   const live = useLiveStatus(channelId, subscribeChatEvents, wsOpens);
   const warmLive = useWarmLive(subscribeChatEvents ? channelId : null, live);
-  const suggestion = usePromptSuggestion(channelId, subscribeChatEvents);
+  const suggestion = usePromptSuggestion(channelId, subscribeChatEvents, wsOpens);
   const background = readOnlyNote === undefined ? shownBackground(live, chatState.backgroundTasks, isRunning) : null;
 
   // +fork on a bubble: the new thread opens, and for a user message its

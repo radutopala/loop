@@ -152,6 +152,7 @@ type Server struct {
 	channels                ChannelEnsurer
 	protectedDirs           []string // dirs a channel's dir_path may not equal or contain (see SetProtectedDirs)
 	threads                 ThreadEnsurer
+	suggestions             *promptSuggestions                    // each channel's latest prompt suggestion, fed by the events hub
 	removeMCPConfig         func(dirPath, channelID string) error // removes a deleted channel's MCP config files
 	configLocks             configLocks                           // serializes edits of each config.json
 	notifyLimit             notifyLimit                           // caps each plugin's notifications and cards
@@ -242,6 +243,7 @@ func (s *Server) SetProtectedDirs(dirs []string) {
 // SetEventsHub configures the events hub for the /api/ws endpoint.
 func (s *Server) SetEventsHub(hub *EventsHub) {
 	s.eventsHub = hub
+	hub.Observe(s.suggestions.observe)
 }
 
 // EventsHub returns the configured events hub, or nil if not set.
@@ -415,6 +417,7 @@ func NewServer(sched scheduler.Scheduler, channels ChannelEnsurer, threads Threa
 		newBackupKey:    age.GenerateX25519Identity,
 		deliverAsync:    func(f func()) { go f() },
 		termDelays:      defaultTerminalDelays(),
+		suggestions:     newPromptSuggestions(),
 		worktreeCreator: &worktree.Creator{
 			Sys: sys,
 			Run: worktree.ExecCommandRunner,
@@ -475,6 +478,7 @@ func (s *Server) registerChannelRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/channels/{id}/session", s.handleSetSession)
 	mux.HandleFunc("GET /api/channels/{id}/messages", s.handleListMessages)
 	mux.HandleFunc("GET /api/channels/{id}/composer-history", s.handleComposerHistory)
+	mux.HandleFunc("GET /api/channels/{id}/prompt-suggestion", s.handlePromptSuggestion)
 	mux.HandleFunc("GET /api/channels/{id}/queued", s.handleListQueuedMessages)
 	mux.HandleFunc("POST /api/channels/{id}/queued/reorder", s.handleReorderQueuedMessages)
 	mux.HandleFunc("POST /api/channels/{id}/queued/{msg_id}/steer", s.handleSteerQueuedMessage)

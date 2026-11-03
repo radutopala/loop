@@ -389,9 +389,9 @@ Clicking a quote button on a bot message stages it as a reply target above the i
 
 ### Prompt Suggestions
 
-After a chat turn, the agent predicts the prompt you're likely to send next, and the empty composer shows it in place of its placeholder, followed by `⇥ Tab`. `Tab` puts it in the composer to send or edit; `Enter` on an empty composer still sends nothing. It stays while the composer is empty and goes when the next run starts or you switch chats.
+After a chat turn, the agent predicts the prompt you're likely to send next, and the empty composer shows it in place of its placeholder, followed by `⇥ Tab`. `Tab` puts it in the composer to send or edit; `Enter` on an empty composer still sends nothing. It stays while the composer is empty and goes when the chat's next run starts. Switching to another chat and back keeps it, and a suggestion that came while another chat was open shows when you open its chat: the daemon keeps each chat's latest one (`GET /api/channels/{id}/prompt-suggestion`) until that chat's next run starts, though not across a daemon restart.
 
-The Claude CLI writes the prediction after the turn's result (`--prompt-suggestions`), and the daemon forwards it as the [`agent.prompt_suggestion`](events.md#agentprompt_suggestion) event. The CLI doesn't predict one after every turn. Only app chats ask; scheduled tasks, reviews, learn and explain runs, and Discord or Slack channels don't. Turn it off with [`claude_prompt_suggestions`](configuration.md): each suggestion is one small extra request.
+The Claude CLI writes the prediction after the turn's result (`--prompt-suggestions`), and the daemon forwards it as the [`agent.prompt_suggestion`](events.md#agentprompt_suggestion) event. The CLI doesn't predict one after every turn. Only app chats and their scheduled task runs ask, the run offering it in its task thread; reviews, learn and explain runs, and Discord or Slack channels don't. Turn it off with [`claude_prompt_suggestions`](configuration.md): each suggestion is one small extra request.
 
 ---
 
