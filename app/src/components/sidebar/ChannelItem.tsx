@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { useRowHover } from "../../hooks/useRowHover";
 import { unreadLabel } from "../../notifications/notifications";
 import { useNotificationsState } from "../../notifications/useNotifications";
 import { useTheme } from "../../ThemeContext";
@@ -76,8 +77,8 @@ export function ChannelItem({
   const fixing = fixingPill(channel.pr_attention, pills);
   const [creating, setCreating] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
-  const [hovered, setHovered] = useState(false);
   const rowRef = useRef<HTMLDivElement>(null);
+  const { hovered, onMouseEnter, onMouseLeave } = useRowHover(rowRef);
   useExpandToSelected(threads, threadsByParent, selectedId, setCollapsed);
   useRevealSelected(rowRef, selected);
 
@@ -99,8 +100,8 @@ export function ChannelItem({
           borderTop: isDragOver ? `2px solid ${colors.active}` : "2px solid transparent",
         }}
         onContextMenu={(e) => onContextMenu(e, channel)}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
+        onMouseEnter={onMouseEnter}
+        onMouseLeave={onMouseLeave}
       >
         {selectMode && !pinned ? (
           <span
