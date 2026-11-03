@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { PRInfo } from "../../api/git";
-import { matchesPR, prAction, prRef, prWorktree, showsPRs } from "./OpenPRs";
+import { emptyPRsNote, matchesPR, prAction, prRef, prWorktree, showsPRs } from "./OpenPRs";
 
 const pr: PRInfo = { number: 12, url: "https://example.com/pull/12", base_ref: "main", head_ref: "feat/login", state: "OPEN", title: "Fix the login" };
 const mr: PRInfo = { ...pr, number: 7, kind: "mr" };
@@ -54,10 +54,23 @@ describe("prWorktree and prAction", () => {
 });
 
 describe("showsPRs", () => {
-  it("shows while loading, on an error, or with some open", () => {
-    expect(showsPRs(null, null)).toBe(true);
-    expect(showsPRs([], "gh: not logged in")).toBe(true);
-    expect(showsPRs([pr], null)).toBe(true);
-    expect(showsPRs([], null)).toBe(false);
+  it.each([
+    { name: "while loading", prs: null, error: null, forge: undefined, want: true },
+    { name: "on an error", prs: [], error: "gh: not logged in", forge: undefined, want: true },
+    { name: "with some open", prs: [pr], error: null, forge: "github", want: true },
+    { name: "on a forge with none open", prs: [], error: null, forge: "github", want: true },
+    { name: "not without a forge", prs: [], error: null, forge: undefined, want: false },
+  ])("$name", ({ prs, error, forge, want }) => {
+    expect(showsPRs(prs, error, forge)).toBe(want);
+  });
+});
+
+describe("emptyPRsNote", () => {
+  it.each([
+    { name: "none open on GitHub", prs: [], forge: "github", want: "No open pull requests" },
+    { name: "none open on GitLab", prs: [], forge: "gitlab", want: "No open merge requests" },
+    { name: "none matching the search", prs: [pr], forge: "github", want: "No matching PRs" },
+  ])("$name", ({ prs, forge, want }) => {
+    expect(emptyPRsNote(prs, forge)).toBe(want);
   });
 });

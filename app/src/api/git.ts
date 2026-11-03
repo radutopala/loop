@@ -130,12 +130,18 @@ export async function fetchPR(channelId: string, fresh = false): Promise<PRRespo
   return res.json();
 }
 
+/** A repo's open PRs (MRs on GitLab), with its forge: "github" or "gitlab",
+ *  absent when the repo has none to list PRs from. */
+export interface OpenPRs {
+  prs: PRInfo[];
+  forge?: string;
+}
+
 /** The repo's open PRs (MRs on GitLab), for checking one out in a new worktree. */
-export async function fetchOpenPRs(channelId: string): Promise<PRInfo[]> {
+export async function fetchOpenPRs(channelId: string): Promise<OpenPRs> {
   const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/prs`);
   if (!res.ok) throw new Error((await res.text()).trim() || `Failed to list the open PRs: ${res.statusText}`);
-  const data: { prs: PRInfo[] } = await res.json();
-  return data.prs;
+  return res.json();
 }
 
 export async function fetchDiff(channelId: string, source?: string, target?: string, rootIndex?: number): Promise<DiffResponse> {

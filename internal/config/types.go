@@ -196,6 +196,9 @@ type EmbeddingsConfig struct {
 	Provider  string `json:"provider"`   // "ollama"
 	Model     string `json:"model"`      // e.g. "nomic-embed-text"
 	OllamaURL string `json:"ollama_url"` // default "http://localhost:11434"
+	// OllamaCPUs caps the CPUs the Ollama container may use; 0 means the
+	// embedder's default (2).
+	OllamaCPUs float64 `json:"ollama_cpus"`
 }
 
 // ReviewConfig configures the review-panel agent prompt. Either Prompt

@@ -31,7 +31,7 @@ export function HeaderBranchPicker({
   const [search, setSearch] = useState("");
   const ref = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const { prs, error: prsError } = useOpenPRs(channelId, open && !!onOpenPR);
+  const { prs, error: prsError, forge } = useOpenPRs(channelId, open && !!onOpenPR);
 
   useEffect(() => {
     if (!open) return;
@@ -69,7 +69,7 @@ export function HeaderBranchPicker({
   const filteredWorktrees = (branchInfo?.worktrees ?? []).filter((wt) => !search || wt.branch.toLowerCase().includes(lowerSearch) || wt.path.split("/").pop()?.toLowerCase().includes(lowerSearch));
 
   const hasWorktrees = (branchInfo?.worktrees ?? []).length > 0 && (!!onImportWorktree || !!onSelectThread);
-  const hasPRs = !!onOpenPR && showsPRs(prs, prsError);
+  const hasPRs = !!onOpenPR && showsPRs(prs, prsError, forge);
   const sectioned = hasWorktrees || hasPRs;
 
   return (
@@ -279,6 +279,7 @@ export function HeaderBranchPicker({
                 testId="branch-picker-prs"
                 prs={prs}
                 error={prsError}
+                forge={forge}
                 search={search}
                 worktrees={branchInfo?.worktrees}
                 onPick={(pr, existing) => {

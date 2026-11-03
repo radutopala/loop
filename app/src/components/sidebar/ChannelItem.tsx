@@ -78,7 +78,7 @@ export function ChannelItem({
   const [creating, setCreating] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const rowRef = useRef<HTMLDivElement>(null);
-  const { hovered, onMouseEnter, onMouseLeave } = useRowHover(rowRef);
+  const { hovered, onMouseEnter, onMouseLeave, onMouseMove } = useRowHover();
   useExpandToSelected(threads, threadsByParent, selectedId, setCollapsed);
   useRevealSelected(rowRef, selected);
 
@@ -102,6 +102,7 @@ export function ChannelItem({
         onContextMenu={(e) => onContextMenu(e, channel)}
         onMouseEnter={onMouseEnter}
         onMouseLeave={onMouseLeave}
+        onMouseMove={onMouseMove}
       >
         {selectMode && !pinned ? (
           <span

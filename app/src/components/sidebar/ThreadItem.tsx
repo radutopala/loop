@@ -74,7 +74,7 @@ export function ThreadItem({
 }: ThreadItemProps) {
   const { colors } = useTheme();
   const rowRef = useRef<HTMLDivElement>(null);
-  const { hovered, onMouseEnter, onMouseLeave } = useRowHover(rowRef);
+  const { hovered, onMouseEnter, onMouseLeave, onMouseMove } = useRowHover();
   const [forking, setForking] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   useExpandToSelected(subThreads ?? NO_THREADS, threadsByParent, selectedId ?? null, setCollapsed);
@@ -106,6 +106,7 @@ export function ThreadItem({
         data-testid="sidebar-thread-row"
         onMouseEnter={onMouseEnter}
         onMouseLeave={onMouseLeave}
+        onMouseMove={onMouseMove}
         style={{
           position: "relative",
           display: "flex",

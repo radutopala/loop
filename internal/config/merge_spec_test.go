@@ -205,10 +205,10 @@ func permissionsLeaf(leaf func(p *types.Permissions) *[]string) func(c *Config, 
 
 // embeddingsLeaf is the rule for an embeddings field: a layer's embeddings
 // block replaces the one below whole, with the Ollama URL defaulted.
-func embeddingsLeaf(leaf func(e *EmbeddingsConfig) *string) func(c *Config, raw string, l mergeLayer) {
+func embeddingsLeaf[T any](leaf func(e *EmbeddingsConfig) *T) func(c *Config, raw string, l mergeLayer) {
 	return func(c *Config, raw string, _ mergeLayer) {
 		c.Memory.Embeddings = EmbeddingsConfig{OllamaURL: "http://localhost:11434"}
-		*leaf(&c.Memory.Embeddings) = decodeJSON[string](raw)
+		*leaf(&c.Memory.Embeddings) = decodeJSON[T](raw)
 	}
 }
 
@@ -340,6 +340,8 @@ var mergeFields = []mergeField{
 		apply: embeddingsLeaf(func(e *EmbeddingsConfig) *string { return &e.Model }), reason: "the layer's embeddings block replaces the one below whole"},
 	{path: "memory.embeddings.ollama_url", kind: mergeCustom, project: `"http://p"`, worktree: `"http://w"`,
 		apply: embeddingsLeaf(func(e *EmbeddingsConfig) *string { return &e.OllamaURL }), reason: "the layer's embeddings block replaces the one below whole"},
+	{path: "memory.embeddings.ollama_cpus", kind: mergeCustom, project: `3`, worktree: `4`,
+		apply: embeddingsLeaf(func(e *EmbeddingsConfig) *float64 { return &e.OllamaCPUs }), reason: "the layer's embeddings block replaces the one below whole"},
 	{path: "quality.max_files", kind: mergeReplace, field: func(c *Config) any { return &c.Quality.MaxFiles }, global: `1`, project: `2`, worktree: `3`},
 	{path: "quality.exclude_paths", kind: mergeReplace, field: func(c *Config) any { return &c.Quality.ExcludePaths }, global: `["g"]`, project: `[]`, worktree: `["w"]`},
 	{path: "quality.rules", kind: mergeCustom, field: func(c *Config) any { return &c.Quality.Rules },

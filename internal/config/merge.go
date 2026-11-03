@@ -467,9 +467,10 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 		}
 		if pc.Memory.Embeddings != nil {
 			merged.Memory.Embeddings = EmbeddingsConfig{
-				Provider:  pc.Memory.Embeddings.Provider,
-				Model:     pc.Memory.Embeddings.Model,
-				OllamaURL: stringDefault(pc.Memory.Embeddings.OllamaURL, "http://localhost:11434"),
+				Provider:   pc.Memory.Embeddings.Provider,
+				Model:      pc.Memory.Embeddings.Model,
+				OllamaURL:  stringDefault(pc.Memory.Embeddings.OllamaURL, "http://localhost:11434"),
+				OllamaCPUs: pc.Memory.Embeddings.OllamaCPUs,
 			}
 		}
 	}
