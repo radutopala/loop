@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { forkThread } from "../../api/channels";
+import { useRowHover } from "../../hooks/useRowHover";
 import { unreadLabel } from "../../notifications/notifications";
 import { useNotificationsState } from "../../notifications/useNotifications";
 import { useTheme } from "../../ThemeContext";
@@ -72,8 +73,8 @@ export function ThreadItem({
   pillsRef,
 }: ThreadItemProps) {
   const { colors } = useTheme();
-  const [hovered, setHovered] = useState(false);
   const rowRef = useRef<HTMLDivElement>(null);
+  const { hovered, onMouseEnter, onMouseLeave } = useRowHover(rowRef);
   const [forking, setForking] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   useExpandToSelected(subThreads ?? NO_THREADS, threadsByParent, selectedId ?? null, setCollapsed);
@@ -103,8 +104,8 @@ export function ThreadItem({
       <div
         ref={rowRef}
         data-testid="sidebar-thread-row"
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
+        onMouseEnter={onMouseEnter}
+        onMouseLeave={onMouseLeave}
         style={{
           position: "relative",
           display: "flex",
