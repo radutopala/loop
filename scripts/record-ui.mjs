@@ -54,7 +54,8 @@ let nextId = 0;
 ws.onmessage = (event) => {
   const msg = JSON.parse(event.data);
   if (msg.id) {
-    pending.get(msg.id)?.(msg.result);
+    const resolve = pending.get(msg.id);
+    if (typeof resolve === "function") resolve(msg.result);
     pending.delete(msg.id);
     return;
   }
