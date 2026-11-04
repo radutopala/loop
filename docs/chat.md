@@ -703,6 +703,10 @@ autoScrollRef.current = atBottom;
 
 ---
 
+## Opening a chat
+
+A chat with no messages to show yet shows "Loading..." over the message list until its first page arrives, fading in after a moment so a quick load shows nothing. A chat opened again shows its last page, kept in memory, while the first page loads.
+
 ## Load More
 
 When the user scrolls to the top of the message list and more rows are available (`hasMore`), `loadMore()` is called automatically.
