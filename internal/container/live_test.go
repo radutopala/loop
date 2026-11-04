@@ -958,6 +958,44 @@ func (s *RunnerSuite) TestLiveNoEcho() {
 	}
 }
 
+// A process that echoed before can still end a turn without its prompt's echo:
+// a line written during a turn of the process's own waits for that turn, whose
+// result ends the line's turn. Messages keep going into its running turns.
+func (s *RunnerSuite) TestLiveEchoedBeforeKeepsAdding() {
+	s.setupLive(0)
+	log := newLiveHookLog()
+	proc := newFakeLiveProc()
+	start := liveReq(func(r *agent.AgentRequest) { r.SessionID = "sess-1" })
+	s.startLive(start, log.hooks(nil), "live-1", proc)
+
+	run := s.goRun(context.Background(), withPrompt(start, "first"))
+	require.Equal(s.T(), string(turnLine(liveTurnUUID, "first")), waitFor(s.T(), proc.stdin))
+	proc.emit(s.T(),
+		`{"type":"user","isReplay":true,"uuid":"turn-1","message":{"role":"user","content":"first"}}`,
+		`{"type":"result","result":"first done","session_id":"sess-1","num_turns":1}`,
+	)
+	require.Equal(s.T(), "first done", waitFor(s.T(), run).resp.Response)
+
+	// The result that arrives belongs to the process's own turn, not this
+	// prompt, so the prompt ends unechoed.
+	run = s.goRun(context.Background(), withPrompt(start, "second"))
+	require.Equal(s.T(), string(turnLine(liveTurnUUID, "second")), waitFor(s.T(), proc.stdin))
+	proc.emit(s.T(), `{"type":"result","result":"own turn done","session_id":"sess-1","num_turns":1}`)
+	require.Equal(s.T(), "own turn done", waitFor(s.T(), run).resp.Response)
+
+	run = s.goRun(context.Background(), withPrompt(start, "third"))
+	require.Equal(s.T(), string(turnLine(liveTurnUUID, "third")), waitFor(s.T(), proc.stdin))
+	require.NoError(s.T(), s.runner.AddToLiveTurn("ch-1", "u-1", "also"))
+	require.Equal(s.T(), string(turnLine("u-1", "also")), waitFor(s.T(), proc.stdin))
+	proc.emit(s.T(),
+		`{"type":"user","isReplay":true,"uuid":"u-1","message":{"role":"user","content":"also"}}`,
+		`{"type":"result","result":"third done","session_id":"sess-1","num_turns":1}`,
+	)
+	require.Equal(s.T(), "third done", waitFor(s.T(), run).resp.Response)
+	require.Equal(s.T(), "u-1", waitFor(s.T(), log.taken))
+	require.NoError(s.T(), s.runner.StopLive("ch-1", "done"))
+}
+
 // Without an AddTaken hook a taken-in add is only forgotten.
 func (s *RunnerSuite) TestLiveInputTakenWithoutHook() {
 	ls := &liveSession{adds: map[string]struct{}{"u-1": {}}}

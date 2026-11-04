@@ -101,9 +101,8 @@ type liveTurn struct {
 	// started is set once the turn's "init" arrived.
 	started bool
 	// promptUUID is the uuid the turn's prompt was written under, for a
-	// turn a user line started; echoed is set once the process echoed it.
+	// turn a user line started.
 	promptUUID string
-	echoed     bool
 }
 
 type liveOutcome struct {
@@ -148,8 +147,11 @@ type liveSession struct {
 	// adds are the uuids of the messages added to a running turn that the
 	// process hasn't echoed back yet (see AddToLiveTurn).
 	adds map[string]struct{}
-	// noEcho is set once a turn ended without the echo of its prompt: the
-	// process doesn't echo its input, and nothing is added to its turns.
+	// echoes is set once the process echoed any line it took in.
+	echoes bool
+	// noEcho is set when a turn ends without the echo of its prompt and no
+	// echo came before it: the process doesn't echo its input, and nothing is
+	// added to its turns.
 	noEcho bool
 }
 
@@ -429,15 +431,11 @@ func (r *DockerRunner) AddToLiveTurn(channelID, uuid, prompt string) error {
 }
 
 // inputTaken tells hooks.AddTaken that the process took in the added
-// message written under uuid. The echo of the running turn's own prompt
-// marks the turn echoed (see checkEcho); echoes of other lines are ignored.
+// message written under uuid. Any echo shows the process echoes its input
+// (see checkEcho); echoes of lines that weren't added are otherwise ignored.
 func (s *liveSession) inputTaken(uuid string) {
 	s.mu.Lock()
-	if s.turn != nil && s.turn.promptUUID == uuid {
-		s.turn.echoed = true
-		s.mu.Unlock()
-		return
-	}
+	s.echoes = true
 	_, added := s.adds[uuid]
 	delete(s.adds, uuid)
 	s.mu.Unlock()
@@ -956,9 +954,14 @@ func (r *DockerRunner) liveResult(s *liveSession, res *claudeResponse, st *strea
 // session then adds nothing more to running turns (AddToLiveTurn returns
 // ErrLiveNoEcho, so messages queue), and the messages added so far count as
 // taken in, as the process read them with the turn.
+//
+// One echo settles it the other way for good. A prompt can be unechoed at its
+// turn's end when the process does echo: a line written while the process runs
+// a turn of its own waits for that turn, whose result then ends the turn of
+// the line.
 func (r *DockerRunner) checkEcho(s *liveSession, turn *liveTurn) {
 	s.mu.Lock()
-	if turn.promptUUID == "" || turn.echoed || s.noEcho {
+	if turn.promptUUID == "" || s.echoes || s.noEcho {
 		s.mu.Unlock()
 		return
 	}

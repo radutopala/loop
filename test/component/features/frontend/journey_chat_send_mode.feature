@@ -53,7 +53,6 @@ Feature: Composer send modes
     And I click on "[data-testid='queued-toggle']"
     And I wait for "[data-testid='queued-adding']" to be visible
     Then the element "[data-testid='queued-row'][data-adding='true']" should contain text "read this mid-turn"
-    And the element "[data-testid='queued-steer']" should not exist
     And the element "[data-testid='queued-edit']" should not exist
     And the page should contain text "adding…"
 
@@ -61,3 +60,46 @@ Feature: Composer send modes
     Then I wait up to "5s" for "[data-testid='queued-toggle']" to disappear
     And I wait up to "5s" for text "adding…" to disappear
     And the page should contain text "read this mid-turn"
+
+  @add-to-turn
+  Scenario: A message added to the running turn can be steered until taken in
+    Given I set up a test channel via API for git repo "bdd-send-steer-added"
+    And the current channel has "read this now" added to its running turn
+    And I open the app in a browser
+    And I wait for text "bdd-send-steer-added" to appear
+    When I click on "bdd-send-steer-added" in the sidebar
+    And I wait for "textarea" to be visible
+    And I inject an agent.status running event
+    And I wait for "[data-testid='queued-toggle']" to be visible
+    And I click on "[data-testid='queued-toggle']"
+    And I wait for "[data-testid='queued-row'][data-adding='true'] [data-testid='queued-steer']" to be visible
+    And I click on "[data-testid='queued-steer']"
+    Then I wait for "[data-testid='queued-steer'][data-steered='true']:disabled" to be visible
+    And the element "[data-testid='queued-row'][data-adding='true']" should contain text "adding…"
+
+    When the agent takes in the added message
+    Then I wait up to "5s" for "[data-testid='queued-toggle']" to disappear
+    And the page should contain text "read this now"
+
+  @add-to-turn
+  Scenario: Steering one added message marks them all, as the agent reads them all
+    Given I set up a test channel via API for git repo "bdd-send-steer-all"
+    And the current channel has "first added" added to its running turn
+    And the current channel has "second added" added to its running turn
+    # A delayed message stays queued without an agent ever picking it up.
+    And I send a POST request to "/api/messages" with body:
+      """
+      {"channel_id":"{channel_id}","content":"only queued","delay_seconds":3600}
+      """
+    And I open the app in a browser
+    And I wait for text "bdd-send-steer-all" to appear
+    When I click on "bdd-send-steer-all" in the sidebar
+    And I wait for "textarea" to be visible
+    And I inject an agent.status running event
+    And I wait for "[data-testid='queued-toggle']" to be visible
+    And I click on "[data-testid='queued-toggle']"
+    And I wait for "[data-testid='queued-row'][data-adding='true'] [data-testid='queued-steer']" to be visible
+    And I click on "[data-testid='queued-row'][data-adding='true'] [data-testid='queued-steer']"
+    Then I wait for "[data-testid='queued-row'][data-adding='true'] [data-testid='queued-steer'][data-steered='true']:disabled" to be visible
+    And the element "[data-testid='queued-row'][data-adding='true'] [data-testid='queued-steer']:not([data-steered='true'])" should not exist
+    And the element "[data-testid='queued-row']:not([data-adding='true']) [data-testid='queued-steer'][data-steered='true']" should not exist

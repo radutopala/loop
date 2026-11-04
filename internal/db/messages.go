@@ -300,6 +300,10 @@ func (s *SQLiteStore) DeleteQueuedMessage(ctx context.Context, channelID, msgID 
 // promoted, false when no matching row exists (already claimed, processed,
 // wrong channel, bot message, or never existed).
 //
+// A message added to the running turn but not yet taken in can be steered too:
+// stopping the run makes the agent read it at once, and if the session ends
+// first, the priority puts it at the front when it's requeued.
+//
 // A delayed row has its not_before pulled back to 1 rather than 0: 1 is
 // already in the past, so the claim accepts it, while staying > 0 keeps the
 // row visible to the delay poller — which is the only thing that wakes an
@@ -312,7 +316,7 @@ func (s *SQLiteStore) SteerQueuedMessage(ctx context.Context, channelID, msgID s
 		                            AND is_triggered = 1 AND kind = 'message'), 0) + 1,
 		     not_before = MIN(not_before, 1)
 		 WHERE channel_id = ? AND msg_id = ? AND is_bot = 0 AND is_processed = 0
-		   AND is_running = 0 AND kind = 'message' AND add_uuid = ''`,
+		   AND is_running = 0 AND kind = 'message'`,
 		channelID, channelID, msgID,
 	)
 	if err != nil {

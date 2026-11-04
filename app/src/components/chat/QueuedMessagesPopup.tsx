@@ -24,6 +24,12 @@ interface QueuedMessagesPopupProps {
 // How long a row says "already started" after an edit came too late.
 const STARTED_FLASH_MS = 2500;
 
+function steerTitle(isSteered: boolean, isAdding: boolean, addingCount: number): string {
+  if (isSteered) return isAdding ? "Steered: the agent reads it now" : "Steered: it goes next";
+  if (isAdding && addingCount > 1) return "Stop the agent and have it read all added messages now";
+  return isAdding ? "Stop the agent and have it read this now" : "Stop the agent and send this next";
+}
+
 export function QueuedMessagesPopup({ messages, channelId, isRunning, onEdit, editingMsgId }: QueuedMessagesPopupProps) {
   const { colors } = useTheme();
   const [expanded, setExpanded] = useState(false);
@@ -71,17 +77,23 @@ export function QueuedMessagesPopup({ messages, channelId, isRunning, onEdit, ed
   // is updated too: the backend has already re-prioritised it, and without this
   // the row would keep its old position until the queue refetches. The row
   // stays marked steered until the agent takes it out of the queue.
-  const handleSteer = async (msgId: string) => {
-    setSteeredIds((prev) => new Set(prev).add(msgId));
+  //
+  // Stopping the run makes the agent read every message added to the turn, so
+  // steering one marks them all: steering another before it's read would stop
+  // the turn that's answering them.
+  const handleSteer = async (msg: Message) => {
+    const msgId = msg.msg_id;
+    const marked = msg.adding ? displayed.filter((m) => m.adding).map((m) => m.msg_id) : [msgId];
+    setSteeredIds((prev) => new Set([...prev, ...marked]));
     try {
       await steerQueuedMessage(channelId, msgId);
       setOrder([msgId, ...displayed.map((m) => m.msg_id).filter((id) => id !== msgId)]);
     } catch {
-      // Leave the row where it is, and steerable again: the queue is
+      // Leave the rows where they are, and steerable again: the queue is
       // unchanged if the call failed.
       setSteeredIds((prev) => {
         const next = new Set(prev);
-        next.delete(msgId);
+        for (const id of marked) next.delete(id);
         return next;
       });
     }
@@ -241,7 +253,8 @@ export function QueuedMessagesPopup({ messages, channelId, isRunning, onEdit, ed
               const isEditing = editingMsgId === msg.msg_id;
               const isSteered = steeredIds.has(msg.msg_id);
               // Written into the running turn, waiting for the agent to
-              // take it in: it can't be steered, edited, removed or moved.
+              // take it in: it can't be edited, removed or moved, but steering
+              // it makes the agent read it now.
               const isAdding = !!msg.adding;
               return (
                 <div
@@ -347,13 +360,13 @@ export function QueuedMessagesPopup({ messages, channelId, isRunning, onEdit, ed
                       adding…
                     </span>
                   ) : null}
-                  {isRunning && !isEditing && !isAdding ? (
+                  {isRunning && !isEditing ? (
                     <button
                       data-testid="queued-steer"
                       data-steered={isSteered ? "true" : undefined}
-                      onClick={() => handleSteer(msg.msg_id)}
+                      onClick={() => handleSteer(msg)}
                       disabled={isSteered || isDeleting}
-                      title={isSteered ? "Steered: it goes next" : "Stop the agent and send this next"}
+                      title={steerTitle(isSteered, isAdding, displayed.filter((m) => m.adding).length)}
                       style={{
                         flexShrink: 0,
                         display: "flex",
