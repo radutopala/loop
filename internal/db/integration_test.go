@@ -233,7 +233,6 @@ func (s *IntegrationSuite) TestAddedMessageLifecycle() {
 
 	for _, op := range []func() (bool, error){
 		func() (bool, error) { return store.DeleteQueuedMessage(ctx, "ch1", "added-1") },
-		func() (bool, error) { return store.SteerQueuedMessage(ctx, "ch1", "added-1") },
 		func() (bool, error) {
 			return store.HoldQueuedMessage(ctx, "ch1", "added-1", time.Now().Add(time.Minute).Unix())
 		},
@@ -243,6 +242,12 @@ func (s *IntegrationSuite) TestAddedMessageLifecycle() {
 		require.False(s.T(), ok)
 	}
 	require.NoError(s.T(), store.ReorderQueuedMessages(ctx, "ch1", []string{"added-1"}))
+
+	// Steering an added message promotes it but leaves it waiting for the
+	// agent to read it: no run claims it, below.
+	steered, err := store.SteerQueuedMessage(ctx, "ch1", "added-1")
+	require.NoError(s.T(), err)
+	require.True(s.T(), steered)
 
 	claimed, err := store.ClaimNextPending(ctx, "ch1")
 	require.NoError(s.T(), err)
@@ -263,6 +268,10 @@ func (s *IntegrationSuite) TestAddedMessageLifecycle() {
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "added-1", timeline[0].MsgID)
 	require.Equal(s.T(), "queued", timeline[0].TriggerMsgID)
+	// The agent has read it, so it's too late to steer it.
+	steered, err = store.SteerQueuedMessage(ctx, "ch1", "added-1")
+	require.NoError(s.T(), err)
+	require.False(s.T(), steered)
 	msgID, err = store.TakeAddedMessage(ctx, "ch1", "u-1")
 	require.NoError(s.T(), err)
 	require.Empty(s.T(), msgID)

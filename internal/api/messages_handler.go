@@ -217,7 +217,9 @@ func (s *Server) handleReorderQueuedMessages(w http.ResponseWriter, r *http.Requ
 // channel's queue and stops the active run so the agent picks it up now
 // instead of when the current turn finishes. It is the per-row equivalent of
 // the composer's interrupt mode: the cancelled run's session is resumed on the
-// next turn, so steering redirects the work rather than discarding it.
+// next turn, so steering redirects the work rather than discarding it. A
+// message already added to the running turn but not yet read is steered the
+// same way: the process keeps it through the stop and starts a turn for it.
 //
 // Promote-then-cancel, in that order, for the same reason the interrupt branch
 // does it: cancelling first leaves a window where the dying run's drain can
