@@ -222,6 +222,13 @@ type Message struct {
 	// queued row. Until it passes (or is released) the claim won't start the
 	// row, and — to keep queue order — won't start anything queued behind it.
 	EditHoldUntil int64 `json:"edit_hold_until,omitempty"`
+	// AddUUID is set while the message waits to be taken into the running
+	// turn it was added to: Loop wrote it to the live session under this
+	// uuid, and the row is marked processed when the session echoes it back.
+	// Such a row is neither claimable nor editable; if the session ends first
+	// the row is requeued as an ordinary triggered message and this is
+	// cleared.
+	AddUUID string `json:"add_uuid,omitempty"`
 	// SessionID and TranscriptUUID locate a chat message in Claude Code's
 	// session transcript: a bot text turn's entry (see agent.TurnRef), or a
 	// user message's prompt entry, recorded once its run ends. Empty on

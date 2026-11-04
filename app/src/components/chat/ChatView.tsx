@@ -45,6 +45,19 @@ function buildStyles(colors: ColorPalette): Record<string, React.CSSProperties> 
       minHeight: 0,
       position: "relative",
     },
+    // Over the empty message list. Fades in after a moment, so a load that
+    // finishes quickly shows nothing.
+    loadingLayer: {
+      position: "absolute",
+      inset: 0,
+      zIndex: 5,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      color: colors.textDim,
+      fontSize: 13,
+      animation: "loop-chat-loading-in 0.15s ease-out 0.15s both",
+    },
     // Top right, clear of the scrollbar.
     findToggle: {
       position: "absolute",
@@ -196,7 +209,8 @@ export function ChatView({
     closeFind();
   }, [channelId, closeFind]);
 
-  const isEmpty = items.length === 0 && liveTail.length === 0 && !loading;
+  const noItems = items.length === 0 && liveTail.length === 0;
+  const isEmpty = noItems && !loading;
   const icon = liveIcon(live, isRunning && !isEmpty);
 
   if (!channelId) {
@@ -246,6 +260,12 @@ export function ChatView({
               onFork={onSelectThread ? forkAt : undefined}
               aboveQueue={statusBars}
             />
+            {noItems && loading && (
+              <div role="status" data-testid="chat-loading" style={styles.loadingLayer}>
+                <style>{"@keyframes loop-chat-loading-in { from { opacity: 0; } to { opacity: 1; } }"}</style>
+                Loading...
+              </div>
+            )}
             {!findOpen && (
               <button
                 onClick={openFind}

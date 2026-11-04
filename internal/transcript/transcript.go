@@ -6,6 +6,8 @@ package transcript
 import (
 	"encoding/json"
 	"errors"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -50,6 +52,33 @@ func Path(home, projectDir, sessionID string) (string, error) {
 		return "", errors.New("invalid session id")
 	}
 	return filepath.Join(home, ".claude", "projects", osutil.EncodeClaudeProjectPath(projectDir), sessionID+".jsonl"), nil
+}
+
+// ReadTail returns the last n bytes of the transcript at path and whether
+// they're all of it. The first line can be cut short, and Parse skips it.
+func ReadTail(path string, n int64) ([]byte, bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, false, err
+	}
+	defer func() { _ = f.Close() }()
+	return readTail(f, n)
+}
+
+func readTail(r io.ReadSeeker, n int64) ([]byte, bool, error) {
+	size, err := r.Seek(0, io.SeekEnd)
+	if err != nil {
+		return nil, false, err
+	}
+	start := max(size-n, 0)
+	if _, err := r.Seek(start, io.SeekStart); err != nil {
+		return nil, false, err
+	}
+	data := make([]byte, size-start)
+	if _, err := io.ReadFull(r, data); err != nil {
+		return nil, false, err
+	}
+	return data, start == 0, nil
 }
 
 // Parse returns a transcript's entries and its line count; lines that don't

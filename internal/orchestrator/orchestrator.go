@@ -18,6 +18,7 @@ import (
 	"github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/randutil"
 	"github.com/radutopala/loop/internal/scheduler"
+	"github.com/radutopala/loop/internal/transcript"
 	"github.com/radutopala/loop/internal/types"
 	"github.com/radutopala/loop/internal/workflow"
 )
@@ -54,6 +55,7 @@ type Bot interface {
 	CreateSimpleThread(ctx context.Context, channelID, name, initialMessage string) (string, error)
 	HandleIncomingMessage(ctx context.Context, channelID, authorID, content, mode string)
 	HandleIncomingMessageWithPriority(ctx context.Context, channelID, authorID, content, mode string, priority int)
+	HandleIncomingMessageAdded(ctx context.Context, channelID, authorID, content, mode string)
 	HandleIncomingMessageDelayed(ctx context.Context, channelID, authorID, msgID, content, mode string, notBefore int64)
 	HandleThreadCreated(ctx context.Context, threadID, authorID, message string)
 }
@@ -141,7 +143,7 @@ func New(store db.Store, bot Bot, runner Runner, sched scheduler.Scheduler, logg
 		tasks:             newTaskRegistry(),
 		delayPollInterval: DelayPollInterval,
 		delayStop:         make(chan struct{}),
-		sessionFiles:      sessionFiles{userHomeDir: os.UserHomeDir, readFile: os.ReadFile, removeAll: os.RemoveAll},
+		sessionFiles:      sessionFiles{userHomeDir: os.UserHomeDir, readTail: transcript.ReadTail, removeAll: os.RemoveAll},
 	}
 	o.loadWorktreeProjectConfig = config.LoadWorktreeProjectConfig
 	o.hiddenKinds = o.defaultHiddenKinds()

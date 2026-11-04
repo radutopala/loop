@@ -26,6 +26,10 @@ func (m *MockLiveRunner) StartLive(ctx context.Context, req *agent.AgentRequest,
 	return m.Called(ctx, req, hooks).Error(0)
 }
 
+func (m *MockLiveRunner) AddToLiveTurn(channelID, uuid, prompt string) error {
+	return m.Called(channelID, uuid, prompt).Error(0)
+}
+
 func (m *MockLiveRunner) StopLive(channelID, reason string) error {
 	return m.Called(channelID, reason).Error(0)
 }
@@ -444,7 +448,9 @@ func (s *OrchestratorSuite) TestLiveHooksActivityAndEnded() {
 	hooks.BackgroundTasks(tasks)
 	ev.AssertExpectations(s.T())
 
+	s.store.On("RequeueAddedMessages", mock.Anything, "ch-1", "").Return(int64(0), nil).Once()
 	hooks.Ended("idle")
+	s.store.AssertExpectations(s.T())
 	got := rec.all()
 	require.Equal(s.T(), livePublished{
 		channelID: "ch-1", eventType: EventLiveStatus,
@@ -458,7 +464,9 @@ func (s *OrchestratorSuite) TestLiveHooksRestartedAndSystem() {
 	lr, rec := s.withLive()
 	hooks := s.startedHooks(lr)
 
+	s.store.On("RequeueAddedMessages", mock.Anything, "ch-1", "").Return(int64(0), nil).Once()
 	hooks.Restarted("config changed")
+	s.store.AssertExpectations(s.T())
 	got := rec.all()
 	require.Equal(s.T(), livePublished{
 		channelID: "ch-1", eventType: EventLiveStatus,
@@ -950,6 +958,157 @@ func (s *OrchestratorSuite) TestLiveHooksSuggestion() {
 			s.orch.liveHooks("ch-1").Suggestion("run the tests")
 
 			ev.AssertExpectations(s.T())
+		})
+	}
+}
+
+func (s *OrchestratorSuite) TestHandleMessageAddToTurn() {
+	tests := []struct {
+		name       string
+		live       bool
+		planned    bool
+		mode       string
+		addErr     error
+		requeueErr error
+		callsAdd   bool
+		wantAdded  bool
+	}{
+		{name: "added to the running turn", live: true, callsAdd: true, wantAdded: true},
+		{name: "no live runner queues", live: false},
+		{name: "planned channel queues", live: true, planned: true},
+		{name: "plan mode queues", live: true, mode: "plan"},
+		{name: "no running turn requeues", live: true, callsAdd: true, addErr: errors.New("no turn running")},
+		{name: "requeue error still drains", live: true, callsAdd: true, addErr: errors.New("no turn running"), requeueErr: errors.New("db down")},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			var lr *MockLiveRunner
+			if tc.live {
+				lr, _ = s.withLive()
+			}
+			var addUUID string
+			if tc.callsAdd {
+				lr.On("AddToLiveTurn", "ch-1", mock.Anything, "more").Run(func(args mock.Arguments) {
+					addUUID = args.String(1)
+				}).Return(tc.addErr).Once()
+			}
+			if tc.addErr != nil {
+				s.store.On("RequeueAddedMessages", s.ctx, "ch-1", mock.Anything).Return(int64(1), tc.requeueErr).Once()
+			}
+			if tc.planned {
+				s.orch.plannedChannels.Store("ch-1", events.ExitPlanModeEventData{})
+			}
+			eb := new(MockEventBroadcaster)
+			s.orch.SetEventBroadcaster(eb)
+			eb.On("BroadcastMessageCreated", "ch-1", mock.MatchedBy(func(d events.MessageEventData) bool {
+				return !d.IsProcessed && d.Content == "more"
+			})).Once()
+
+			var inserted *db.Message
+			s.store.On("IsChannelActive", s.ctx, "ch-1").Return(true, nil)
+			s.store.On("GetChannel", s.ctx, "ch-1").Return(&db.Channel{ID: 1, ChannelID: "ch-1", Active: true, Platform: types.PlatformLocal}, nil)
+			s.store.On("InsertMessage", s.ctx, mock.Anything).Run(func(args mock.Arguments) {
+				inserted = args.Get(1).(*db.Message)
+			}).Return(nil).Once()
+			drained := false
+			s.orch.drainSpawn = func(func()) { drained = true }
+
+			s.orch.HandleMessage(s.ctx, &bot.IncomingMessage{
+				ChannelID: "ch-1", AuthorID: "user1", Content: "more", MessageID: "m1",
+				Platform: types.PlatformLocal, IsDM: true, Mode: tc.mode, AddToTurn: true,
+			})
+
+			require.Equal(s.T(), !tc.wantAdded, drained)
+			require.NotNil(s.T(), inserted)
+			require.False(s.T(), inserted.IsProcessed)
+			if tc.callsAdd {
+				// The row is stored waiting to be taken in, under the uuid
+				// the line was written with, before the line is written.
+				require.NotEmpty(s.T(), addUUID)
+				require.Equal(s.T(), addUUID, inserted.AddUUID)
+				require.False(s.T(), inserted.IsTriggered)
+				if tc.addErr != nil {
+					s.store.AssertCalled(s.T(), "RequeueAddedMessages", s.ctx, "ch-1", addUUID)
+				}
+			} else {
+				require.Empty(s.T(), inserted.AddUUID)
+				require.True(s.T(), inserted.IsTriggered)
+			}
+			if lr != nil {
+				lr.AssertExpectations(s.T())
+			}
+			eb.AssertExpectations(s.T())
+			s.store.AssertExpectations(s.T())
+		})
+	}
+}
+
+func (s *OrchestratorSuite) TestTakeAddedMessage() {
+	tests := []struct {
+		name      string
+		msgID     string
+		err       error
+		events    bool
+		broadcast bool
+	}{
+		{name: "taken broadcasts", msgID: "m1", events: true, broadcast: true},
+		{name: "taken without events", msgID: "m1"},
+		{name: "no row is quiet", events: true},
+		{name: "store error is logged", err: errors.New("db down"), events: true},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			s.store.On("TakeAddedMessage", mock.Anything, "ch-1", "u-1").Return(tc.msgID, tc.err).Once()
+			ev := new(MockEventBroadcaster)
+			if tc.events {
+				s.orch.SetEventBroadcaster(ev)
+			}
+			if tc.broadcast {
+				ev.On("BroadcastMessageTaken", "ch-1", events.MessageTakenData{MsgID: tc.msgID}).Once()
+			}
+
+			s.orch.liveHooks("ch-1").AddTaken("u-1")
+
+			ev.AssertExpectations(s.T())
+			s.store.AssertExpectations(s.T())
+		})
+	}
+}
+
+func (s *OrchestratorSuite) TestRequeueAddedMessages() {
+	tests := []struct {
+		name    string
+		n       int64
+		err     error
+		events  bool
+		resumes bool
+	}{
+		{name: "requeued broadcasts and drains", n: 2, events: true, resumes: true},
+		{name: "requeued without events drains", n: 1, resumes: true},
+		{name: "nothing to requeue", events: true},
+		{name: "store error is logged", err: errors.New("db down"), events: true},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			s.store.On("RequeueAddedMessages", mock.Anything, "ch-1", "").Return(tc.n, tc.err).Once()
+			ev := new(MockEventBroadcaster)
+			if tc.events {
+				s.orch.SetEventBroadcaster(ev)
+			}
+			if tc.resumes && tc.events {
+				ev.On("BroadcastMessagesRequeued", "ch-1").Once()
+			}
+			drained := false
+			s.orch.drainSpawn = func(func()) { drained = true }
+
+			s.orch.requeueAddedMessages("ch-1")
+
+			require.Equal(s.T(), tc.resumes, drained)
+			ev.AssertExpectations(s.T())
+			s.store.AssertExpectations(s.T())
 		})
 	}
 }

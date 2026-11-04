@@ -114,6 +114,10 @@ func (m *MockIncomingMessageHandler) HandleIncomingMessageWithPriority(ctx conte
 	m.Called(ctx, channelID, authorID, content, mode, priority)
 }
 
+func (m *MockIncomingMessageHandler) HandleIncomingMessageAdded(ctx context.Context, channelID, authorID, content, mode string) {
+	m.Called(ctx, channelID, authorID, content, mode)
+}
+
 func (m *MockIncomingMessageHandler) HandleIncomingMessageDelayed(ctx context.Context, channelID, authorID, msgID, content, mode string, notBefore int64) {
 	m.Called(ctx, channelID, authorID, msgID, content, mode, notBefore)
 }
@@ -740,6 +744,7 @@ func (s *ServerSuite) TestCorsMiddleware() {
 	require.Equal(s.T(), http.StatusOK, w.Code)
 	require.Equal(s.T(), "*", w.Header().Get("Access-Control-Allow-Origin"))
 	require.Contains(s.T(), w.Header().Get("Access-Control-Allow-Methods"), "GET")
+	require.Equal(s.T(), "600", w.Header().Get("Access-Control-Max-Age"))
 }
 
 func (s *ServerSuite) TestCorsMiddlewareOptions() {

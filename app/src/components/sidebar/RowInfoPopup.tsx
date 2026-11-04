@@ -7,6 +7,8 @@ import { InfoPopup, infoBorder } from "./InfoPopup";
 import { type RowInfoLine, rowInfoLines } from "./rowInfo";
 import { sessionName } from "./sessions";
 
+const PR_LOOKUP_DELAY_MS = 250;
+
 interface RowInfoPopupProps {
   channel: Channel;
   /** The row the popup sits beside. */
@@ -22,8 +24,9 @@ interface RowInfoPopupProps {
  */
 export function RowInfoPopup({ channel, anchorRef, hovered }: RowInfoPopupProps) {
   const { colors } = useTheme();
-  // Looked up only while the popup shows, not for every row in the sidebar.
-  const pr = useChannelPR(channel.id, channel.branch, hovered);
+  // Looked up only once the pointer rests on the row: each lookup can run gh for
+  // seconds, and crossing the sidebar on the way to a chat passes many rows.
+  const pr = useChannelPR(channel.id, channel.branch, hovered, PR_LOOKUP_DELAY_MS);
   // The watcher's status, only for a row with a PR/MR pill to explain.
   const status = useChannelPRStatus(channel.id, hovered && (!!channel.pr_attention || (channel.unresolved_threads ?? 0) > 0));
   const lines = rowInfoLines(channel, pr, status);

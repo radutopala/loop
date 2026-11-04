@@ -295,6 +295,10 @@ type streamCallbacks struct {
 	// onPrompt gets the user message of a turn started from outside the
 	// process's stdin, which the CLI replays with --replay-user-messages.
 	onPrompt func(text string)
+	// onInput gets the uuid of each line of the process's own stdin the
+	// CLI replays with --replay-user-messages, which it does when it takes
+	// the line in.
+	onInput func(uuid string)
 	// onSuggestion gets each prompt_suggestion: the next prompt the CLI
 	// predicts, written after the turn's result.
 	onSuggestion func(text string)
@@ -312,7 +316,7 @@ func (cb streamCallbacks) any() bool {
 		cb.onActivity != nil || cb.onBackgroundTasks != nil || cb.onThinking != nil ||
 		cb.onToolResult != nil || cb.onSession != nil || cb.onTurnStart != nil ||
 		cb.onSystem != nil || cb.onControlResponse != nil || cb.onPrompt != nil ||
-		cb.onSuggestion != nil
+		cb.onInput != nil || cb.onSuggestion != nil
 }
 
 // requestCallbacks are the stream callbacks req sets.
@@ -358,6 +362,20 @@ type userMessage struct {
 			IsError   bool            `json:"is_error"`
 		} `json:"content"`
 	} `json:"message"`
+}
+
+// replayedInput returns the uuid of a user event the CLI replays for a line
+// of the process's own stdin: a replay without an origin.
+func replayedInput(line []byte) (string, bool) {
+	var evt struct {
+		IsReplay bool            `json:"isReplay"`
+		Origin   json.RawMessage `json:"origin"`
+		UUID     string          `json:"uuid"`
+	}
+	if json.Unmarshal(line, &evt) != nil || !evt.IsReplay || evt.Origin != nil || evt.UUID == "" {
+		return "", false
+	}
+	return evt.UUID, true
 }
 
 // replayedPrompt returns the text of a user event the CLI replays for a
@@ -682,6 +700,12 @@ func (st *streamState) dispatch(line []byte, cb streamCallbacks) *claudeResponse
 			}
 		}
 	case "user":
+		if cb.onInput != nil {
+			if uuid, ok := replayedInput(line); ok {
+				cb.onInput(uuid)
+				return nil
+			}
+		}
 		if cb.onPrompt != nil {
 			if text, ok := replayedPrompt(line); ok {
 				cb.onPrompt(text)

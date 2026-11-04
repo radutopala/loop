@@ -25,10 +25,11 @@ import (
 // running after a result: when one ends, the process starts a turn by
 // itself.
 //
-// Exactly one user line is written per turn, and only while no turn runs:
-// the CLI merges the lines it gets during a turn into one turn with one
-// result, which would leave a reader waiting for a result per line out of
-// step for good.
+// A turn's own user line is written only while no turn runs: the CLI
+// merges the lines it gets during a turn into one turn with one result,
+// which would leave a reader waiting for a result per line out of step for
+// good. AddToLiveTurn writes the only other lines, on purpose into the
+// running turn, and nothing waits for a result of theirs.
 
 // ErrNoLiveSession is returned for a channel with no live session.
 var ErrNoLiveSession = errors.New("no live session")
@@ -36,6 +37,15 @@ var ErrNoLiveSession = errors.New("no live session")
 // ErrNoLiveTask is returned by StopLiveTask for a task the live session
 // doesn't run in the background.
 var ErrNoLiveTask = errors.New("no such background task")
+
+// ErrNoLiveTurn is returned by AddToLiveTurn when the channel's live
+// session runs no turn.
+var ErrNoLiveTurn = errors.New("no turn running")
+
+// ErrLiveNoEcho is returned by AddToLiveTurn when the channel's live
+// session doesn't echo the lines it takes in, so Loop couldn't tell when an
+// added message was read (see checkEcho).
+var ErrLiveNoEcho = errors.New("the live session doesn't echo its input")
 
 // ErrLiveSessionRunning is returned by StartLive when the channel already
 // has a live session.
@@ -67,12 +77,15 @@ const liveStopTimeout = 15 * time.Second
 // turn and keeps the process.
 var interruptLine = []byte(`{"type":"control_request","request_id":"loop-interrupt","request":{"subtype":"interrupt"}}` + "\n")
 
-// userTurnLine is the stream-json line of one user turn. Its content is a
-// string, as a prompt's is in a one-shot run's transcript, so forks at the
-// message find it there.
-func userTurnLine(prompt string) []byte {
+// turnLine is the stream-json line of one user message, a turn's prompt or
+// a message added to a running turn. The CLI echoes its uuid back unchanged
+// with --replay-user-messages once it has taken the message in. Its content
+// is a string, as a prompt's is in a one-shot run's transcript, so forks at
+// the message find it there.
+func turnLine(uuid, prompt string) []byte {
 	line, _ := json.Marshal(map[string]any{
 		"type":    "user",
+		"uuid":    uuid,
 		"message": map[string]any{"role": "user", "content": prompt},
 	})
 	return append(line, '\n')
@@ -87,6 +100,10 @@ type liveTurn struct {
 	done func(*agent.AgentResponse, error)
 	// started is set once the turn's "init" arrived.
 	started bool
+	// promptUUID is the uuid the turn's prompt was written under, for a
+	// turn a user line started; echoed is set once the process echoed it.
+	promptUUID string
+	echoed     bool
 }
 
 type liveOutcome struct {
@@ -128,6 +145,12 @@ type liveSession struct {
 	// answers of, by id; controlSeq numbers them.
 	controls   map[string]chan []byte
 	controlSeq int
+	// adds are the uuids of the messages added to a running turn that the
+	// process hasn't echoed back yet (see AddToLiveTurn).
+	adds map[string]struct{}
+	// noEcho is set once a turn ended without the echo of its prompt: the
+	// process doesn't echo its input, and nothing is added to its turns.
+	noEcho bool
 }
 
 // write sends one line to the process.
@@ -370,6 +393,59 @@ func (r *DockerRunner) InterruptLive(channelID string) error {
 	return nil
 }
 
+// AddToLiveTurn writes prompt into the turn the channel's live session
+// runs, under uuid. The CLI takes it in after the turn's current step (a
+// tool call, or a subagent's whole run) and answers it in the same turn, so
+// it gets no result of its own; hooks.AddTaken gets uuid once the CLI
+// echoes the line back, which it does when it takes the message in. When
+// the turn ends first, or is interrupted, the CLI starts a turn for it by
+// itself, which the session runs as any turn the process starts
+// (beginOwnTurn), and the echo comes as that turn starts. It returns
+// ErrNoLiveSession or ErrNoLiveTurn when there is no turn to add to, and
+// ErrLiveNoEcho when the session can't tell when it took a message in.
+func (r *DockerRunner) AddToLiveTurn(channelID, uuid, prompt string) error {
+	s := r.liveSession(channelID)
+	if s == nil {
+		return ErrNoLiveSession
+	}
+	// Held while writing: the turn can only end, and the next one write its
+	// own line, after this line is written.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.turn == nil {
+		return ErrNoLiveTurn
+	}
+	if s.noEcho {
+		return ErrLiveNoEcho
+	}
+	if err := s.write(turnLine(uuid, prompt)); err != nil {
+		return err
+	}
+	if s.adds == nil {
+		s.adds = map[string]struct{}{}
+	}
+	s.adds[uuid] = struct{}{}
+	return nil
+}
+
+// inputTaken tells hooks.AddTaken that the process took in the added
+// message written under uuid. The echo of the running turn's own prompt
+// marks the turn echoed (see checkEcho); echoes of other lines are ignored.
+func (s *liveSession) inputTaken(uuid string) {
+	s.mu.Lock()
+	if s.turn != nil && s.turn.promptUUID == uuid {
+		s.turn.echoed = true
+		s.mu.Unlock()
+		return
+	}
+	_, added := s.adds[uuid]
+	delete(s.adds, uuid)
+	s.mu.Unlock()
+	if added && s.hooks.AddTaken != nil {
+		s.hooks.AddTaken(uuid)
+	}
+}
+
 // StopLiveTask stops the background task taskID of the channel's live
 // session; the process reports the set without it once it stopped.
 func (r *DockerRunner) StopLiveTask(channelID, taskID string) error {
@@ -557,8 +633,9 @@ func (r *DockerRunner) runLive(ctx context.Context, req *agent.AgentRequest) (re
 	}
 
 	turn := &liveTurn{
-		cb:     requestCallbacks(req),
-		result: make(chan liveOutcome, 1),
+		cb:         requestCallbacks(req),
+		result:     make(chan liveOutcome, 1),
+		promptUUID: r.newUUID(),
 	}
 	if err := r.claimLiveTurn(ctx, s, turn); err != nil {
 		if errors.Is(err, errLiveEnded) {
@@ -574,7 +651,7 @@ func (r *DockerRunner) runLive(ctx context.Context, req *agent.AgentRequest) (re
 	if req.PlanMode {
 		prompt = planModePromptPrefix + prompt
 	}
-	if err := s.write(userTurnLine(prompt)); err != nil {
+	if err := s.write(turnLine(turn.promptUUID, prompt)); err != nil {
 		// The process is gone. The turn runs as usual, resuming the session
 		// the process is on, or as asked while it has none of its own.
 		r.endLive(s, "stdin closed")
@@ -736,6 +813,7 @@ func (r *DockerRunner) liveCallbacks(s *liveSession) streamCallbacks {
 			}
 		},
 		onControlResponse: s.controlAnswered,
+		onInput:           s.inputTaken,
 		onPrompt: func(text string) {
 			if s.hooks.Prompt != nil {
 				s.hooks.Prompt(text)
@@ -868,7 +946,36 @@ func (r *DockerRunner) liveResult(s *liveSession, res *claudeResponse, st *strea
 		s.mu.Unlock()
 	}
 	res.Output = st.tail.String()
+	r.checkEcho(s, turn)
 	r.finishLiveTurn(s, turn, liveOutcome{resp: res})
+}
+
+// checkEcho makes sure the process echoes the lines it takes in, which
+// --replay-user-messages does without documenting it: a turn whose prompt
+// Loop wrote that ends without the prompt's echo means it doesn't. The
+// session then adds nothing more to running turns (AddToLiveTurn returns
+// ErrLiveNoEcho, so messages queue), and the messages added so far count as
+// taken in, as the process read them with the turn.
+func (r *DockerRunner) checkEcho(s *liveSession, turn *liveTurn) {
+	s.mu.Lock()
+	if turn.promptUUID == "" || turn.echoed || s.noEcho {
+		s.mu.Unlock()
+		return
+	}
+	s.noEcho = true
+	adds := s.adds
+	s.adds = nil
+	s.mu.Unlock()
+	if r.logger != nil {
+		r.logger.Warn("live session doesn't echo its input; messages sent during a turn are queued instead",
+			"channel_id", s.channelID)
+	}
+	if s.hooks.AddTaken == nil {
+		return
+	}
+	for uuid := range adds {
+		s.hooks.AddTaken(uuid)
+	}
 }
 
 // finishLiveTurn hands the turn its outcome and makes the session idle.

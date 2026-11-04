@@ -49,6 +49,7 @@ type ActiveChatLister interface {
 type IncomingMessageHandler interface {
 	HandleIncomingMessage(ctx context.Context, channelID, authorID, content, mode string)
 	HandleIncomingMessageWithPriority(ctx context.Context, channelID, authorID, content, mode string, priority int)
+	HandleIncomingMessageAdded(ctx context.Context, channelID, authorID, content, mode string)
 	HandleIncomingMessageDelayed(ctx context.Context, channelID, authorID, msgID, content, mode string, notBefore int64)
 	HandleThreadCreated(ctx context.Context, threadID, authorID, message string)
 }
@@ -811,6 +812,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Max-Age", "600")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return

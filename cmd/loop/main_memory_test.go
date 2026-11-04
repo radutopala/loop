@@ -213,10 +213,10 @@ func (s *MainSuite) TestMultiDirIndexerResolveMemoryPathsWorktree() {
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
 			store := new(testutil.MockStore)
-			store.On("ListChannels", mock.Anything).Return([]*db.Channel{
-				{ChannelID: "root", DirPath: "/repo"},
+			store.On("GetWorktreeChannelsByDirPath", mock.Anything, "/repo/.worktrees/wt").Return([]*db.Channel{
 				{ChannelID: "wt", DirPath: "/repo/.worktrees/wt", ParentID: "root", Worktree: true},
-			}, nil)
+			}, nil).Maybe()
+			store.On("GetWorktreeChannelsByDirPath", mock.Anything, "/repo").Return([]*db.Channel{}, nil).Maybe()
 			store.On("GetChannel", mock.Anything, "root").Return(&db.Channel{ChannelID: "root", DirPath: "/repo"}, nil).Maybe()
 			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 			mdi := &multiDirIndexer{indexer: memory.NewIndexer(&fakeEmbedder{}, store, logger, 0), logger: logger, app: s.app, channels: store}
@@ -239,7 +239,7 @@ func (s *MainSuite) TestMultiDirIndexerSearchWorktree() {
 	sys.Override("UserHomeDir").Return("/home/test", nil)
 
 	store := new(testutil.MockStore)
-	store.On("ListChannels", mock.Anything).Return([]*db.Channel{
+	store.On("GetWorktreeChannelsByDirPath", mock.Anything, "/repo/.worktrees/wt").Return([]*db.Channel{
 		{ChannelID: "wt", DirPath: "/repo/.worktrees/wt", ParentID: "root", Worktree: true},
 	}, nil)
 	store.On("GetChannel", mock.Anything, "root").Return(&db.Channel{ChannelID: "root", DirPath: "/repo"}, nil)
@@ -263,18 +263,18 @@ func (s *MainSuite) TestWorktreeRootDir() {
 		want  string
 	}{
 		{name: "worktree channel", setup: func(store *testutil.MockStore) {
-			store.On("ListChannels", mock.Anything).Return([]*db.Channel{{ChannelID: "other", DirPath: "/repo/.worktrees/wt"}, wt}, nil)
+			store.On("GetWorktreeChannelsByDirPath", mock.Anything, wt.DirPath).Return([]*db.Channel{wt}, nil)
 			store.On("GetChannel", mock.Anything, "root").Return(&db.Channel{ChannelID: "root", DirPath: "/repo"}, nil)
 		}, want: "/repo"},
 		{name: "parent gone", setup: func(store *testutil.MockStore) {
-			store.On("ListChannels", mock.Anything).Return([]*db.Channel{wt}, nil)
+			store.On("GetWorktreeChannelsByDirPath", mock.Anything, wt.DirPath).Return([]*db.Channel{wt}, nil)
 			store.On("GetChannel", mock.Anything, "root").Return(nil, nil)
 		}},
 		{name: "no worktree channel", setup: func(store *testutil.MockStore) {
-			store.On("ListChannels", mock.Anything).Return([]*db.Channel{{ChannelID: "root", DirPath: "/repo"}}, nil)
+			store.On("GetWorktreeChannelsByDirPath", mock.Anything, wt.DirPath).Return([]*db.Channel{}, nil)
 		}},
 		{name: "listing fails", setup: func(store *testutil.MockStore) {
-			store.On("ListChannels", mock.Anything).Return(nil, errors.New("db error"))
+			store.On("GetWorktreeChannelsByDirPath", mock.Anything, wt.DirPath).Return(nil, errors.New("db error"))
 		}},
 	}
 	for _, tt := range tests {

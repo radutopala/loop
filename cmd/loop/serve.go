@@ -409,12 +409,12 @@ func resolveRelativePath(dirPath, p string) string {
 // the owner trusts them: the daemon indexes them, and agents can search
 // what it indexed.
 func (a *app) defaultLoadProjectMemoryPaths(dirPath string) []string {
-	return config.NewTrustStoreIn(a.userConfigDir).MemoryPaths(dirPath)
+	return a.memoryTrust.MemoryPaths(dirPath)
 }
 
 // worktreeStore is what worktreeRootDir reads channels through.
 type worktreeStore interface {
-	channelLister
+	GetWorktreeChannelsByDirPath(ctx context.Context, dirPath string) ([]*db.Channel, error)
 	db.ChannelGetter
 }
 
@@ -423,15 +423,13 @@ type worktreeStore interface {
 // channels' parent chain, not from the worktree's .git file, which the
 // agent can rewrite.
 func worktreeRootDir(ctx context.Context, store worktreeStore, dirPath string) string {
-	channels, err := store.ListChannels(ctx)
+	channels, err := store.GetWorktreeChannelsByDirPath(ctx, dirPath)
 	if err != nil {
 		return ""
 	}
 	for _, ch := range channels {
-		if ch.Worktree && ch.DirPath == dirPath {
-			if root := db.WorktreeRootDirPath(ctx, store, ch); root != "" {
-				return root
-			}
+		if root := db.WorktreeRootDirPath(ctx, store, ch); root != "" {
+			return root
 		}
 	}
 	return ""
@@ -1018,6 +1016,13 @@ func (a *app) serve() error {
 	}
 	// Plugin runs likewise; their plugins are told of those that fail.
 	orch.RecoverPluginRuns(ctx)
+	// Messages added to a turn the prior daemon run was running were never
+	// taken in; requeue them so the wake below runs them as ordinary turns.
+	if n, err := store.RequeueAddedMessages(ctx, "", ""); err != nil {
+		logger.Error("requeueing added messages", "error", err)
+	} else if n > 0 {
+		logger.Warn("requeued messages added to a turn the prior daemon run left", "count", n)
+	}
 	if pending, err := store.ListPendingChannels(ctx); err != nil {
 		logger.Error("listing pending channels", "error", err)
 	} else {

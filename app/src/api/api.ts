@@ -106,16 +106,77 @@ function withAuth(init: RequestInit | undefined, tok: string): RequestInit {
   return { ...init, headers };
 }
 
-/** fetch for the Loop API: adds the token, and on a 401 reads the token
- *  again (it may have been rotated, or the daemon just wrote it) and retries
- *  once. Bodies must be replayable (strings, not streams). */
-export async function apiFetch(input: string, init?: RequestInit): Promise<Response> {
+/** Adds the token, and on a 401 reads the token again (it may have been
+ *  rotated, or the daemon just wrote it) and retries once. */
+async function send(input: string, init?: RequestInit): Promise<Response> {
   const tok = apiToken || (await refreshApiToken());
   const res = await fetch(input, withAuth(init, tok));
   if (res.status !== 401) return res;
   const fresh = await refreshApiToken();
   if (!fresh || fresh === tok) return res;
   return fetch(input, withAuth(init, fresh));
+}
+
+/** Runs at most max sends at a time, the rest waiting in order. */
+function limited(max: number): (input: string) => Promise<Response> {
+  let running = 0;
+  const queue: Array<() => void> = [];
+  return async (input) => {
+    if (running < max) running++;
+    else await new Promise<void>((start) => queue.push(start));
+    try {
+      return await send(input);
+    } finally {
+      const next = queue.shift();
+      if (next) next();
+      else running--;
+    }
+  };
+}
+
+/** Reads that run git or gh, which can take seconds. A browser gives a host
+ *  6 connections, and every chat opening asks for a file tree per root, a
+ *  diff and a PR, so they run a few at a time to leave room for the chat's
+ *  own requests. A gh lookup takes seconds where git takes a tenth of one, so
+ *  the two wait apart: lookups piling up never hold back a chat's diff. */
+const GIT_GET = /\/api\/channels\/[^/]+\/(diff|commits|branches|files)(\?|$)/;
+const PR_GET = /\/api\/channels\/[^/]+\/pr(\?|$)/;
+const sendGitGet = limited(3);
+const sendPRGet = limited(2);
+
+function sendGet(input: string): Promise<Response> {
+  if (PR_GET.test(input)) return sendPRGet(input);
+  return GIT_GET.test(input) ? sendGitGet(input) : send(input);
+}
+
+/** How long an identical plain GET can join one already sent. It covers the
+ *  views of a chat all asking as it opens; anything later asks again, so a
+ *  refetch after a change never gets an answer from before it. */
+const SHARE_WINDOW_MS = 50;
+
+const sharedGets = new Map<string, { started: number; res: Promise<Response> }>();
+
+/** fetch for the Loop API, see send. Identical plain GETs sent together share
+ *  one request. A call with init can be a write, so it's never shared and no
+ *  GET sent before it ends is joined after. Bodies must be replayable
+ *  (strings, not streams). */
+export function apiFetch(input: string, init?: RequestInit): Promise<Response> {
+  if (init) {
+    sharedGets.clear();
+    return send(input, init).finally(() => sharedGets.clear());
+  }
+  const now = Date.now();
+  let shared = sharedGets.get(input);
+  if (!shared || now - shared.started > SHARE_WINDOW_MS) {
+    const entry = { started: now, res: sendGet(input) };
+    const forget = () => {
+      if (sharedGets.get(input) === entry) sharedGets.delete(input);
+    };
+    entry.res.then(forget, forget);
+    sharedGets.set(input, entry);
+    shared = entry;
+  }
+  return shared.res.then((res) => res.clone());
 }
 
 /** WebSocket subprotocols that carry the token: the server answers with

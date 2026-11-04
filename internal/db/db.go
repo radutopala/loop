@@ -19,6 +19,7 @@ type Store interface {
 	GetChannel(ctx context.Context, channelID string) (*Channel, error)
 	GetChannelByDirPath(ctx context.Context, dirPath string, platform types.Platform) (*Channel, error)
 	GetChannelsByDirPath(ctx context.Context, dirPath string) ([]*Channel, error)
+	GetWorktreeChannelsByDirPath(ctx context.Context, dirPath string) ([]*Channel, error)
 	IsChannelActive(ctx context.Context, channelID string) (bool, error)
 	UpdateSessionID(ctx context.Context, channelID string, sessionID string) error
 	MarkSessionForkPending(ctx context.Context, channelID string, sessionID string) (bool, error)
@@ -51,6 +52,8 @@ type Store interface {
 	ResetStaleRunningMessages(ctx context.Context) ([]StaleRunningMessage, error)
 	MaxQueuedPriority(ctx context.Context, channelID string) (int, error)
 	ListPendingChannels(ctx context.Context) ([]string, error)
+	TakeAddedMessage(ctx context.Context, channelID, uuid string) (string, error)
+	RequeueAddedMessages(ctx context.Context, channelID, uuid string) (int64, error)
 	GetRecentMessages(ctx context.Context, channelID string, limit int) ([]*Message, error)
 	ListUserMessageContents(ctx context.Context, channelID string, limit int) ([]string, error)
 	ListQueuedUserMessages(ctx context.Context, channelID string) ([]*Message, error)
@@ -314,7 +317,7 @@ func (s *SQLiteStore) withTx(ctx context.Context, fn func(tx *sql.Tx) error) err
 
 // Column lists for SELECT queries.
 const (
-	messageColumns = `id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, is_triggered, is_running, priority, mode, created_at, kind, chain_position, tool_use_id, tool_name, is_error, trigger_msg_id, not_before, edit_hold_until, session_id, transcript_uuid`
+	messageColumns = `id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, is_triggered, is_running, priority, mode, created_at, kind, chain_position, tool_use_id, tool_name, is_error, trigger_msg_id, not_before, edit_hold_until, session_id, transcript_uuid, add_uuid`
 	channelColumns = `id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, task_id, description, ticket_url, learn_override, explain_override, kind, created_at, updated_at`
 	taskColumns    = `id, channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec, thread_id, worktree, origin_branch, update_before_run, running, workflow_name, workflow_inputs, bash_script, plugin_id, plugin_action`
 )
@@ -391,7 +394,7 @@ func scanMessageRow(scanner rowScanner) (*Message, error) {
 		&kind, &msg.ChainPosition,
 		&msg.ToolUseID, &msg.ToolName, &isError,
 		&msg.TriggerMsgID, &msg.NotBefore, &msg.EditHoldUntil,
-		&msg.SessionID, &msg.TranscriptUUID,
+		&msg.SessionID, &msg.TranscriptUUID, &msg.AddUUID,
 	); err != nil {
 		return nil, err
 	}

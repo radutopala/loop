@@ -117,6 +117,7 @@ export function MessageBubble({
   showProcessing,
   showQueued,
   queuePosition,
+  adding,
   highlighted,
   onQuote,
   turnEnd,
@@ -126,6 +127,8 @@ export function MessageBubble({
   showProcessing?: boolean;
   showQueued?: boolean;
   queuePosition?: string;
+  /** The queued message was added to the running turn, not yet taken in. */
+  adding?: boolean;
   highlighted?: boolean;
   onQuote?: (msg: Message) => void;
   /** The bot message ends its turn: it carries the turn's Explain action. */
@@ -261,7 +264,7 @@ export function MessageBubble({
                   letterSpacing: 0.3,
                 }}
               >
-                {queuePosition ? `queued ${queuePosition}` : "queued"}
+                {adding ? "adding…" : queuePosition ? `queued ${queuePosition}` : "queued"}
               </span>
             )}
             {showProcessing && (

@@ -7,8 +7,12 @@ Feature: Files Panel Journey
     Given I set up a test channel via API for git repo "bdd-files-panel"
     And I open the app in a browser
     And I wait for text "bdd-files-panel" to appear
+    And I record requests matching "/files\?"
     When I click on "bdd-files-panel" in the sidebar
     Then I wait for "textarea" to be visible
+
+    # Without a Files panel in the layout, the chat doesn't list the workspace
+    And no recorded request should be sent
 
     # Add the standalone Files panel
     When I add a "Files" panel

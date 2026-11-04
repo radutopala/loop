@@ -1,4 +1,4 @@
-.PHONY: help build build-linux install test test-integration test-integration-browser test-integration-plugin test-integration-pluginsdk test-component test-runner-build test-runner-push bdd-serve lint lint-go lint-app sdk-gen sdk-gen-check coverage coverage-check prove-seccomp codeql-download codeql codeql-js docker-build docs-build docs-serve docs-capture docs-architecture run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-test app-install app-build-binary app-dist-linux app-icons _sync-loop-overrides
+.PHONY: help build build-linux install test test-integration test-integration-browser test-integration-plugin test-integration-pluginsdk test-component test-runner-build test-runner-push bdd-serve lint lint-go lint-app sdk-gen sdk-gen-check coverage coverage-check prove-seccomp codeql-download codeql codeql-js docker-build docs-build docs-serve docs-capture docs-architecture run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-record app-test app-install app-build-binary app-dist-linux app-icons _sync-loop-overrides
 .DEFAULT_GOAL := help
 
 # Strip gate-child env inheritance when invoking make from inside a
@@ -367,6 +367,9 @@ app-build-binary: ## Cross-compile loop binary for app bundling (GOOS=, GOARCH=)
 
 app-dev: ## Start the Electron app frontend dev server
 	cd app && npm install && npx vite --host
+
+app-record: ## Record requests, Loading times and screenshots from the running app-dev window (DURATION=60, OUT=dir)
+	node scripts/record-ui.mjs --seconds $(or $(DURATION),60) $(if $(OUT),--out "$(OUT)")
 
 app-test: ## Run the frontend unit tests (vitest)
 	cd app && npm install && npm test

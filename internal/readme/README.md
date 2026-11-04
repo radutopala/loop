@@ -1209,6 +1209,10 @@ make app-dev-docker   # Run Vite dev server in Docker (browser-only, no Electron
 make clean            # Remove build artifacts
 ```
 
+`make app-dev` opens a Chrome DevTools Protocol port on `127.0.0.1:9223` (set `LOOP_DEBUG_PORT` to change it). Packaged builds don't open it.
+
+`make app-record` uses that port to watch the window while you click around. It lists the longest Loading states and slowest API requests, and saves a full timeline and screenshots to a temp folder (`DURATION=90` sets the seconds, `OUT=dir` the folder). It only observes, so it works with whatever you do by hand, but screenshots capture whatever is on screen.
+
 ### Integration Tests
 
 Integration tests run against the real platform APIs to verify bot behavior end-to-end. Both Discord and Slack suites are available — each creates temporary channels, runs all tests, and cleans up on teardown.

@@ -148,6 +148,7 @@ type app struct {
 	ensureImage            func(context.Context, container.DockerClient, *config.Config, func(string)) error
 	newEmbedder            func(*config.Config) (embeddings.Embedder, error)
 	loadProjectMemoryPaths func(string) []string
+	memoryTrust            *config.TrustStore // long-lived: each reindex asks it about every dir
 	newDockerExecClient    func() (terminal.ExecClient, error)
 	newHostExecClient      func() terminal.ExecClient
 	newBrowserProvider     func(config.BrowserConfig, *slog.Logger) (api.BrowserProvider, error)
@@ -325,6 +326,7 @@ func newApp() *app {
 	a.ensureAllChannelsFn = a.ensureAllChannels
 	a.ensureImage = a.defaultEnsureImage
 	a.newEmbedder = a.defaultNewEmbedder
+	a.memoryTrust = config.NewTrustStoreIn(func() (string, error) { return a.userConfigDir() })
 	a.loadProjectMemoryPaths = a.defaultLoadProjectMemoryPaths
 	a.getLatestVersionFn = func() (string, error) {
 		return getLatestVersion(fmt.Sprintf("https://github.com/%s/%s/releases/latest", repoOwner, repoName))

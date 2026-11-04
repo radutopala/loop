@@ -23,6 +23,8 @@ type Broadcaster interface {
 	BroadcastAgentTasks(channelID string, data AgentTasksEventData)
 	BroadcastMessagesProcessed(channelID string, data MessagesProcessedData)
 	BroadcastMessageDeleted(channelID string, data MessageDeletedData)
+	BroadcastMessageTaken(channelID string, data MessageTakenData)
+	BroadcastMessagesRequeued(channelID string)
 	BroadcastChannelCreated(parentChannelID, channelID string)
 	BroadcastChannelDeleted(channelID string)
 	BroadcastAgentInstanceRegistered(channelID string, data AgentInstanceEventData)
@@ -113,6 +115,13 @@ type MessageEventData struct {
 // MessagesProcessedData is the payload for messages.processed events.
 type MessagesProcessedData struct {
 	MsgIDs []string `json:"msg_ids"`
+}
+
+// MessageTakenData is the payload for message.taken events: a message added
+// to the running turn was taken in by the agent. Unlike messages.processed
+// it doesn't end a turn.
+type MessageTakenData struct {
+	MsgID string `json:"msg_id"`
 }
 
 // MessageDeletedData is the payload for message.deleted events.

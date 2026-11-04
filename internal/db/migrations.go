@@ -700,6 +700,11 @@ var migrations = []migration{
 		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`),
 	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_walkthroughs_channel ON walkthroughs(channel_id, id)`),
+	// add_uuid marks a user message added to a running turn and waiting to be
+	// taken in: the uuid it was written to the live session under. Cleared
+	// when the session echoes it back (the row turns processed) or when the
+	// row is requeued because the session ended first.
+	sqlMigration(`ALTER TABLE messages ADD COLUMN add_uuid TEXT NOT NULL DEFAULT ''`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the

@@ -303,6 +303,10 @@ func (m *mockBot) HandleIncomingMessageWithPriority(ctx context.Context, channel
 	m.Called(ctx, channelID, authorID, content, mode, priority)
 }
 
+func (m *mockBot) HandleIncomingMessageAdded(ctx context.Context, channelID, authorID, content, mode string) {
+	m.Called(ctx, channelID, authorID, content, mode)
+}
+
 func (m *mockBot) HandleIncomingMessageDelayed(ctx context.Context, channelID, authorID, msgID, content, mode string, notBefore int64) {
 	m.Called(ctx, channelID, authorID, msgID, content, mode, notBefore)
 }
@@ -568,6 +572,7 @@ func (s *MainSuite) setupServeMocks() *serveMocks {
 	m.store.On("ListReviewSessions", mock.Anything).Return(nil, nil).Maybe()
 	m.store.On("ListPausedChannels", mock.Anything).Return(nil, nil).Maybe()
 	m.store.On("ListPendingChannels", mock.Anything).Return(([]string)(nil), nil).Maybe()
+	m.store.On("RequeueAddedMessages", mock.Anything, "", "").Return(int64(0), nil).Maybe()
 	m.dockerClient.On("LatestClaudeVersion").Return("1.0.0").Maybe()
 	// The update checker reads the installed Claude version off the image
 	// labels at startup; no image exists in these tests.

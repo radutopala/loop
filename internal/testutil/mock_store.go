@@ -44,6 +44,14 @@ func (m *MockStore) GetChannelsByDirPath(ctx context.Context, dirPath string) ([
 	return args.Get(0).([]*db.Channel), args.Error(1)
 }
 
+func (m *MockStore) GetWorktreeChannelsByDirPath(ctx context.Context, dirPath string) ([]*db.Channel, error) {
+	args := m.Called(ctx, dirPath)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*db.Channel), args.Error(1)
+}
+
 func (m *MockStore) IsChannelActive(ctx context.Context, channelID string) (bool, error) {
 	args := m.Called(ctx, channelID)
 	return args.Bool(0), args.Error(1)
@@ -189,6 +197,16 @@ func (m *MockStore) ResetStaleRunningMessages(ctx context.Context) ([]db.StaleRu
 func (m *MockStore) MaxQueuedPriority(ctx context.Context, channelID string) (int, error) {
 	args := m.Called(ctx, channelID)
 	return args.Int(0), args.Error(1)
+}
+
+func (m *MockStore) TakeAddedMessage(ctx context.Context, channelID, uuid string) (string, error) {
+	args := m.Called(ctx, channelID, uuid)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockStore) RequeueAddedMessages(ctx context.Context, channelID, uuid string) (int64, error) {
+	args := m.Called(ctx, channelID, uuid)
+	return args.Get(0).(int64), args.Error(1)
 }
 
 func (m *MockStore) ListPendingChannels(ctx context.Context) ([]string, error) {

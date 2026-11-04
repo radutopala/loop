@@ -59,3 +59,13 @@ Feature: Chat Pagination Journey
     When I click on "[data-testid='chat-jump-latest']"
     Then the chat is scrolled to its bottom
     And I wait up to "5s" for "[data-testid='chat-jump-latest']" to disappear
+
+  Scenario: Opening a chat shows Loading until its messages arrive
+    Given I set up a test channel via API for git repo "bdd-chat-loading"
+    And I open the app in a browser
+    And I wait for text "bdd-chat-loading" to appear
+    And I delay requests matching "*/timeline\?*" by "2s"
+
+    When I click on "bdd-chat-loading" in the sidebar
+    Then I wait for "[data-testid='chat-loading']" to be visible
+    And I wait up to "10s" for "[data-testid='chat-loading']" to disappear

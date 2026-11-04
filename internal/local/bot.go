@@ -310,14 +310,14 @@ func (b *Bot) OnChannelJoin(handler func(ctx context.Context, channelID string, 
 // HandleIncomingMessage implements api.IncomingMessageHandler. It parses mentions
 // and command prefixes, then routes the message through the orchestrator.
 func (b *Bot) HandleIncomingMessage(ctx context.Context, channelID, authorID, content, mode string) {
-	b.handleIncoming(ctx, channelID, authorID, "", content, mode, 0, 0)
+	b.handleIncoming(ctx, channelID, authorID, content, mode, incomingOpts{})
 }
 
 // HandleIncomingMessageWithPriority is like HandleIncomingMessage but attaches a
 // priority to the IncomingMessage so the orchestrator can write it onto the DB
 // row. Used by the API interrupt path to bump a new message above queued ones.
 func (b *Bot) HandleIncomingMessageWithPriority(ctx context.Context, channelID, authorID, content, mode string, priority int) {
-	b.handleIncoming(ctx, channelID, authorID, "", content, mode, priority, 0)
+	b.handleIncoming(ctx, channelID, authorID, content, mode, incomingOpts{priority: priority})
 }
 
 // HandleIncomingMessageDelayed is like HandleIncomingMessage but attaches a
@@ -325,13 +325,29 @@ func (b *Bot) HandleIncomingMessageWithPriority(ctx context.Context, channelID, 
 // drain skips until the delay elapses. Used by the delayed queue_message path,
 // which picks msgID so it can hand it back to the agent.
 func (b *Bot) HandleIncomingMessageDelayed(ctx context.Context, channelID, authorID, msgID, content, mode string, notBefore int64) {
-	b.handleIncoming(ctx, channelID, authorID, msgID, content, mode, 0, notBefore)
+	b.handleIncoming(ctx, channelID, authorID, content, mode, incomingOpts{msgID: msgID, notBefore: notBefore})
+}
+
+// HandleIncomingMessageAdded is like HandleIncomingMessage but asks the
+// orchestrator to add the message to the turn the channel's live session runs,
+// queueing it as usual when no turn runs.
+func (b *Bot) HandleIncomingMessageAdded(ctx context.Context, channelID, authorID, content, mode string) {
+	b.handleIncoming(ctx, channelID, authorID, content, mode, incomingOpts{addToTurn: true})
+}
+
+// incomingOpts carries handleIncoming's optional message id, priority,
+// not-before delay and add-to-turn flag. An empty msgID has the orchestrator
+// generate one.
+type incomingOpts struct {
+	msgID     string
+	priority  int
+	notBefore int64
+	addToTurn bool
 }
 
 // handleIncoming parses mentions/prefixes and routes the message through the
-// orchestrator, carrying the optional message id, priority and not-before
-// delay. An empty msgID has the orchestrator generate one.
-func (b *Bot) handleIncoming(ctx context.Context, channelID, authorID, msgID, content, mode string, priority int, notBefore int64) {
+// orchestrator, carrying opts.
+func (b *Bot) handleIncoming(ctx context.Context, channelID, authorID, content, mode string, opts incomingOpts) {
 	if authorID == "" {
 		authorID = DefaultAuthorID
 	}
@@ -349,7 +365,7 @@ func (b *Bot) handleIncoming(ctx context.Context, channelID, authorID, msgID, co
 	if b.messageHandler != nil {
 		b.messageHandler(ctx, &bot.IncomingMessage{
 			ChannelID:    channelID,
-			MessageID:    msgID,
+			MessageID:    opts.msgID,
 			AuthorID:     authorID,
 			AuthorName:   authorID,
 			Content:      content,
@@ -359,8 +375,9 @@ func (b *Bot) handleIncoming(ctx context.Context, channelID, authorID, msgID, co
 			IsDM:         true,
 			Timestamp:    time.Now().UTC(),
 			Mode:         mode,
-			Priority:     priority,
-			NotBefore:    notBefore,
+			Priority:     opts.priority,
+			NotBefore:    opts.notBefore,
+			AddToTurn:    opts.addToTurn,
 		})
 	}
 }

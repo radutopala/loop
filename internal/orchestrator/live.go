@@ -40,6 +40,7 @@ type LiveRunner interface {
 	StopLive(channelID, reason string) error
 	StopLiveTask(channelID, taskID string) error
 	InterruptLive(channelID string) error
+	AddToLiveTurn(channelID, uuid, prompt string) error
 	LiveInfo(channelID string) (agent.LiveInfo, bool)
 	LiveChannels() []string
 	SendLiveControl(ctx context.Context, channelID string, request json.RawMessage) (json.RawMessage, error)
@@ -310,11 +311,13 @@ func (o *Orchestrator) liveHooks(channelID string) agent.LiveHooks {
 		Ended: func(reason string) {
 			o.logger.Info("live session ended", "channel_id", channelID, "reason", reason)
 			o.publishLive(channelID, LiveStatus{LiveInfo: agent.LiveInfo{ChannelID: channelID}, Reason: reason})
+			o.requeueAddedMessages(channelID)
 		},
 		Restarted: func(reason string) {
 			status := o.LiveSession(context.Background(), channelID)
 			status.Reason = reason
 			o.publishLive(channelID, status)
+			o.requeueAddedMessages(channelID)
 		},
 		System: func(subtype string, event json.RawMessage) {
 			if o.liveSystem != nil {
@@ -326,6 +329,7 @@ func (o *Orchestrator) liveHooks(channelID string) agent.LiveHooks {
 				o.events.BroadcastPromptSuggestion(channelID, events.PromptSuggestionEventData{Suggestion: text})
 			}
 		},
+		AddTaken: func(uuid string) { o.takeAddedMessage(channelID, uuid) },
 		Prompt: func(text string) {
 			msgID := storeUserPrompt(context.Background(), o.store, o.events, channelID, liveAuthorID, "remote", text)
 			// The turn it starts answers it.

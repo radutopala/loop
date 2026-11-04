@@ -188,6 +188,30 @@ A queued user message was removed from the channel's message queue via `DELETE /
 
 ---
 
+### `message.taken`
+
+The agent took in a message added to the turn its [live session](chat.md#live-sessions) runs (`delivery: "add"` on `POST /api/messages`). Claude Code echoes each added line back under the uuid Loop wrote it with once it reads it, after the turn's current step; the row is then marked processed and moved to the end of the channel's timeline, where the agent read it. Unlike `messages.processed` it doesn't end the turn: the run goes on. The FE moves the bubble to the end of the live tail, drops its `adding…` label and re-fetches the queue.
+
+**Payload schema:**
+
+```json
+{
+  "msg_id": "ask-1a2b3c4d5e6f7a8b"
+}
+```
+
+| Field    | Type   | Description |
+|----------|--------|-------------|
+| `msg_id` | string | Message ID of the added message the agent took in |
+
+---
+
+### `messages.requeued`
+
+The channel's live session ended or was restarted before the agent took in one or more messages added to its turn. Those rows were turned into ordinary queued messages, which the channel now runs as turns of their own. No payload; the FE re-fetches the queue.
+
+---
+
 ### `message.updated`
 
 A queued user message's text was edited via `PUT /api/channels/{id}/queued/{msg_id}` before it started. Emitted only when the edit was applied.
@@ -1260,6 +1284,8 @@ A plugin's [composer switch](plugins.md#composer-switches) changed in a chat: th
 | `BroadcastMessagesProcessed` | `messages.processed` | `MessagesProcessedData` | Channel |
 | `BroadcastMessageDeleted` | `message.deleted` | `MessageDeletedData` | Channel |
 | `BroadcastMessageUpdated` | `message.updated` | `MessageUpdatedData` | Channel |
+| `BroadcastMessageTaken` | `message.taken` | `MessageTakenData` | Channel |
+| `BroadcastMessagesRequeued` | `messages.requeued` | — | Channel |
 | `BroadcastAgentStatus` | `agent.status` | `AgentStatusEventData` | Global |
 | `BroadcastToolUse` | `tool.use` | `ToolUseEventData` | Channel |
 | `BroadcastAgentThinking` | `agent.thinking` | `AgentThinkingEventData` | Channel |
@@ -1333,6 +1359,8 @@ type Broadcaster interface {
     BroadcastExitPlan(channelID string, data ExitPlanModeEventData)
     BroadcastTodoWrite(channelID string, data TodoWriteEventData)
     BroadcastMessagesProcessed(channelID string, data MessagesProcessedData)
+    BroadcastMessageTaken(channelID string, data MessageTakenData)
+    BroadcastMessagesRequeued(channelID string)
     BroadcastChannelCreated(parentChannelID, channelID string)
     BroadcastChannelDeleted(channelID string)
     BroadcastAgentInstanceRegistered(channelID string, data AgentInstanceEventData)

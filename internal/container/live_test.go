@@ -138,6 +138,7 @@ type liveHookLog struct {
 	activity  chan string
 	begun     chan struct{}
 	done      chan liveRun
+	taken     chan string
 }
 
 func newLiveHookLog() *liveHookLog {
@@ -149,6 +150,7 @@ func newLiveHookLog() *liveHookLog {
 		activity:  make(chan string, 16),
 		begun:     make(chan struct{}, 16),
 		done:      make(chan liveRun, 16),
+		taken:     make(chan string, 16),
 	}
 }
 
@@ -173,7 +175,8 @@ func (l *liveHookLog) hooks(turns chan string) agent.LiveHooks {
 		System: func(subtype string, event json.RawMessage) {
 			l.system <- subtype + "=" + string(event)
 		},
-		Prompt: func(text string) { l.prompts <- text },
+		Prompt:   func(text string) { l.prompts <- text },
+		AddTaken: func(uuid string) { l.taken <- uuid },
 	}
 }
 
@@ -194,6 +197,9 @@ func (c doneSignalCtx) Done() <-chan struct{} {
 
 const liveStartedAt = "2026-10-15T10:00:00Z"
 
+// liveTurnUUID is the uuid every turn prompt is written under in tests.
+const liveTurnUUID = "turn-1"
+
 // setupLive gets the runner ready for live sessions that end after idle,
 // with timers the test fires.
 func (s *RunnerSuite) setupLive(idle time.Duration) *fakeClock {
@@ -203,6 +209,7 @@ func (s *RunnerSuite) setupLive(idle time.Duration) *fakeClock {
 	s.runner.logger = slog.New(slog.DiscardHandler)
 	started, _ := time.Parse(time.RFC3339, liveStartedAt)
 	s.runner.now = func() time.Time { return started }
+	s.runner.newUUID = func() string { return liveTurnUUID }
 	reg := new(MockContainerRegistry)
 	reg.On("Register", mock.Anything).Maybe()
 	reg.On("ScheduleRemove", mock.Anything, mock.Anything).Maybe()
@@ -242,7 +249,7 @@ func (s *RunnerSuite) goRun(ctx context.Context, req *agent.AgentRequest) <-chan
 // liveTurn runs a turn of prompt on proc, which answers it with result.
 func (s *RunnerSuite) liveTurn(req *agent.AgentRequest, proc *fakeLiveProc, result string) liveRun {
 	run := s.goRun(context.Background(), req)
-	require.Equal(s.T(), string(userTurnLine(req.Prompt)), waitFor(s.T(), proc.stdin))
+	require.Equal(s.T(), string(turnLine(liveTurnUUID, req.Prompt)), waitFor(s.T(), proc.stdin))
 	proc.emit(s.T(), `{"type":"system","subtype":"init"}`, result)
 	return waitFor(s.T(), run)
 }
@@ -307,7 +314,7 @@ func (s *RunnerSuite) TestLiveSessionTurns() {
 	req.OnSession = func(id string) { record("session %s", id) }
 
 	run := s.goRun(context.Background(), &req)
-	require.Equal(s.T(), string(userTurnLine(planModePromptPrefix+"hello")), waitFor(s.T(), proc.stdin))
+	require.Equal(s.T(), string(turnLine(liveTurnUUID, planModePromptPrefix+"hello")), waitFor(s.T(), proc.stdin))
 	proc.emit(s.T(),
 		`{"type":"system","subtype":"init"}`,
 		`{"type":"assistant","session_id":"sess-1","uuid":"u1","message":{"model":"claude-x","content":[{"type":"thinking","thinking":"hmm"},{"type":"text","text":"Hello"},{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}]}}`,
@@ -340,7 +347,7 @@ func (s *RunnerSuite) TestLiveSessionTurns() {
 	// An error result, with the output that isn't JSON as its error.
 	req2 := withPrompt(&agent.AgentRequest{ChannelID: "ch-1", Live: true, PlanMode: true, SessionID: "sess-1"}, "again")
 	run = s.goRun(context.Background(), req2)
-	require.Equal(s.T(), string(userTurnLine(planModePromptPrefix+"again")), waitFor(s.T(), proc.stdin))
+	require.Equal(s.T(), string(turnLine(liveTurnUUID, planModePromptPrefix+"again")), waitFor(s.T(), proc.stdin))
 	proc.emit(s.T(), "not json", `{"type":"result","subtype":"error_during_execution","is_error":true,"session_id":"sess-1"}`)
 	got = waitFor(s.T(), run)
 	require.ErrorContains(s.T(), got.err, "claude returned error: error_during_execution")
@@ -830,7 +837,7 @@ func (s *RunnerSuite) TestLiveOwnTurns() {
 	waitFor(s.T(), ctx.waiting)
 	proc.emit(s.T(), `{"type":"result","result":"bg","session_id":"sess-1","num_turns":1}`)
 	require.Equal(s.T(), "bg", waitFor(s.T(), log.done).resp.Response)
-	require.Equal(s.T(), string(userTurnLine("next")), waitFor(s.T(), proc.stdin))
+	require.Equal(s.T(), string(turnLine(liveTurnUUID, "next")), waitFor(s.T(), proc.stdin))
 	proc.emit(s.T(), `{"type":"result","result":"mine","session_id":"sess-1","num_turns":1}`)
 	require.Equal(s.T(), "mine", waitFor(s.T(), run).resp.Response)
 
@@ -842,6 +849,120 @@ func (s *RunnerSuite) TestLiveOwnTurns() {
 	got = waitFor(s.T(), log.done)
 	require.ErrorIs(s.T(), got.err, errLiveEnded)
 	require.Empty(s.T(), s.runner.LiveChannels())
+}
+
+func (s *RunnerSuite) TestAddToLiveTurn() {
+	require.ErrorIs(s.T(), s.runner.AddToLiveTurn("ch-1", "u-0", "also"), ErrNoLiveSession)
+
+	s.setupLive(0)
+	log := newLiveHookLog()
+	turns := make(chan string, 4)
+	proc := newFakeLiveProc()
+	start := liveReq(func(r *agent.AgentRequest) { r.SessionID = "sess-1" })
+	s.startLive(start, log.hooks(turns), "live-1", proc)
+
+	// No turn runs yet.
+	require.ErrorIs(s.T(), s.runner.AddToLiveTurn("ch-1", "u-0", "also"), ErrNoLiveTurn)
+
+	// Added to the running turn, whose one result answers both. The line
+	// carries its uuid, and the CLI's echo of it reports it taken in once.
+	run := s.goRun(context.Background(), withPrompt(start, "first"))
+	require.Equal(s.T(), string(turnLine(liveTurnUUID, "first")), waitFor(s.T(), proc.stdin))
+	require.NoError(s.T(), s.runner.AddToLiveTurn("ch-1", "u-1", "also"))
+	require.Equal(s.T(), string(turnLine("u-1", "also")), waitFor(s.T(), proc.stdin))
+	proc.emit(s.T(),
+		`{"type":"system","subtype":"init"}`,
+		`{"type":"user","isReplay":true,"uuid":"turn-1","message":{"role":"user","content":"first"}}`,
+		`{"type":"user","isReplay":true,"uuid":"u-1","message":{"role":"user","content":"also"}}`,
+		`{"type":"user","isReplay":true,"uuid":"u-1","message":{"role":"user","content":"also"}}`,
+		`{"type":"result","result":"both","session_id":"sess-1","num_turns":2}`,
+	)
+	got := waitFor(s.T(), run)
+	require.NoError(s.T(), got.err)
+	require.Equal(s.T(), "both", got.resp.Response)
+	require.Equal(s.T(), "u-1", waitFor(s.T(), log.taken))
+	requireNone(s.T(), log.taken)
+	requireNone(s.T(), log.begun)
+
+	// Taken in only after the turn ended: the process runs it as a turn of
+	// its own.
+	run = s.goRun(context.Background(), withPrompt(start, "second"))
+	require.Equal(s.T(), string(turnLine(liveTurnUUID, "second")), waitFor(s.T(), proc.stdin))
+	require.NoError(s.T(), s.runner.AddToLiveTurn("ch-1", "u-2", "late"))
+	require.Equal(s.T(), string(turnLine("u-2", "late")), waitFor(s.T(), proc.stdin))
+	proc.emit(s.T(),
+		`{"type":"user","isReplay":true,"uuid":"turn-1","message":{"role":"user","content":"second"}}`,
+		`{"type":"result","result":"second done","session_id":"sess-1","num_turns":1}`,
+	)
+	require.Equal(s.T(), "second done", waitFor(s.T(), run).resp.Response)
+	proc.emit(s.T(),
+		`{"type":"system","subtype":"init"}`,
+		`{"type":"user","isReplay":true,"uuid":"u-2","message":{"role":"user","content":"late"}}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"late answer"}]}}`,
+		`{"type":"result","result":"late done","session_id":"sess-1","num_turns":1}`,
+	)
+	waitFor(s.T(), log.begun)
+	require.Equal(s.T(), "u-2", waitFor(s.T(), log.taken))
+	require.Equal(s.T(), "late answer", waitFor(s.T(), turns))
+	require.Equal(s.T(), "late done", waitFor(s.T(), log.done).resp.Response)
+
+	// Not once the session ended.
+	require.NoError(s.T(), s.runner.StopLive("ch-1", "stopped by user"))
+	require.ErrorIs(s.T(), s.runner.AddToLiveTurn("ch-1", "u-3", "gone"), ErrNoLiveSession)
+}
+
+// A turn that ends without the echo of its prompt shows the process doesn't
+// echo its input: what was added counts as taken in with the turn, and the
+// session adds nothing more, so messages queue instead.
+func (s *RunnerSuite) TestLiveNoEcho() {
+	tests := []struct {
+		name  string
+		hooks func(log *liveHookLog) agent.LiveHooks
+	}{
+		{name: "hooks", hooks: func(log *liveHookLog) agent.LiveHooks { return log.hooks(nil) }},
+		{name: "no AddTaken hook", hooks: func(log *liveHookLog) agent.LiveHooks {
+			hooks := log.hooks(nil)
+			hooks.AddTaken = nil
+			return hooks
+		}},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			s.setupLive(0)
+			log := newLiveHookLog()
+			proc := newFakeLiveProc()
+			start := liveReq(func(r *agent.AgentRequest) { r.SessionID = "sess-1" })
+			s.startLive(start, tc.hooks(log), "live-1", proc)
+
+			run := s.goRun(context.Background(), withPrompt(start, "first"))
+			require.Equal(s.T(), string(turnLine(liveTurnUUID, "first")), waitFor(s.T(), proc.stdin))
+			require.NoError(s.T(), s.runner.AddToLiveTurn("ch-1", "u-1", "also"))
+			require.Equal(s.T(), string(turnLine("u-1", "also")), waitFor(s.T(), proc.stdin))
+			proc.emit(s.T(), `{"type":"result","result":"both","session_id":"sess-1","num_turns":1}`)
+			require.Equal(s.T(), "both", waitFor(s.T(), run).resp.Response)
+			if tc.hooks(log).AddTaken != nil {
+				require.Equal(s.T(), "u-1", waitFor(s.T(), log.taken))
+			}
+			requireNone(s.T(), log.taken)
+
+			// The next turn runs, and nothing is added to it.
+			run = s.goRun(context.Background(), withPrompt(start, "second"))
+			require.Equal(s.T(), string(turnLine(liveTurnUUID, "second")), waitFor(s.T(), proc.stdin))
+			require.ErrorIs(s.T(), s.runner.AddToLiveTurn("ch-1", "u-2", "late"), ErrLiveNoEcho)
+			proc.emit(s.T(), `{"type":"result","result":"second done","session_id":"sess-1","num_turns":1}`)
+			require.Equal(s.T(), "second done", waitFor(s.T(), run).resp.Response)
+			requireNone(s.T(), log.taken)
+			require.NoError(s.T(), s.runner.StopLive("ch-1", "done"))
+		})
+	}
+}
+
+// Without an AddTaken hook a taken-in add is only forgotten.
+func (s *RunnerSuite) TestLiveInputTakenWithoutHook() {
+	ls := &liveSession{adds: map[string]struct{}{"u-1": {}}}
+	ls.inputTaken("u-1")
+	require.Empty(s.T(), ls.adds)
 }
 
 func (s *RunnerSuite) TestLiveOwnTurnsUnreported() {
@@ -1347,4 +1468,23 @@ func (s *RunnerSuite) TestLiveInterruptNoGrace() {
 	_ = proc.inR.CloseWithError(errors.New("gone"))
 	require.Error(s.T(), s.runner.InterruptLive("ch-1"))
 	require.NoError(s.T(), s.runner.StopLive("ch-1", "done"))
+}
+
+// A line that couldn't be written isn't waited on as an add.
+func (s *RunnerSuite) TestAddToLiveTurnWriteError() {
+	s.setupLive(0)
+	log := newLiveHookLog()
+	proc := newFakeLiveProc()
+	start := liveReq(func(r *agent.AgentRequest) { r.SessionID = "sess-1" })
+	s.startLive(start, log.hooks(nil), "live-1", proc)
+
+	run := s.goRun(context.Background(), withPrompt(start, "first"))
+	require.Equal(s.T(), string(turnLine(liveTurnUUID, "first")), waitFor(s.T(), proc.stdin))
+	broken := errors.New("stdin closed")
+	require.NoError(s.T(), proc.inR.CloseWithError(broken))
+	require.ErrorIs(s.T(), s.runner.AddToLiveTurn("ch-1", "u-1", "also"), broken)
+	require.Empty(s.T(), s.runner.liveSession("ch-1").adds)
+
+	proc.close()
+	require.ErrorIs(s.T(), waitFor(s.T(), run).err, errLiveEnded)
 }

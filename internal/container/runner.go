@@ -16,6 +16,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/agentgate"
 	"github.com/radutopala/loop/internal/config"
@@ -231,6 +233,8 @@ type DockerRunner struct {
 	// now and afterFunc are the clock live sessions run on.
 	now       func() time.Time
 	afterFunc func(d time.Duration, f func()) stopper
+	// newUUID names each turn prompt a live session writes.
+	newUUID func() string
 }
 
 // NewDockerRunner creates a new DockerRunner with the given Docker client and config.
@@ -252,6 +256,7 @@ func NewDockerRunner(client DockerClient, cfg *config.Config, configLoad func() 
 		liveStarting:              map[string]bool{},
 		now:                       time.Now,
 		afterFunc:                 func(d time.Duration, f func()) stopper { return time.AfterFunc(d, f) },
+		newUUID:                   uuid.NewString,
 	}
 	r.transcriptMissing = func(workDir, sessionID string) bool {
 		return claudeTranscriptMissing(r.sys.Stat, r.sys.UserHomeDir, workDir, sessionID)

@@ -613,6 +613,10 @@ func (s *BotSuite) TestHandleIncomingMessageWithPriorityNoop() {
 	s.bot.HandleIncomingMessageWithPriority(context.Background(), "", "", "", "", 0)
 }
 
+func (s *BotSuite) TestHandleIncomingMessageAddedNoop() {
+	s.bot.HandleIncomingMessageAdded(context.Background(), "", "", "", "")
+}
+
 func (s *BotSuite) TestHandleIncomingMessageDelayedNoop() {
 	s.bot.HandleIncomingMessageDelayed(context.Background(), "", "", "", "", "", 0)
 }

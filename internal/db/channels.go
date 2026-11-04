@@ -76,6 +76,22 @@ func (s *SQLiteStore) GetChannelsByDirPath(ctx context.Context, dirPath string) 
 	return scanChannels(rows)
 }
 
+// GetWorktreeChannelsByDirPath returns the worktree channels working in
+// dirPath. Unlike GetChannelsByDirPath, it finds channels with a parent, as
+// worktree channels have.
+func (s *SQLiteStore) GetWorktreeChannelsByDirPath(ctx context.Context, dirPath string) ([]*Channel, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+channelColumns+`
+		 FROM channels WHERE dir_path = ? AND worktree = 1 ORDER BY name ASC`,
+		dirPath,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanChannels(rows)
+}
+
 func (s *SQLiteStore) IsChannelActive(ctx context.Context, channelID string) (bool, error) {
 	var count int
 	err := s.db.QueryRowContext(ctx,

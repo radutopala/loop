@@ -355,25 +355,28 @@ The active segment has white background with black text; inactive has transparen
 |--------|---------|
 | Send message | Press `Enter` (without Shift) |
 | New line | Press `Shift+Enter` |
-| Send with opposite mode (Queue ↔ Steer) | `⌘+Enter` on macOS / `Ctrl+Enter` elsewhere — flips the active send mode for this send only without changing the persisted preference |
+| Send with Steer (or Queue when in Steer) | `⌘+Enter` on macOS / `Ctrl+Enter` elsewhere — sends with Steer for this send only, or with Queue when Steer is the active mode, without changing the persisted preference |
+| Cycle the send mode | Tap `⌘` on its own on macOS / `Ctrl` elsewhere in the composer — Queue → Add → Steer → Queue, and the choice persists like picking it on the chip. A chord such as `⌘C`, a `⌘`-click or a press held longer than half a second doesn't count |
+| Send with Add (or Queue when in Add) | `⌥+Enter` on macOS / `Alt+Enter` elsewhere — sends with Add for this send only, or with Queue when Add is the active mode, without changing the persisted preference |
 | Stop running agent | Click the Stop button (square icon with `colors.textDim` border) |
 
 The send button:
-- **Not running:** White circle with up-arrow icon. Disabled (40% opacity) when textarea is empty. A small `QUEUE` or `STEER` chip on the button indicates the active send mode.
+- **Not running:** White circle with up-arrow icon. Disabled (40% opacity) when textarea is empty. A small `QUEUE`, `ADD` or `STEER` chip on the button indicates the active send mode.
 - **Running:** Transparent with dimmed border, contains a filled square (stop) icon. Pressing **Stop** is optimistic — the UI flips to "not running" immediately and re-syncs when `agent.status` lands.
 
 After sending, the textarea is cleared and re-focused via `requestAnimationFrame`.
 
-### Send Mode (Queue vs Steer)
+### Send Mode (Queue, Add, Steer)
 
-While the agent is running, a small chip beside the send button selects what `Enter` does. Click the chip to flip between the two modes; the choice is persisted in `localStorage` under `loop-send-mode`.
+While the agent is running, a small chip beside the send button selects what `Enter` does. Click the chip to pick one of the three modes; the choice is persisted in `localStorage` under `loop-send-mode`.
 
 | Mode | Behavior |
 |------|----------|
 | **Queue** (default, `QUEUE`) | Message is appended to the queue and processed when the current run finishes. |
-| **Steer** (`STEER`) | Cancels the active run and sends the message with `interrupt=true` (the wire field kept its original name). The server inserts it at `priority = MaxQueuedPriority + 1` so it claims the next slot ahead of any already-queued rows; queued rows are preserved (not deleted). The cancelled run's session is resumed on the next turn, so steering redirects the work rather than discarding it. |
+| **Add** (`ADD`) | Sends the message with `delivery: "add"`: it goes into the turn the agent is running, which takes it in after its current step (a tool call, or a subagent's whole run) and answers it in the same turn. The message shows at once in the chat and in the queue, labelled `adding…`, until the agent takes it in: then it leaves the queue and moves to where the agent read it in the conversation. When the turn ends before the agent takes it in, the agent answers it in a turn of its own right after. If the live session ends or restarts first, it becomes an ordinary queued message. With no turn to add to (the chat runs one-shot, or its turn has just ended), the message is queued as in Queue mode. See [Live Sessions](#live-sessions). |
+| **Steer** (`STEER`) | Cancels the active run and sends the message with `delivery: "steer"` (`interrupt=true`, its older name, is still accepted). The server inserts it at `priority = MaxQueuedPriority + 1` so it claims the next slot ahead of any already-queued rows; queued rows are preserved (not deleted). The cancelled run's session is resumed on the next turn, so steering redirects the work rather than discarding it. |
 
-`⌘/Ctrl+Enter` sends with the opposite mode for one send only (it does not persist). The button tooltip and placeholder reflect the active mode and the keyboard hint at all times.
+`⌘/Ctrl+Enter` sends with Steer for one send only, or with Queue when Steer is the active mode; `⌥/Alt+Enter` does the same for Add. Neither persists. A lone `⌘` (`Ctrl`) tap in the composer moves the chip to the next mode and does persist. The button tooltip and placeholder reflect the active mode and the keyboard hint at all times.
 
 When the agent is **not** running, the send mode is irrelevant — every send is just a normal message.
 
@@ -700,6 +703,10 @@ autoScrollRef.current = atBottom;
 
 ---
 
+## Opening a chat
+
+A chat with no messages to show yet shows "Loading..." over the message list until its first page arrives, fading in after a moment so a quick load shows nothing. A chat opened again shows its last page, kept in memory, while the first page loads.
+
 ## Load More
 
 When the user scrolls to the top of the message list and more rows are available (`hasMore`), `loadMore()` is called automatically.
@@ -833,6 +840,7 @@ A `QueuedMessagesPopup` component (`src/components/chat/QueuedMessagesPopup.tsx`
 - **Row layout** — one line per message, truncated with ellipsis. Clicking a row toggles an inline expanded view (full content, pre-wrapped). A delayed row also shows a live [`⏱` countdown](#delay-countdown) between the content and the copy button.
 - **Steer button** — shown on each row only while a run is active, since with the channel idle the queue is already draining and steering would just be a reorder. It calls `POST /api/channels/{id}/queued/{msg_id}/steer` via the `steerQueuedMessage` API client, which promotes the row to the front of the queue and cancels the active run — the per-row equivalent of the composer's steer send mode. The row moves to the top of the local list immediately, since the backend has already re-prioritised it, and the button turns into a highlighted, disabled `Steered` until the agent takes the row: pressing it again would only stop the agent again. If the call fails, the row stays where it was and can be steered again.
 - **Edit button** — a pencil on each row moves the message into the composer to edit it (see [Editing a queued message](#editing-a-queued-message)). The row shows `editing` while it's open; Steer is hidden and Delete disabled for that row until the edit ends.
+- **Added rows** — a message [added to the running turn](#send-mode-queue-add-steer) shows on top as `adding…` until the agent takes it in. It has no Steer, Edit or Delete button and can't be dragged: it is no longer the queue's to run. The chat bubble shows `adding…` too, in place of a queue position, at the end of the chat until it is taken in.
 - **Delete button** — a `×` button on each row calls `DELETE /api/messages/{msg_id}?channel_id=...` via the `deleteQueuedMessage` API client. The row dims while the request is in flight; the server broadcasts a `message.deleted` WebSocket event, which both removes the row from the local timeline and re-fetches the queue. Deleting a queued row is safe even mid-run — `ClaimNextPending` only sees `is_running=0 AND is_processed=0` rows, so the deletion lands before the row can be claimed.
 - **Safety** — the row identified by `processingMsgId` (see [Processing State](#processing-state)) is filtered out of the popup, and the backend refuses to steer a claimed row, so neither path can re-prioritise the message the agent is already running. Use the existing stop button to cancel an in-flight run without queueing anything, or "Deny with prompt" on a gate card to steer with a new prompt that runs ahead of the queue without dropping queued rows.
 
@@ -855,6 +863,8 @@ Above the composer, one row per [monitor](api.md#post-apichannelsidmonitors) the
 ## Live Sessions
 
 A chat's turns run in a live session: one Claude Code process, in its own Docker container, that stays up between turns and reads each new prompt from its input. Everything else about the chat is unchanged: messages queue and steer as before, Stop interrupts the turn, asks and plans prompt the same way, and a model or settings change applies from the next turn.
+
+A live session can also take a message into the turn it is running: the composer's **Add** [send mode](#send-mode-queue-add-steer). The message is written to the session's input while the turn runs; Claude Code reads it after the turn's current step and answers it in the same turn, with one reply. A message added while the turn writes its final text, or just before Stop or Steer ends the turn, is answered in a turn Claude Code starts by itself right after, which the chat shows as any other turn. Loop writes each added line with a uuid of its own, and Claude Code echoes the line back under it as it reads it: that echo marks the message taken in ([`message.taken`](events.md#messagetaken)), and the message joins the turn that read it, so the chat shows it inside that turn, after the steps before it. Added messages the session never took in, because it ended or its process was replaced, are queued as ordinary messages. Each turn's prompt is written with a uuid too; a turn that ends without its echo means Claude Code doesn't echo what it reads, and then the session counts what was added to that turn as taken in, logs a warning, and queues messages sent in Add mode from then on, as Queue mode does.
 
 - **Lazy start.** The session starts with the channel's next message when none is running, resuming the channel's Claude session, and every later message reuses it. In the app, typing a message already starts it, so the container is up by the time you send. It stops after `live_session_idle_sec` (default 600; 0 never stops it) without a turn or background task; the next message starts a new one on the same session.
 - **Background work.** Tasks the agent left in the background (shells, subagents, [monitors](#monitors)) keep running while the session waits. When one finishes, the agent can take a turn on its own; its reply posts to the chat like any other, on Slack and Discord too. Such a turn carries on the one before it, so its last reply ends that turn and takes its [Explain](#explain-button) and [Learn](#learn-from-a-run) buttons. A turn someone starts from outside Loop shows its prompt in the chat as a user message from `remote`, before the reply; the turn is that prompt's.

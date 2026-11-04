@@ -499,7 +499,7 @@ Send a message to a channel. When an orchestrator is configured, routes through 
   "channel_id": "abc123",
   "content": "Hello, bot!",
   "mode": "plan",
-  "interrupt": false,
+  "delivery": "queue",
   "delay_seconds": 0
 }
 ```
@@ -509,8 +509,9 @@ Send a message to a channel. When an orchestrator is configured, routes through 
 | `channel_id`    | string | yes      | Target channel or thread ID |
 | `content`       | string | yes      | Message text |
 | `mode`          | string | no       | Agent mode hint (e.g. `"plan"`) |
-| `interrupt`     | bool   | no       | When `true`, cancels the active run on the channel and inserts this message with `priority = MaxQueuedPriority(channel_id) + 1` so it claims next ahead of any queued rows. Existing queued messages are preserved (not deleted). Used by the chat UI's "Deny with prompt" gate flow. |
-| `delay_seconds` | int    | no       | When `> 0`, holds the message back for that many seconds. The row is inserted with `not_before = now + delay_seconds` (unix seconds); `ClaimNextPending` skips it until then and a background poller drains the channel once it comes due. Takes precedence over `interrupt` (an interrupt would be pointless if the message runs later). Set by the [`queue_message`](mcpserver.md) MCP tool. |
+| `delivery`      | string | no       | How the message meets an active run. `"queue"` (default) waits behind it. `"add"` writes the message into the turn the channel's [live session](chat.md#live-sessions) runs, which answers it in that turn. The row is stored first, untriggered and carrying the uuid its line is written with, so it shows in the [queue](#get-apichannelsidqueued) as `"adding": true` until the agent takes it in: then it is marked processed and moved to the end of the timeline ([`message.taken`](events.md#messagetaken)). If the session ends or restarts before that, or the daemon restarts, the row becomes an ordinary queued message ([`messages.requeued`](events.md#messagesrequeued)). With no live session, no turn running, a channel parked on an ask or plan card, or `mode` set, an added message is queued instead. `"steer"` cancels the active run and inserts this message with `priority = MaxQueuedPriority(channel_id) + 1` so it claims next ahead of any queued rows; queued rows are preserved (not deleted). Used by the chat UI's send modes and its "Deny with prompt" gate flow. |
+| `interrupt`     | bool   | no       | Older name for `"delivery": "steer"`, still accepted. With `delivery` set to `"queue"` or `"add"` it is a `400`. |
+| `delay_seconds` | int    | no       | When `> 0`, holds the message back for that many seconds. The row is inserted with `not_before = now + delay_seconds` (unix seconds); `ClaimNextPending` skips it until then and a background poller drains the channel once it comes due. Takes precedence over `delivery` (steering or adding would be pointless if the message runs later). Set by the [`queue_message`](mcpserver.md) MCP tool. |
 
 **Response:** `204 No Content`, or with `delay_seconds > 0`, `200 OK` with the queued message's id, so the caller can remove it with [`DELETE /api/messages/{id}`](#delete-apimessagesid) before it runs:
 
@@ -521,10 +522,11 @@ Send a message to a channel. When an orchestrator is configured, routes through 
 **Behavior notes:**
 - When an `IncomingMessageHandler` is set, the message is dispatched asynchronously with a detached context (the HTTP response returns immediately).
 - When no handler is set, falls back to direct `PostMessage` via the configured message sender.
-- `interrupt=true` requires both a `RunCanceller` and a `Store` on the server; the orchestrator wires both during startup.
+- `delivery: "steer"` (or `interrupt=true`) requires both a `RunCanceller` and a `Store` on the server; the orchestrator wires both during startup.
+- `delivery: "add"` routes through `HandleIncomingMessageAdded`, which sets `AddToTurn` on the incoming message for the orchestrator.
 - `delay_seconds > 0` routes through `HandleIncomingMessageDelayed` with a `msg_id` picked by the handler, which stamps `not_before` on the inserted row. Because the row is not yet due, the immediate drain claims nothing; the orchestrator's delay poller re-drains the channel once `not_before` passes (this also recovers pending delays across a daemon restart, since the drain is event-driven).
 
-**Errors:** `400` if `channel_id` or `content` is empty. `501` if message sending is not configured and no handler is set.
+**Errors:** `400` if `channel_id` or `content` is empty, `delivery` is not `"queue"`, `"add"` or `"steer"`, or it contradicts `interrupt`. `501` if message sending is not configured and no handler is set.
 
 ---
 
@@ -800,7 +802,7 @@ List messages for a channel. Supports two modes: **cursor-based pagination** (de
 
 ### `GET /api/channels/{id}/queued`
 
-Return the canonical queue of unprocessed user messages for a channel — every row with `kind = 'message'`, `is_bot = 0`, `is_processed = 0`, ordered by `priority DESC, id ASC` (the exact order the orchestrator drains in). The chat UI calls this on channel mount and after every event that could change the queue (`message.created`, `message.deleted`, `message.updated`, `messages.processed`, `agent.status`) so the "queued"/"processing" labels and the queued-messages popup stay correct even when older pages of chat history are not loaded in the renderer.
+Return the canonical queue of unprocessed user messages for a channel — every row with `kind = 'message'`, `is_bot = 0`, `is_processed = 0`, ordered by `priority DESC, id ASC` (the exact order the orchestrator drains in), after any rows added to the running turn. The chat UI calls this on channel mount and after every event that could change the queue (`message.created`, `message.deleted`, `message.updated`, `messages.processed`, `agent.status`) so the "queued"/"processing" labels and the queued-messages popup stay correct even when older pages of chat history are not loaded in the renderer.
 
 **Path Parameters:**
 
@@ -839,7 +841,7 @@ Return the canonical queue of unprocessed user messages for a channel — every 
 }
 ```
 
-The in-flight message is **included** in the response, marked `"is_running": true` (omitted on the others). Clients use the [`agent.status`](events.md#agentstatus) event's `msg_id` to distinguish "processing" from "queued", and `is_running` until that event arrives. A scheduled task running in the thread claims no row, so every message sent meanwhile stays "queued" until it finishes. Higher `priority` values sort first; `priority` is omitted when zero. Rows queued with a delay carry `not_before` (unix seconds); the chat UI renders a live countdown chip until it elapses. `not_before` is omitted when zero (immediate). A row being edited in some window carries `edit_hold_until` (unix seconds) until the edit is saved, cancelled, or its lease lapses; it and everything behind it won't start meanwhile (see [`POST /api/channels/{id}/queued/{msg_id}/hold`](#post-apichannelsidqueuedmsg_idhold)).
+The in-flight message is **included** in the response, marked `"is_running": true` (omitted on the others). Clients use the [`agent.status`](events.md#agentstatus) event's `msg_id` to distinguish "processing" from "queued", and `is_running` until that event arrives. A scheduled task running in the thread claims no row, so every message sent meanwhile stays "queued" until it finishes. Higher `priority` values sort first; `priority` is omitted when zero. Rows queued with a delay carry `not_before` (unix seconds); the chat UI renders a live countdown chip until it elapses. `not_before` is omitted when zero (immediate). A row [added to the running turn](#post-apimessages) of the channel's live session carries `"adding": true` until the agent takes it in; it can't be deleted, steered, edited, held or reordered, and the claim never picks it up. A row being edited in some window carries `edit_hold_until` (unix seconds) until the edit is saved, cancelled, or its lease lapses; it and everything behind it won't start meanwhile (see [`POST /api/channels/{id}/queued/{msg_id}/hold`](#post-apichannelsidqueuedmsg_idhold)).
 
 **Errors:** `501` if message listing is not configured. `500` on database error.
 

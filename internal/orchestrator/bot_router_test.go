@@ -581,6 +581,23 @@ func (s *BotRouterSuite) TestHandleIncomingMessageDelayedNilBotNoPanic() {
 	router.HandleIncomingMessageDelayed(context.Background(), "ch-1", "", "", "test", "", 99)
 }
 
+func (s *BotRouterSuite) TestHandleIncomingMessageAddedRoutesToCorrectBot() {
+	s.store.On("GetChannel", mock.Anything, "ch-local").Return(
+		&db.Channel{ChannelID: "ch-local", Platform: types.PlatformLocal}, nil,
+	)
+	s.localBot.On("HandleIncomingMessageAdded", mock.Anything, "ch-local", "user-1", "more", "").Return()
+
+	s.router.HandleIncomingMessageAdded(context.Background(), "ch-local", "user-1", "more", "")
+	s.localBot.AssertCalled(s.T(), "HandleIncomingMessageAdded", mock.Anything, "ch-local", "user-1", "more", "")
+}
+
+func (s *BotRouterSuite) TestHandleIncomingMessageAddedNilBotNoPanic() {
+	router := NewBotRouter(map[types.Platform]Bot{}, s.store, s.logger)
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(nil, nil)
+
+	router.HandleIncomingMessageAdded(context.Background(), "ch-1", "", "test", "")
+}
+
 func (s *BotRouterSuite) TestHandleThreadCreatedRoutesToCorrectBot() {
 	s.store.On("GetChannel", mock.Anything, "thread-1").Return(
 		&db.Channel{ChannelID: "thread-1", Platform: types.PlatformLocal}, nil,

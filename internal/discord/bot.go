@@ -601,6 +601,11 @@ func (b *DiscordBot) HandleIncomingMessage(_ context.Context, _, _, _, _ string)
 func (b *DiscordBot) HandleIncomingMessageWithPriority(_ context.Context, _, _, _, _ string, _ int) {
 }
 
+// HandleIncomingMessageAdded is a no-op on Discord — chat platforms don't
+// drive the API add-to-turn path.
+func (b *DiscordBot) HandleIncomingMessageAdded(_ context.Context, _, _, _, _ string) {
+}
+
 // HandleIncomingMessageDelayed is a no-op on Discord — chat platforms don't
 // drive the API delayed queue_message path.
 func (b *DiscordBot) HandleIncomingMessageDelayed(_ context.Context, _, _, _, _, _ string, _ int64) {
