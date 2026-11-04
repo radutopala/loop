@@ -8,7 +8,6 @@ import {
   deleteThread,
   ensureChannel,
   fetchChannels,
-  fetchDiff,
   fetchPlaygroundShares,
   getApiUrl,
   getImageStatus,
@@ -125,7 +124,6 @@ function AppInner() {
   const [error, setError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mountKey, setMountKey] = useState(0);
-  const [diffStats, setDiffStats] = useState<{ add: number; del: number }>({ add: 0, del: 0 });
   const [paletteOpen, setPaletteOpen] = useState(false);
   const {
     settingsOpen,
@@ -176,24 +174,6 @@ function AppInner() {
   const notifications = useUnreadNotifications(ready);
   const [pluginsEpoch, setPluginsEpoch] = useState(0);
   const notificationsState = useMemo(() => ({ unread: notifications.unread, epoch: notifications.epoch, pluginsEpoch }), [notifications.unread, notifications.epoch, pluginsEpoch]);
-
-  // Fetch diff stats for the selected channel and keep them updated via events.
-  const loadDiffStats = useCallback(async () => {
-    if (!selectedId) return;
-    try {
-      const d = await fetchDiff(selectedId);
-      setDiffStats({ add: d.total_additions, del: d.total_deletions });
-    } catch {
-      /* ignore */
-    }
-  }, [selectedId]);
-
-  useEffect(() => {
-    setDiffStats({ add: 0, del: 0 });
-    loadDiffStats();
-  }, [loadDiffStats]);
-
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // API URL already initialized by parent App component.
   useEffect(() => {
@@ -383,16 +363,8 @@ function AppInner() {
         refreshShareCount();
         return;
       }
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(loadDiffStats, 1_000);
     },
-    [loadDiffStats, selectedId, loadChannels, patchChannel, refreshShareCount, notifications.refetch],
-  );
-  useEffect(
-    () => () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    },
-    [],
+    [selectedId, loadChannels, patchChannel, refreshShareCount, notifications.refetch],
   );
 
   // Single app-level WS that subscribes to the selected channel + all running
@@ -888,7 +860,6 @@ function AppInner() {
               onStatusChange={loadChannels}
               error={error}
               onDismissError={() => setError(null)}
-              diffStats={diffStats}
               parentIsWorktree={!!(selectedChannel.parent_id && channels.find((c) => c.id === selectedChannel.parent_id)?.worktree)}
               onCreateWorktree={handleCreateWorktree}
               onOpenPR={handleOpenPR}

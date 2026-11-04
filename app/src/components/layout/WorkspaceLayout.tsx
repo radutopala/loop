@@ -293,7 +293,6 @@ interface WorkspaceLayoutProps {
   onStatusChange?: () => void;
   error?: string | null;
   onDismissError?: () => void;
-  diffStats?: { add: number; del: number };
   style?: React.CSSProperties;
   parentIsWorktree?: boolean;
   onCreateWorktree?: (channelId: string, branch: string) => Promise<void>;
@@ -344,7 +343,6 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     onStatusChange,
     error,
     onDismissError,
-    diffStats: _diffStats,
     style,
     parentIsWorktree,
     onCreateWorktree,
