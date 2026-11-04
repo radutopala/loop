@@ -14,7 +14,19 @@ import type { TimelineItem } from "../../types";
 // and stays put; one whose trigger is off-page is simply absent and its replies
 // render where the base order placed them — identical to groupTimelineItems'
 // existing handling of off-page triggers.
-export function orderTimelineItems(list: TimelineItem[]): TimelineItem[] {
+//
+// Messages in last, the ones added to the running turn but not yet taken in,
+// go to the end: the agent reads them after everything so far, and they'd
+// otherwise render above the prompt of the turn they were added to.
+export function orderTimelineItems(list: TimelineItem[], last: ReadonlySet<string> = new Set()): TimelineItem[] {
+  const ordered = relocateTriggers(list);
+  if (last.size === 0) return ordered;
+  const isLast = (it: TimelineItem) => it.kind === "message" && last.has(it.data.msg_id);
+  if (!ordered.some(isLast)) return ordered;
+  return [...ordered.filter((it) => !isLast(it)), ...ordered.filter(isLast)];
+}
+
+function relocateTriggers(list: TimelineItem[]): TimelineItem[] {
   const firstReplyIdx = new Map<string, number>();
   for (let i = 0; i < list.length; i++) {
     const trig = list[i]!.trigger_msg_id;

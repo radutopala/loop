@@ -206,6 +206,88 @@ func (s *IntegrationSuite) TestSteerQueuedMessageSkipsClaimedRow() {
 	require.False(s.T(), steered)
 }
 
+// TestAddedMessageLifecycle checks a message added to a running turn
+// against a real SQLite: it is listed first in the queue but never claimed,
+// edited, steered, reordered or deleted; the echo takes it in once; and a
+// requeue turns a still-waiting one into an ordinary claimable row.
+func (s *IntegrationSuite) TestAddedMessageLifecycle() {
+	store, err := NewSQLiteStore(filepath.Join(s.T().TempDir(), "loop.db"))
+	require.NoError(s.T(), err)
+	defer store.Close()
+
+	ctx := context.Background()
+	chatID := seedChannel(s.T(), store, "ch1")
+	for _, m := range []*Message{
+		{MsgID: "queued", IsTriggered: true, Priority: 5},
+		{MsgID: "added-1", AddUUID: "u-1"},
+		{MsgID: "added-2", AddUUID: "u-2"},
+	} {
+		m.ChatID, m.ChannelID, m.Content, m.Kind, m.CreatedAt = chatID, "ch1", m.MsgID, MessageKindMessage, time.Now()
+		require.NoError(s.T(), store.InsertMessage(ctx, m))
+	}
+
+	queued, err := store.ListQueuedUserMessages(ctx, "ch1")
+	require.NoError(s.T(), err)
+	require.Len(s.T(), queued, 3)
+	require.Equal(s.T(), []string{"added-1", "added-2", "queued"}, []string{queued[0].MsgID, queued[1].MsgID, queued[2].MsgID})
+
+	for _, op := range []func() (bool, error){
+		func() (bool, error) { return store.DeleteQueuedMessage(ctx, "ch1", "added-1") },
+		func() (bool, error) { return store.SteerQueuedMessage(ctx, "ch1", "added-1") },
+		func() (bool, error) {
+			return store.HoldQueuedMessage(ctx, "ch1", "added-1", time.Now().Add(time.Minute).Unix())
+		},
+	} {
+		ok, err := op()
+		require.NoError(s.T(), err)
+		require.False(s.T(), ok)
+	}
+	require.NoError(s.T(), store.ReorderQueuedMessages(ctx, "ch1", []string{"added-1"}))
+
+	claimed, err := store.ClaimNextPending(ctx, "ch1")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "queued", claimed.MsgID)
+	claimed, err = store.ClaimNextPending(ctx, "ch1")
+	require.NoError(s.T(), err)
+	require.Nil(s.T(), claimed)
+
+	require.NoError(s.T(), store.InsertAgentEvent(ctx, &Message{
+		ChatID: chatID, ChannelID: "ch1", Kind: MessageKindToolUse, ToolName: "Bash", TriggerMsgID: "queued", CreatedAt: time.Now(),
+	}))
+	msgID, err := store.TakeAddedMessage(ctx, "ch1", "u-1")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "added-1", msgID)
+	// Taken in, it sorts after every row so far, where the agent read it,
+	// and links to the turn that read it.
+	timeline, err := store.GetTimeline(ctx, "ch1", 0, 0, 1)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "added-1", timeline[0].MsgID)
+	require.Equal(s.T(), "queued", timeline[0].TriggerMsgID)
+	msgID, err = store.TakeAddedMessage(ctx, "ch1", "u-1")
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), msgID)
+	msgID, err = store.TakeAddedMessage(ctx, "ch1", "")
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), msgID)
+
+	n, err := store.RequeueAddedMessages(ctx, "other", "")
+	require.NoError(s.T(), err)
+	require.Zero(s.T(), n)
+	n, err = store.RequeueAddedMessages(ctx, "ch1", "u-other")
+	require.NoError(s.T(), err)
+	require.Zero(s.T(), n)
+	n, err = store.RequeueAddedMessages(ctx, "", "")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), int64(1), n)
+	msgID, err = store.TakeAddedMessage(ctx, "ch1", "u-2")
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), msgID)
+	claimed, err = store.ClaimNextPending(ctx, "ch1")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "added-2", claimed.MsgID)
+	require.Empty(s.T(), claimed.AddUUID)
+}
+
 // TestEditHoldBlocksClaim checks the edit-hold contract against a real
 // SQLite: a held row stops the claim without letting rows behind it jump
 // ahead, an expired lease wakes the poller, and a row that already started

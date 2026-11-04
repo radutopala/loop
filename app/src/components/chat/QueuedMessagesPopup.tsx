@@ -122,11 +122,14 @@ export function QueuedMessagesPopup({ messages, channelId, isRunning, onEdit, ed
   };
 
   // Apply the user's drag order locally: known ids first (in chosen order),
-  // then any newly-arrived messages appended; removed ones drop out.
+  // then any newly-arrived messages appended; removed ones drop out. Rows
+  // being added to the running turn stay on top: they're no longer the
+  // queue's to order.
   const displayed = (() => {
     if (!order) return messages;
     const byId = new Map(messages.map((m) => [m.msg_id, m]));
-    const result: Message[] = [];
+    const result: Message[] = messages.filter((m) => m.adding);
+    for (const m of result) byId.delete(m.msg_id);
     for (const id of order) {
       const m = byId.get(id);
       if (m) {
@@ -161,7 +164,11 @@ export function QueuedMessagesPopup({ messages, channelId, isRunning, onEdit, ed
     ids.splice(to, 0, dragged);
     if (ids.length === original.length && ids.every((id, i) => id === original[i])) return; // no-op
     setOrder(ids);
-    reorderQueuedMessages(channelId, ids).catch(logErr("reordering queued messages"));
+    const adding = new Set(messages.filter((m) => m.adding).map((m) => m.msg_id));
+    reorderQueuedMessages(
+      channelId,
+      ids.filter((id) => !adding.has(id)),
+    ).catch(logErr("reordering queued messages"));
   };
 
   return (
@@ -233,17 +240,24 @@ export function QueuedMessagesPopup({ messages, channelId, isRunning, onEdit, ed
               const isDeleting = deletingIds.has(msg.msg_id);
               const isEditing = editingMsgId === msg.msg_id;
               const isSteered = steeredIds.has(msg.msg_id);
+              // Written into the running turn, waiting for the agent to
+              // take it in: it can't be steered, edited, removed or moved.
+              const isAdding = !!msg.adding;
               return (
                 <div
                   key={msg.msg_id}
                   onDragOver={(e) => {
+                    if (isAdding) return;
                     e.preventDefault();
                     e.dataTransfer.dropEffect = "move";
                     const pos = dropPosition(e);
                     setDropTarget((prev) => (prev && prev.id === msg.msg_id && prev.pos === pos ? prev : { id: msg.msg_id, pos }));
                   }}
-                  onDrop={(e) => handleDrop(msg.msg_id, dropPosition(e))}
+                  onDrop={(e) => {
+                    if (!isAdding) handleDrop(msg.msg_id, dropPosition(e));
+                  }}
                   data-testid="queued-row"
+                  data-adding={isAdding ? "true" : undefined}
                   data-editing={isEditing ? "true" : undefined}
                   style={{
                     display: "flex",
@@ -256,7 +270,7 @@ export function QueuedMessagesPopup({ messages, channelId, isRunning, onEdit, ed
                   }}
                 >
                   <span
-                    draggable
+                    draggable={!isAdding}
                     onDragStart={(e) => {
                       draggedIdRef.current = msg.msg_id;
                       e.dataTransfer.effectAllowed = "move";
@@ -265,8 +279,17 @@ export function QueuedMessagesPopup({ messages, channelId, isRunning, onEdit, ed
                       draggedIdRef.current = null;
                       setDropTarget(null);
                     }}
-                    title="Drag to reorder"
-                    style={{ flexShrink: 0, cursor: "grab", color: colors.textDim, userSelect: "none", display: "flex", alignItems: "center", paddingTop: 2 }}
+                    title={isAdding ? undefined : "Drag to reorder"}
+                    style={{
+                      flexShrink: 0,
+                      cursor: isAdding ? "default" : "grab",
+                      color: colors.textDim,
+                      userSelect: "none",
+                      display: "flex",
+                      alignItems: "center",
+                      paddingTop: 2,
+                      visibility: isAdding ? "hidden" : undefined,
+                    }}
                   >
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
                       <circle cx="9" cy="6" r="1.5" />
@@ -315,7 +338,16 @@ export function QueuedMessagesPopup({ messages, channelId, isRunning, onEdit, ed
                       already started
                     </span>
                   ) : null}
-                  {isRunning && !isEditing ? (
+                  {isAdding ? (
+                    <span
+                      data-testid="queued-adding"
+                      title="Added to the running turn: the agent reads it after its current step"
+                      style={{ flexShrink: 0, color: colors.active, fontSize: 11, lineHeight: "20px" }}
+                    >
+                      adding…
+                    </span>
+                  ) : null}
+                  {isRunning && !isEditing && !isAdding ? (
                     <button
                       data-testid="queued-steer"
                       data-steered={isSteered ? "true" : undefined}
@@ -351,7 +383,7 @@ export function QueuedMessagesPopup({ messages, channelId, isRunning, onEdit, ed
                       {isSteered ? "Steered" : "Steer"}
                     </button>
                   ) : null}
-                  {onEdit && !isEditing ? (
+                  {onEdit && !isEditing && !isAdding ? (
                     <button
                       data-testid="queued-edit"
                       onClick={() => handleEdit(msg)}
@@ -419,32 +451,34 @@ export function QueuedMessagesPopup({ messages, channelId, isRunning, onEdit, ed
                       </svg>
                     )}
                   </button>
-                  <button
-                    onClick={() => handleDelete(msg.msg_id)}
-                    disabled={isDeleting || isEditing}
-                    title={isEditing ? "Finish or cancel the edit first" : "Remove from queue"}
-                    style={{
-                      flexShrink: 0,
-                      width: 20,
-                      height: 20,
-                      padding: 0,
-                      background: "none",
-                      border: "none",
-                      color: colors.textDim,
-                      cursor: isDeleting || isEditing ? "default" : "pointer",
-                      fontSize: 14,
-                      lineHeight: 1,
-                      borderRadius: 4,
-                    }}
-                    onMouseEnter={(e) => {
-                      if (!isDeleting && !isEditing) e.currentTarget.style.color = colors.dangerText;
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.color = colors.textDim;
-                    }}
-                  >
-                    {"\u00D7"}
-                  </button>
+                  {isAdding ? null : (
+                    <button
+                      onClick={() => handleDelete(msg.msg_id)}
+                      disabled={isDeleting || isEditing}
+                      title={isEditing ? "Finish or cancel the edit first" : "Remove from queue"}
+                      style={{
+                        flexShrink: 0,
+                        width: 20,
+                        height: 20,
+                        padding: 0,
+                        background: "none",
+                        border: "none",
+                        color: colors.textDim,
+                        cursor: isDeleting || isEditing ? "default" : "pointer",
+                        fontSize: 14,
+                        lineHeight: 1,
+                        borderRadius: 4,
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!isDeleting && !isEditing) e.currentTarget.style.color = colors.dangerText;
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.color = colors.textDim;
+                      }}
+                    >
+                      {"\u00D7"}
+                    </button>
+                  )}
                 </div>
               );
             })}

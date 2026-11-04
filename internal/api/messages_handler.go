@@ -17,12 +17,42 @@ type sendMessageRequest struct {
 	ChannelID string `json:"channel_id"`
 	Content   string `json:"content"`
 	Mode      string `json:"mode,omitempty"`
-	Interrupt bool   `json:"interrupt,omitempty"`
+	// Delivery says how the message meets an active run: "queue" (the
+	// default) waits behind it, "add" goes into its running turn, "steer"
+	// cancels it and runs next.
+	Delivery string `json:"delivery,omitempty"`
+	// Interrupt is the older name for delivery "steer", still accepted.
+	Interrupt bool `json:"interrupt,omitempty"`
 	// DelaySeconds defers the message: the drain skips it until this many
 	// seconds from now have elapsed. 0 (default) sends immediately. A positive
-	// delay takes precedence over Interrupt (a deferred message can't also jump
-	// the queue). Set only via the delayed queue_message MCP path.
+	// delay takes precedence over the delivery (a deferred message can't also
+	// jump the queue). Set only via the delayed queue_message MCP path.
 	DelaySeconds int `json:"delay_seconds,omitempty"`
+}
+
+// Message deliveries, see sendMessageRequest.Delivery.
+const (
+	deliveryQueue = "queue"
+	deliveryAdd   = "add"
+	deliverySteer = "steer"
+)
+
+// delivery resolves the request's delivery, reading interrupt as "steer".
+// It returns false for an unknown delivery, or one that contradicts
+// interrupt.
+func (req *sendMessageRequest) delivery() (string, bool) {
+	switch req.Delivery {
+	case "":
+		if req.Interrupt {
+			return deliverySteer, true
+		}
+		return deliveryQueue, true
+	case deliverySteer:
+		return deliverySteer, true
+	case deliveryQueue, deliveryAdd:
+		return req.Delivery, !req.Interrupt
+	}
+	return "", false
 }
 
 // queuedMessageResponse answers a delayed send with the queued message's id,
@@ -45,6 +75,11 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "content is required", http.StatusBadRequest)
 		return
 	}
+	delivery, ok := req.delivery()
+	if !ok {
+		http.Error(w, `delivery must be "queue", "add" or "steer", and agree with interrupt`, http.StatusBadRequest)
+		return
+	}
 
 	// Route through the orchestrator when available. HandleIncomingMessage*
 	// is now non-blocking after the InsertMessage step (the orchestrator
@@ -52,7 +87,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	// and rely on the insert being persisted before this function returns.
 	if s.msgHandler != nil {
 		// Delayed mode: persist a deferred row the drain skips until the delay
-		// elapses. Checked before interrupt — a scheduled follow-up can't also
+		// elapses. Checked before the delivery — a scheduled follow-up can't also
 		// jump the active run. Its id is picked here so the agent that queued
 		// it can remove it before it runs.
 		if req.DelaySeconds > 0 {
@@ -62,7 +97,11 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 			writeHTTPJSON(w, http.StatusOK, queuedMessageResponse{MsgID: msgID}, s.logger)
 			return
 		}
-		s.enqueueMessage(r.Context(), req.ChannelID, req.Content, req.Mode, req.Interrupt)
+		if delivery == deliveryAdd {
+			s.msgHandler.HandleIncomingMessageAdded(context.Background(), req.ChannelID, "", req.Content, req.Mode)
+		} else {
+			s.enqueueMessage(r.Context(), req.ChannelID, req.Content, req.Mode, delivery == deliverySteer)
+		}
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -223,7 +262,10 @@ type messageResponse struct {
 	IsProcessed bool   `json:"is_processed"`
 	// IsRunning is set on the queued row a chat run has claimed; the FE uses
 	// it to tell that row from ones still waiting (e.g. behind a task run).
-	IsRunning    bool      `json:"is_running,omitempty"`
+	IsRunning bool `json:"is_running,omitempty"`
+	// Adding is set on a queued row written into the running turn of the
+	// channel's live session, still waiting for the agent to take it in.
+	Adding       bool      `json:"adding,omitempty"`
 	Priority     int       `json:"priority,omitempty"`
 	TriggerMsgID string    `json:"trigger_msg_id,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
@@ -255,6 +297,7 @@ func toMessageResponse(m *db.Message) messageResponse {
 		IsBot:         m.IsBot,
 		IsProcessed:   m.IsProcessed,
 		IsRunning:     m.IsRunning,
+		Adding:        m.AddUUID != "",
 		Priority:      m.Priority,
 		TriggerMsgID:  m.TriggerMsgID,
 		CreatedAt:     m.CreatedAt,

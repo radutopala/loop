@@ -1011,6 +1011,67 @@ func (s *EventsHubSuite) TestBroadcastMessageDeleted() {
 	require.Equal(s.T(), "ch-1", evt.ChannelID)
 }
 
+func (s *EventsHubSuite) TestBroadcastMessageTaken() {
+	hub := NewEventsHub(testLogger())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		hub.Register(conn, nil)
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer conn.Close()
+
+	time.Sleep(50 * time.Millisecond)
+
+	hub.BroadcastMessageTaken("ch-1", events.MessageTakenData{MsgID: "msg-a"})
+
+	_, msg, err := conn.ReadMessage()
+	require.NoError(s.T(), err)
+
+	var evt Event
+	require.NoError(s.T(), json.Unmarshal(msg, &evt))
+	require.Equal(s.T(), "message.taken", evt.Type)
+	require.Equal(s.T(), "ch-1", evt.ChannelID)
+	require.Equal(s.T(), map[string]any{"msg_id": "msg-a"}, evt.Data)
+}
+
+func (s *EventsHubSuite) TestBroadcastMessagesRequeued() {
+	hub := NewEventsHub(testLogger())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		hub.Register(conn, nil)
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer conn.Close()
+
+	time.Sleep(50 * time.Millisecond)
+
+	hub.BroadcastMessagesRequeued("ch-1")
+
+	_, msg, err := conn.ReadMessage()
+	require.NoError(s.T(), err)
+
+	var evt Event
+	require.NoError(s.T(), json.Unmarshal(msg, &evt))
+	require.Equal(s.T(), "messages.requeued", evt.Type)
+	require.Equal(s.T(), "ch-1", evt.ChannelID)
+}
+
 func (s *EventsHubSuite) TestBroadcastMessageUpdated() {
 	hub := NewEventsHub(testLogger())
 

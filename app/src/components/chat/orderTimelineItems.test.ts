@@ -105,4 +105,14 @@ describe("orderTimelineItems", () => {
   it("handles an empty list", () => {
     expect(orderTimelineItems([])).toEqual([]);
   });
+
+  it("moves messages added to the running turn to the end", () => {
+    const list = [userMsg("A", 1), userMsg("B", 2), toolUse("A", 3), botMsg("a1", "A", 4)];
+    expect(ids(orderTimelineItems(list, new Set(["B"])))).toEqual(["A", "tool_use:A", "a1", "B"]);
+  });
+
+  it("keeps the list when no added message is in it", () => {
+    const list = [userMsg("A", 1), botMsg("a1", "A", 2)];
+    expect(ids(orderTimelineItems(list, new Set(["X"])))).toEqual(["A", "a1"]);
+  });
 });

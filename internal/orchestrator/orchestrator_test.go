@@ -127,6 +127,10 @@ func (m *MockBot) HandleIncomingMessageWithPriority(ctx context.Context, channel
 	m.Called(ctx, channelID, authorID, content, mode, priority)
 }
 
+func (m *MockBot) HandleIncomingMessageAdded(ctx context.Context, channelID, authorID, content, mode string) {
+	m.Called(ctx, channelID, authorID, content, mode)
+}
+
 func (m *MockBot) HandleIncomingMessageDelayed(ctx context.Context, channelID, authorID, msgID, content, mode string, notBefore int64) {
 	m.Called(ctx, channelID, authorID, msgID, content, mode, notBefore)
 }
@@ -180,6 +184,14 @@ func (m *MockEventBroadcaster) BroadcastMessageCreated(channelID string, data ev
 
 func (m *MockEventBroadcaster) BroadcastMessagesProcessed(channelID string, data events.MessagesProcessedData) {
 	m.Called(channelID, data)
+}
+
+func (m *MockEventBroadcaster) BroadcastMessageTaken(channelID string, data events.MessageTakenData) {
+	m.Called(channelID, data)
+}
+
+func (m *MockEventBroadcaster) BroadcastMessagesRequeued(channelID string) {
+	m.Called(channelID)
 }
 
 func (m *MockEventBroadcaster) BroadcastMessageDeleted(channelID string, data events.MessageDeletedData) {

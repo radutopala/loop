@@ -38,3 +38,16 @@ Feature: Queued message deletion and steering
       {}
       """
     Then the response status should be 404
+
+  @add-to-turn
+  Scenario: A message added with no turn running is queued
+    Given a channel exists for directory "/tmp/bdd-add-no-turn"
+    When I connect to the events WebSocket for the channel
+    And I send a POST request to "/api/messages" with body:
+      """
+      {"channel_id":"{channel_id}","content":"add me to the turn","delivery":"add"}
+      """
+    Then the response status should be 204
+    When I wait up to "5s" for a WebSocket event of type "message.created"
+    Then the WebSocket event data "content" should be "add me to the turn"
+    And the WebSocket event data "is_processed" should be "false"

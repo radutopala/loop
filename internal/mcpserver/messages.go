@@ -123,6 +123,7 @@ type queuedMessage struct {
 	MsgID     string `json:"msg_id"`
 	Content   string `json:"content"`
 	IsRunning bool   `json:"is_running,omitempty"`
+	Adding    bool   `json:"adding,omitempty"`
 	NotBefore int64  `json:"not_before,omitempty"`
 }
 
@@ -168,6 +169,8 @@ func (s *Server) handleListQueuedMessages(_ context.Context, _ *mcp.CallToolRequ
 		switch {
 		case m.IsRunning:
 			state = "running"
+		case m.Adding:
+			state = "adding to the running turn"
 		case m.NotBefore > 0:
 			state = "delayed until " + time.Unix(m.NotBefore, 0).UTC().Format(time.RFC3339)
 		}
@@ -208,6 +211,9 @@ func (s *Server) handleDeleteQueuedMessage(_ context.Context, _ *mcp.CallToolReq
 	}
 	if msgs[i].IsRunning {
 		return errorResult(fmt.Sprintf("message %s is already running", input.MsgID)), nil, nil
+	}
+	if msgs[i].Adding {
+		return errorResult(fmt.Sprintf("message %s was added to the running turn", input.MsgID)), nil, nil
 	}
 
 	u := s.apiURL + "/api/messages/" + url.PathEscape(input.MsgID) + "?channel_id=" + url.QueryEscape(s.channelID)

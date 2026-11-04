@@ -116,6 +116,10 @@ func (m worldMessages) HandleIncomingMessageWithPriority(_ context.Context, chan
 	m.w.add("message", channelID)
 }
 
+func (m worldMessages) HandleIncomingMessageAdded(_ context.Context, channelID, _, _, _ string) {
+	m.w.add("message", channelID)
+}
+
 func (m worldMessages) HandleIncomingMessageDelayed(_ context.Context, channelID, _, _, _, _ string, _ int64) {
 	m.w.add("message", channelID)
 }

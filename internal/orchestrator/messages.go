@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/db"
@@ -107,6 +108,15 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *bot.IncomingMessa
 		}
 	}
 
+	// An added message is written into the running turn, which answers it.
+	// Until the live session takes it in it waits in the queue under its
+	// uuid, never claimed by the drain; it is stored before it is written,
+	// so the session's echo always finds it.
+	addUUID := ""
+	if msg.AddToTurn && triggered && allowed && msg.Mode == "" && o.canAddToTurn(msg.ChannelID) {
+		addUUID = uuid.NewString()
+	}
+
 	row := &db.Message{
 		ChatID:      channel.ID,
 		ChannelID:   msg.ChannelID,
@@ -114,7 +124,8 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *bot.IncomingMessa
 		AuthorID:    msg.AuthorID,
 		AuthorName:  msg.AuthorName,
 		Content:     msg.Content,
-		IsTriggered: triggered && allowed,
+		IsTriggered: triggered && allowed && addUUID == "",
+		AddUUID:     addUUID,
 		Priority:    msg.Priority,
 		Mode:        msg.Mode,
 		NotBefore:   msg.NotBefore,
@@ -124,6 +135,7 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *bot.IncomingMessa
 		o.logger.Error("inserting message", "error", err, "channel_id", msg.ChannelID)
 		return
 	}
+	added := addUUID != "" && o.addToRunningTurn(ctx, msg.ChannelID, addUUID, msg.Content)
 
 	if o.events != nil {
 		o.events.BroadcastMessageCreated(msg.ChannelID, events.MessageEventData{
@@ -143,9 +155,10 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *bot.IncomingMessa
 		"author", msg.AuthorName,
 		"content", msg.Content,
 		"triggered", triggered,
+		"added_to_turn", added,
 	)
 
-	if !triggered || !allowed {
+	if !triggered || !allowed || added {
 		return
 	}
 
@@ -157,6 +170,58 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *bot.IncomingMessa
 	// The per-channel mutex inside drainChannel serialises concurrent
 	// drains, so multiple spawns are safe.
 	o.drainAsync(msg.ChannelID, msg)
+}
+
+// canAddToTurn reports whether a message may go into channelID's running
+// live turn. A parked channel waits on its card, so nothing is added there.
+func (o *Orchestrator) canAddToTurn(channelID string) bool {
+	return o.live != nil && !o.IsChannelPlanned(channelID) && !o.IsChannelAsked(channelID)
+}
+
+// addToRunningTurn writes content, stored under addUUID, into the turn
+// channelID's live session runs and reports whether it did. When it can't,
+// the row is requeued as an ordinary triggered message.
+func (o *Orchestrator) addToRunningTurn(ctx context.Context, channelID, addUUID, content string) bool {
+	err := o.live.AddToLiveTurn(channelID, addUUID, content)
+	if err == nil {
+		return true
+	}
+	o.logger.Debug("queueing the message instead of adding it to the turn", "channel_id", channelID, "reason", err)
+	if _, err := o.store.RequeueAddedMessages(ctx, channelID, addUUID); err != nil {
+		o.logger.Error("requeueing a message not added to the turn", "error", err, "channel_id", channelID)
+	}
+	return false
+}
+
+// takeAddedMessage marks the message added to channelID's running turn
+// under addUUID as taken in, now that the live session echoed it.
+func (o *Orchestrator) takeAddedMessage(channelID, addUUID string) {
+	msgID, err := o.store.TakeAddedMessage(context.Background(), channelID, addUUID)
+	if err != nil {
+		o.logger.Error("marking an added message taken in", "error", err, "channel_id", channelID)
+		return
+	}
+	if msgID != "" && o.events != nil {
+		o.events.BroadcastMessageTaken(channelID, events.MessageTakenData{MsgID: msgID})
+	}
+}
+
+// requeueAddedMessages runs the messages added to channelID's live session
+// that it never took in as ordinary turns: the session ended or its process
+// was replaced.
+func (o *Orchestrator) requeueAddedMessages(channelID string) {
+	n, err := o.store.RequeueAddedMessages(context.Background(), channelID, "")
+	if err != nil {
+		o.logger.Error("requeueing added messages", "error", err, "channel_id", channelID)
+		return
+	}
+	if n > 0 {
+		o.logger.Info("requeued added messages the live session never took in", "channel_id", channelID, "count", n)
+		if o.events != nil {
+			o.events.BroadcastMessagesRequeued(channelID)
+		}
+		o.ResumeChannel(context.Background(), channelID)
+	}
 }
 
 // ResumeChannel drains pending triggered messages for a channel without a

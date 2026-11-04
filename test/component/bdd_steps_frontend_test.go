@@ -329,6 +329,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I press Escape$`, tc.pressEscape)
 	ctx.Step(`^the focus is in "([^"]*)"$`, tc.assertFocusIn)
 	ctx.Step(`^I press Shift\+Enter$`, tc.pressShiftEnter)
+	ctx.Step(`^I tap the send mode cycle key$`, tc.tapSendModeCycleKey)
 	ctx.Step(`^I clear the "([^"]*)" field$`, tc.clearField)
 
 	// Wait
@@ -1739,6 +1740,25 @@ func (tc *TestContext) pressEnter() error {
 
 func (tc *TestContext) pressShiftEnter() error {
 	return chromedp.Run(tc.chromeTab.ctx, chromedp.KeyEvent("\r", chromedp.KeyModifiers(input.ModifierShift)))
+}
+
+// tapSendModeCycleKey presses and releases the composer's lone cycle
+// modifier: Meta on macOS, Control elsewhere (the headless browser's case).
+func (tc *TestContext) tapSendModeCycleKey() error {
+	return chromedp.Run(tc.chromeTab.ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		var isMac bool
+		if err := chromedp.Evaluate(`navigator.platform.includes("Mac")`, &isMac).Do(ctx); err != nil {
+			return err
+		}
+		key, code, vk, mod := "Control", "ControlLeft", int64(17), input.ModifierCtrl
+		if isMac {
+			key, code, vk, mod = "Meta", "MetaLeft", 91, input.ModifierMeta
+		}
+		if err := input.DispatchKeyEvent(input.KeyRawDown).WithKey(key).WithCode(code).WithWindowsVirtualKeyCode(vk).WithModifiers(mod).Do(ctx); err != nil {
+			return err
+		}
+		return input.DispatchKeyEvent(input.KeyUp).WithKey(key).WithCode(code).WithWindowsVirtualKeyCode(vk).Do(ctx)
+	}))
 }
 
 func (tc *TestContext) pressEscape() error {

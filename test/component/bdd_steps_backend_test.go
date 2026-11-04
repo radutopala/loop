@@ -71,6 +71,8 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^the learn thread has a bot message:$`, tc.seedLearnThreadMessage)
 	ctx.Step(`^the learn pass withdraws the proposal "([^"]*)" because "([^"]*)"$`, tc.withdrawLearnProposal)
 	ctx.Step(`^the current channel has a finished turn "([^"]*)" replying "([^"]*)"$`, tc.seedExplainTurn)
+	ctx.Step(`^the current channel has "([^"]*)" added to its running turn$`, tc.seedAddedMessage)
+	ctx.Step(`^the agent takes in the added message$`, tc.takeAddedMessage)
 	ctx.Step(`^the current channel has a finished turn "([^"]*)" replying "([^"]*)" in session "([^"]*)"$`, tc.seedTurnInSession)
 	ctx.Step(`^the current channel's learn passes review turns (\d+) and (\d+), and none is superseded$`, tc.assertLearnPassesPerTurn)
 	ctx.Step(`^the turn has an explanation:$`, tc.seedExplanation)
@@ -117,6 +119,7 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 
 	// WebSocket steps
 	ctx.Step(`^I connect to the events WebSocket$`, tc.connectEventsWS)
+	ctx.Step(`^I connect to the events WebSocket for the channel$`, tc.connectChannelEventsWS)
 	ctx.Step(`^the WebSocket connection should be established$`, tc.assertWSConnected)
 	ctx.Step(`^I close the WebSocket connection$`, tc.closeWS)
 	ctx.Step(`^I wait up to "([^"]*)" for a WebSocket event of type "([^"]*)"$`, tc.waitForWSEventOfType)
@@ -1134,7 +1137,19 @@ func (tc *TestContext) createTicketViaAPI(title, ticketType string) error {
 // --- WebSocket steps ---
 
 func (tc *TestContext) connectEventsWS() error {
-	wsURL := strings.Replace(tc.BaseURL, "http://", "ws://", 1) + "/api/ws?channels=bdd-test"
+	return tc.dialEventsWS("bdd-test")
+}
+
+// connectChannelEventsWS subscribes to the events of the scenario's channel.
+func (tc *TestContext) connectChannelEventsWS() error {
+	if tc.ChannelID == "" {
+		return fmt.Errorf("no channel_id set; use 'a channel exists for directory' step first")
+	}
+	return tc.dialEventsWS(tc.ChannelID)
+}
+
+func (tc *TestContext) dialEventsWS(channels string) error {
+	wsURL := strings.Replace(tc.BaseURL, "http://", "ws://", 1) + "/api/ws?channels=" + url.QueryEscape(channels)
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, apiauth.AuthHeader(apiToken()))
 	if err != nil {
 		return fmt.Errorf("connecting to WebSocket: %w", err)
@@ -1464,6 +1479,49 @@ func (tc *TestContext) useSideChat() error {
 // user's prompt and the bot's reply to it, both processed, as a run leaves
 // them. The reply's msg_id is {explain_msg_id}. They go straight into the
 // daemon's database: posting a prompt through the API would start a run.
+// seedAddedMessage stores content as a message written into the running
+// turn of the current channel's live session, waiting for the agent to take
+// it in: queued, but not triggered.
+func (tc *TestContext) seedAddedMessage(content string) error {
+	if tc.ChannelID == "" {
+		return fmt.Errorf("no channel_id set; use 'I set up a test channel via API' step first")
+	}
+	sqlDB, err := openDaemonDB()
+	if err != nil {
+		return err
+	}
+	defer sqlDB.Close()
+	suffix := strconv.FormatInt(time.Now().UnixNano(), 36)
+	tc.AddedUUID = "bdd-add-" + suffix
+	return db.NewSQLiteStoreFromDB(sqlDB).InsertMessage(context.Background(), &db.Message{
+		ChannelID:  tc.ChannelID,
+		MsgID:      "bdd-added-" + suffix,
+		AuthorID:   "user",
+		AuthorName: "tester",
+		Content:    content,
+		AddUUID:    tc.AddedUUID,
+		CreatedAt:  time.Now().UTC(),
+	})
+}
+
+// takeAddedMessage does what the live session's echo of the seeded added
+// message does: marks it taken in and tells the chat.
+func (tc *TestContext) takeAddedMessage() error {
+	sqlDB, err := openDaemonDB()
+	if err != nil {
+		return err
+	}
+	defer sqlDB.Close()
+	msgID, err := db.NewSQLiteStoreFromDB(sqlDB).TakeAddedMessage(context.Background(), tc.ChannelID, tc.AddedUUID)
+	if err != nil {
+		return err
+	}
+	if msgID == "" {
+		return fmt.Errorf("no message added under %s", tc.AddedUUID)
+	}
+	return tc.injectEventWithData("message.taken", "the channel", &godog.DocString{Content: `{"msg_id":"` + msgID + `"}`})
+}
+
 func (tc *TestContext) seedExplainTurn(prompt, reply string) error {
 	return tc.seedTurn(prompt, reply, "")
 }

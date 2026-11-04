@@ -598,6 +598,21 @@ func (s *BotSuite) TestHandleIncomingMessageDelayed() {
 	require.Zero(s.T(), received.Priority)
 }
 
+func (s *BotSuite) TestHandleIncomingMessageAdded() {
+	var received *bot.IncomingMessage
+	s.bot.OnMessage(func(_ context.Context, msg *bot.IncomingMessage) {
+		received = msg
+	})
+
+	s.bot.HandleIncomingMessageAdded(context.Background(), "ch-1", "user-1", "and this", "")
+
+	require.NotNil(s.T(), received)
+	require.Equal(s.T(), "and this", received.Content)
+	require.True(s.T(), received.AddToTurn)
+	require.Zero(s.T(), received.Priority)
+	require.Empty(s.T(), received.MessageID)
+}
+
 // --- HandleThreadCreated ---
 
 func (s *BotSuite) TestHandleThreadCreated() {

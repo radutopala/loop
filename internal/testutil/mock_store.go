@@ -191,6 +191,16 @@ func (m *MockStore) MaxQueuedPriority(ctx context.Context, channelID string) (in
 	return args.Int(0), args.Error(1)
 }
 
+func (m *MockStore) TakeAddedMessage(ctx context.Context, channelID, uuid string) (string, error) {
+	args := m.Called(ctx, channelID, uuid)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockStore) RequeueAddedMessages(ctx context.Context, channelID, uuid string) (int64, error) {
+	args := m.Called(ctx, channelID, uuid)
+	return args.Get(0).(int64), args.Error(1)
+}
+
 func (m *MockStore) ListPendingChannels(ctx context.Context) ([]string, error) {
 	args := m.Called(ctx)
 	if args.Get(0) == nil {

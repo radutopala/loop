@@ -146,6 +146,9 @@ type LiveHooks struct {
 	System func(subtype string, event json.RawMessage)
 	// Prompt gets the user message of a turn started from outside Loop.
 	Prompt func(text string)
+	// AddTaken gets the uuid of a message added to the running turn (see
+	// AddToLiveTurn) once the process has taken it in.
+	AddTaken func(uuid string)
 	// Suggestion gets the next prompt the process predicts after a turn,
 	// as OnSuggestion does; it comes after the turn's result, so no turn
 	// is running to take it.

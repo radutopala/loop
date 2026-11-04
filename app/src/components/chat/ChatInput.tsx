@@ -20,7 +20,7 @@ import { ExplainToggle } from "./ExplainToggle";
 import { HoverTip } from "./HoverTip";
 import { LearnToggle } from "./LearnToggle";
 import { composerPlaceholder } from "./promptSuggestion";
-import { chooseSendRoute, normalizeSendMode, type SendMode } from "./sendRouting";
+import { chooseSendRoute, ModifierTap, nextSendMode, normalizeSendMode, oneOffSendHint, oneOffSendMode, type SendMode } from "./sendRouting";
 
 function buildInputStyles(colors: ColorPalette): Record<string, React.CSSProperties> {
   return {
@@ -513,6 +513,16 @@ export function ChatInput({
     setShowSendMenu(false);
   }, []);
 
+  // A lone ⌘ tap (Ctrl elsewhere) in the composer cycles Queue → Add → Steer.
+  const modifierTap = useRef(new ModifierTap(navigator.platform.includes("Mac") ? "Meta" : "Control"));
+  const handleKeyUp = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (modifierTap.current.up(e)) changeSendMode(nextSendMode(sendMode));
+    },
+    [changeSendMode, sendMode],
+  );
+  const cancelModifierTap = useCallback(() => modifierTap.current.cancel(), []);
+
   const isLoopCommand = useCallback((t: string) => t.trimStart().startsWith("/loop"), []);
 
   const handlePaste = useCallback(
@@ -581,11 +591,11 @@ export function ChatInput({
           // Auto-deny the pending approval and force a steer — same shape as
           // ApprovalCard's "Deny with prompt".
           await resolveGateApproval(route.reqId, "deny");
-          await sendMessage(channelId, content, mode, true);
+          await sendMessage(channelId, content, mode, "steer");
           onDismissGate?.();
           return;
         case "message":
-          await sendMessage(channelId, content, mode, route.steer || undefined);
+          await sendMessage(channelId, content, mode, route.delivery);
       }
     },
     [channelId, mode, sendMode, effectiveIsRunning, hasPendingAskUser, hasPendingExitPlan, pendingGateReqId, onDismissGate],
@@ -866,6 +876,7 @@ export function ChatInput({
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      modifierTap.current.down(e);
       // Command picker navigation.
       if (showCommands && filteredCommands.length > 0) {
         if (e.key === "ArrowDown") {
@@ -1009,11 +1020,7 @@ export function ChatInput({
       }
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
-        if (e.metaKey || e.ctrlKey) {
-          handleSend(sendMode === "steer" ? "queue" : "steer");
-        } else {
-          handleSend();
-        }
+        handleSend(oneOffSendMode(sendMode, e));
       }
     },
     [
@@ -1218,10 +1225,13 @@ export function ChatInput({
         value={text}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
+        onKeyUp={handleKeyUp}
+        onMouseDown={cancelModifierTap}
+        onBlur={cancelModifierTap}
         onPaste={handlePaste}
         placeholder={composerPlaceholder(
           suggestion,
-          `Ask Loop anything, / for commands, @ for files${shortcuts.length > 0 ? ", # for shortcuts" : ""} — ${navigator.platform.includes("Mac") ? "⌘" : "Ctrl+"}Enter to ${sendMode === "steer" ? "queue" : "steer"}`,
+          `Ask Loop anything, / for commands, @ for files${shortcuts.length > 0 ? ", # for shortcuts" : ""} — ${oneOffSendHint(sendMode, navigator.platform.includes("Mac"))}`,
         )}
         rows={3}
         disabled={sending}
@@ -1333,7 +1343,7 @@ export function ChatInput({
               }}
               onClick={() => handleSend()}
               disabled={!text.trim() || sending}
-              title={`${sendMode === "steer" ? "Send (steer)" : "Send (queue)"} — ${navigator.platform.includes("Mac") ? "⌘" : "Ctrl+"}Enter to ${sendMode === "steer" ? "queue" : "steer"}`}
+              title={`Send (${sendMode}) — ${oneOffSendHint(sendMode, navigator.platform.includes("Mac"))}`}
             >
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
                 <path d="M8 14V2M8 2L3 7M8 2L13 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
@@ -1361,9 +1371,10 @@ export function ChatInput({
               letterSpacing: 0.3,
             }}
             onClick={() => setShowSendMenu((prev) => !prev)}
-            title={`Send mode — ${navigator.platform.includes("Mac") ? "⌘" : "Ctrl+"}Enter sends with the other mode once`}
+            data-testid="send-mode-chip"
+            title={`Send mode — ${oneOffSendHint(sendMode, navigator.platform.includes("Mac"))}, for one send`}
           >
-            {sendMode === "steer" ? "STEER" : "QUEUE"}
+            {sendMode.toUpperCase()}
             <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
               <path d="M1.5 3L4 5.5L6.5 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
@@ -1389,11 +1400,13 @@ export function ChatInput({
                 {(
                   [
                     ["queue", "Queue", "Messages wait for the agent to finish"],
+                    ["add", "Add", "The agent takes it in after its current step"],
                     ["steer", "Steer", "Stop the agent, then send"],
                   ] as const
                 ).map(([key, label, desc]) => (
                   <button
                     key={key}
+                    data-testid={`send-mode-${key}`}
                     onClick={() => changeSendMode(key)}
                     style={{
                       display: "flex",
@@ -1425,7 +1438,7 @@ export function ChatInput({
                   </button>
                 ))}
                 <div style={{ padding: "4px 8px 2px", fontSize: 10, color: colors.textDim, borderTop: `1px solid ${colors.border}`, marginTop: 2 }}>
-                  {navigator.platform.includes("Mac") ? "⌘" : "Ctrl+"}Enter flips mode for one send
+                  {oneOffSendHint(sendMode, navigator.platform.includes("Mac"))}, for one send
                 </div>
               </div>
             </>

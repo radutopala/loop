@@ -570,6 +570,11 @@ func (b *SlackBot) HandleIncomingMessage(_ context.Context, _, _, _, _ string) {
 func (b *SlackBot) HandleIncomingMessageWithPriority(_ context.Context, _, _, _, _ string, _ int) {
 }
 
+// HandleIncomingMessageAdded is a no-op on Slack — chat platforms don't
+// drive the API add-to-turn path.
+func (b *SlackBot) HandleIncomingMessageAdded(_ context.Context, _, _, _, _ string) {
+}
+
 // HandleIncomingMessageDelayed is a no-op on Slack — chat platforms don't drive
 // the API delayed queue_message path.
 func (b *SlackBot) HandleIncomingMessageDelayed(_ context.Context, _, _, _, _, _ string, _ int64) {

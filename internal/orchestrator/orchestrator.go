@@ -54,6 +54,7 @@ type Bot interface {
 	CreateSimpleThread(ctx context.Context, channelID, name, initialMessage string) (string, error)
 	HandleIncomingMessage(ctx context.Context, channelID, authorID, content, mode string)
 	HandleIncomingMessageWithPriority(ctx context.Context, channelID, authorID, content, mode string, priority int)
+	HandleIncomingMessageAdded(ctx context.Context, channelID, authorID, content, mode string)
 	HandleIncomingMessageDelayed(ctx context.Context, channelID, authorID, msgID, content, mode string, notBefore int64)
 	HandleThreadCreated(ctx context.Context, threadID, authorID, message string)
 }

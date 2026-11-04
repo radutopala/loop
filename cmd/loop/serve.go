@@ -1018,6 +1018,13 @@ func (a *app) serve() error {
 	}
 	// Plugin runs likewise; their plugins are told of those that fail.
 	orch.RecoverPluginRuns(ctx)
+	// Messages added to a turn the prior daemon run was running were never
+	// taken in; requeue them so the wake below runs them as ordinary turns.
+	if n, err := store.RequeueAddedMessages(ctx, "", ""); err != nil {
+		logger.Error("requeueing added messages", "error", err)
+	} else if n > 0 {
+		logger.Warn("requeued messages added to a turn the prior daemon run left", "count", n)
+	}
 	if pending, err := store.ListPendingChannels(ctx); err != nil {
 		logger.Error("listing pending channels", "error", err)
 	} else {

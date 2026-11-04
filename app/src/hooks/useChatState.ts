@@ -14,6 +14,7 @@ import type {
   MessageCreatedData,
   MessageStreamingData,
   MessagesProcessedData,
+  MessageTakenData,
   MessageUpdatedData,
   TimelineItem,
   ToolResultData,
@@ -111,6 +112,7 @@ export function useChatState(channelId: string | null, initialRunningBot?: boole
     appendLiveCompacting,
     markProcessed,
     removeMessage,
+    takeMessage,
     updateMessageContent,
     refetchHead,
   } = useTimeline(channelId);
@@ -278,6 +280,18 @@ export function useChatState(channelId: string | null, initialRunningBot?: boole
         if (processingMsgIdRef.current && data.msg_ids.includes(processingMsgIdRef.current)) {
           setProcessingMsgId(null);
         }
+        refreshQueue();
+        return;
+      }
+      if (event.type === "message.taken") {
+        // The agent took in a message added to its running turn. Unlike
+        // messages.processed this isn't the end of a turn: the run goes on.
+        const data = event.data as MessageTakenData;
+        takeMessage(data.msg_id);
+        refreshQueue();
+        return;
+      }
+      if (event.type === "messages.requeued") {
         refreshQueue();
         return;
       }
@@ -460,7 +474,7 @@ export function useChatState(channelId: string | null, initialRunningBot?: boole
         return;
       }
     },
-    [appendLiveMessage, appendLiveThinking, appendLiveToolUse, appendLiveToolResult, appendLiveCompacting, markProcessed, removeMessage, updateMessageContent, refetchHead, refreshQueue],
+    [appendLiveMessage, appendLiveThinking, appendLiveToolUse, appendLiveToolResult, appendLiveCompacting, markProcessed, removeMessage, takeMessage, updateMessageContent, refetchHead, refreshQueue],
   );
 
   // Subscribe to chat events from the app-level store (single WS).

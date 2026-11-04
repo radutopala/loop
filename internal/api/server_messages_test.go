@@ -218,6 +218,78 @@ func (s *ServerSuite) TestSendMessageNoInterrupt() {
 	canceller.AssertNotCalled(s.T(), "CancelActiveRun")
 }
 
+func (s *ServerSuite) TestSendMessageDelivery() {
+	tests := []struct {
+		name string
+		body string
+		on   func(h *MockIncomingMessageHandler, c *MockRunCanceller)
+	}{
+		{
+			name: "add goes to the running turn",
+			body: `{"channel_id":"ch-1","content":"also this","delivery":"add"}`,
+			on: func(h *MockIncomingMessageHandler, _ *MockRunCanceller) {
+				h.On("HandleIncomingMessageAdded", mock.Anything, "ch-1", "", "also this", "").Return().Once()
+			},
+		},
+		{
+			name: "queue waits behind the run",
+			body: `{"channel_id":"ch-1","content":"also this","delivery":"queue"}`,
+			on: func(h *MockIncomingMessageHandler, _ *MockRunCanceller) {
+				h.On("HandleIncomingMessage", mock.Anything, "ch-1", "", "also this", "").Return().Once()
+			},
+		},
+		{
+			name: "steer cancels the run",
+			body: `{"channel_id":"ch-1","content":"also this","delivery":"steer"}`,
+			on: func(h *MockIncomingMessageHandler, c *MockRunCanceller) {
+				s.store.On("MaxQueuedPriority", mock.Anything, "ch-1").Return(0, nil).Once()
+				h.On("HandleIncomingMessageWithPriority", mock.Anything, "ch-1", "", "also this", "", 1).Return().Once()
+				c.On("CancelActiveRun", "ch-1").Return(true).Once()
+			},
+		},
+		{
+			name: "steer agrees with interrupt",
+			body: `{"channel_id":"ch-1","content":"also this","delivery":"steer","interrupt":true}`,
+			on: func(h *MockIncomingMessageHandler, c *MockRunCanceller) {
+				s.store.On("MaxQueuedPriority", mock.Anything, "ch-1").Return(0, nil).Once()
+				h.On("HandleIncomingMessageWithPriority", mock.Anything, "ch-1", "", "also this", "", 1).Return().Once()
+				c.On("CancelActiveRun", "ch-1").Return(true).Once()
+			},
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			handler := new(MockIncomingMessageHandler)
+			canceller := new(MockRunCanceller)
+			s.srv.SetIncomingMessageHandler(handler)
+			s.srv.SetRunCanceller(canceller)
+			tc.on(handler, canceller)
+
+			rec := s.testRequest("POST", "/api/messages", tc.body)
+
+			require.Equal(s.T(), http.StatusNoContent, rec.Code)
+			handler.AssertExpectations(s.T())
+			canceller.AssertExpectations(s.T())
+		})
+	}
+}
+
+func (s *ServerSuite) TestSendMessageBadDelivery() {
+	for _, body := range []string{
+		`{"channel_id":"ch-1","content":"x","delivery":"later"}`,
+		`{"channel_id":"ch-1","content":"x","delivery":"add","interrupt":true}`,
+		`{"channel_id":"ch-1","content":"x","delivery":"queue","interrupt":true}`,
+	} {
+		handler := new(MockIncomingMessageHandler)
+		s.srv.SetIncomingMessageHandler(handler)
+
+		rec := s.testRequest("POST", "/api/messages", body)
+
+		require.Equal(s.T(), http.StatusBadRequest, rec.Code, body)
+		handler.AssertNotCalled(s.T(), "HandleIncomingMessage", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	}
+}
+
 func (s *ServerSuite) TestSendMessageDelayed() {
 	handler := new(MockIncomingMessageHandler)
 	canceller := new(MockRunCanceller)
@@ -398,6 +470,7 @@ func (s *ServerSuite) TestListQueuedMessagesSuccess() {
 	msgs := []*db.Message{
 		{ID: 12, ChannelID: "ch-1", MsgID: "m12", AuthorID: "u1", AuthorName: "alice", Content: "bumped", Priority: 1, IsRunning: true, CreatedAt: now},
 		{ID: 10, ChannelID: "ch-1", MsgID: "m10", AuthorID: "u1", AuthorName: "alice", Content: "first", CreatedAt: now},
+		{ID: 14, ChannelID: "ch-1", MsgID: "m14", AuthorID: "u1", AuthorName: "alice", Content: "also", AddUUID: "u-1", CreatedAt: now},
 	}
 	s.store.On("ListQueuedUserMessages", mock.Anything, "ch-1").Return(msgs, nil)
 
@@ -406,12 +479,14 @@ func (s *ServerSuite) TestListQueuedMessagesSuccess() {
 
 	var resp queuedMessagesResponse
 	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
-	require.Len(s.T(), resp.Messages, 2)
+	require.Len(s.T(), resp.Messages, 3)
 	require.Equal(s.T(), "m12", resp.Messages[0].MsgID)
 	require.Equal(s.T(), 1, resp.Messages[0].Priority)
 	require.True(s.T(), resp.Messages[0].IsRunning)
 	require.Equal(s.T(), "m10", resp.Messages[1].MsgID)
 	require.False(s.T(), resp.Messages[1].IsRunning)
+	require.False(s.T(), resp.Messages[1].Adding)
+	require.True(s.T(), resp.Messages[2].Adding)
 }
 
 func (s *ServerSuite) TestListQueuedMessagesEmpty() {

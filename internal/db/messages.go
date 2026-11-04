@@ -14,11 +14,11 @@ func (s *SQLiteStore) InsertMessage(ctx context.Context, msg *Message) error {
 	// row sorts after every prior chat-or-event row. Single-writer SQLite
 	// serialises Exec calls, so this subselect can't race itself.
 	result, err := s.db.ExecContext(ctx,
-		`INSERT INTO messages (chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, is_triggered, priority, mode, trigger_msg_id, not_before, created_at, session_id, transcript_uuid, chain_position)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT MAX(chain_position) FROM messages WHERE channel_id = ?), 0) + 1)`,
+		`INSERT INTO messages (chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, is_triggered, priority, mode, trigger_msg_id, not_before, created_at, session_id, transcript_uuid, add_uuid, chain_position)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT MAX(chain_position) FROM messages WHERE channel_id = ?), 0) + 1)`,
 		msg.ChatID, msg.ChannelID, msg.MsgID, msg.AuthorID, msg.AuthorName, msg.Content,
 		boolToInt(msg.IsBot), boolToInt(msg.IsProcessed), boolToInt(msg.IsTriggered),
-		msg.Priority, msg.Mode, msg.TriggerMsgID, msg.NotBefore, msg.CreatedAt, msg.SessionID, msg.TranscriptUUID, msg.ChannelID,
+		msg.Priority, msg.Mode, msg.TriggerMsgID, msg.NotBefore, msg.CreatedAt, msg.SessionID, msg.TranscriptUUID, msg.AddUUID, msg.ChannelID,
 	)
 	if err != nil {
 		return err
@@ -206,6 +206,53 @@ func (s *SQLiteStore) MaxQueuedPriority(ctx context.Context, channelID string) (
 	return int(prio.Int64), nil
 }
 
+// TakeAddedMessage marks the message added to channelID's running turn
+// under uuid as processed, now that the live session has taken it in, and
+// returns its msg_id. Its chain_position moves past every row so far, so the
+// timeline shows it where the agent read it rather than where it was sent,
+// and it links to the trigger of the latest row of a turn, the turn that read
+// it, so the chat renders it inside that turn instead of after it.
+// It returns "" when no waiting added row matches: the row was already
+// requeued, or the echo was of some other input.
+func (s *SQLiteStore) TakeAddedMessage(ctx context.Context, channelID, uuid string) (string, error) {
+	var msgID string
+	err := s.withTx(ctx, func(tx *sql.Tx) error {
+		err := tx.QueryRowContext(ctx,
+			`UPDATE messages SET is_processed = 1, add_uuid = '',
+			   chain_position = (SELECT MAX(chain_position) FROM messages WHERE channel_id = ?) + 1,
+			   trigger_msg_id = COALESCE((SELECT trigger_msg_id FROM messages WHERE channel_id = ? AND trigger_msg_id != ''
+			     ORDER BY chain_position DESC, id DESC LIMIT 1), '')
+			 WHERE channel_id = ? AND add_uuid = ? AND add_uuid != '' AND is_processed = 0 AND kind = 'message'
+			 RETURNING msg_id`,
+			channelID, channelID, channelID, uuid,
+		).Scan(&msgID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
+	})
+	return msgID, err
+}
+
+// RequeueAddedMessages turns messages added to a running turn but not yet
+// taken in into ordinary triggered queue rows: the one written under uuid,
+// whose write failed, or, with uuid empty, all of channelID's, for when the
+// live session they were written to ended before reading them. An empty
+// channelID too requeues them on every channel (daemon startup). Returns
+// how many rows changed.
+func (s *SQLiteStore) RequeueAddedMessages(ctx context.Context, channelID, uuid string) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE messages SET is_triggered = 1, add_uuid = ''
+		 WHERE add_uuid != '' AND is_processed = 0 AND kind = 'message'
+		   AND (? = '' OR channel_id = ?) AND (? = '' OR add_uuid = ?)`,
+		channelID, channelID, uuid, uuid,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // ListPendingChannels returns the set of channel_ids that have at least one
 // eligible (is_triggered=1, is_processed=0, is_running=0) pending message row.
 // Used at daemon startup to wake processors for channels with queued work.
@@ -235,7 +282,7 @@ func (s *SQLiteStore) ListPendingChannels(ctx context.Context) ([]string, error)
 // channel, bot message, or never existed).
 func (s *SQLiteStore) DeleteQueuedMessage(ctx context.Context, channelID, msgID string) (bool, error) {
 	res, err := s.db.ExecContext(ctx,
-		`DELETE FROM messages WHERE channel_id = ? AND msg_id = ? AND is_bot = 0 AND is_processed = 0 AND is_running = 0 AND kind = 'message'`,
+		`DELETE FROM messages WHERE channel_id = ? AND msg_id = ? AND is_bot = 0 AND is_processed = 0 AND is_running = 0 AND kind = 'message' AND add_uuid = ''`,
 		channelID, msgID,
 	)
 	if err != nil {
@@ -265,7 +312,7 @@ func (s *SQLiteStore) SteerQueuedMessage(ctx context.Context, channelID, msgID s
 		                            AND is_triggered = 1 AND kind = 'message'), 0) + 1,
 		     not_before = MIN(not_before, 1)
 		 WHERE channel_id = ? AND msg_id = ? AND is_bot = 0 AND is_processed = 0
-		   AND is_running = 0 AND kind = 'message'`,
+		   AND is_running = 0 AND kind = 'message' AND add_uuid = ''`,
 		channelID, channelID, msgID,
 	)
 	if err != nil {
@@ -278,9 +325,10 @@ func (s *SQLiteStore) SteerQueuedMessage(ctx context.Context, channelID, msgID s
 	return n > 0, nil
 }
 
-// queuedUserRow matches a waiting user message that no run has started yet —
-// the only rows an edit may touch.
-const queuedUserRow = `channel_id = ? AND msg_id = ? AND is_bot = 0 AND is_processed = 0 AND is_running = 0 AND kind = 'message'`
+// queuedUserRow matches a waiting user message that no run has started yet
+// and that isn't already written into a running turn — the only rows an edit
+// may touch.
+const queuedUserRow = `channel_id = ? AND msg_id = ? AND is_bot = 0 AND is_processed = 0 AND is_running = 0 AND kind = 'message' AND add_uuid = ''`
 
 // HoldQueuedMessage takes (or renews) an edit hold on a waiting user message
 // until the unix-seconds time until. Returns false when the row is no longer
@@ -365,14 +413,15 @@ func (s *SQLiteStore) GetRecentMessages(ctx context.Context, channelID string, l
 }
 
 // ListQueuedUserMessages returns every user message on the channel that is
-// still unprocessed, ordered by the same (priority DESC, id ASC) rule the
+// still unprocessed: first the ones added to the running turn and waiting to
+// be taken in, then the queue in the same (priority DESC, id ASC) order the
 // processor uses to pick the next row. This is the canonical queue: the FE
 // should render it directly rather than filtering its paginated subset, which
 // can include stale unprocessed orphans from crashes that the in-memory
 // processor will never run.
 func (s *SQLiteStore) ListQueuedUserMessages(ctx context.Context, channelID string) ([]*Message, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+messageColumns+` FROM messages WHERE channel_id = ? AND kind = 'message' AND is_bot = 0 AND is_processed = 0 ORDER BY priority DESC, id ASC`,
+		`SELECT `+messageColumns+` FROM messages WHERE channel_id = ? AND kind = 'message' AND is_bot = 0 AND is_processed = 0 ORDER BY add_uuid != '' DESC, priority DESC, id ASC`,
 		channelID,
 	)
 	if err != nil {
@@ -391,7 +440,7 @@ func (s *SQLiteStore) ReorderQueuedMessages(ctx context.Context, channelID strin
 		n := len(orderedMsgIDs)
 		for i, msgID := range orderedMsgIDs {
 			if _, err := tx.ExecContext(ctx,
-				`UPDATE messages SET priority = ? WHERE channel_id = ? AND msg_id = ? AND kind = 'message' AND is_bot = 0 AND is_processed = 0`,
+				`UPDATE messages SET priority = ? WHERE channel_id = ? AND msg_id = ? AND kind = 'message' AND is_bot = 0 AND is_processed = 0 AND add_uuid = ''`,
 				n-i, channelID, msgID,
 			); err != nil {
 				return err

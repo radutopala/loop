@@ -109,7 +109,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
   // Pair tool_use with its tool_result by tool_use_id so the renderer can
   // collapse them into a single pill with output. Skip pairing when the
   // tool_use_id is empty (live events without a stable id).
-  const allItems: TimelineItem[] = orderTimelineItems([...items, ...liveTail]);
+  const allItems: TimelineItem[] = orderTimelineItems([...items, ...liveTail], new Set(backendQueue.filter((m) => m.adding).map((m) => m.msg_id)));
   const resultsByToolUseID = new Map<string, { text: string; is_error: boolean; truncated: boolean }>();
   for (const it of allItems) {
     if (it.kind === "tool_result" && it.tool_use_id) {
@@ -298,11 +298,14 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
   const queuedMessages = backendQueue.filter((m) => m.msg_id !== effectiveProcessingMsgId);
 
   // Queue position labels ("1/3" etc.) keyed by msg_id. Backend order is
-  // already (priority DESC, id ASC), so positions are simply 1-indexed.
+  // already (priority DESC, id ASC), so positions are simply 1-indexed. Rows
+  // added to the running turn aren't waiting their turn and get no position.
+  const waiting = queuedMessages.filter((m) => !m.adding);
   const queuePositionByMsgId = new Map<string, string>();
-  queuedMessages.forEach((m, idx) => {
-    queuePositionByMsgId.set(m.msg_id, `${idx + 1}/${queuedMessages.length}`);
+  waiting.forEach((m, idx) => {
+    queuePositionByMsgId.set(m.msg_id, `${idx + 1}/${waiting.length}`);
   });
+  const addingMsgIdSet = new Set(queuedMessages.filter((m) => m.adding).map((m) => m.msg_id));
   // Set of msg_ids the backend considers queued. Used to drive the per-bubble
   // "queued" label so it stays synced with the popup even when the locally
   // loaded message's is_processed field is stale.
@@ -441,6 +444,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
                     showProcessing={isRunning && !msg.is_bot && msg.msg_id === effectiveProcessingMsgId}
                     showQueued={!msg.is_bot && queuedMsgIdSet.has(msg.msg_id)}
                     queuePosition={queuePositionByMsgId.get(msg.msg_id)}
+                    adding={addingMsgIdSet.has(msg.msg_id)}
                     highlighted={msg.id === highlightedMsgId}
                     onQuote={onQuote}
                     turnEnd={turnEnds.has(msg.msg_id)}

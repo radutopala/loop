@@ -51,6 +51,7 @@ type TestContext struct {
 	WorktreeThreadID         string
 	LearnChannelID           string   // hidden learn thread seeded under ChannelID
 	ExplainMsgID             string   // last bot message of a turn seeded in ChannelID
+	AddedUUID                string   // uuid of the message seeded as added to ChannelID's running turn
 	TurnMsgIDs               []string // last bot message of each turn seeded in ChannelID, in order
 	ExplainChannelID         string   // hidden explain thread seeded under ChannelID
 	WorktreePath             string

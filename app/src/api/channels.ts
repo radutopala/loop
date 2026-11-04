@@ -322,10 +322,16 @@ export async function createChannel(name: string, platform = "local"): Promise<s
 // steer stops the active run before the message is queued in front of it —
 // the wire field keeps its original `interrupt` name, which is what the
 // backend's cancel-then-claim path has always been called.
-export async function sendMessage(channelId: string, content: string, mode?: "agent" | "plan", steer?: boolean): Promise<void> {
+/**
+ * How a message meets an active run: queued behind it, added to its running
+ * turn (the backend queues it when no turn runs), or steering it.
+ */
+export type MessageDelivery = "queue" | "add" | "steer";
+
+export async function sendMessage(channelId: string, content: string, mode?: "agent" | "plan", delivery?: MessageDelivery): Promise<void> {
   const body: Record<string, string | boolean> = { channel_id: channelId, content };
   if (mode && mode !== "agent") body.mode = mode;
-  if (steer) body.interrupt = true;
+  if (delivery && delivery !== "queue") body.delivery = delivery;
   const res = await apiFetch(`${getApiUrl()}/api/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

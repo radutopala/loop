@@ -20,6 +20,8 @@ const (
 	EventMessagesProcessed         = "messages.processed"
 	EventMessageDeleted            = "message.deleted"
 	EventMessageUpdated            = "message.updated"
+	EventMessageTaken              = "message.taken"
+	EventMessagesRequeued          = "messages.requeued"
 	EventAgentStatus               = "agent.status"
 	EventToolUse                   = "tool.use"
 	EventToolResult                = "tool.result"
@@ -213,6 +215,26 @@ func (h *EventsHub) BroadcastMessagesProcessed(channelID string, data events.Mes
 		Type:      EventMessagesProcessed,
 		ChannelID: channelID,
 		Data:      data,
+	})
+}
+
+// BroadcastMessageTaken sends a message.taken event for a message added to
+// the running turn that the agent has now taken in.
+func (h *EventsHub) BroadcastMessageTaken(channelID string, data events.MessageTakenData) {
+	h.Broadcast(Event{
+		Type:      EventMessageTaken,
+		ChannelID: channelID,
+		Data:      data,
+	})
+}
+
+// BroadcastMessagesRequeued sends a messages.requeued event: messages added
+// to a live turn that was gone before taking them in are queued as ordinary
+// messages now.
+func (h *EventsHub) BroadcastMessagesRequeued(channelID string) {
+	h.Broadcast(Event{
+		Type:      EventMessagesRequeued,
+		ChannelID: channelID,
 	})
 }
 

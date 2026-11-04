@@ -385,7 +385,7 @@ func (s *MainSuite) TestServeResumesPendingMessages() {
 	// expectations that match BEFORE the SetupTest .Maybe (which won't run
 	// because the new ones consume the call). We tag .Once() to make this
 	// crystal clear in the suite output.
-	m.store.ExpectedCalls = filterMockCalls(m.store.ExpectedCalls, "ResetStaleRunningMessages", "ListPendingChannels", "FailInterruptedExplanations", "FailInterruptedLearnPasses")
+	m.store.ExpectedCalls = filterMockCalls(m.store.ExpectedCalls, "ResetStaleRunningMessages", "ListPendingChannels", "FailInterruptedExplanations", "FailInterruptedLearnPasses", "RequeueAddedMessages")
 	m.store.On("FailInterruptedExplanations", mock.Anything).Return(int64(2), nil).Once()
 	m.store.On("FailInterruptedLearnPasses", mock.Anything).Return(int64(1), nil).Once()
 	m.store.On("ResetStaleRunningMessages", mock.Anything).Return([]db.StaleRunningMessage{
@@ -396,6 +396,7 @@ func (s *MainSuite) TestServeResumesPendingMessages() {
 	}, nil).Once()
 	// Returning a pending channel kicks off orch.ResumeChannel — that goroutine
 	// calls ClaimNextPending; allow it to no-op cleanly with Maybe.
+	m.store.On("RequeueAddedMessages", mock.Anything, "", "").Return(int64(1), nil).Once()
 	m.store.On("ListPendingChannels", mock.Anything).Return([]string{"ch-pending"}, nil).Once()
 	m.store.On("ClaimNextPending", mock.Anything, "ch-pending").Return(nil, nil).Maybe()
 
@@ -415,6 +416,7 @@ func (s *MainSuite) TestServeResumesPendingMessages() {
 	m.store.AssertCalled(s.T(), "ResetStaleRunningMessages", mock.Anything)
 	m.store.AssertCalled(s.T(), "FailInterruptedExplanations", mock.Anything)
 	m.store.AssertCalled(s.T(), "FailInterruptedLearnPasses", mock.Anything)
+	m.store.AssertCalled(s.T(), "RequeueAddedMessages", mock.Anything, "", "")
 	m.store.AssertCalled(s.T(), "ListPendingChannels", mock.Anything)
 }
 
@@ -425,10 +427,11 @@ func (s *MainSuite) TestServeResumesPendingMessages() {
 func (s *MainSuite) TestServeStartupRecoveryErrors() {
 	m := s.setupServeMocks()
 	m.setupHappyBot()
-	m.store.ExpectedCalls = filterMockCalls(m.store.ExpectedCalls, "ResetStaleRunningMessages", "ListPendingChannels", "FailInterruptedExplanations", "FailInterruptedLearnPasses")
+	m.store.ExpectedCalls = filterMockCalls(m.store.ExpectedCalls, "ResetStaleRunningMessages", "ListPendingChannels", "FailInterruptedExplanations", "FailInterruptedLearnPasses", "RequeueAddedMessages")
 	m.store.On("ResetStaleRunningMessages", mock.Anything).Return(nil, errors.New("db gone")).Once()
 	m.store.On("FailInterruptedExplanations", mock.Anything).Return(int64(0), errors.New("db gone")).Once()
 	m.store.On("FailInterruptedLearnPasses", mock.Anything).Return(int64(0), errors.New("db gone")).Once()
+	m.store.On("RequeueAddedMessages", mock.Anything, "", "").Return(int64(0), errors.New("db gone")).Once()
 	m.store.On("ListPendingChannels", mock.Anything).Return(nil, errors.New("read failed")).Once()
 
 	errCh := make(chan error, 1)

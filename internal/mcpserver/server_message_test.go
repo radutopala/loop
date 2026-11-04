@@ -175,11 +175,13 @@ func (s *MCPServerSuite) TestListQueuedMessages() {
 			name: "running, delayed and queued",
 			body: `{"messages":[` +
 				`{"msg_id":"m1","content":"check the PR","is_running":true},` +
+				`{"msg_id":"m4","content":"also this","adding":true},` +
 				`{"msg_id":"m2","content":"tag\nthe release","not_before":1790000000},` +
 				`{"msg_id":"m3","content":"` + long + `"}]}`,
 			want: []string{
-				"3 queued message(s)",
+				"4 queued message(s)",
 				"- m1 [running] check the PR",
+				"- m4 [adding to the running turn] also this",
 				"- m2 [delayed until 2026-09-21T14:13:20Z] tag the release",
 				"- m3 [queued] " + strings.Repeat("x", 120) + "…",
 			},
@@ -212,7 +214,7 @@ func (s *MCPServerSuite) TestListQueuedMessagesErrors() {
 }
 
 func (s *MCPServerSuite) TestDeleteQueuedMessage() {
-	const queue = `{"messages":[{"msg_id":"m1","content":"now","is_running":true},{"msg_id":"m2","content":"later","not_before":1790000000}]}`
+	const queue = `{"messages":[{"msg_id":"m1","content":"now","is_running":true},{"msg_id":"m3","content":"also","adding":true},{"msg_id":"m2","content":"later","not_before":1790000000}]}`
 	tests := []struct {
 		name       string
 		msgID      string
@@ -223,6 +225,7 @@ func (s *MCPServerSuite) TestDeleteQueuedMessage() {
 	}{
 		{name: "removes a waiting message", msgID: "m2", deleteCode: http.StatusNoContent, wantDelete: true, wantText: "Removed queued message m2."},
 		{name: "refuses the running message", msgID: "m1", wantError: true, wantText: "m1 is already running"},
+		{name: "refuses a message added to the turn", msgID: "m3", wantError: true, wantText: "m3 was added to the running turn"},
 		{name: "unknown id", msgID: "gone", wantError: true, wantText: "no queued message gone"},
 		{name: "delete fails", msgID: "m2", deleteCode: http.StatusNotFound, wantDelete: true, wantError: true, wantText: "API error (status 404)"},
 		{name: "msg_id required", msgID: "", wantError: true, wantText: "msg_id is required"},

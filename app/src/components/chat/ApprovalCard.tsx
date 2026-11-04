@@ -139,7 +139,7 @@ export function ApprovalCard({
         // Cancel the now-resumed run and queue the prompt as the latest user
         // message; the next run will see the deny tool result plus this new
         // instruction at the top of the agent's context.
-        await sendMessage(channelId, text, undefined, true);
+        await sendMessage(channelId, text, undefined, "steer");
       }
       onResolved?.();
     } catch (e) {

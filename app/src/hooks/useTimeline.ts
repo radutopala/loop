@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchTimeline } from "../api/loopApi";
 import type { Message, TimelineCursor, TimelineItem } from "../types";
 import { logErr } from "../utils/log";
+import { latestTrigger } from "./latestTrigger";
 import { TimelineCache } from "./timelineCache";
 
 const PAGE_SIZE = 50;
@@ -28,6 +29,9 @@ interface UseTimelineResult {
   // Mutators for chat-row events that already affected DB state.
   markProcessed: (msgIds: string[]) => void;
   removeMessage: (msgId: string) => void;
+  // Marks a message added to the running turn processed and moves it to the
+  // end of the live tail: the agent read it there, after its current step.
+  takeMessage: (msgId: string) => void;
   updateMessageContent: (msgId: string, content: string) => void;
   // Refetch the head of the timeline + drop the live tail (called on run completion).
   refetchHead: () => void;
@@ -225,6 +229,25 @@ export function useTimeline(channelId: string | null, cache: TimelineCache = las
     setLiveTail(filter);
   }, []);
 
+  const takeMessage = useCallback(
+    (msgId: string) => {
+      const isIt = (it: TimelineItem) => it.kind === "message" && it.data.msg_id === msgId;
+      const found = itemsRef.current.find(isIt);
+      setItems((prev) => (prev.some(isIt) ? prev.filter((it) => !isIt(it)) : prev));
+      setLiveTail((prev) => {
+        const item = prev.find(isIt) ?? found;
+        if (!item || item.kind !== "message") return prev;
+        // It joins the turn that read it, the turn of the latest linked row,
+        // as the backend links it, so it renders inside that turn.
+        const rest = prev.filter((it) => !isIt(it));
+        const trigger = latestTrigger([...itemsRef.current.filter((it) => !isIt(it)), ...rest]) ?? item.trigger_msg_id;
+        const moved: TimelineItem = { ...item, position: 0, id: nextLiveId(), trigger_msg_id: trigger, data: { ...item.data, is_processed: true, trigger_msg_id: trigger } };
+        return [...rest, moved];
+      });
+    },
+    [nextLiveId],
+  );
+
   const updateMessageContent = useCallback((msgId: string, content: string) => {
     const apply = (list: TimelineItem[]): TimelineItem[] => {
       let changed = false;
@@ -320,6 +343,7 @@ export function useTimeline(channelId: string | null, cache: TimelineCache = las
     appendLiveCompacting,
     markProcessed,
     removeMessage,
+    takeMessage,
     updateMessageContent,
     refetchHead,
   };
