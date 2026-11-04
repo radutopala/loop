@@ -292,6 +292,49 @@ func (s *StoreSuite) TestGetChannelsByDirPathError() {
 	require.Nil(s.T(), channels)
 }
 
+func (s *StoreSuite) TestGetWorktreeChannelsByDirPath() {
+	now := time.Now().UTC()
+	tests := []struct {
+		name    string
+		expect  func(*sqlmock.ExpectedQuery)
+		want    []string
+		wantErr error
+	}{
+		{
+			name: "worktree channels",
+			expect: func(q *sqlmock.ExpectedQuery) {
+				q.WillReturnRows(newMockChannelRows().
+					AddRow(1, "wt", "", "wt", "/repo/.worktrees/wt", "root", "local", 1, "", "", 0, "", 1, "", "", 0, 0, "", "", "", "", "", now, now))
+			},
+			want: []string{"wt"},
+		},
+		{
+			name:   "none",
+			expect: func(q *sqlmock.ExpectedQuery) { q.WillReturnRows(newMockChannelRows()) },
+		},
+		{
+			name:    "query fails",
+			expect:  func(q *sqlmock.ExpectedQuery) { q.WillReturnError(sql.ErrConnDone) },
+			wantErr: sql.ErrConnDone,
+		},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			tt.expect(s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE dir_path = \? AND worktree = 1`).
+				WithArgs("/repo/.worktrees/wt"))
+
+			channels, err := s.store.GetWorktreeChannelsByDirPath(context.Background(), "/repo/.worktrees/wt")
+			require.ErrorIs(s.T(), err, tt.wantErr)
+			var got []string
+			for _, ch := range channels {
+				got = append(got, ch.ChannelID)
+			}
+			require.Equal(s.T(), tt.want, got)
+			require.NoError(s.T(), s.mock.ExpectationsWereMet())
+		})
+	}
+}
+
 func (s *StoreSuite) TestIsChannelActive() {
 	s.mock.ExpectQuery(`SELECT COUNT`).WithArgs("ch1").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	active, err := s.store.IsChannelActive(context.Background(), "ch1")

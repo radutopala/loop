@@ -277,6 +277,9 @@ type TrustStore struct {
 	// readIn reads a project config without following a symlink out of
 	// the project.
 	readIn func(root, path string) ([]byte, error)
+	// projects keeps the project configs MemoryPaths decoded, so an unchanged
+	// one isn't read or decoded again; nil reads each through readIn.
+	projects *projectCache
 	// buildFiles fingerprints the build context of the project in dir,
 	// nil when it has none.
 	buildFiles func(dir string) (buildctx.Files, error)
@@ -316,6 +319,7 @@ func NewTrustStoreIn(userConfigDir func() (string, error)) *TrustStore {
 		readFile:      os.ReadFile,
 		stat:          os.Stat,
 		readIn:        osutil.ReadFileIn,
+		projects:      newProjectCache(),
 		buildFiles:    func(dir string) (buildctx.Files, error) { return projectBuildFiles(builds, dir) },
 		writeFile:     os.WriteFile,
 		mkdirAll:      os.MkdirAll,
@@ -500,11 +504,7 @@ func projectBuildFiles(c *buildctx.Cache, dir string) (buildctx.Files, error) {
 // MemoryPaths returns the project's memory paths that apply: the trusted
 // ones. An unreadable project config has none.
 func (s *TrustStore) MemoryPaths(dir string) []string {
-	data, err := s.readIn(dir, filepath.Join(dir, ".loop", "config.json"))
-	if err != nil {
-		return nil
-	}
-	pc, err := parseProjectConfig(data)
+	pc, err := s.projectConfig(dir)
 	if err != nil {
 		return nil
 	}
@@ -512,6 +512,19 @@ func (s *TrustStore) MemoryPaths(dir string) []string {
 		return f.Memory.Paths
 	}
 	return nil
+}
+
+// projectConfig decodes the project config in dir.
+func (s *TrustStore) projectConfig(dir string) (*projectConfig, error) {
+	path := filepath.Join(dir, ".loop", "config.json")
+	if s.projects != nil {
+		return s.projects.read(dir, path)
+	}
+	data, err := s.readIn(dir, path)
+	if err != nil {
+		return nil, err
+	}
+	return parseProjectConfig(data)
 }
 
 // Status reports whether the project config in dir is trusted.

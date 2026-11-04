@@ -19,6 +19,7 @@ type Store interface {
 	GetChannel(ctx context.Context, channelID string) (*Channel, error)
 	GetChannelByDirPath(ctx context.Context, dirPath string, platform types.Platform) (*Channel, error)
 	GetChannelsByDirPath(ctx context.Context, dirPath string) ([]*Channel, error)
+	GetWorktreeChannelsByDirPath(ctx context.Context, dirPath string) ([]*Channel, error)
 	IsChannelActive(ctx context.Context, channelID string) (bool, error)
 	UpdateSessionID(ctx context.Context, channelID string, sessionID string) error
 	MarkSessionForkPending(ctx context.Context, channelID string, sessionID string) (bool, error)

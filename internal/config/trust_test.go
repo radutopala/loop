@@ -405,11 +405,52 @@ func (s *TrustSuite) TestMemoryPaths() {
 	require.Nil(s.T(), s.store.MemoryPaths("/proj"))
 }
 
+func (s *TrustSuite) TestMemoryPathsCachedAcrossCalls() {
+	dir := s.T().TempDir()
+	cfgDir := s.T().TempDir()
+	path := filepath.Join(dir, ".loop", "config.json")
+	require.NoError(s.T(), os.MkdirAll(filepath.Dir(path), 0o755))
+	write := func(data string, mtime time.Time) {
+		require.NoError(s.T(), os.WriteFile(path, []byte(data), 0o644))
+		require.NoError(s.T(), os.Chtimes(path, mtime, mtime))
+	}
+	base := time.Now().Add(-time.Hour)
+	write(`{"memory": {"paths": ["/docs"]}}`, base)
+
+	store := NewTrustStoreIn(func() (string, error) { return cfgDir, nil })
+	opened := 0
+	open := store.projects.open
+	store.projects.open = func(root, p string) (*os.File, error) {
+		opened++
+		return open(root, p)
+	}
+	require.Nil(s.T(), store.MemoryPaths(dir), "not trusted yet")
+	require.NoError(s.T(), NewTrustStoreIn(store.userConfigDir).Trust(dir, ""))
+	got := store.MemoryPaths(dir)
+	require.Equal(s.T(), []string{"/docs"}, got, "another store's trust applies")
+	got[0] = "/changed"
+	require.Equal(s.T(), []string{"/docs"}, store.MemoryPaths(dir), "callers don't share what's kept")
+	require.Equal(s.T(), 3, opened)
+
+	require.Len(s.T(), store.projects.files, 1)
+	kept := store.projects.files[path].data
+	require.Equal(s.T(), []string{"/docs"}, store.MemoryPaths(dir))
+	require.Same(s.T(), &kept[0], &store.projects.files[path].data[0], "an unchanged file isn't read again")
+
+	write(`{"memory": {"paths": ["/other"]}}`, base.Add(time.Minute))
+	require.Equal(s.T(), []string{"/docs"}, store.MemoryPaths(dir), "an untrusted edit keeps the trusted paths")
+	require.NoError(s.T(), NewTrustStoreIn(store.userConfigDir).Trust(dir, ""))
+	require.Equal(s.T(), []string{"/other"}, store.MemoryPaths(dir), "the edit, once trusted")
+	require.NoError(s.T(), os.Remove(path))
+	require.Nil(s.T(), store.MemoryPaths(dir), "a removed file has none")
+}
+
 func (s *TrustSuite) TestNewTrustStore() {
 	st := NewTrustStore()
 	require.NotNil(s.T(), st.userConfigDir)
 	require.NotNil(s.T(), st.readFile)
 	require.NotNil(s.T(), st.readIn)
+	require.NotNil(s.T(), st.projects)
 	require.NotNil(s.T(), st.buildFiles)
 	require.NotNil(s.T(), st.writeFile)
 	require.NotNil(s.T(), st.mkdirAll)

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -148,7 +149,7 @@ func (s *Server) recordConfig(path, source string) {
 		}
 		return
 	}
-	if !utf8.Valid(data) || slices.ContainsFunc(configHistoryPrivate, func(m string) bool { return strings.Contains(string(data), m) }) {
+	if !utf8.Valid(data) || slices.ContainsFunc(configHistoryPrivate, func(m string) bool { return bytes.Contains(data, []byte(m)) }) {
 		return
 	}
 	sum := sha256.Sum256(data)
