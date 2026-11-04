@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { EditorStateApi } from "../../hooks/useEditorState";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
@@ -31,6 +31,7 @@ export function FileTreePanel({ channelId: _channelId, dirPath, branch, editorSt
     previewTab,
     loadDir,
     refreshTree,
+    showTree,
     toggleDir,
     setSelectedDir,
     addExtraDir,
@@ -46,6 +47,10 @@ export function FileTreePanel({ channelId: _channelId, dirPath, branch, editorSt
   const [newDirName, setNewDirName] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; path: string; isDir: boolean } | null>(null);
   const [addDirError, setAddDirError] = useState<string | null>(null);
+
+  useEffect(() => {
+    showTree();
+  }, [showTree]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent, path: string, isDir: boolean) => {
     e.preventDefault();

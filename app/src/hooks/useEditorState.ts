@@ -99,6 +99,8 @@ export interface EditorStateApi {
   // Actions on the file tree
   loadDir: (path: string, rootIndex?: number) => Promise<void>;
   refreshTree: () => Promise<void>;
+  /** Called by a file tree panel as it mounts, to load the root listings. */
+  showTree: () => void;
   toggleDir: (pathKey: string) => void;
   setSelectedDir: (pathKey: string) => void;
   addExtraDir: (dir: string) => Promise<void>;
@@ -138,6 +140,8 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
   const [roots, setRoots] = useState<RootEntry[]>([]);
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set([makePathKey(0, "")]));
   const [dirContents, setDirContents] = useState<Map<string, FileEntry[]>>(new Map());
+  const [treeShown, setTreeShown] = useState(false);
+  const [treeRootIndexes, setTreeRootIndexes] = useState<number[] | null>(null);
   const [selectedDir, setSelectedDir] = useState(makePathKey(0, ""));
 
   const [openTabs, setOpenTabs] = useState<string[]>(() => loadEditorTabs(channelId, tabsKey).tabs);
@@ -273,12 +277,21 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
           for (const root of r) next.add(makePathKey(root.index, ""));
           return next;
         });
-        for (const root of r) loadDir(".", root.index);
+        setTreeRootIndexes(r.map((root) => root.index));
       })
       .catch(() => {
-        loadDir(".", 0);
+        setTreeRootIndexes([0]);
       });
-  }, [channelId, loadDir]);
+  }, [channelId]);
+
+  // List each root once a file tree is on screen. Layouts without one skip
+  // these requests, one per root, when a chat opens.
+  useEffect(() => {
+    if (!treeShown || !treeRootIndexes) return;
+    for (const index of treeRootIndexes) loadDir(".", index);
+  }, [treeShown, treeRootIndexes, loadDir]);
+
+  const showTree = useCallback(() => setTreeShown(true), []);
 
   // On mount, if a tab was persisted, fetch its content.
   useEffect(() => {
@@ -951,6 +964,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     codeEditorRef,
     loadDir,
     refreshTree,
+    showTree,
     toggleDir,
     setSelectedDir,
     addExtraDir,
