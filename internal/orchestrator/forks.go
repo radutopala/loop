@@ -16,12 +16,17 @@ import (
 // directory Claude Code keeps for a working directory.
 type sessionFiles struct {
 	userHomeDir func() (string, error)
-	readFile    func(string) ([]byte, error)
+	readTail    func(path string, n int64) ([]byte, bool, error)
 	removeAll   func(string) error
 }
 
+// promptTailStart is how much of a transcript promptOf reads first. A session
+// can reach hundreds of MB, while a prompt sits about a turn before its reply.
+const promptTailStart = 1 << 20
+
 // promptOf returns the uuid of the prompt that entry uuid answers, in the
-// transcript of session sessionID run in workDir.
+// transcript of session sessionID run in workDir. It reads the transcript's
+// end and widens that until the parent links from uuid reach the prompt.
 func (f sessionFiles) promptOf(workDir, sessionID, uuid string) (string, error) {
 	home, err := f.userHomeDir()
 	if err != nil {
@@ -31,16 +36,19 @@ func (f sessionFiles) promptOf(workDir, sessionID, uuid string) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	data, err := f.readFile(path)
-	if err != nil {
-		return "", err
+	for n := int64(promptTailStart); ; n *= 4 {
+		data, whole, err := f.readTail(path, n)
+		if err != nil {
+			return "", err
+		}
+		entries, _ := transcript.Parse(data)
+		if prompt, ok := transcript.PromptOf(entries, uuid); ok {
+			return prompt.UUID, nil
+		}
+		if whole {
+			return "", errors.New("the prompt isn't in the transcript")
+		}
 	}
-	entries, _ := transcript.Parse(data)
-	prompt, ok := transcript.PromptOf(entries, uuid)
-	if !ok {
-		return "", errors.New("the prompt isn't in the transcript")
-	}
-	return prompt.UUID, nil
 }
 
 // recordPrompt records on user message msgID of channel ch where its prompt

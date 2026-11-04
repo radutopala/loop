@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -266,9 +267,9 @@ func (s *OrchestratorSuite) readTranscripts() *[]string {
 	var read []string
 	s.orch.sessionFiles = sessionFiles{
 		userHomeDir: func() (string, error) { return "/home/u", nil },
-		readFile: func(path string) ([]byte, error) {
+		readTail: func(path string, _ int64) ([]byte, bool, error) {
 			read = append(read, path)
-			return []byte(promptTranscript), nil
+			return []byte(promptTranscript), true, nil
 		},
 	}
 	return &read
@@ -294,9 +295,9 @@ func (s *OrchestratorSuite) TestSessionFilesPromptOf() {
 		s.Run(tc.name, func() {
 			f := sessionFiles{
 				userHomeDir: func() (string, error) { return "/home/u", tc.homeErr },
-				readFile: func(path string) ([]byte, error) {
+				readTail: func(path string, _ int64) ([]byte, bool, error) {
 					require.Equal(s.T(), "/home/u/.claude/projects/-project/sess-1.jsonl", path)
-					return []byte(promptTranscript), tc.readErr
+					return []byte(promptTranscript), true, tc.readErr
 				},
 			}
 			got, err := f.promptOf("/project", tc.sessionID, tc.uuid)
@@ -306,6 +307,57 @@ func (s *OrchestratorSuite) TestSessionFilesPromptOf() {
 			}
 			require.NoError(s.T(), err)
 			require.Equal(s.T(), tc.want, got)
+		})
+	}
+}
+
+// TestSessionFilesPromptOfWidens covers reading more of the transcript only
+// while the parent links from the reply leave what's been read.
+func (s *OrchestratorSuite) TestSessionFilesPromptOfWidens() {
+	lines := strings.Split(promptTranscript, "\n")
+	reply, fromAttachment := lines[4], lines[3]+"\n"+lines[4]
+	cut := lines[2][len(lines[2])/2:] + "\n"
+	tests := []struct {
+		name       string
+		tails      []string
+		wantWidths []int64
+		wantErr    string
+	}{
+		{
+			name:       "the first read reaches the prompt",
+			tails:      []string{cut + lines[2] + "\n" + fromAttachment},
+			wantWidths: []int64{promptTailStart},
+		},
+		{
+			name:       "widens until it does",
+			tails:      []string{reply, cut + fromAttachment, promptTranscript},
+			wantWidths: []int64{promptTailStart, promptTailStart * 4, promptTailStart * 16},
+		},
+		{
+			name:       "stops at the whole transcript",
+			tails:      []string{reply, cut + fromAttachment},
+			wantWidths: []int64{promptTailStart, promptTailStart * 4},
+			wantErr:    "isn't in the transcript",
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			var widths []int64
+			f := sessionFiles{
+				userHomeDir: func() (string, error) { return "/home/u", nil },
+				readTail: func(_ string, n int64) ([]byte, bool, error) {
+					widths = append(widths, n)
+					return []byte(tc.tails[len(widths)-1]), len(widths) == len(tc.tails), nil
+				},
+			}
+			got, err := f.promptOf("/project", "sess-1", "a-3")
+			require.Equal(s.T(), tc.wantWidths, widths)
+			if tc.wantErr != "" {
+				require.ErrorContains(s.T(), err, tc.wantErr)
+				return
+			}
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), "u-2", got)
 		})
 	}
 }

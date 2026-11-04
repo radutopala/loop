@@ -18,6 +18,7 @@ import (
 	"github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/randutil"
 	"github.com/radutopala/loop/internal/scheduler"
+	"github.com/radutopala/loop/internal/transcript"
 	"github.com/radutopala/loop/internal/types"
 	"github.com/radutopala/loop/internal/workflow"
 )
@@ -142,7 +143,7 @@ func New(store db.Store, bot Bot, runner Runner, sched scheduler.Scheduler, logg
 		tasks:             newTaskRegistry(),
 		delayPollInterval: DelayPollInterval,
 		delayStop:         make(chan struct{}),
-		sessionFiles:      sessionFiles{userHomeDir: os.UserHomeDir, readFile: os.ReadFile, removeAll: os.RemoveAll},
+		sessionFiles:      sessionFiles{userHomeDir: os.UserHomeDir, readTail: transcript.ReadTail, removeAll: os.RemoveAll},
 	}
 	o.loadWorktreeProjectConfig = config.LoadWorktreeProjectConfig
 	o.hiddenKinds = o.defaultHiddenKinds()

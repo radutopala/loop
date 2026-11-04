@@ -1,6 +1,9 @@
 package transcript
 
 import (
+	"errors"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -35,6 +38,60 @@ var session = []string{
 func parse(lines ...string) []Entry {
 	entries, _ := Parse([]byte(strings.Join(lines, "\n")))
 	return entries
+}
+
+// seekFailer fails the seek numbered failAt (from 1).
+type seekFailer struct {
+	io.ReadSeeker
+	failAt, seeks int
+}
+
+func (f *seekFailer) Seek(offset int64, whence int) (int64, error) {
+	f.seeks++
+	if f.seeks == f.failAt {
+		return 0, errors.New("seek failed")
+	}
+	return f.ReadSeeker.Seek(offset, whence)
+}
+
+// shortReader's file shrinks after its size was taken.
+type shortReader struct{ io.ReadSeeker }
+
+func (shortReader) Read([]byte) (int, error) { return 0, io.EOF }
+
+func (s *TranscriptSuite) TestReadTail() {
+	path := filepath.Join(s.T().TempDir(), "t.jsonl")
+	require.NoError(s.T(), os.WriteFile(path, []byte("0123456789"), 0o600))
+	tests := []struct {
+		name      string
+		n         int64
+		want      string
+		wantWhole bool
+	}{
+		{name: "the end", n: 4, want: "6789"},
+		{name: "exactly all", n: 10, want: "0123456789", wantWhole: true},
+		{name: "more than all", n: 11, want: "0123456789", wantWhole: true},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			got, whole, err := ReadTail(path, tc.n)
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tc.want, string(got))
+			require.Equal(s.T(), tc.wantWhole, whole)
+		})
+	}
+}
+
+func (s *TranscriptSuite) TestReadTailErrors() {
+	file := strings.NewReader("0123456789")
+	_, _, err := ReadTail(filepath.Join(s.T().TempDir(), "missing.jsonl"), 4)
+	require.ErrorIs(s.T(), err, os.ErrNotExist)
+	for _, failAt := range []int{1, 2} {
+		_, _, err := readTail(&seekFailer{ReadSeeker: file, failAt: failAt}, 4)
+		require.ErrorContains(s.T(), err, "seek failed")
+	}
+	_, _, err = readTail(shortReader{file}, 4)
+	require.ErrorIs(s.T(), err, io.EOF)
 }
 
 func (s *TranscriptSuite) TestParse() {
