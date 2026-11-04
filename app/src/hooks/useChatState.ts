@@ -21,6 +21,7 @@ import type {
   ToolUseData,
   WSEvent,
 } from "../types";
+import { latestGuard } from "./latestGuard";
 import type { ActiveChatState, ChatEventListener } from "./useChatStateStore";
 import { useTimeline } from "./useTimeline";
 
@@ -136,22 +137,24 @@ export function useChatState(channelId: string | null, initialRunningBot?: boole
   // resolves after a channel switch doesn't write stale rows into the new
   // channel's state.
   const queueChannelRef = useRef<string | null>(channelId);
+  const [startQueueFetch] = useState(latestGuard);
   const refreshQueue = useCallback(() => {
     if (!channelId) {
       setQueuedMessages([]);
       return;
     }
     const target = channelId;
+    const isLatest = startQueueFetch();
     fetchQueuedMessages(target)
       .then((msgs) => {
-        if (queueChannelRef.current === target) {
+        if (queueChannelRef.current === target && isLatest()) {
           setQueuedMessages(msgs);
         }
       })
       .catch((err) => {
         console.warn("[chat] fetchQueuedMessages failed:", err);
       });
-  }, [channelId]);
+  }, [channelId, startQueueFetch]);
 
   // Fetch the queue whenever the selected channel changes.
   useEffect(() => {

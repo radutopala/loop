@@ -84,7 +84,11 @@ BDD_STAGE_CONFIG = mkdir -p $(BDD_DATA) && ( umask 077; tok=$$(sed -nE 's/.*clau
 BDD_CONFIG_ARGS = -e LOOP_DOCS_HOST_CONFIG=$(BDD_HOST_CONFIG) -e LOOP_BDD_AGENTGATE=0
 else
 BDD_STAGE_CONFIG = true
-BDD_CONFIG_ARGS = -v "$(HOME)/.loop/config.json:/host-loop-config.json:ro" -e LOOP_DOCS_HOST_CONFIG=/host-loop-config.json
+# Without a token in the config, live agents can log in with your Claude
+# credentials file. The daemon checks a mount's source exists, so the runner
+# needs the file at its host path too.
+BDD_CREDENTIALS := $(wildcard $(HOME)/.claude/.credentials.json)
+BDD_CONFIG_ARGS = -v "$(HOME)/.loop/config.json:/host-loop-config.json:ro" -e LOOP_DOCS_HOST_CONFIG=/host-loop-config.json $(if $(BDD_CREDENTIALS),-v "$(BDD_CREDENTIALS):$(BDD_CREDENTIALS)" -e LOOP_DOCS_CLAUDE_CREDENTIALS="$(BDD_CREDENTIALS)")
 endif
 
 test-component-bdd: ## Run BDD component tests (via Docker on host, natively in CI)

@@ -150,8 +150,9 @@ function sendGet(input: string): Promise<Response> {
 }
 
 /** How long an identical plain GET can join one already sent. It covers the
- *  views of a chat all asking as it opens; anything later asks again, so a
- *  refetch after a change never gets an answer from before it. */
+ *  views of a chat all asking as it opens. Anything later asks again, but a
+ *  change can land inside the window, so a refetch that follows one uses
+ *  apiFetchFresh. */
 const SHARE_WINDOW_MS = 50;
 
 const sharedGets = new Map<string, { started: number; res: Promise<Response> }>();
@@ -177,6 +178,13 @@ export function apiFetch(input: string, init?: RequestInit): Promise<Response> {
     shared = entry;
   }
   return shared.res.then((res) => res.clone());
+}
+
+/** apiFetch for a refetch after a change: a plain GET that never joins one sent
+ *  earlier, whose answer can predate the change. Requests can overlap, so the
+ *  caller keeps only the latest answer. */
+export function apiFetchFresh(input: string): Promise<Response> {
+  return sendGet(input);
 }
 
 /** WebSocket subprotocols that carry the token: the server answers with

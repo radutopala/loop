@@ -287,6 +287,25 @@ describe("apiFetch", () => {
       void api.apiFetch("http://api/x", { method: "GET" });
       expect(fetchMock).toHaveBeenCalledTimes(2);
     });
+
+    it("never lets a fresh GET join one sent earlier, or be joined", async () => {
+      const { api, fetchMock } = await setup();
+      void api.apiFetch("http://api/x");
+      void api.apiFetchFresh("http://api/x");
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      void api.apiFetch("http://api/x");
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      void api.apiFetchFresh("http://api/x");
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
+    it("asks again for the queue each time, so a message just added is in the answer", async () => {
+      const { fetchMock } = await setup();
+      const { fetchQueuedMessages } = await import("./channels");
+      void fetchQueuedMessages("c1");
+      void fetchQueuedMessages("c1");
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
   });
 
   it("sends the token and keeps the caller's headers", async () => {

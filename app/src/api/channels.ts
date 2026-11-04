@@ -1,5 +1,5 @@
 import type { AskUserQuestionData, Channel, ExitPlanModeData, Message, PluginBadge, TimelineResponse } from "../types";
-import { apiFetch, getApiUrl, getWsUrl, wsProtocols } from "./api";
+import { apiFetch, apiFetchFresh, getApiUrl, getWsUrl, wsProtocols } from "./api";
 import type { PRAttention } from "./pr";
 
 /** Open a one-shot WebSocket to send a kill message for a channel's agent container. */
@@ -474,7 +474,7 @@ export async function fetchMessages(channelId: string, opts?: { limit?: number; 
  * correct even when older pages are out of view.
  */
 export async function fetchQueuedMessages(channelId: string): Promise<Message[]> {
-  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/queued`);
+  const res = await apiFetchFresh(`${getApiUrl()}/api/channels/${channelId}/queued`);
   if (!res.ok) throw new Error(`Failed to fetch queued messages: ${res.statusText}`);
   const data: { messages: Message[] } = await res.json();
   return data.messages ?? [];

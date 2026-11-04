@@ -139,7 +139,7 @@ if [ -n "$LOOP_DOCS_CAPTURE" ]; then
         # strict JSON parser (jq/python) can't be relied on — extract the token
         # tolerantly. Matches both "key": "v" and unquoted key: "v" forms.
         DOCS_TOKEN=$(sed -nE 's/.*claude_code_oauth_token[^:]*:[[:space:]]*"([^"]+)".*/\1/p' "$LOOP_DOCS_HOST_CONFIG" 2>/dev/null | head -1 || true)
-        if [ -n "$DOCS_TOKEN" ]; then
+        if [ -n "$DOCS_TOKEN" ] || [ -n "$LOOP_DOCS_CLAUDE_CREDENTIALS" ]; then
             # Empty config — the container runner reads this via copy_files and
             # merges in the consent flags itself (onboarding, bypass-permissions,
             # per-workdir trust), so the live agent boots straight to the prompt.
@@ -169,10 +169,24 @@ if [ -n "$LOOP_DOCS_CAPTURE" ]; then
             # freshly-built binary under the host-shared LOOP_HOME and bind-mount
             # it over /usr/local/bin/loop in each agent container.
             cp bin/loop "$LOOP_HOME/loop" && chmod 0755 "$LOOP_HOME/loop"
-            DOCS_AUTH="\"claude_code_oauth_token\": \"$DOCS_TOKEN\",
+            # A token wins. Otherwise bind only the credentials file over the
+            # isolated ~/.claude above, read-write: Claude saves a refreshed
+            # login there, and a rotated login that isn't saved would sign the
+            # file's owner out. The gate stays off for these runs: its git
+            # commit/push rule holds a git command Claude runs at startup,
+            # waiting on an approval nobody is there to give.
+            DOCS_TOKEN_LINE=""
+            DOCS_CREDENTIALS_MOUNT=""
+            if [ -n "$DOCS_TOKEN" ]; then
+                DOCS_TOKEN_LINE="\"claude_code_oauth_token\": \"$DOCS_TOKEN\","
+            else
+                DOCS_CREDENTIALS_MOUNT=", \"$LOOP_DOCS_CLAUDE_CREDENTIALS:$LOOP_HOME/.claude/.credentials.json\""
+                AGENTGATE_ENABLED=false
+            fi
+            DOCS_AUTH="$DOCS_TOKEN_LINE
   \"envs\": { \"NODE_TLS_REJECT_UNAUTHORIZED\": \"0\", \"NODE_NO_WARNINGS\": \"1\", \"LOOP_HOST_USER\": \"agent\", \"LOOP_HOST_UID\": \"1000\", \"LOOP_HOST_GID\": \"1000\", \"TMPDIR\": \"$LOOP_HOME/.claude/tmp\" },
   \"gates\": { \"agentgate\": { \"enabled\": $AGENTGATE_ENABLED, \"command_rules\": [ { \"commands\": [\"git\"], \"args_patterns\": [\"commit\", \"push\"], \"decision\": \"approve\", \"message\": \"git commit/push (approval required)\" } ] } },
-  \"mounts\": [\"~/.claude:~/.claude\", \"$LOOP_HOME/loop:/usr/local/bin/loop\"],
+  \"mounts\": [\"~/.claude:~/.claude\", \"$LOOP_HOME/loop:/usr/local/bin/loop\"$DOCS_CREDENTIALS_MOUNT],
   \"copy_files\": [\"~/.claude.json\"],"
             echo -e "${YELLOW}Docs capture: injecting Claude auth + non-root agent uid for live runs${NC}"
         else
