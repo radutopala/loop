@@ -313,6 +313,13 @@ if (process.platform === "darwin") {
 
 const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL;
 
+// Dev builds accept Chrome DevTools Protocol clients on localhost, to measure
+// or drive the app from outside. Packaged builds never open this port.
+if (VITE_DEV_SERVER_URL) {
+  app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
+  app.commandLine.appendSwitch("remote-debugging-port", process.env.LOOP_DEBUG_PORT || "9223");
+}
+
 // The packaged app's page, and the URL the window may show: the dev server
 // in dev, the file URL of that page otherwise.
 const appEntryFile = path.join(__dirname, "../dist/index.html");
