@@ -136,7 +136,7 @@ describe("apiFetch", () => {
     const flush = () => new Promise((r) => setTimeout(r));
     const files = (root: number) => `http://api/api/channels/c1/files?path=.&root=${root}`;
 
-    it.each(["pr", "diff", "commits?limit=1", "branches", "files?path=."])("holds a fourth %s back", async (endpoint) => {
+    it.each(["diff", "commits?limit=1", "branches", "files?path=."])("holds a fourth %s back", async (endpoint) => {
       const { api, fetchMock, pending } = await setup();
       for (const root of [1, 2, 3]) void api.apiFetch(files(root));
       await flush();
@@ -148,6 +148,32 @@ describe("apiFetch", () => {
       expect(fetchMock).toHaveBeenCalledTimes(4);
       pending[3]!(new Response("fourth"));
       expect(await (await fourth).text()).toBe("fourth");
+    });
+
+    it("holds a third PR lookup back", async () => {
+      const { api, fetchMock, pending } = await setup();
+      const pr = (id: string) => `http://api/api/channels/${id}/pr`;
+      for (const id of ["a", "b"]) void api.apiFetch(pr(id));
+      await flush();
+      const third = api.apiFetch(pr("c"));
+      await flush();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      pending[0]!(new Response("first"));
+      await flush();
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      pending[2]!(new Response("third"));
+      expect(await (await third).text()).toBe("third");
+    });
+
+    it("sends a diff past PR lookups that are all waiting", async () => {
+      const { api, fetchMock } = await setup();
+      for (const id of ["a", "b", "c", "d", "e"]) void api.apiFetch(`http://api/api/channels/${id}/pr`);
+      await flush();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      void api.apiFetch("http://api/api/channels/home/diff");
+      await flush();
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(fetchMock).toHaveBeenLastCalledWith("http://api/api/channels/home/diff", expect.anything());
     });
 
     it("sends the chat's requests past a full limit", async () => {

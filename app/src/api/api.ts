@@ -117,26 +117,36 @@ async function send(input: string, init?: RequestInit): Promise<Response> {
   return fetch(input, withAuth(init, fresh));
 }
 
+/** Runs at most max sends at a time, the rest waiting in order. */
+function limited(max: number): (input: string) => Promise<Response> {
+  let running = 0;
+  const queue: Array<() => void> = [];
+  return async (input) => {
+    if (running < max) running++;
+    else await new Promise<void>((start) => queue.push(start));
+    try {
+      return await send(input);
+    } finally {
+      const next = queue.shift();
+      if (next) next();
+      else running--;
+    }
+  };
+}
+
 /** Reads that run git or gh, which can take seconds. A browser gives a host
  *  6 connections, and every chat opening asks for a file tree per root, a
  *  diff and a PR, so they run a few at a time to leave room for the chat's
- *  own requests. */
-const SLOW_GET = /\/api\/channels\/[^/]+\/(pr|diff|commits|branches|files)(\?|$)/;
-const MAX_SLOW_GETS = 3;
+ *  own requests. A gh lookup takes seconds where git takes a tenth of one, so
+ *  the two wait apart: lookups piling up never hold back a chat's diff. */
+const GIT_GET = /\/api\/channels\/[^/]+\/(diff|commits|branches|files)(\?|$)/;
+const PR_GET = /\/api\/channels\/[^/]+\/pr(\?|$)/;
+const sendGitGet = limited(3);
+const sendPRGet = limited(2);
 
-let slowGets = 0;
-const slowGetQueue: Array<() => void> = [];
-
-async function sendSlowGet(input: string): Promise<Response> {
-  if (slowGets < MAX_SLOW_GETS) slowGets++;
-  else await new Promise<void>((start) => slowGetQueue.push(start));
-  try {
-    return await send(input);
-  } finally {
-    const next = slowGetQueue.shift();
-    if (next) next();
-    else slowGets--;
-  }
+function sendGet(input: string): Promise<Response> {
+  if (PR_GET.test(input)) return sendPRGet(input);
+  return GIT_GET.test(input) ? sendGitGet(input) : send(input);
 }
 
 /** How long an identical plain GET can join one already sent. It covers the
@@ -158,7 +168,7 @@ export function apiFetch(input: string, init?: RequestInit): Promise<Response> {
   const now = Date.now();
   let shared = sharedGets.get(input);
   if (!shared || now - shared.started > SHARE_WINDOW_MS) {
-    const entry = { started: now, res: SLOW_GET.test(input) ? sendSlowGet(input) : send(input) };
+    const entry = { started: now, res: sendGet(input) };
     const forget = () => {
       if (sharedGets.get(input) === entry) sharedGets.delete(input);
     };
