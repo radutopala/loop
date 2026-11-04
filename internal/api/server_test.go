@@ -744,6 +744,7 @@ func (s *ServerSuite) TestCorsMiddleware() {
 	require.Equal(s.T(), http.StatusOK, w.Code)
 	require.Equal(s.T(), "*", w.Header().Get("Access-Control-Allow-Origin"))
 	require.Contains(s.T(), w.Header().Get("Access-Control-Allow-Methods"), "GET")
+	require.Equal(s.T(), "600", w.Header().Get("Access-Control-Max-Age"))
 }
 
 func (s *ServerSuite) TestCorsMiddlewareOptions() {

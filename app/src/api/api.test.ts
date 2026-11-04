@@ -116,6 +116,153 @@ describe("refreshApiToken", () => {
 });
 
 describe("apiFetch", () => {
+  describe("limiting reads that run git or gh", () => {
+    async function setup() {
+      stubDesktop(["tok"]);
+      const pending: Array<(r: Response) => void> = [];
+      const failing: Array<(e: Error) => void> = [];
+      const fetchMock = vi.fn(
+        () =>
+          new Promise<Response>((resolve, reject) => {
+            pending.push(resolve);
+            failing.push(reject);
+          }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      const api = await load();
+      await api.refreshApiToken();
+      return { api, fetchMock, pending, failing };
+    }
+    const flush = () => new Promise((r) => setTimeout(r));
+    const files = (root: number) => `http://api/api/channels/c1/files?path=.&root=${root}`;
+
+    it.each(["pr", "diff", "commits?limit=1", "branches", "files?path=."])("holds a fourth %s back", async (endpoint) => {
+      const { api, fetchMock, pending } = await setup();
+      for (const root of [1, 2, 3]) void api.apiFetch(files(root));
+      await flush();
+      const fourth = api.apiFetch(`http://api/api/channels/c1/${endpoint}`);
+      await flush();
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      pending[0]!(new Response("first"));
+      await flush();
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+      pending[3]!(new Response("fourth"));
+      expect(await (await fourth).text()).toBe("fourth");
+    });
+
+    it("sends the chat's requests past a full limit", async () => {
+      const { api, fetchMock } = await setup();
+      for (const root of [1, 2, 3, 4]) void api.apiFetch(files(root));
+      await flush();
+      for (const path of ["timeline?limit=50", "files/exists", "roots"]) void api.apiFetch(`http://api/api/channels/c1/${path}`);
+      await flush();
+      expect(fetchMock).toHaveBeenCalledTimes(6);
+    });
+
+    it("frees its place when a read fails, and when nothing waits", async () => {
+      const { api, fetchMock, pending, failing } = await setup();
+      const reads = [1, 2, 3].map((root) => api.apiFetch(files(root)));
+      await flush();
+      failing[0]!(new Error("down"));
+      await expect(reads[0]).rejects.toThrow("down");
+      void api.apiFetch(files(4));
+      await flush();
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+      pending[1]!(new Response("two"));
+      await reads[1];
+      void api.apiFetch(files(5));
+      await flush();
+      expect(fetchMock).toHaveBeenCalledTimes(5);
+    });
+  });
+
+  describe("sharing plain GETs", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    // Loads the module with fetch answering each call by its own Response,
+    // released by resolving it.
+    async function setup() {
+      stubDesktop(["tok"]);
+      const pending: Array<(r: Response) => void> = [];
+      const fetchMock = vi.fn(() => new Promise<Response>((resolve) => pending.push(resolve)));
+      vi.stubGlobal("fetch", fetchMock);
+      const api = await load();
+      await api.refreshApiToken();
+      return { api, fetchMock, pending };
+    }
+
+    it("gives identical GETs sent together one request, each with a readable body", async () => {
+      const { api, fetchMock, pending } = await setup();
+      const a = api.apiFetch("http://api/x");
+      const b = api.apiFetch("http://api/x");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      pending[0]!(new Response("body"));
+      expect(await (await a).text()).toBe("body");
+      expect(await (await b).text()).toBe("body");
+    });
+
+    it("keeps different URLs apart", async () => {
+      const { api, fetchMock } = await setup();
+      void api.apiFetch("http://api/x");
+      void api.apiFetch("http://api/y");
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("asks again once the window has passed, even with the first still out", async () => {
+      vi.useFakeTimers();
+      const { api, fetchMock, pending } = await setup();
+      const first = api.apiFetch("http://api/x");
+      vi.advanceTimersByTime(51);
+      const second = api.apiFetch("http://api/x");
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      pending[1]!(new Response("new"));
+      expect(await (await second).text()).toBe("new");
+      pending[0]!(new Response("old"));
+      expect(await (await first).text()).toBe("old");
+    });
+
+    it("asks again once the first has answered", async () => {
+      const { api, fetchMock, pending } = await setup();
+      const first = api.apiFetch("http://api/x");
+      pending[0]!(new Response("one"));
+      await first;
+      void api.apiFetch("http://api/x");
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("asks again after a failure, which reaches everyone that shared it", async () => {
+      const { api, fetchMock } = await setup();
+      fetchMock.mockImplementationOnce(() => Promise.reject(new Error("down")));
+      const a = api.apiFetch("http://api/x");
+      const b = api.apiFetch("http://api/x");
+      await expect(a).rejects.toThrow("down");
+      await expect(b).rejects.toThrow("down");
+      void api.apiFetch("http://api/x");
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("doesn't join a GET from before a call with init, while it runs or after", async () => {
+      const { api, fetchMock, pending } = await setup();
+      void api.apiFetch("http://api/x");
+      const post = api.apiFetch("http://api/w", { method: "POST" });
+      void api.apiFetch("http://api/x");
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      pending[1]!(new Response("ok"));
+      await post;
+      void api.apiFetch("http://api/x");
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+    });
+
+    it("never shares a call with init", async () => {
+      const { api, fetchMock } = await setup();
+      void api.apiFetch("http://api/x", { method: "GET" });
+      void api.apiFetch("http://api/x", { method: "GET" });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it("sends the token and keeps the caller's headers", async () => {
     stubBrowser("", { "loop-api-token": "tok" });
     const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => new Response("ok"));

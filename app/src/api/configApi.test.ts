@@ -183,7 +183,7 @@ describe("configRevisionSourceLabel", () => {
 
 describe("setGlobalConfigValue", () => {
   it("sets one key in the global config and keeps its comments", async () => {
-    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ path: "", content: null, raw: '{\n  // mine\n  "desktop": {"theme": "light"}\n}' }) });
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ path: "", content: null, raw: '{\n  // mine\n  "desktop": {"theme": "light"}\n}' })));
     fetchMock.mockResolvedValueOnce({ ok: true });
     await setGlobalConfigValue(["desktop", "hidden_pills"], ["ci", "comment"]);
     const [url, init] = fetchMock.mock.calls[1] ?? [];
