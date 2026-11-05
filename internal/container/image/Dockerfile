@@ -68,13 +68,13 @@ RUN ARCH=$(uname -m | sed 's/aarch64/arm64/' | sed 's/x86_64/amd64/') && \
     curl -fsSL -o /tmp/loop.tar.gz "https://github.com/radutopala/loop/releases/download/${TAG}/loop_${LOOP_VERSION#v}_linux_${ARCH}.tar.gz" && \
     tar -xzf /tmp/loop.tar.gz -C /usr/local/bin loop && rm /tmp/loop.tar.gz; \
     else \
-    TAG=$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/radutopala/loop/releases/latest | sed 's#.*/##') && \
+    TAG=$(curl -fsSL https://api.github.com/repos/radutopala/loop/releases/latest | grep -o '"tag_name": *"[^"]*"' | head -1 | cut -d'"' -f4) && \
     V="${TAG#v}" && \
     curl -fsSL -o /tmp/loop.tar.gz "https://github.com/radutopala/loop/releases/download/${TAG}/loop_${V}_linux_${ARCH}.tar.gz" && \
     tar -xzf /tmp/loop.tar.gz -C /usr/local/bin loop && rm /tmp/loop.tar.gz; \
     fi
 RUN ARCH=$(uname -m | sed 's/aarch64/arm64/' | sed 's/x86_64/amd64/') && \
-    TAG=$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/radutopala/ticket/releases/latest | sed 's#.*/##') && \
+    TAG=$(curl -fsSL https://api.github.com/repos/radutopala/ticket/releases/latest | grep -o '"tag_name": *"[^"]*"' | head -1 | cut -d'"' -f4) && \
     V="${TAG#v}" && \
     curl -fsSL -o /tmp/tk.tar.gz "https://github.com/radutopala/ticket/releases/download/${TAG}/tk_${V}_linux_${ARCH}.tar.gz" && \
     tar -xzf /tmp/tk.tar.gz -C /usr/local/bin tk && rm /tmp/tk.tar.gz

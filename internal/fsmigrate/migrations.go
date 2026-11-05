@@ -337,14 +337,6 @@ var migrations = []Migration{
 		Description: "rename the ci config block to pr",
 		Apply:       renameCIBlock,
 	},
-	{
-		// The image build looked up the latest release through GitHub's REST
-		// API, whose anonymous limit is per IP, so a shared address could
-		// fail the build with a 403. The refreshed Dockerfile follows the
-		// release page's redirect instead.
-		Description: "refresh container/ files: latest release tag without the GitHub API",
-		Apply:       refreshContainerFiles,
-	},
 }
 
 // adoptProjectConfigs trusts the project config of every project checkout
