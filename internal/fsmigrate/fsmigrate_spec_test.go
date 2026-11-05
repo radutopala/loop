@@ -122,6 +122,7 @@ var migrationClasses = []migrationClass{
 	{description: "trust existing project workflows", exempt: exemptAdopt},
 	{description: "trust existing project container images", exempt: exemptAdopt},
 	{description: "rename the ci config block to pr"},
+	{description: "refresh container/ files: latest release tag without the GitHub API"},
 }
 
 // --- generated trees ---
