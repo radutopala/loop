@@ -1,7 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"errors"
+	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/stretchr/testify/mock"
@@ -60,6 +63,58 @@ func (s *TerminalHandlerSuite) TestCreateChatShellErrors() {
 			require.Equal(s.T(), tt.wantMsg, msg.Message)
 			require.Equal(s.T(), tt.wantCode, msg.ErrorCode)
 			s.terminal.AssertExpectations(s.T())
+		})
+	}
+}
+
+// lockedBuffer lets a test read what the WS handler's goroutine logged.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func (s *TerminalHandlerSuite) TestSessionFailureIsLogged() {
+	tests := []struct {
+		name    string
+		msg     wsControlMessage
+		wantLog bool
+	}{
+		{name: "session failed", msg: wsControlMessage{ChannelID: "ch-2"}, wantLog: true},
+		{name: "bad request", msg: wsControlMessage{}, wantLog: false},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			logs := &lockedBuffer{}
+			s.srv.logger = slog.New(slog.NewTextHandler(logs, nil))
+			s.srv.containerRegistry = chatContainers()
+			conn, ts := s.dialWS()
+			defer ts.Close()
+			defer conn.Close()
+
+			tt.msg.Type = "create"
+			tt.msg.Target = targetChat
+			sendControl(s.T(), conn, tt.msg)
+
+			require.Equal(s.T(), "error", readStatusMsg(s.T(), conn).Type)
+			if tt.wantLog {
+				require.Contains(s.T(), logs.String(), "terminal ws: session failed")
+				require.Contains(s.T(), logs.String(), "the chat's container isn't running")
+			} else {
+				require.NotContains(s.T(), logs.String(), "terminal ws: session failed")
+			}
 		})
 	}
 }

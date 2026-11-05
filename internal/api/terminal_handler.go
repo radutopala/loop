@@ -266,6 +266,9 @@ func (t *terminalWSConn) writeBinary(data []byte) {
 }
 
 func (t *terminalWSConn) sendError(message, code string) {
+	if code == wsErrCodeSessionFailed {
+		t.logger.Warn("terminal ws: session failed", "error", message)
+	}
 	t.writeJSON(wsStatusMessage{Type: wsStatusError, Message: message, ErrorCode: code})
 }
 
