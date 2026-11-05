@@ -441,15 +441,20 @@ function getFocusedOrLastWindow(): BrowserWindow | null {
   return BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null;
 }
 
-function navigateToChannel(channelId: string) {
-  const win = getFocusedOrLastWindow();
+function navigateToChannel(channelId: string, win = getFocusedOrLastWindow()) {
   if (!channelId || !win) return;
   // Set hash directly on the page — triggers the renderer's hashchange listener.
   // This avoids IPC timing issues where the listener isn't mounted yet.
   win.webContents.executeJavaScript(`window.location.hash = ${JSON.stringify(channelId)}`);
   if (win.isMinimized()) win.restore();
+  win.show();
   win.focus();
 }
+
+// A clicked notification opens its channel in the window that showed it.
+ipcMain.on("open-channel", (event, channelId: string) => {
+  navigateToChannel(channelId, BrowserWindow.fromWebContents(event.sender));
+});
 
 let pendingChannelId: string | null = null;
 

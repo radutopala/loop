@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld("loopAPI", {
   downloadUpdate: () => ipcRenderer.invoke("download-update"),
   installUpdate: () => ipcRenderer.invoke("install-update"),
   onUpdateStatus: (callback) => subscribe("update-status", (_event, status) => callback(status)),
+  openChannel: (channelId) => ipcRenderer.send("open-channel", channelId),
   notifyTurnEnd: () => ipcRenderer.send("turn-ended"),
   notifyApprovalNeeded: (reqId) => ipcRenderer.send("approval-needed", reqId),
   notifyApprovalResolved: (reqId) => ipcRenderer.send("approval-resolved", reqId),
