@@ -18,6 +18,7 @@ import type {
   ToolUseData,
   WSEvent,
 } from "../types";
+import { notifyChannel } from "./channelNotification";
 import { alertsOnRunEnd, bouncesOnRunEnd, notifiesOnRunEnd, shouldForwardToChatListeners, subscriptionChannels } from "./chatEventRouting";
 import { useWebSocketConnection } from "./useWebSocketConnection";
 
@@ -648,7 +649,7 @@ export function useChatStateStore({ channels, channelsFetchedAt, selectedId, onA
           const ch = channelsRef.current.find((c) => c.id === unreadTarget) ?? channelsRef.current.find((c) => c.id === channelId);
           const name = ch?.name || channelId;
           const body = data.status === "completed" ? `Completed in ${Math.round((data.duration_ms ?? 0) / 1000)}s` : `Error: ${data.error ?? "unknown"}`;
-          new Notification(`Loop — ${name}`, { body });
+          notifyChannel(`Loop — ${name}`, body, unreadTarget);
         }
         // Skip the dock bounce for runs the user didn't start.
         if (bouncesOnRunEnd(data.trigger)) {
@@ -667,7 +668,7 @@ export function useChatStateStore({ channels, channelsFetchedAt, selectedId, onA
         const ch = channelsRef.current.find((c) => c.id === approvalTarget) ?? channelsRef.current.find((c) => c.id === channelId);
         const name = ch?.name || channelId;
         const body = reqData.target ? `Approval needed: ${reqData.target}` : "Approval needed";
-        new Notification(`Loop — ${name}`, { body });
+        notifyChannel(`Loop — ${name}`, body, approvalTarget);
       }
       console.log("[bounce] notifyApprovalNeeded reqId=%s channelId=%s target=%s", reqData.req_id, channelId, reqData.target);
       window.loopAPI?.notifyApprovalNeeded?.(reqData.req_id);

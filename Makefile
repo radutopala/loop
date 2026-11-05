@@ -370,7 +370,27 @@ app-build-binary: ## Cross-compile loop binary for app bundling (GOOS=, GOARCH=)
 	echo "Built app/resources/$$EB_OS/$$EB_ARCH/"
 
 app-dev: ## Start the Electron app frontend dev server
-	cd app && npm install && npx vite --host
+	cd app && npm install
+	@$(MAKE) --no-print-directory _app-dev-sign
+	cd app && npx vite --host
+
+# macOS refuses notifications from Electron's stock ad-hoc signature, so sign
+# the dev copy with a Developer ID when there is one. Nothing else needs it:
+# without one, app-dev runs as usual and only banners are missing.
+APP_DEV_ELECTRON ?= app/node_modules/electron/dist/Electron.app
+APP_DEV_SIGN_IDENTITY ?= Developer ID Application
+
+.PHONY: _app-dev-sign
+_app-dev-sign:
+	@[ "$$(uname)" = Darwin ] || exit 0; \
+	if codesign -dv "$(APP_DEV_ELECTRON)" 2>&1 | grep -Eq '^TeamIdentifier=[A-Z0-9]+$$'; then exit 0; fi; \
+	if ! security find-identity -v -p codesigning | grep -q "$(APP_DEV_SIGN_IDENTITY)"; then \
+		echo "warning: no '$(APP_DEV_SIGN_IDENTITY)' identity in keychain; dev app can't show notifications"; \
+		exit 0; \
+	fi; \
+	codesign --force --deep --sign "$(APP_DEV_SIGN_IDENTITY)" --timestamp=none "$(APP_DEV_ELECTRON)" \
+		&& echo "Signed $(APP_DEV_ELECTRON) with '$(APP_DEV_SIGN_IDENTITY)'" \
+		|| echo "warning: could not sign $(APP_DEV_ELECTRON); dev app can't show notifications"
 
 app-record: ## Record requests, Loading times and screenshots from the running app-dev window (DURATION=60, OUT=dir)
 	node scripts/record-ui.mjs --seconds $(or $(DURATION),60) $(if $(OUT),--out "$(OUT)")

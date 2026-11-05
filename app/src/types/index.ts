@@ -467,6 +467,7 @@ declare global {
       downloadUpdate?: () => Promise<void>;
       installUpdate?: () => Promise<void>;
       onUpdateStatus?: (callback: (status: UpdateStatus) => void) => () => void;
+      openChannel?: (channelId: string) => void;
       notifyTurnEnd?: () => void;
       notifyApprovalNeeded?: (reqId?: string) => void;
       notifyApprovalResolved?: (reqId?: string) => void;

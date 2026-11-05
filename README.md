@@ -1211,6 +1211,8 @@ make clean            # Remove build artifacts
 
 `make app-dev` opens a Chrome DevTools Protocol port on `127.0.0.1:9223` (set `LOOP_DEBUG_PORT` to change it). Packaged builds don't open it.
 
+macOS refuses notifications from Electron's stock ad-hoc signature, so on a Mac `make app-dev` signs its Electron with your `Developer ID Application` certificate (set `APP_DEV_SIGN_IDENTITY` to use another). Without one, the app runs as usual but shows no notifications.
+
 `make app-record` uses that port to watch the window while you click around. It lists the longest Loading states and slowest API requests, and saves a full timeline and screenshots to a temp folder (`DURATION=90` sets the seconds, `OUT=dir` the folder). It only observes, so it works with whatever you do by hand, but screenshots capture whatever is on screen.
 
 ### Integration Tests
