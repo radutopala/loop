@@ -183,6 +183,7 @@ func (s *TerminalHandlerSuite) TestHostCreateParentFallbackLoopDir() {
 	hostMgr := new(MockTerminalManager)
 	s.srv.SetHostTerminalManager(hostMgr)
 	s.srv.loopDir = "/tmp/loop-test"
+	s.srv.sys = workDirSystem(s.T(), "/tmp/loop-test/ch-thread/work", nil)
 
 	store := new(MockChannelLister)
 	store.On("GetChannel", mock.Anything, "ch-thread").
@@ -213,6 +214,7 @@ func (s *TerminalHandlerSuite) TestHostCreateLoopDirFallback() {
 	hostMgr := new(MockTerminalManager)
 	s.srv.SetHostTerminalManager(hostMgr)
 	s.srv.loopDir = "/tmp/loop-test"
+	s.srv.sys = workDirSystem(s.T(), "/tmp/loop-test/ch-nodir/work", nil)
 
 	store := new(MockChannelLister)
 	store.On("GetChannel", mock.Anything, "ch-nodir").

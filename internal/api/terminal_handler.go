@@ -161,6 +161,8 @@ type terminalWSConn struct {
 	// dir, 1+ = extra_dirs). Used to resolve a shell pane's RootIndex to an
 	// absolute path. May be nil (then RootIndex is ignored — primary dir only).
 	rootDirs func(ctx context.Context, channelID string) ([]string, error)
+	// mkdirAll creates a channel's work dir for a host shell.
+	mkdirAll func(path string, perm os.FileMode) error
 	logger   *slog.Logger
 	writeMu  sync.Mutex
 	stopOnce sync.Once
@@ -584,6 +586,11 @@ func (t *terminalWSConn) resolveRootDir(ctx context.Context, channelID string, r
 	return paths[rootIndex]
 }
 
+// isLoopWorkDir reports whether dir is a channel's <loopDir>/<id>/work.
+func (t *terminalWSConn) isLoopWorkDir(dir string) bool {
+	return t.loopDir != "" && filepath.Base(dir) == "work" && filepath.Dir(filepath.Dir(dir)) == t.loopDir
+}
+
 func (t *terminalWSConn) handleCreateHost(ctx context.Context, msg wsControlMessage) {
 	if t.hostManager == nil {
 		t.sendError("host terminal not configured", wsErrCodeSessionFailed)
@@ -619,6 +626,16 @@ func (t *terminalWSConn) handleCreateHost(ctx context.Context, msg wsControlMess
 	if len(msg.Cmd) > 0 {
 		t.sendError("host sessions don't take a cmd", wsErrCodeInvalidInput)
 		return
+	}
+
+	// A channel without a project gets a work dir under the loop dir, which
+	// otherwise appears only when its first agent runs. A project dir is the
+	// user's: if that's gone, the session fails rather than recreating it.
+	if t.isLoopWorkDir(dirPath) {
+		if err := t.mkdirAll(dirPath, 0o755); err != nil {
+			t.sendError("creating work dir: "+err.Error(), wsErrCodeSessionFailed)
+			return
+		}
 	}
 
 	t.detachCurrent()
@@ -1143,6 +1160,7 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 
 	tc := newTerminalWSConn(conn, s.termManager, s.hostTermManager, s.containerRegistry, s.cmdBuilder, s.store, s.loopDir, s.termDelays, s.logger)
 	tc.rootDirs = s.allDirPaths
+	tc.mkdirAll = s.sys.MkdirAll
 	tc.releaseShell = s.releaseShell
 	tc.claimShell = s.claimShell
 	if s.agentRegistry != nil {
