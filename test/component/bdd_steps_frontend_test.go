@@ -2115,9 +2115,30 @@ func (tc *TestContext) waitForSelectorVisibleWithTimeout(timeout, selector strin
 		return fmt.Errorf("invalid timeout %q: %w", timeout, err)
 	}
 	js := fmt.Sprintf(`(() => { const el = document.querySelector(%q); if (!el) return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; })()`, selector)
-	return chromedp.Run(tc.chromeTab.ctx,
+	err = chromedp.Run(tc.chromeTab.ctx,
 		chromedp.Poll(js, nil, chromedp.WithPollingTimeout(d), chromedp.WithPollingInterval(200*time.Millisecond)),
 	)
+	if err != nil {
+		return fmt.Errorf("%w; page state: %s", err, tc.pageStateSummary())
+	}
+	return nil
+}
+
+// pageStateSummary says what the page shows, for a failed wait's error: which
+// panes it holds and the end of its text, where a pane's error lands.
+func (tc *TestContext) pageStateSummary() string {
+	ctx, cancel := context.WithTimeout(tc.chromeTab.ctx, 5*time.Second)
+	defer cancel()
+	var summary string
+	err := chromedp.Run(ctx, chromedp.Evaluate(`JSON.stringify({
+		hash: location.hash,
+		panes: [...document.querySelectorAll('[data-testid$="-pane"]')].map((e) => e.dataset.testid),
+		text: document.body.innerText.slice(-600),
+	})`, &summary))
+	if err != nil {
+		return "unavailable: " + err.Error()
+	}
+	return summary
 }
 
 // waitForSelectorVisibleBestEffort waits like waitForSelectorVisibleWithTimeout

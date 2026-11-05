@@ -1572,7 +1572,18 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         case "host-shell":
           return (
             <div key={`layout-host-shell-${channelId}-${leaf.id}`} style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden", backgroundColor: colors.sidebar }}>
-              <Terminal channelId={channelId} target="host" instanceId={leaf.id} hideActions onStatusChange={onStatusChange} onPaneStatus={(status) => handlePaneStatus(leaf.id, status)} />
+              <Terminal
+                channelId={channelId}
+                target="host"
+                instanceId={leaf.id}
+                hideActions
+                onPaneStatus={(status) => {
+                  handlePaneStatus(leaf.id, status);
+                  // The channel list has nothing on host shells, but one that
+                  // ended may have changed its git state, with a commit say.
+                  if (status !== "running") onStatusChange?.();
+                }}
+              />
             </div>
           );
         case "docker-shell":

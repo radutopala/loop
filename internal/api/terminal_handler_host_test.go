@@ -3,12 +3,15 @@ package api
 import (
 	"encoding/base64"
 	"errors"
+	"os"
+	"testing"
 	"time"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/testutil"
 )
 
 // --- Host terminal tests ---
@@ -103,6 +106,116 @@ func (s *TerminalHandlerSuite) TestCreateHostSessionThreadInheritsParentDirPath(
 	require.Equal(s.T(), "host-thread-sess", msg.SessionID)
 	store.AssertExpectations(s.T())
 	close(doneCh)
+}
+
+// workDirSystem expects dir, and only dir, to be created.
+func workDirSystem(t *testing.T, dir string, err error) *testutil.MockSystem {
+	sys := new(testutil.MockSystem)
+	sys.On("MkdirAll", dir, os.FileMode(0o755)).Return(err).Once()
+	t.Cleanup(func() { sys.AssertExpectations(t) })
+	return sys
+}
+
+func (s *TerminalHandlerSuite) TestCreateHostSessionWorkDir() {
+	const loopDir = "/tmp/loop-test"
+	tests := []struct {
+		name      string
+		channel   *db.Channel
+		parent    *db.Channel
+		wantDir   string
+		wantMkdir bool
+	}{
+		{
+			name:      "stored work dir of a channel without a project",
+			channel:   &db.Channel{ChannelID: "ch-1", DirPath: loopDir + "/ch-1/work"},
+			wantDir:   loopDir + "/ch-1/work",
+			wantMkdir: true,
+		},
+		{
+			name:      "no stored dir",
+			channel:   &db.Channel{ChannelID: "ch-1"},
+			wantDir:   loopDir + "/ch-1/work",
+			wantMkdir: true,
+		},
+		{
+			name:      "thread in its parent's work dir",
+			channel:   &db.Channel{ChannelID: "ch-1", ParentID: "ch-parent"},
+			parent:    &db.Channel{ChannelID: "ch-parent", DirPath: loopDir + "/ch-parent/work"},
+			wantDir:   loopDir + "/ch-parent/work",
+			wantMkdir: true,
+		},
+		{
+			name:    "project dir is left alone",
+			channel: &db.Channel{ChannelID: "ch-1", DirPath: "/home/user/work"},
+			wantDir: "/home/user/work",
+		},
+		{
+			name:    "deeper dir named work is left alone",
+			channel: &db.Channel{ChannelID: "ch-1", DirPath: loopDir + "/a/b/work"},
+			wantDir: loopDir + "/a/b/work",
+		},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			hostMgr := new(MockTerminalManager)
+			s.srv.SetHostTerminalManager(hostMgr)
+			s.srv.loopDir = loopDir
+			sys := new(testutil.MockSystem)
+			if tt.wantMkdir {
+				sys.On("MkdirAll", tt.wantDir, os.FileMode(0o755)).Return(nil).Once()
+			}
+			s.srv.sys = sys
+
+			store := new(MockChannelLister)
+			store.On("GetChannel", mock.Anything, "ch-1").Return(tt.channel, nil)
+			if tt.parent != nil {
+				store.On("GetChannel", mock.Anything, tt.parent.ChannelID).Return(tt.parent, nil)
+			}
+			s.srv.store = store
+
+			outCh := make(chan []byte, 1)
+			doneCh := make(chan struct{})
+			defer close(doneCh)
+			hostMgr.On("CreateSession", mock.Anything, tt.wantDir, []string(nil)).
+				Return("host-1", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
+			hostMgr.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+			conn, ts := s.dialWS()
+			defer ts.Close()
+			defer conn.Close()
+
+			sendControl(s.T(), conn, wsControlMessage{Type: "create", ChannelID: "ch-1", Target: "host"})
+
+			require.Equal(s.T(), "created", readStatusMsg(s.T(), conn).Type)
+			sys.AssertExpectations(s.T())
+			hostMgr.AssertExpectations(s.T())
+		})
+	}
+}
+
+func (s *TerminalHandlerSuite) TestCreateHostSessionWorkDirError() {
+	hostMgr := new(MockTerminalManager)
+	s.srv.SetHostTerminalManager(hostMgr)
+	s.srv.loopDir = "/tmp/loop-test"
+	s.srv.sys = workDirSystem(s.T(), "/tmp/loop-test/ch-1/work", errors.New("disk full"))
+
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: "/tmp/loop-test/ch-1/work"}, nil)
+	s.srv.store = store
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ChannelID: "ch-1", Target: "host"})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "error", msg.Type)
+	require.Equal(s.T(), "creating work dir: disk full", msg.Message)
+	require.Equal(s.T(), wsErrCodeSessionFailed, msg.ErrorCode)
+	hostMgr.AssertNotCalled(s.T(), "CreateSession", mock.Anything, mock.Anything, mock.Anything)
 }
 
 func (s *TerminalHandlerSuite) TestCreateHostSessionError() {

@@ -241,8 +241,8 @@ cleanup() {
     echo -e "\n${YELLOW}Shutting down...${NC}"
     # Always dump server log tail for debugging CI failures.
     if [ -s "$LOOP_STDERR" ]; then
-        echo -e "${YELLOW}=== Loop server stderr (last 100 lines) ===${NC}"
-        tail -100 "$LOOP_STDERR"
+        echo -e "${YELLOW}=== Loop server stderr (last 500 lines) ===${NC}"
+        tail -500 "$LOOP_STDERR"
         echo -e "${YELLOW}=== End server stderr ===${NC}"
     fi
     kill "$LOOP_PID" 2>/dev/null || true
