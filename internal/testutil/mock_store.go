@@ -119,6 +119,11 @@ func (m *MockStore) ListPausedChannels(ctx context.Context) ([]*db.PausedChannel
 	return nil, args.Error(1)
 }
 
+func (m *MockStore) LatestPromptRowID(ctx context.Context, channelID string) (int64, error) {
+	args := m.Called(ctx, channelID)
+	return args.Get(0).(int64), args.Error(1)
+}
+
 func (m *MockStore) ListUserMessageContents(ctx context.Context, channelID string, limit int) ([]string, error) {
 	args := m.Called(ctx, channelID, limit)
 	if v := args.Get(0); v != nil {

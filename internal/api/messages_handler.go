@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/radutopala/loop/internal/apiauth"
+	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/randutil"
@@ -16,7 +18,10 @@ import (
 type sendMessageRequest struct {
 	ChannelID string `json:"channel_id"`
 	Content   string `json:"content"`
-	Mode      string `json:"mode,omitempty"`
+	// FromChannelID is the channel an owner-token caller, such as an agent on
+	// the host, sends from. Any other token's own channel takes its place.
+	FromChannelID string `json:"from_channel_id,omitempty"`
+	Mode          string `json:"mode,omitempty"`
 	// Delivery says how the message meets an active run: "queue" (the
 	// default) waits behind it, "add" goes into its running turn, "steer"
 	// cancels it and runs next.
@@ -81,6 +86,9 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tags := s.originTags(r.Context(), &req)
+	ctx := bot.WithMessageTags(r.Context(), tags)
+
 	// Route through the orchestrator when available. HandleIncomingMessage*
 	// is now non-blocking after the InsertMessage step (the orchestrator
 	// drains in its own goroutine), so we can call it on the request thread
@@ -93,14 +101,14 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		if req.DelaySeconds > 0 {
 			notBefore := time.Now().Add(time.Duration(req.DelaySeconds) * time.Second).Unix()
 			msgID := "ask-" + randutil.HexID(16)
-			s.msgHandler.HandleIncomingMessageDelayed(context.Background(), req.ChannelID, "", msgID, req.Content, req.Mode, notBefore)
+			s.msgHandler.HandleIncomingMessageDelayed(context.WithoutCancel(ctx), req.ChannelID, "", msgID, req.Content, req.Mode, notBefore)
 			writeHTTPJSON(w, http.StatusOK, queuedMessageResponse{MsgID: msgID}, s.logger)
 			return
 		}
 		if delivery == deliveryAdd {
-			s.msgHandler.HandleIncomingMessageAdded(context.Background(), req.ChannelID, "", req.Content, req.Mode)
+			s.msgHandler.HandleIncomingMessageAdded(context.WithoutCancel(ctx), req.ChannelID, "", req.Content, req.Mode)
 		} else {
-			s.enqueueMessage(r.Context(), req.ChannelID, req.Content, req.Mode, delivery == deliverySteer)
+			s.enqueueMessage(ctx, req.ChannelID, req.Content, req.Mode, delivery == deliverySteer)
 		}
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -110,12 +118,38 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.messages.PostMessage(r.Context(), req.ChannelID, req.Content); err != nil {
+	if err := s.messages.PostMessage(r.Context(), req.ChannelID, bot.WithOriginLabel(req.Content, tags)); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// originTags returns the tags naming the channel a message came from, or nil
+// when it was sent from its own channel or from no channel, as the app sends
+// the user's. A token's own channel is what counts, so an agent can't pass a
+// message off as another channel's. The name and prompt are extras: without
+// them the channel id still lets the agent reply.
+func (s *Server) originTags(ctx context.Context, req *sendMessageRequest) map[string]string {
+	from := req.FromChannelID
+	if p, ok := apiauth.PrincipalFrom(ctx); ok && p.Kind != apiauth.KindOwner {
+		from = p.ChannelID
+	}
+	if from == "" || from == req.ChannelID {
+		return nil
+	}
+	tags := map[string]string{bot.TagOriginChannel: from}
+	if s.store == nil {
+		return tags
+	}
+	if ch, err := s.store.GetChannel(ctx, from); err == nil && ch != nil && ch.Name != "" {
+		tags[bot.TagOriginChannelName] = ch.Name
+	}
+	if id, err := s.store.LatestPromptRowID(ctx, from); err == nil && id > 0 {
+		tags[bot.TagOriginMessage] = strconv.FormatInt(id, 10)
+	}
+	return tags
 }
 
 // enqueueMessage queues content for channelID's agent. With interrupt, it
@@ -134,11 +168,11 @@ func (s *Server) enqueueMessage(ctx context.Context, channelID, content, mode st
 				prio = p + 1
 			}
 		}
-		s.msgHandler.HandleIncomingMessageWithPriority(context.Background(), channelID, "", content, mode, prio)
+		s.msgHandler.HandleIncomingMessageWithPriority(context.WithoutCancel(ctx), channelID, "", content, mode, prio)
 		s.runCanceller.CancelActiveRun(channelID)
 		return
 	}
-	s.msgHandler.HandleIncomingMessage(context.Background(), channelID, "", content, mode)
+	s.msgHandler.HandleIncomingMessage(context.WithoutCancel(ctx), channelID, "", content, mode)
 }
 
 // WakeChannel posts content to channelID as a message its agent answers, as
@@ -271,6 +305,8 @@ type messageResponse struct {
 	Priority     int       `json:"priority,omitempty"`
 	TriggerMsgID string    `json:"trigger_msg_id,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
+	// Tags are the message's key/value facts, such as the channel it was sent from.
+	Tags map[string]string `json:"tags,omitempty"`
 	// NotBefore is the unix-seconds timestamp a delayed message becomes eligible
 	// to run; 0/omitted for immediate messages. The FE renders a live countdown
 	// from it while it is still in the future.
@@ -298,6 +334,7 @@ func toMessageResponse(m *db.Message) messageResponse {
 		Content:       m.Content,
 		IsBot:         m.IsBot,
 		IsProcessed:   m.IsProcessed,
+		Tags:          m.Tags,
 		IsRunning:     m.IsRunning,
 		Adding:        m.AddUUID != "",
 		Priority:      m.Priority,

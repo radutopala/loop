@@ -1452,3 +1452,41 @@ func (s *OrchestratorSuite) TestHandleMessageOwnSessionResumesInPlace() {
 	})
 	s.runner.AssertExpectations(s.T())
 }
+
+// A message from another channel keeps its stored content as sent; the agent
+// reads it with the label, and the event carries the tags for the chat's link.
+func (s *OrchestratorSuite) TestHandleMessageOriginTags() {
+	tags := map[string]string{bot.TagOriginChannel: "ch2", bot.TagOriginChannelName: "backend", bot.TagOriginMessage: "42"}
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+	var inserted *db.Message
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Run(func(args mock.Arguments) {
+		if m := args.Get(1).(*db.Message); !m.IsBot {
+			inserted = m
+		}
+	}).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		return req.Prompt == `Alice: [from channel "backend", channel_id: ch2, message_id: 42; if it needs an answer, send it with send_message to this channel_id] hello`
+	})).Return(&agent.AgentResponse{Response: "ok", SessionID: "sess-1"}, nil).Once()
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess-1").Return(nil)
+	s.bot.On("SendMessage", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("MarkMessagesProcessed", s.ctx, mock.Anything).Return(nil)
+	eb := new(MockEventBroadcaster)
+	eb.On("BroadcastAgentStatus", "ch1", mock.Anything).Maybe()
+	eb.On("BroadcastMessageCreated", "ch1", mock.MatchedBy(func(d events.MessageEventData) bool {
+		return d.IsBot || (d.Content == "hello" && d.Tags[bot.TagOriginChannel] == "ch2")
+	}))
+	s.orch.SetEventBroadcaster(eb)
+
+	s.orch.HandleMessage(s.ctx, &bot.IncomingMessage{
+		ChannelID: "ch1", MessageID: "m1", GuildID: "g1", AuthorName: "Alice",
+		Content: "hello", IsBotMention: true, Tags: tags,
+	})
+
+	require.NotNil(s.T(), inserted)
+	require.Equal(s.T(), "hello", inserted.Content)
+	require.Equal(s.T(), tags, inserted.Tags)
+	s.runner.AssertExpectations(s.T())
+}

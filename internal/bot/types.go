@@ -58,6 +58,8 @@ type IncomingMessage struct {
 	// the same channel. Higher wins; ties broken by id ASC (insertion order).
 	// Default 0 — the interrupt path bumps to MaxQueuedPriority+1.
 	Priority int
+	// Tags are key/value facts about the message, stored with it. See tags.go.
+	Tags map[string]string
 	// NotBefore is a unix-seconds timestamp before which this message must not
 	// run. 0 (the common case) means eligible immediately. Set by the delayed
 	// queue_message path to schedule a follow-up turn for later.

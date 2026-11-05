@@ -214,6 +214,9 @@ type Message struct {
 	// (thinking, tool_use, tool_result, compacting). Empty for user-authored
 	// rows and for legacy pre-migration rows.
 	TriggerMsgID string `json:"trigger_msg_id,omitempty"`
+	// Tags are key/value facts about the message, such as the channel it was
+	// sent from. Empty for most rows.
+	Tags map[string]string `json:"tags,omitempty"`
 	// NotBefore is a unix-seconds timestamp before which the drain/claim must
 	// not run this row. 0 (the common case) means eligible immediately. Set via
 	// the delayed queue_message path to schedule a follow-up turn for later.

@@ -39,8 +39,9 @@ func (s *Server) handleSendMessage(_ context.Context, _ *mcp.CallToolRequest, in
 	}
 
 	data, _ := json.Marshal(map[string]string{
-		"channel_id": channelID,
-		"content":    input.Content,
+		"channel_id":      channelID,
+		"content":         input.Content,
+		"from_channel_id": s.channelID,
 	})
 
 	if errResult, err := doAPICallNoBody(s, "POST", s.apiURL+"/api/messages", http.StatusNoContent, data); errResult != nil || err != nil {

@@ -80,6 +80,8 @@ export interface Message {
   // Priority governs processing order (higher first). Missing/0 = default.
   // Used by ChatMessages to render queue position ("1/3").
   priority?: number;
+  // Key/value facts about the message, such as the channel it was sent from.
+  tags?: Record<string, string>;
   // For bot replies, the msg_id of the user message whose agent run produced
   // this reply. Empty for user messages and pre-feature rows. Used to group
   // agent events with their triggering user message at reload time.
@@ -143,6 +145,7 @@ export interface MessageCreatedData {
   is_bot: boolean;
   is_processed: boolean;
   priority?: number;
+  tags?: Record<string, string>;
   trigger_msg_id?: string;
   forkable?: boolean;
   not_before?: number;

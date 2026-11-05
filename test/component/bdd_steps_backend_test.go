@@ -54,6 +54,8 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I add an extra workspace root via API$`, tc.addExtraWorkspaceRootViaAPI)
 	ctx.Step(`^I set up a sample project channel$`, tc.setupSampleProjectChannel)
 	ctx.Step(`^I create a thread "([^"]*)" under the current channel via API$`, tc.createThreadViaAPI)
+	ctx.Step(`^the latest thread queues "([^"]*)" for itself$`, tc.latestThreadQueuesForItself)
+	ctx.Step(`^the latest thread queues "([^"]*)" for the current channel$`, tc.latestThreadQueuesForChannel)
 	ctx.Step(`^I set up a test task via API with prompt "([^"]*)" and schedule "([^"]*)"$`, tc.setupTaskViaAPI)
 	ctx.Step(`^I set up a test task via API with type "([^"]*)" prompt "([^"]*)" and schedule "([^"]*)"$`, tc.setupTaskViaAPIWithType)
 	ctx.Step(`^I trigger Run Now via API for the current task$`, tc.triggerRunNowViaAPI)
@@ -363,6 +365,35 @@ func (tc *TestContext) createThreadViaAPI(name string) error {
 		if id, ok := tc.LastJSON["thread_id"].(string); ok {
 			tc.CreatedThreadIDs = append(tc.CreatedThreadIDs, id)
 		}
+	}
+	return nil
+}
+
+// latestThreadQueuesForItself leaves a message showing in the latest thread.
+// The long delay keeps it there, waiting, without an agent run.
+func (tc *TestContext) latestThreadQueuesForItself(content string) error {
+	thread := tc.CreatedThreadIDs[len(tc.CreatedThreadIDs)-1]
+	return tc.postDelayedMessage(thread, thread, content)
+}
+
+// latestThreadQueuesForChannel sends the current channel a message from the
+// latest thread, as send_message would.
+func (tc *TestContext) latestThreadQueuesForChannel(content string) error {
+	return tc.postDelayedMessage(tc.ChannelID, tc.CreatedThreadIDs[len(tc.CreatedThreadIDs)-1], content)
+}
+
+func (tc *TestContext) postDelayedMessage(channelID, fromChannelID, content string) error {
+	b, _ := json.Marshal(map[string]any{
+		"channel_id":      channelID,
+		"from_channel_id": fromChannelID,
+		"content":         content,
+		"delay_seconds":   3600,
+	})
+	if err := tc.doRequest(http.MethodPost, "/api/messages", string(b)); err != nil {
+		return err
+	}
+	if tc.LastStatus != http.StatusOK {
+		return fmt.Errorf("failed to queue a message: status %d, body: %s", tc.LastStatus, string(tc.LastBody))
 	}
 	return nil
 }

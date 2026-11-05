@@ -20,6 +20,7 @@ type ChannelLister interface {
 	UpsertChannel(ctx context.Context, ch *db.Channel) error
 	GetMessagesCursor(ctx context.Context, channelID string, cursor int64, limit int) ([]*db.Message, error)
 	ListUserMessageContents(ctx context.Context, channelID string, limit int) ([]string, error)
+	LatestPromptRowID(ctx context.Context, channelID string) (int64, error)
 	ListQueuedUserMessages(ctx context.Context, channelID string) ([]*db.Message, error)
 	SearchMessages(ctx context.Context, query string, limit int) ([]*db.Message, error)
 	SearchChannelMessages(ctx context.Context, channelID, query string, limit int) ([]int64, error)

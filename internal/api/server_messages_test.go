@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -15,6 +16,8 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	"github.com/radutopala/loop/internal/apiauth"
+	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/db"
 )
 
@@ -76,6 +79,147 @@ func (s *ServerSuite) TestSendMessageViaHandler() {
 	handler.AssertExpectations(s.T())
 	// PostMessage must NOT be called when the handler is set.
 	s.messages.AssertNotCalled(s.T(), "PostMessage")
+}
+
+func (s *ServerSuite) TestSendMessageOriginTags() {
+	agent := &apiauth.Principal{Kind: apiauth.KindAgent, ChannelID: "agent-ch"}
+	owner := &apiauth.Principal{Kind: apiauth.KindOwner}
+	named := &db.Channel{ChannelID: "agent-ch", Name: "backend"}
+	tests := []struct {
+		name      string
+		principal *apiauth.Principal
+		body      string
+		channel   *db.Channel
+		lookupErr error
+		promptID  int64
+		promptErr error
+		noLookups bool // sent from its own channel, or none: nothing to look up
+		want      map[string]string
+	}{
+		{
+			name:      "agent token: all tags",
+			principal: agent,
+			body:      `{"channel_id":"ch-1","content":"hi"}`,
+			channel:   named,
+			promptID:  42,
+			want:      map[string]string{bot.TagOriginChannel: "agent-ch", bot.TagOriginChannelName: "backend", bot.TagOriginMessage: "42"},
+		},
+		{
+			name:      "agent token can't claim another channel",
+			principal: agent,
+			body:      `{"channel_id":"ch-1","content":"hi","from_channel_id":"forged"}`,
+			channel:   named,
+			want:      map[string]string{bot.TagOriginChannel: "agent-ch", bot.TagOriginChannelName: "backend"},
+		},
+		{
+			name:      "plugin token counts as its own channel too",
+			principal: &apiauth.Principal{Kind: apiauth.KindPlugin, ChannelID: "agent-ch"},
+			body:      `{"channel_id":"ch-1","content":"hi","from_channel_id":"forged"}`,
+			channel:   named,
+			want:      map[string]string{bot.TagOriginChannel: "agent-ch", bot.TagOriginChannelName: "backend"},
+		},
+		{
+			name:      "owner token names its channel",
+			principal: owner,
+			body:      `{"channel_id":"ch-1","content":"hi","from_channel_id":"agent-ch"}`,
+			channel:   named,
+			want:      map[string]string{bot.TagOriginChannel: "agent-ch", bot.TagOriginChannelName: "backend"},
+		},
+		{
+			name:      "lookup failures leave the channel id",
+			principal: agent,
+			body:      `{"channel_id":"ch-1","content":"hi"}`,
+			lookupErr: errors.New("db down"),
+			promptErr: errors.New("db down"),
+			want:      map[string]string{bot.TagOriginChannel: "agent-ch"},
+		},
+		{
+			name:      "unknown channel, no prompt yet",
+			principal: agent,
+			body:      `{"channel_id":"ch-1","content":"hi"}`,
+			want:      map[string]string{bot.TagOriginChannel: "agent-ch"},
+		},
+		{name: "own channel", principal: agent, body: `{"channel_id":"agent-ch","content":"hi"}`, noLookups: true},
+		{name: "owner without a channel", principal: owner, body: `{"channel_id":"ch-1","content":"hi"}`, noLookups: true},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			target := "ch-1"
+			if tc.noLookups && tc.principal == agent {
+				target = "agent-ch"
+			}
+			if !tc.noLookups {
+				s.store.On("GetChannel", mock.Anything, "agent-ch").Return(tc.channel, tc.lookupErr).Once()
+				s.store.On("LatestPromptRowID", mock.Anything, "agent-ch").Return(tc.promptID, tc.promptErr).Once()
+			}
+			handler := new(MockIncomingMessageHandler)
+			s.srv.SetIncomingMessageHandler(handler)
+			var got map[string]string
+			handler.On("HandleIncomingMessage", mock.Anything, target, "", "hi", "").
+				Run(func(args mock.Arguments) { got = bot.MessageTagsFrom(args.Get(0).(context.Context)) }).Return().Once()
+
+			req := httptest.NewRequest("POST", "/api/messages", strings.NewReader(tc.body))
+			req = req.WithContext(apiauth.WithPrincipal(req.Context(), *tc.principal))
+			rec := httptest.NewRecorder()
+			s.srv.handleSendMessage(rec, req)
+
+			require.Equal(s.T(), http.StatusNoContent, rec.Code)
+			require.Equal(s.T(), tc.want, got)
+			handler.AssertExpectations(s.T())
+			s.store.AssertExpectations(s.T())
+		})
+	}
+}
+
+// Delayed and added messages keep their tags, as queued ones do: each takes a
+// different handler call.
+func (s *ServerSuite) TestSendMessageOriginTagsOtherDeliveries() {
+	body := `{"channel_id":"ch-1","content":"hi","from_channel_id":"from-ch"%s}`
+	tests := []struct {
+		name  string
+		extra string
+		call  string
+		args  []any
+	}{
+		{name: "added", extra: `,"delivery":"add"`, call: "HandleIncomingMessageAdded", args: []any{mock.Anything, "ch-1", "", "hi", ""}},
+		{name: "steered", extra: `,"delivery":"steer"`, call: "HandleIncomingMessageWithPriority", args: []any{mock.Anything, "ch-1", "", "hi", "", mock.Anything}},
+		{name: "delayed", extra: `,"delay_seconds":60`, call: "HandleIncomingMessageDelayed", args: []any{mock.Anything, "ch-1", "", mock.Anything, "hi", "", mock.Anything}},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			s.store.On("GetChannel", mock.Anything, "from-ch").Return(nil, nil).Once()
+			s.store.On("LatestPromptRowID", mock.Anything, "from-ch").Return(int64(0), nil).Once()
+			s.store.On("MaxQueuedPriority", mock.Anything, "ch-1").Return(0, nil).Maybe()
+			handler := new(MockIncomingMessageHandler)
+			s.srv.SetIncomingMessageHandler(handler)
+			canceller := new(MockRunCanceller)
+			canceller.On("CancelActiveRun", "ch-1").Return(true).Maybe()
+			s.srv.SetRunCanceller(canceller)
+			var got map[string]string
+			handler.On(tc.call, tc.args...).
+				Run(func(args mock.Arguments) { got = bot.MessageTagsFrom(args.Get(0).(context.Context)) }).Return().Once()
+
+			rec := s.testRequest("POST", "/api/messages", fmt.Sprintf(body, tc.extra))
+
+			require.Less(s.T(), rec.Code, 300)
+			require.Equal(s.T(), map[string]string{bot.TagOriginChannel: "from-ch"}, got)
+		})
+	}
+}
+
+// Without an orchestrator the row and its tags don't exist, so the label goes
+// straight into the posted text.
+func (s *ServerSuite) TestSendMessageOriginLabelWithoutHandler() {
+	s.srv.store = nil
+	s.srv.msgHandler = nil
+	s.messages.On("PostMessage", mock.Anything, "ch-1", "[from channel_id: from-ch; if it needs an answer, send it with send_message to this channel_id] hi").Return(nil).Once()
+
+	rec := s.testRequest("POST", "/api/messages", `{"channel_id":"ch-1","content":"hi","from_channel_id":"from-ch"}`)
+
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	s.messages.AssertExpectations(s.T())
 }
 
 func (s *ServerSuite) TestSendMessageViaHandlerPlanMode() {

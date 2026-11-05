@@ -4,6 +4,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -14,11 +15,11 @@ func (s *SQLiteStore) InsertMessage(ctx context.Context, msg *Message) error {
 	// row sorts after every prior chat-or-event row. Single-writer SQLite
 	// serialises Exec calls, so this subselect can't race itself.
 	result, err := s.db.ExecContext(ctx,
-		`INSERT INTO messages (chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, is_triggered, priority, mode, trigger_msg_id, not_before, created_at, session_id, transcript_uuid, add_uuid, chain_position)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT MAX(chain_position) FROM messages WHERE channel_id = ?), 0) + 1)`,
+		`INSERT INTO messages (chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, is_triggered, priority, mode, trigger_msg_id, not_before, created_at, session_id, transcript_uuid, add_uuid, tags, chain_position)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT MAX(chain_position) FROM messages WHERE channel_id = ?), 0) + 1)`,
 		msg.ChatID, msg.ChannelID, msg.MsgID, msg.AuthorID, msg.AuthorName, msg.Content,
 		boolToInt(msg.IsBot), boolToInt(msg.IsProcessed), boolToInt(msg.IsTriggered),
-		msg.Priority, msg.Mode, msg.TriggerMsgID, msg.NotBefore, msg.CreatedAt, msg.SessionID, msg.TranscriptUUID, msg.AddUUID, msg.ChannelID,
+		msg.Priority, msg.Mode, msg.TriggerMsgID, msg.NotBefore, msg.CreatedAt, msg.SessionID, msg.TranscriptUUID, msg.AddUUID, encodeTags(msg.Tags), msg.ChannelID,
 	)
 	if err != nil {
 		return err
@@ -367,6 +368,28 @@ func (s *SQLiteStore) execAffected(ctx context.Context, query string, args ...an
 		return false, err
 	}
 	return n > 0, nil
+}
+
+// encodeTags returns tags as the tags column stores them.
+func encodeTags(tags map[string]string) string {
+	if len(tags) == 0 {
+		return ""
+	}
+	b, _ := json.Marshal(tags) // a map of strings always encodes
+	return string(b)
+}
+
+// LatestPromptRowID returns the row id of the last user message the channel's
+// agent has started on, or 0 when there is none. Messages still queued don't
+// count.
+func (s *SQLiteStore) LatestPromptRowID(ctx context.Context, channelID string) (int64, error) {
+	var id int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(id), 0) FROM messages
+		 WHERE channel_id = ? AND kind = 'message' AND is_bot = 0 AND (is_running = 1 OR is_processed = 1)`,
+		channelID,
+	).Scan(&id)
+	return id, err
 }
 
 // ListUserMessageContents returns the contents of the channel's most recent

@@ -268,6 +268,17 @@ func (s *OrchestratorSuite) TestRefreshTypingTickerError() {
 
 // --- buildAgentRequest test ---
 
+func (s *OrchestratorSuite) TestBuildAgentRequestOriginLabel() {
+	recent := []*db.Message{{
+		AuthorName: "Alice", Content: "hi",
+		Tags: map[string]string{bot.TagOriginChannel: "ch2"},
+	}}
+
+	req := s.orch.buildAgentRequest("ch1", recent, nil)
+
+	require.Equal(s.T(), "Alice: [from channel_id: ch2; if it needs an answer, send it with send_message to this channel_id] hi", req.Messages[0].Content)
+}
+
 func (s *OrchestratorSuite) TestBuildAgentRequest() {
 	recent := []*db.Message{
 		{ID: 2, AuthorName: "Alice", Content: "new msg", IsBot: false},

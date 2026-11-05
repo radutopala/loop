@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { inAppHref, messageLink, parseChannelTarget } from "./messageLinks";
+import { inAppHref, messageLink, messageOrigin, parseChannelTarget } from "./messageLinks";
 
 describe("messageLink", () => {
   it("links to a message in a channel", () => {
@@ -57,5 +57,19 @@ describe("inAppHref", () => {
 
   it.each(["https://example.com", "loop://channel/", "loop://channel/4bc8a7f4/abc", "loop://other/4bc8a7f4"])("leaves %s alone", (url) => {
     expect(inAppHref(url)).toBeNull();
+  });
+});
+
+describe("messageOrigin", () => {
+  it("links to the sender's message under its name", () => {
+    expect(messageOrigin({ origin_channel: "4bc8a7f4", origin_channel_name: "backend", origin_message: "42" })).toEqual({ name: "backend", href: "#4bc8a7f4/42" });
+  });
+
+  it("links to the channel, under its id, with no message or name", () => {
+    expect(messageOrigin({ origin_channel: "4bc8a7f4" })).toEqual({ name: "4bc8a7f4", href: "#4bc8a7f4" });
+  });
+
+  it.each([[undefined], [{}], [{ k: "v" }], [{ origin_channel: "../x" }]])("is null for %j", (tags) => {
+    expect(messageOrigin(tags)).toBeNull();
   });
 });

@@ -4,7 +4,7 @@ import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { AgentActivityData, AskUserOption, AskUserQuestion, ExitPlanModeData, Message, TaskItem, TimelineItem } from "../../types";
 import { writeClipboard } from "../../utils/copyToClipboard";
-import { messageLink } from "../../utils/messageLinks";
+import { messageLink, messageOrigin } from "../../utils/messageLinks";
 import { isPRMessage } from "../../utils/prStatus";
 import { Chevron } from "../shared/Chevron";
 import type { MenuItem } from "../shared/ContextMenu";
@@ -141,6 +141,7 @@ export function MessageBubble({
   const styles = buildMessageStyles(colors);
   const isUser = !message.is_bot;
   const time = formatMessageTimestamp(message.created_at);
+  const origin = messageOrigin(message.tags);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const [hovered, setHovered] = useState(false);
   const forkButton =
@@ -242,6 +243,16 @@ export function MessageBubble({
         {isUser && (
           <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 6, marginTop: 4 }}>
             {message.not_before ? <DelayCountdown notBefore={message.not_before} /> : null}
+            {origin && (
+              <a
+                data-testid="message-origin"
+                href={origin.href}
+                title={`Sent by the agent in ${origin.name}: go to the message it was working on`}
+                style={{ fontSize: 11, color: colors.active, textDecoration: "none" }}
+              >
+                from #{origin.name}
+              </a>
+            )}
             {isPRMessage(message) && (
               <span
                 data-testid="pr-message-badge"

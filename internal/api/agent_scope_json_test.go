@@ -120,6 +120,10 @@ func TestRequestRefsCoverHandlerBodies(t *testing.T) {
 	guard := stringFields(&requestRefs{})
 	for _, dst := range agentRequestBodies() {
 		for key := range stringFields(dst) {
+			// Not a target: a token's own channel replaces it (originTags).
+			if key == "from_channel_id" {
+				continue
+			}
 			if strings.HasSuffix(key, "channel_id") || strings.HasSuffix(key, "thread_id") || strings.HasSuffix(key, "dir_path") {
 				require.Contains(t, guard, key, "%T's %s isn't read by the guard", dst, key)
 			}

@@ -18,6 +18,19 @@ export function messageLink(channelId: string, messageId: number): string {
   return `${PREFIX}${channelId}/${messageId}`;
 }
 
+/**
+ * Where a message sent from another channel came from, from its origin tags:
+ * the name the channel had then, and an in-app href to the prompt its agent was
+ * on, or to the channel when that is unknown. Null for any other message.
+ */
+export function messageOrigin(tags?: Record<string, string>): { name: string; href: string } | null {
+  const channelId = tags?.origin_channel;
+  if (!channelId) return null;
+  const messageId = Number(tags.origin_message);
+  const href = inAppHref(messageId > 0 ? messageLink(channelId, messageId) : `${PREFIX}${channelId}`);
+  return href ? { name: tags.origin_channel_name || channelId, href } : null;
+}
+
 // Channel ids are local hex ids, Discord snowflakes, Slack channel ids and
 // Slack threads ("<channel>:<ts>"). Anything else, such as "?" or a ".."
 // path segment, must not reach the API paths the id is interpolated into.
