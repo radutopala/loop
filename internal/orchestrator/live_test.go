@@ -1044,6 +1044,22 @@ func (s *OrchestratorSuite) TestHandleMessageAddToTurn() {
 	}
 }
 
+func (s *OrchestratorSuite) TestHandleMessageAddToTurnOriginLabel() {
+	lr, _ := s.withLive()
+	lr.On("AddToLiveTurn", "ch-1", mock.Anything, "[from channel_id: ch-2; if it needs an answer, send it with send_message to this channel_id] more").Return(nil).Once()
+	s.store.On("IsChannelActive", s.ctx, "ch-1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch-1").Return(&db.Channel{ID: 1, ChannelID: "ch-1", Active: true, Platform: types.PlatformLocal}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil).Once()
+
+	s.orch.HandleMessage(s.ctx, &bot.IncomingMessage{
+		ChannelID: "ch-1", AuthorID: "user1", Content: "more", MessageID: "m1",
+		Platform: types.PlatformLocal, IsDM: true, AddToTurn: true,
+		Tags: map[string]string{bot.TagOriginChannel: "ch-2"},
+	})
+
+	lr.AssertExpectations(s.T())
+}
+
 func (s *OrchestratorSuite) TestTakeAddedMessage() {
 	tests := []struct {
 		name      string

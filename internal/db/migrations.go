@@ -705,6 +705,8 @@ var migrations = []migration{
 	// when the session echoes it back (the row turns processed) or when the
 	// row is requeued because the session ended first.
 	sqlMigration(`ALTER TABLE messages ADD COLUMN add_uuid TEXT NOT NULL DEFAULT ''`),
+	// tags holds a message's key/value facts as a JSON object, or '' without any.
+	sqlMigration(`ALTER TABLE messages ADD COLUMN tags TEXT NOT NULL DEFAULT ''`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the

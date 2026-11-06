@@ -101,6 +101,8 @@ type MessageEventData struct {
 	IsBot       bool   `json:"is_bot"`
 	IsProcessed bool   `json:"is_processed"`
 	Priority    int    `json:"priority,omitempty"`
+	// Tags are the message's key/value facts, such as the channel it was sent from.
+	Tags map[string]string `json:"tags,omitempty"`
 	// TriggerMsgID is the msg_id of the user message whose run produced this
 	// bot reply. Empty for user messages and bot rows not emitted by a run.
 	TriggerMsgID string `json:"trigger_msg_id,omitempty"`

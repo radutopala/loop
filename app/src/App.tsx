@@ -30,6 +30,7 @@ import { GlobalTasksPanel } from "./components/panels/GlobalTasksPanel";
 import { WorkflowsGlobalPanel, type WorkflowsGlobalPanelHandle } from "./components/panels/WorkflowsGlobalPanel";
 import { CommandPalette } from "./components/shared/CommandPalette";
 import { DaemonUnavailable } from "./components/shared/DaemonUnavailable";
+import { ErrorBar } from "./components/shared/ErrorBar";
 import { LoopLogo } from "./components/shared/LoopLogo";
 import type { OpenPRHandler } from "./components/shared/OpenPRs";
 import { Settings } from "./components/shared/Settings";
@@ -451,16 +452,22 @@ function AppInner() {
   // it's new.
   const channelsRef = useRef(channels);
   channelsRef.current = channels;
+  const channelExists = useCallback(
+    async (id: string) => {
+      if (channelsRef.current.some((c) => c.id === id)) return true;
+      const chs = await fetchChannels();
+      if (!chs.some((c) => c.id === id)) return false;
+      await loadChannels();
+      return true;
+    },
+    [loadChannels],
+  );
   const uiSelectChannel = useCallback(
     async (id: string) => {
-      if (!channelsRef.current.some((c) => c.id === id)) {
-        const chs = await fetchChannels();
-        if (!chs.some((c) => c.id === id)) throw new Error(`no channel ${id}`);
-        await loadChannels();
-      }
+      if (!(await channelExists(id))) throw new Error(`no channel ${id}`);
       handleSelect(id);
     },
-    [loadChannels, handleSelect],
+    [channelExists, handleSelect],
   );
 
   // Auto-select DM channel if nothing is selected on first load.
@@ -510,9 +517,24 @@ function AppInner() {
   // Opens a channel, or a message in it: "<channel-id>[/<message-id>]" from
   // the hash or a loop://channel/ deep link.
   const openChannelTarget = useCallback(
-    (raw: string) => {
+    async (raw: string) => {
       const target = parseChannelTarget(raw);
       if (!target) return;
+      // Selecting a channel moves the hash too, which lands here.
+      if (target.messageId === null && target.channelId === selectedId) return;
+      let exists: boolean;
+      try {
+        exists = await channelExists(target.channelId);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to open the channel");
+        return;
+      }
+      if (!exists) {
+        setError("That channel or thread doesn't exist anymore.");
+        // Stay where we are, with the hash saying so.
+        window.history.replaceState(null, "", `#${selectedId ?? ""}`);
+        return;
+      }
       if (target.messageId === null) {
         setSelectedId(target.channelId);
         return;
@@ -522,7 +544,7 @@ function AppInner() {
       // change the browser reports.
       window.history.replaceState(null, "", `#${target.channelId}`);
     },
-    [handleSelectMessage],
+    [selectedId, channelExists, handleSelectMessage],
   );
 
   // Handle back/forward navigation, and message links followed in the chat.
@@ -960,8 +982,11 @@ function AppInner() {
             ) : sharesOpen ? (
               <GlobalSharesPanel sidebarOpen={sidebarOpen} onOpenPalette={() => setPaletteOpen(true)} onClose={() => closePanel("shares")} />
             ) : (
-              <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <LoopLogo />
+              <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+                {error && <ErrorBar message={error} onDismiss={() => setError(null)} />}
+                <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <LoopLogo />
+                </div>
               </div>
             )}
           </>

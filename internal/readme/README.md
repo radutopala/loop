@@ -1132,7 +1132,7 @@ In headless/Linux environments where Electron can't launch, `LOOP_NO_ELECTRON=1 
 | `delete_thread` | Delete a thread by ID (cleans up worktree and branch if applicable) |
 | `search_channels` | Search for channels and threads by name |
 | `channel_status` | Show a channel's threads and worktree threads as a tree, each with its sidebar hover info: branch, PR/MR checks, merge conflict, unresolved review threads, sync and agent status (`channel_id` optional — defaults to the current channel's tree) |
-| `send_message` | Send a message to a channel or thread (`channel_id` optional — defaults to the current channel) |
+| `send_message` | Send a message to a channel or thread (`channel_id` optional — defaults to the current channel). A message to another channel tells the agent there who sent it, and the chat links back to the sender |
 | `queue_message` | Queue a follow-up prompt for yourself in the current channel/thread/worktree; `interrupt=true` cancels the active run and jumps the queue; `delay_seconds` holds it back and returns its `msg_id` |
 | `list_queued_messages` | List the messages waiting in the current channel's queue: `msg_id`, running/queued/delayed, and the start of each |
 | `delete_queued_message` | Remove a waiting message from the current channel's queue by `msg_id` (not the running one) |
@@ -1210,6 +1210,8 @@ make clean            # Remove build artifacts
 ```
 
 `make app-dev` opens a Chrome DevTools Protocol port on `127.0.0.1:9223` (set `LOOP_DEBUG_PORT` to change it). Packaged builds don't open it.
+
+macOS refuses notifications from Electron's stock ad-hoc signature, so on a Mac `make app-dev` signs its Electron with your `Developer ID Application` certificate (set `APP_DEV_SIGN_IDENTITY` to use another). Without one, the app runs as usual but shows no notifications.
 
 `make app-record` uses that port to watch the window while you click around. It lists the longest Loading states and slowest API requests, and saves a full timeline and screenshots to a temp folder (`DURATION=90` sets the seconds, `OUT=dir` the folder). It only observes, so it works with whatever you do by hand, but screenshots capture whatever is on screen.
 

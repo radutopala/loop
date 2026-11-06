@@ -508,6 +508,7 @@ Send a message to a channel. When an orchestrator is configured, routes through 
 |-----------------|--------|----------|-------------|
 | `channel_id`    | string | yes      | Target channel or thread ID |
 | `content`       | string | yes      | Message text |
+| `from_channel_id` | string | no     | Channel the message is sent from, for an owner token. Any other token's own channel replaces it. When it isn't `channel_id`, the message gets [origin tags](#message-tags). |
 | `mode`          | string | no       | Agent mode hint (e.g. `"plan"`) |
 | `delivery`      | string | no       | How the message meets an active run. `"queue"` (default) waits behind it. `"add"` writes the message into the turn the channel's [live session](chat.md#live-sessions) runs, which answers it in that turn. The row is stored first, untriggered and carrying the uuid its line is written with, so it shows in the [queue](#get-apichannelsidqueued) as `"adding": true` until the agent takes it in: then it is marked processed and moved to the end of the timeline ([`message.taken`](events.md#messagetaken)). If the session ends or restarts before that, or the daemon restarts, the row becomes an ordinary queued message ([`messages.requeued`](events.md#messagesrequeued)). With no live session, no turn running, a channel parked on an ask or plan card, or `mode` set, an added message is queued instead. `"steer"` cancels the active run and inserts this message with `priority = MaxQueuedPriority(channel_id) + 1` so it claims next ahead of any queued rows; queued rows are preserved (not deleted). Used by the chat UI's send modes and its "Deny with prompt" gate flow. |
 | `interrupt`     | bool   | no       | Older name for `"delivery": "steer"`, still accepted. With `delivery` set to `"queue"` or `"add"` it is a `400`. |
@@ -526,9 +527,22 @@ Send a message to a channel. When an orchestrator is configured, routes through 
 - `delivery: "add"` routes through `HandleIncomingMessageAdded`, which sets `AddToTurn` on the incoming message for the orchestrator.
 - `delay_seconds > 0` routes through `HandleIncomingMessageDelayed` with a `msg_id` picked by the handler, which stamps `not_before` on the inserted row. Because the row is not yet due, the immediate drain claims nothing; the orchestrator's delay poller re-drains the channel once `not_before` passes (this also recovers pending delays across a daemon restart, since the drain is event-driven).
 
-**Errors:** `400` if `channel_id` or `content` is empty, `delivery` is not `"queue"`, `"add"` or `"steer"`, or it contradicts `interrupt`. `501` if message sending is not configured and no handler is set.
+**Errors:** `400` if `channel_id` or `content` is empty, `delivery` is not `"queue"`, `"add"` or `"steer"`, or it contradicts `interrupt`. `404` if the channel doesn't exist, for example because it was deleted. `501` if message sending is not configured and no handler is set.
 
 ---
+
+
+#### Message tags
+
+Message rows and `message.created` events carry `tags`, a key/value object, when the message has any. A message sent from another channel has:
+
+| Tag | Value |
+|-----|-------|
+| `origin_channel` | The sender's channel ID |
+| `origin_channel_name` | Its name when the message was sent, when it has one |
+| `origin_message` | Row ID of the last user message the sender's agent started on, when there is one |
+
+The agent reads them as `[from channel "<name>", channel_id: <id>, message_id: <id>; if it needs an answer, send it with send_message to this channel_id] <content>`; a message starting with `/` is passed as it is, so it still runs as a slash command. The chat shows a link back to that channel and message. The stored content has no label.
 
 ### `DELETE /api/messages/{id}`
 

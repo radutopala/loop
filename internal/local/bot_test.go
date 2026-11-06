@@ -494,6 +494,19 @@ func (s *BotSuite) TestHandleIncomingMessagePlain() {
 	require.True(s.T(), received.IsDM)
 }
 
+func (s *BotSuite) TestHandleIncomingMessageTags() {
+	var received *bot.IncomingMessage
+	s.bot.OnMessage(func(_ context.Context, msg *bot.IncomingMessage) {
+		received = msg
+	})
+
+	tags := map[string]string{bot.TagOriginChannel: "ch-2"}
+	s.bot.HandleIncomingMessage(bot.WithMessageTags(context.Background(), tags), "ch-1", "user-1", "hello", "")
+
+	require.NotNil(s.T(), received)
+	require.Equal(s.T(), tags, received.Tags)
+}
+
 func (s *BotSuite) TestHandleIncomingMessageMention() {
 	var received *bot.IncomingMessage
 	s.bot.OnMessage(func(_ context.Context, msg *bot.IncomingMessage) {

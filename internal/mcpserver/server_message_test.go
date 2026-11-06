@@ -20,6 +20,7 @@ func (s *MCPServerSuite) TestSendMessageSuccess() {
 		body, _ := io.ReadAll(req.Body)
 		require.Contains(s.T(), string(body), `"channel_id":"ch-1"`)
 		require.Contains(s.T(), string(body), `"content":"hello world"`)
+		require.Contains(s.T(), string(body), `"from_channel_id":"test-channel"`)
 		return noContentResponse(http.StatusNoContent), nil
 	}
 

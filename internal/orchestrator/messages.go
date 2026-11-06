@@ -128,6 +128,7 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *bot.IncomingMessa
 		AddUUID:     addUUID,
 		Priority:    msg.Priority,
 		Mode:        msg.Mode,
+		Tags:        msg.Tags,
 		NotBefore:   msg.NotBefore,
 		CreatedAt:   msg.Timestamp,
 	}
@@ -135,7 +136,7 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *bot.IncomingMessa
 		o.logger.Error("inserting message", "error", err, "channel_id", msg.ChannelID)
 		return
 	}
-	added := addUUID != "" && o.addToRunningTurn(ctx, msg.ChannelID, addUUID, msg.Content)
+	added := addUUID != "" && o.addToRunningTurn(ctx, msg.ChannelID, addUUID, bot.WithOriginLabel(msg.Content, msg.Tags))
 
 	if o.events != nil {
 		o.events.BroadcastMessageCreated(msg.ChannelID, events.MessageEventData{
@@ -145,6 +146,7 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *bot.IncomingMessa
 			AuthorName: msg.AuthorName,
 			Content:    msg.Content,
 			Priority:   msg.Priority,
+			Tags:       msg.Tags,
 			NotBefore:  msg.NotBefore,
 		})
 	}
@@ -351,6 +353,7 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 		MessageID:  row.MsgID,
 		Mode:       row.Mode,
 		Priority:   row.Priority,
+		Tags:       row.Tags,
 		Timestamp:  row.CreatedAt,
 	}
 	if incoming != nil && incoming.MessageID == row.MsgID {
@@ -515,7 +518,7 @@ func (o *Orchestrator) prepareAgentRequest(ctx context.Context, msg *bot.Incomin
 	}
 
 	req := o.buildAgentRequest(msg.ChannelID, recent, channel)
-	req.Prompt = formatMessageContent(msg.AuthorName, msg.Content)
+	req.Prompt = formatMessageContent(msg.AuthorName, bot.WithOriginLabel(msg.Content, msg.Tags))
 	req.AuthorID = msg.AuthorID
 	req.PlanMode = msg.Mode == "plan"
 
@@ -1014,7 +1017,7 @@ func (o *Orchestrator) buildAgentRequest(channelID string, recent []*db.Message,
 		}
 		messages = append(messages, agent.AgentMessage{
 			Role:    role,
-			Content: formatMessageContent(m.AuthorName, m.Content),
+			Content: formatMessageContent(m.AuthorName, bot.WithOriginLabel(m.Content, m.Tags)),
 		})
 	}
 

@@ -192,7 +192,7 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "send_message",
-		Description: "Send a message to a channel or thread. channel_id is optional — omit it to target the current channel/thread this agent is running in; use search_channels to find another channel's ID. To trigger the bot in the target channel, include @BotName (e.g. @LoopBot) as plain text in the message — it will be converted to a proper mention automatically.",
+		Description: "Send a message to a channel or thread. channel_id is optional — omit it to target the current channel/thread this agent is running in; use search_channels to find another channel's ID. To trigger the bot in the target channel, include @BotName (e.g. @LoopBot) as plain text in the message — it will be converted to a proper mention automatically. The agent in another channel or thread reads your message with a label naming your channel and how to answer it, unless it is a slash command.",
 	}, s.handleSendMessage)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{

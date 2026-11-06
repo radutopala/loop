@@ -255,6 +255,7 @@ export function useChatState(channelId: string | null, initialRunningBot?: boole
           is_bot: data.is_bot,
           is_processed: data.is_processed,
           priority: data.priority,
+          tags: data.tags,
           trigger_msg_id: data.trigger_msg_id,
           forkable: data.forkable,
           not_before: data.not_before,

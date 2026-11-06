@@ -376,6 +376,7 @@ func (b *Bot) handleIncoming(ctx context.Context, channelID, authorID, content, 
 			Timestamp:    time.Now().UTC(),
 			Mode:         mode,
 			Priority:     opts.priority,
+			Tags:         bot.MessageTagsFrom(ctx),
 			NotBefore:    opts.notBefore,
 			AddToTurn:    opts.addToTurn,
 		})

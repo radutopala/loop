@@ -206,6 +206,67 @@ func (s *IntegrationSuite) TestSteerQueuedMessageSkipsClaimedRow() {
 	require.False(s.T(), steered)
 }
 
+// TestMessageTags checks tags against a real SQLite: they come back from a
+// read and survive a claim, and a message without any stores none.
+func (s *IntegrationSuite) TestMessageTags() {
+	store, err := NewSQLiteStore(filepath.Join(s.T().TempDir(), "loop.db"))
+	require.NoError(s.T(), err)
+	defer store.Close()
+
+	ctx := context.Background()
+	chatID := seedChannel(s.T(), store, "ch1")
+	tags := map[string]string{"origin_channel": "ch2", "origin_channel_name": `a "quoted" name`}
+	for _, m := range []*Message{{MsgID: "tagged", Tags: tags, IsTriggered: true}, {MsgID: "plain", IsTriggered: true}} {
+		m.ChatID, m.ChannelID, m.Content, m.Kind, m.CreatedAt = chatID, "ch1", m.MsgID, MessageKindMessage, time.Now()
+		require.NoError(s.T(), store.InsertMessage(ctx, m))
+	}
+
+	queued, err := store.ListQueuedUserMessages(ctx, "ch1")
+	require.NoError(s.T(), err)
+	require.Len(s.T(), queued, 2)
+	require.Equal(s.T(), tags, queued[0].Tags)
+	require.Nil(s.T(), queued[1].Tags)
+
+	claimed, err := store.ClaimNextPending(ctx, "ch1")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "tagged", claimed.MsgID)
+	require.Equal(s.T(), tags, claimed.Tags)
+}
+
+// TestLatestPromptRowID checks which rows count as the prompt a channel's
+// agent is on: a queued message doesn't, and neither do another channel's rows
+// or the bot's.
+func (s *IntegrationSuite) TestLatestPromptRowID() {
+	store, err := NewSQLiteStore(filepath.Join(s.T().TempDir(), "loop.db"))
+	require.NoError(s.T(), err)
+	defer store.Close()
+
+	ctx := context.Background()
+	chatID := seedChannel(s.T(), store, "ch1")
+	otherChatID := seedChannel(s.T(), store, "ch2")
+
+	id, err := store.LatestPromptRowID(ctx, "ch1")
+	require.NoError(s.T(), err)
+	require.Zero(s.T(), id)
+
+	insert := func(m *Message) int64 {
+		m.Content, m.Kind, m.CreatedAt = m.MsgID, MessageKindMessage, time.Now()
+		if m.ChatID == 0 {
+			m.ChatID, m.ChannelID = chatID, "ch1"
+		}
+		require.NoError(s.T(), store.InsertMessage(ctx, m))
+		return m.ID
+	}
+	first := insert(&Message{MsgID: "first", IsProcessed: true})
+	insert(&Message{MsgID: "reply", IsBot: true, IsProcessed: true})
+	insert(&Message{MsgID: "queued", IsTriggered: true})
+	insert(&Message{MsgID: "elsewhere", ChatID: otherChatID, ChannelID: "ch2", IsProcessed: true})
+
+	id, err = store.LatestPromptRowID(ctx, "ch1")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), first, id)
+}
+
 // TestAddedMessageLifecycle checks a message added to a running turn
 // against a real SQLite: it is listed first in the queue but never claimed,
 // edited, steered, reordered or deleted; the echo takes it in once; and a
