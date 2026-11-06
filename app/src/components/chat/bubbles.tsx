@@ -248,7 +248,7 @@ export function MessageBubble({
                 data-testid="message-origin"
                 href={origin.href}
                 title={`Sent by the agent in ${origin.name}: go to the message it was working on`}
-                style={{ fontSize: 11, color: colors.active, textDecoration: "none" }}
+                style={{ fontSize: 11, color: colors.active, textDecoration: "none", marginRight: "auto" }}
               >
                 from #{origin.name}
               </a>
