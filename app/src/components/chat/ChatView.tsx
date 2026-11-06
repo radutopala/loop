@@ -111,6 +111,8 @@ interface ChatViewProps {
   /** The project config waits for trust: the composer says so, with a way to review it. */
   trustPending?: boolean;
   onReviewTrust?: () => void;
+  /** Opens the Settings section that reclaims Docker space, offered when a live session ended on a full disk. */
+  onFreeDockerSpace?: () => void;
   /** Opens a thread; chat bubbles offer +fork only when it's set. */
   onSelectThread?: (threadId: string) => void;
   /** Nobody writes in this chat: the note shows in place of the composer. */
@@ -130,6 +132,7 @@ export function ChatView({
   noAutoFocus,
   trustPending,
   onReviewTrust,
+  onFreeDockerSpace,
   onSelectThread,
   readOnlyNote,
   subscribeChatEvents,
@@ -226,7 +229,7 @@ export function ChatView({
   // the composer and has to stay last.
   const statusBars = (
     <>
-      {readOnlyNote === undefined && <LiveBar status={live} />}
+      {readOnlyNote === undefined && <LiveBar status={live} onReclaimSettings={onFreeDockerSpace} />}
       {channelId && background && <BackgroundTasksBar channelId={channelId} tasks={background.tasks} stoppable={background.stoppable} />}
       {channelId && subscribeChatEvents && <MonitorsBar channelId={channelId} subscribeChatEvents={subscribeChatEvents} wsOpens={wsOpens} />}
     </>

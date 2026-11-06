@@ -142,6 +142,7 @@ function AppInner() {
     togglePanel,
     openConfig,
     openProjectTrust,
+    openContainersSettings,
     toggleSettingsKeyboard,
     forceOpenSettings,
     closePanel,
@@ -871,6 +872,7 @@ function AppInner() {
               channelId={selectedId}
               channel={selectedChannel}
               onReviewProjectTrust={reviewProjectTrust}
+              onFreeDockerSpace={openContainersSettings}
               sidebarOpen={sidebarOpen}
               style={readmeOpen || settingsOpen || containersOpen || tasksOpen || workflowsOpen || sharesOpen ? { display: "none" } : undefined}
               onToggleSidebar={() => setSidebarOpen((v) => !v)}

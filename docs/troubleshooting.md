@@ -106,6 +106,7 @@ and the agent's own writes fail with `no space left on device`, and the chat
 shows the notice instead of a reply. Free space inside Docker, then send the
 message again:
 
+- **Settings → Containers** -- shows what can be reclaimed and prunes it.
 - `docker builder prune -a` -- the build cache is usually the largest share.
 - `docker image prune -a` and `docker container prune` -- unused images and
   stopped containers.

@@ -29,6 +29,8 @@ export interface AppPanelState {
   openConfig: (dirPath: string) => void;
   /** Open settings on a project's config, where its trust notice is. */
   openProjectTrust: (dirPath: string) => void;
+  /** Open settings on its Containers section, where Docker space is reclaimed. */
+  openContainersSettings: () => void;
   /**
    * Toggle settings without closing other panels first (keyboard shortcut
    * behavior: only close others when opening, not when closing).
@@ -109,6 +111,17 @@ export function useAppPanelState(): AppPanelState {
     setSettingsSection("__project_json__");
   }, []);
 
+  const openContainersSettings = useCallback(() => {
+    setReadmeOpen(false);
+    setContainersOpen(false);
+    setTasksOpen(false);
+    setWorkflowsOpen(false);
+    setSharesOpen(false);
+    setSettingsOpen(true);
+    setSettingsDirPath(null);
+    setSettingsSection("Containers");
+  }, []);
+
   const toggleSettingsKeyboard = useCallback(() => {
     setSettingsOpen((v) => {
       if (!v) {
@@ -185,6 +198,7 @@ export function useAppPanelState(): AppPanelState {
     openSettings,
     openConfig,
     openProjectTrust,
+    openContainersSettings,
     toggleSettingsKeyboard,
     forceOpenSettings,
     closePanel,

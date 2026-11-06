@@ -62,6 +62,12 @@ export function liveSummary(status: LiveStatus | null): string | null {
   return status.reason && !ROUTINE_ENDS.has(status.reason) ? `Session ended: ${endedReason(status.reason)}` : null;
 }
 
+/** liveDiskFull reports whether the live session ended because Docker is out
+ *  of disk space, by the ENOSPC text its process's error carries. */
+export function liveDiskFull(status: LiveStatus | null): boolean {
+  return !!status && !status.running && /no space left on device|enospc/i.test(status.reason ?? "");
+}
+
 /** liveBackground is the background tasks a running live session waits on;
  *  null when it waits on none. */
 export function liveBackground(status: LiveStatus | null): BackgroundTask[] | null {
@@ -122,7 +128,8 @@ export function footerLabel(enabled: boolean | undefined): string {
 
 /** shouldWarm reports whether typing in the channel should start its live
  *  session: its turns run live, none runs yet, and none was asked for since
- *  the last one ran. */
+ *  the last one ran. A full disk fails every start, each one replacing the
+ *  error on the bar with a session about to die, so only sending retries. */
 export function shouldWarm(status: LiveStatus | null, asked: boolean): boolean {
-  return status !== null && status.enabled !== false && !status.running && !asked;
+  return status !== null && status.enabled !== false && !status.running && !asked && !liveDiskFull(status);
 }
