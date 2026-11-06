@@ -253,13 +253,16 @@ func (s *MainSuite) TestServeAPIServerStartError() {
 	m.store.AssertExpectations(s.T())
 }
 
+// failOrchestratorStart makes serve return as soon as it reaches the orchestrator.
+func (s *MainSuite) failOrchestratorStart() {
+	s.app.startOrchestrator = func(*orchestrator.Orchestrator, context.Context) error {
+		return errors.New("fail early")
+	}
+}
+
 func (s *MainSuite) TestServeOrchestratorStartError() {
 	m := s.setupServeMocks()
-	m.bot.On("OnMessage", mock.Anything).Return()
-	m.bot.On("OnInteraction", mock.Anything).Return()
-	m.bot.On("OnChannelDelete", mock.Anything).Return()
-	m.bot.On("OnChannelJoin", mock.Anything).Return()
-	m.bot.On("RegisterCommands", mock.Anything).Return(errors.New("register failed"))
+	s.failOrchestratorStart()
 
 	err := s.app.serve()
 	require.Error(s.T(), err)
@@ -270,11 +273,7 @@ func (s *MainSuite) TestServeOrchestratorStartError() {
 
 func (s *MainSuite) TestServeRecoverWorkflowRunsError() {
 	m := s.setupServeMocks()
-	m.bot.On("OnMessage", mock.Anything).Return()
-	m.bot.On("OnInteraction", mock.Anything).Return()
-	m.bot.On("OnChannelDelete", mock.Anything).Return()
-	m.bot.On("OnChannelJoin", mock.Anything).Return()
-	m.bot.On("RegisterCommands", mock.Anything).Return(errors.New("fail early"))
+	s.failOrchestratorStart()
 
 	// Override the default Maybe() mock to return an error.
 	m.store.ExpectedCalls = filterExpected(m.store.ExpectedCalls, "ListWorkflowRunsByStatus")
@@ -491,6 +490,33 @@ func (s *MainSuite) TestServeReviewPromptResolveError() {
 	}
 }
 
+// A chat platform that can't be reached leaves the daemon running, and doesn't
+// hold up its shutdown.
+func (s *MainSuite) TestServeStaysUpWhenABotCantStart() {
+	m := s.setupServeMocks()
+	m.setupHappyBot()
+	m.bot.ExpectedCalls = filterExpected(m.bot.ExpectedCalls, "RegisterCommands")
+	m.bot.ExpectedCalls = filterExpected(m.bot.ExpectedCalls, "Start")
+	m.bot.On("RegisterCommands", mock.Anything).Return(errors.New("proxy down"))
+	m.bot.On("Start", mock.Anything).Return(errors.New("proxy down"))
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.app.serve() }()
+
+	s.waitForServeReady(errCh)
+	p, err := os.FindProcess(os.Getpid())
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), p.Signal(syscall.SIGINT))
+
+	select {
+	case err := <-errCh:
+		require.NoError(s.T(), err)
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("serve() did not return in time")
+	}
+	m.bot.AssertExpectations(s.T())
+}
+
 func (s *MainSuite) TestServeHappyPathWithChannelService() {
 	m := s.setupServeMocks()
 	m.setupHappyBot()
@@ -583,11 +609,7 @@ func (s *MainSuite) TestServeHappyPathShutdownWithAPIStopError() {
 func (s *MainSuite) TestServeWithMemoryEnabled() {
 	m := s.setupServeMocks()
 	m.store.On("ListChannels", mock.Anything).Maybe().Return(nil, nil)
-	m.bot.On("OnMessage", mock.Anything).Return()
-	m.bot.On("OnInteraction", mock.Anything).Return()
-	m.bot.On("OnChannelDelete", mock.Anything).Return()
-	m.bot.On("OnChannelJoin", mock.Anything).Return()
-	m.bot.On("RegisterCommands", mock.Anything).Return(errors.New("fail early"))
+	s.failOrchestratorStart()
 
 	m.cfg.Memory = config.MemoryConfig{
 		Enabled: true,
@@ -613,11 +635,7 @@ func (s *MainSuite) TestServeWithMemoryEnabled() {
 
 func (s *MainSuite) TestServeWithMemoryEmbedderError() {
 	m := s.setupServeMocks()
-	m.bot.On("OnMessage", mock.Anything).Return()
-	m.bot.On("OnInteraction", mock.Anything).Return()
-	m.bot.On("OnChannelDelete", mock.Anything).Return()
-	m.bot.On("OnChannelJoin", mock.Anything).Return()
-	m.bot.On("RegisterCommands", mock.Anything).Return(errors.New("fail early"))
+	s.failOrchestratorStart()
 
 	m.cfg.Memory = config.MemoryConfig{
 		Enabled: true,
@@ -633,12 +651,8 @@ func (s *MainSuite) TestServeWithMemoryEmbedderError() {
 }
 
 func (s *MainSuite) TestServeDockerClientCloserCalled() {
-	m := s.setupServeMocks()
-	m.bot.On("OnMessage", mock.Anything).Return()
-	m.bot.On("OnInteraction", mock.Anything).Return()
-	m.bot.On("OnChannelDelete", mock.Anything).Return()
-	m.bot.On("OnChannelJoin", mock.Anything).Return()
-	m.bot.On("RegisterCommands", mock.Anything).Return(errors.New("fail"))
+	s.setupServeMocks()
+	s.failOrchestratorStart()
 
 	closeCalled := false
 	innerClient := new(mockDockerClient)

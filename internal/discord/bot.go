@@ -127,11 +127,13 @@ func (b *DiscordBot) Start(ctx context.Context) error {
 	b.mu.Unlock()
 
 	if err := b.session.Open(); err != nil {
+		_ = b.Stop()
 		return fmt.Errorf("discord session open: %w", err)
 	}
 
 	user, err := b.session.User("@me")
 	if err != nil {
+		_ = b.Stop()
 		return fmt.Errorf("discord get bot user: %w", err)
 	}
 	b.mu.Lock()
@@ -143,7 +145,8 @@ func (b *DiscordBot) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop closes the Discord session and removes event handlers.
+// Stop closes the Discord session and removes event handlers. Start also
+// calls it when it fails, so that starting again doesn't add them twice.
 func (b *DiscordBot) Stop() error {
 	b.mu.RLock()
 	handlers := b.removeHandlers

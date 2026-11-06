@@ -23,7 +23,7 @@ The `Orchestrator` struct holds references to:
 When `Start` is called:
 
 1. Register message, interaction, channel delete, and channel join handlers on the bot.
-2. Register slash commands on all platforms (`bot.RegisterCommands`).
+2. Register slash commands on all platforms (`bot.RegisterCommands`). This step and the next don't stop the daemon if a platform can't be reached: the router retries that platform in the background (see [platforms](platforms.md)).
 3. Start the bot (opens connections to Discord/Slack/etc.).
 4. Start the scheduler (loads tasks from DB, begins cron loop).
 5. Start the delay poller (`startDelayPoller`) — a 1s ticker that re-drains channels whose delayed messages have come due (see [Delayed messages](#delayed-messages)). `Stop` closes `delayStop` (once) to shut it down.
