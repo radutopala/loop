@@ -181,7 +181,7 @@ The `BotRouter` sits between the orchestrator and the platform-specific bots. It
 
 ### Routing Behavior
 
-- **Lifecycle operations** (`Start`, `Stop`, `RegisterCommands`, `RemoveCommands`) fan out to **all** registered bots.
+- **Lifecycle operations** (`Start`, `Stop`, `RegisterCommands`, `RemoveCommands`) fan out to **all** registered bots. A bot that fails `Start` or `RegisterCommands` doesn't stop the daemon: it's logged as a warning and retried in the background, after 5s and doubling up to once a minute, until it succeeds.
 - **Handler registration** (`OnMessage`, `OnInteraction`, `OnChannelDelete`, `OnChannelJoin`) registers on **all** bots, so the orchestrator receives events from every platform.
 - **Channel-specific operations** (`SendMessage`, `SendTyping`, `SendStopButton`, `RemoveStopButton`, `SetChannelTopic`, `DeleteThread`, `RenameThread`, `PostMessage`, `GetChannelParentID`, `GetChannelName`, `CreateThread`, `CreateSimpleThread`, `InviteUserToChannel`) look up the channel in the database via `GetChannel`, determine its platform, and dispatch to the corresponding bot. If no bot is found, a warning is logged and an error is returned.
 - **API message routing** (`HandleIncomingMessage`, `HandleThreadCreated`) similarly resolve the channel's platform bot and delegate to it.

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/db"
@@ -17,12 +18,20 @@ type ChannelStore interface {
 	GetChannel(ctx context.Context, channelID string) (*db.Channel, error)
 }
 
+// How long a bot waits before retrying a failed start, doubling up to the max.
+const (
+	botRetryDelay    = 5 * time.Second
+	botRetryMaxDelay = time.Minute
+)
+
 // BotRouter implements Bot by routing calls to the correct platform-specific bot
 // based on channel platform from the database.
 type BotRouter struct {
 	bots   map[types.Platform]Bot
 	store  ChannelStore
 	logger *slog.Logger
+
+	retryDelay time.Duration // the first retry's delay
 }
 
 // NewBotRouter creates a BotRouter wrapping the given platform bots.
@@ -31,6 +40,8 @@ func NewBotRouter(bots map[types.Platform]Bot, store ChannelStore, logger *slog.
 		bots:   bots,
 		store:  store,
 		logger: logger,
+
+		retryDelay: botRetryDelay,
 	}
 }
 
@@ -65,6 +76,37 @@ func (r *BotRouter) forEachBot(fn func(types.Platform, Bot) error, operation str
 	return nil
 }
 
+// bringUp runs op on every bot. A bot that fails keeps retrying in the
+// background until ctx ends, so a platform that can't be reached (a proxy or
+// network outage) doesn't take down the daemon and the other platforms.
+func (r *BotRouter) bringUp(ctx context.Context, operation string, op func(Bot) error) {
+	for p, b := range r.bots {
+		if err := op(b); err != nil {
+			r.logger.WarnContext(ctx, operation+" failed, retrying", "platform", p, "error", err)
+			go r.retry(ctx, p, b, operation, op)
+		}
+	}
+}
+
+// retry repeats op with a growing delay until it succeeds or ctx ends.
+func (r *BotRouter) retry(ctx context.Context, p types.Platform, b Bot, operation string, op func(Bot) error) {
+	delay := r.retryDelay
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
+		}
+		err := op(b)
+		if err == nil {
+			r.logger.InfoContext(ctx, operation+" succeeded after retrying", "platform", p)
+			return
+		}
+		r.logger.WarnContext(ctx, operation+" failed, retrying", "platform", p, "error", err)
+		delay = min(delay*2, botRetryMaxDelay)
+	}
+}
+
 // withBot resolves the bot for a channel, returning an error if none is found.
 func (r *BotRouter) withBot(ctx context.Context, channelID, method string) (Bot, error) {
 	b := r.botForChannel(ctx, channelID)
@@ -76,16 +118,21 @@ func (r *BotRouter) withBot(ctx context.Context, channelID, method string) (Bot,
 
 // --- Lifecycle: fan out to all bots ---
 
+// Start starts every bot, retrying in the background those that fail.
 func (r *BotRouter) Start(ctx context.Context) error {
-	return r.forEachBot(func(_ types.Platform, b Bot) error { return b.Start(ctx) }, "starting bots")
+	r.bringUp(ctx, "starting bot", func(b Bot) error { return b.Start(ctx) })
+	return nil
 }
 
 func (r *BotRouter) Stop() error {
 	return r.forEachBot(func(_ types.Platform, b Bot) error { return b.Stop() }, "stopping bots")
 }
 
+// RegisterCommands registers every bot's commands, retrying in the background
+// those that fail.
 func (r *BotRouter) RegisterCommands(ctx context.Context) error {
-	return r.forEachBot(func(_ types.Platform, b Bot) error { return b.RegisterCommands(ctx) }, "registering commands")
+	r.bringUp(ctx, "registering commands", func(b Bot) error { return b.RegisterCommands(ctx) })
+	return nil
 }
 
 func (r *BotRouter) RemoveCommands(ctx context.Context) error {

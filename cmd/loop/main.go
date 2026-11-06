@@ -119,8 +119,10 @@ type app struct {
 	// Bots
 	discordgoNew  func(string) (*discordgo.Session, error)
 	newDiscordBot func(string, string, string, *slog.Logger) (orchestrator.Bot, error)
-	newSlackBot   func(string, string, *slog.Logger) (orchestrator.Bot, error)
-	newLocalBot   func(db.Store, *slog.Logger) orchestrator.Bot
+	// startOrchestrator can't fail on a bot: BotRouter retries those itself.
+	startOrchestrator func(*orchestrator.Orchestrator, context.Context) error
+	newSlackBot       func(string, string, *slog.Logger) (orchestrator.Bot, error)
+	newLocalBot       func(db.Store, *slog.Logger) orchestrator.Bot
 
 	// Outbound proxy: serve points all three at the configured proxy. The
 	// chat platforms dial through them — HTTP via the default transport,
@@ -232,7 +234,8 @@ func newApp() *app {
 		fsMigrateRun: fsmigrate.Run,
 
 		// Bots
-		discordgoNew: discordgo.New,
+		discordgoNew:      discordgo.New,
+		startOrchestrator: (*orchestrator.Orchestrator).Start,
 		newSlackBot: func(botToken, appToken string, logger *slog.Logger) (orchestrator.Bot, error) {
 			sapi := goslack.New(botToken, goslack.OptionAppLevelToken(appToken))
 			smClient := socketmode.New(sapi, socketmode.OptionDialer(slackDialer))

@@ -976,7 +976,7 @@ func (a *app) serve() error {
 	// Start the bot + scheduler only after the API is listening so any run they
 	// trigger (a due scheduled task, an inbound message) can call back into the
 	// loop API.
-	if err := orch.Start(ctx); err != nil {
+	if err := a.startOrchestrator(orch, ctx); err != nil {
 		_ = apiSrv.Stop(context.Background())
 		return fmt.Errorf("starting orchestrator: %w", err)
 	}

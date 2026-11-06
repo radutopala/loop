@@ -27,25 +27,52 @@ func (s *BotSuite) TestStartSuccess() {
 	s.session.AssertExpectations(s.T())
 }
 
-func (s *BotSuite) TestStartOpenError() {
-	noop := func() {}
-	s.session.On("AddHandler", mock.Anything).Return(noop).Times(5)
-	s.session.On("Open").Return(errors.New("connection failed"))
+func (s *BotSuite) TestStartErrorUndoesItself() {
+	tests := []struct {
+		name    string
+		setup   func(*MockSession)
+		wantErr string
+	}{
+		{
+			name: "open error",
+			setup: func(ss *MockSession) {
+				ss.On("Open").Return(errors.New("connection failed")).Once()
+			},
+			wantErr: "discord session open",
+		},
+		{
+			name: "user error",
+			setup: func(ss *MockSession) {
+				ss.On("Open").Return(nil).Once()
+				ss.On("User", "@me", mock.Anything).Return(nil, errors.New("user fetch failed")).Once()
+			},
+			wantErr: "discord get bot user",
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			session := new(MockSession)
+			b := NewBot(session, "app-1", "g-1", slog.New(slog.NewTextHandler(discard{}, nil)))
+			removed := 0
+			session.On("AddHandler", mock.Anything).Return(func() { removed++ }).Times(5)
+			session.On("Close").Return(nil).Once()
+			tc.setup(session)
 
-	err := s.bot.Start(context.Background())
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "discord session open")
-}
+			err := b.Start(context.Background())
+			require.ErrorContains(s.T(), err, tc.wantErr)
+			require.Equal(s.T(), 5, removed)
+			session.AssertExpectations(s.T())
 
-func (s *BotSuite) TestStartUserError() {
-	noop := func() {}
-	s.session.On("AddHandler", mock.Anything).Return(noop).Times(5)
-	s.session.On("Open").Return(nil)
-	s.session.On("User", "@me", mock.Anything).Return(nil, errors.New("user fetch failed"))
-
-	err := s.bot.Start(context.Background())
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "discord get bot user")
+			// Starting again adds the handlers once more, on top of none.
+			session.On("AddHandler", mock.Anything).Return(func() {}).Times(5)
+			session.On("Open").Return(nil).Once()
+			session.On("User", "@me", mock.Anything).Return(&discordgo.User{ID: "bot-123"}, nil).Once()
+			require.NoError(s.T(), b.Start(context.Background()))
+			require.Len(s.T(), b.removeHandlers, 5)
+			require.Equal(s.T(), "bot-123", b.BotUserID())
+			session.AssertExpectations(s.T())
+		})
+	}
 }
 
 func (s *BotSuite) TestStop() {

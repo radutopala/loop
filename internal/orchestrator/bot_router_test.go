@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -68,13 +69,46 @@ func (s *BotRouterSuite) TestStartFansOutToAllBots() {
 	s.localBot.AssertExpectations(s.T())
 }
 
-func (s *BotRouterSuite) TestStartCollectsErrors() {
-	s.discordBot.On("Start", mock.Anything).Return(errors.New("discord fail"))
-	s.localBot.On("Start", mock.Anything).Return(nil)
+// A bot that fails doesn't fail the rest: the others are done at once, and it
+// retries in the background until it succeeds.
+func (s *BotRouterSuite) TestBringUpRetriesTheBotThatFails() {
+	tests := []struct {
+		method string
+		call   func(*BotRouter, context.Context) error
+	}{
+		{"Start", (*BotRouter).Start},
+		{"RegisterCommands", (*BotRouter).RegisterCommands},
+	}
+	for _, tc := range tests {
+		s.Run(tc.method, func() {
+			s.SetupTest()
+			s.router.retryDelay = time.Millisecond
+			done := make(chan struct{})
+			s.localBot.On(tc.method, mock.Anything).Return(nil).Once()
+			s.discordBot.On(tc.method, mock.Anything).Return(errors.New("proxy down")).Times(3)
+			s.discordBot.On(tc.method, mock.Anything).Run(func(mock.Arguments) { close(done) }).Return(nil).Once()
 
-	err := s.router.Start(context.Background())
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "discord fail")
+			require.NoError(s.T(), tc.call(s.router, context.Background()))
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				s.T().Fatal("the bot wasn't retried")
+			}
+			s.localBot.AssertExpectations(s.T())
+			s.discordBot.AssertExpectations(s.T())
+		})
+	}
+}
+
+func (s *BotRouterSuite) TestRetryStopsWithTheContext() {
+	s.router.retryDelay = time.Hour
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	s.router.retry(ctx, types.PlatformDiscord, s.discordBot, "starting bot", func(Bot) error {
+		s.T().Fatal("retried after the context ended")
+		return nil
+	})
 }
 
 func (s *BotRouterSuite) TestStopFansOutToAllBots() {
@@ -102,15 +136,6 @@ func (s *BotRouterSuite) TestRegisterCommandsFansOut() {
 
 	err := s.router.RegisterCommands(context.Background())
 	require.NoError(s.T(), err)
-}
-
-func (s *BotRouterSuite) TestRegisterCommandsCollectsErrors() {
-	s.discordBot.On("RegisterCommands", mock.Anything).Return(errors.New("fail"))
-	s.localBot.On("RegisterCommands", mock.Anything).Return(nil)
-
-	err := s.router.RegisterCommands(context.Background())
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "registering commands")
 }
 
 func (s *BotRouterSuite) TestRemoveCommandsFansOut() {
