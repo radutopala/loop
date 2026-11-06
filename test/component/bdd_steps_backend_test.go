@@ -56,6 +56,7 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I create a thread "([^"]*)" under the current channel via API$`, tc.createThreadViaAPI)
 	ctx.Step(`^the latest thread queues "([^"]*)" for itself$`, tc.latestThreadQueuesForItself)
 	ctx.Step(`^the latest thread queues "([^"]*)" for the current channel$`, tc.latestThreadQueuesForChannel)
+	ctx.Step(`^the latest thread is deleted via API$`, tc.deleteLatestThread)
 	ctx.Step(`^I set up a test task via API with prompt "([^"]*)" and schedule "([^"]*)"$`, tc.setupTaskViaAPI)
 	ctx.Step(`^I set up a test task via API with type "([^"]*)" prompt "([^"]*)" and schedule "([^"]*)"$`, tc.setupTaskViaAPIWithType)
 	ctx.Step(`^I trigger Run Now via API for the current task$`, tc.triggerRunNowViaAPI)
@@ -380,6 +381,17 @@ func (tc *TestContext) latestThreadQueuesForItself(content string) error {
 // latest thread, as send_message would.
 func (tc *TestContext) latestThreadQueuesForChannel(content string) error {
 	return tc.postDelayedMessage(tc.ChannelID, tc.CreatedThreadIDs[len(tc.CreatedThreadIDs)-1], content)
+}
+
+func (tc *TestContext) deleteLatestThread() error {
+	thread := tc.CreatedThreadIDs[len(tc.CreatedThreadIDs)-1]
+	if err := tc.doRequest(http.MethodDelete, "/api/threads/"+url.PathEscape(thread), ""); err != nil {
+		return err
+	}
+	if tc.LastStatus != http.StatusNoContent {
+		return fmt.Errorf("failed to delete the thread: status %d, body: %s", tc.LastStatus, string(tc.LastBody))
+	}
+	return nil
 }
 
 func (tc *TestContext) postDelayedMessage(channelID, fromChannelID, content string) error {

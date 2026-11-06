@@ -89,6 +89,20 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	tags := s.originTags(r.Context(), &req)
 	ctx := bot.WithMessageTags(r.Context(), tags)
 
+	// The orchestrator drops a message for a channel it can't find, so the
+	// sender has to hear about it here.
+	if s.msgHandler != nil && s.store != nil {
+		ch, err := s.store.GetChannel(r.Context(), req.ChannelID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if ch == nil {
+			http.Error(w, "channel not found", http.StatusNotFound)
+			return
+		}
+	}
+
 	// Route through the orchestrator when available. HandleIncomingMessage*
 	// is now non-blocking after the InsertMessage step (the orchestrator
 	// drains in its own goroutine), so we can call it on the request thread

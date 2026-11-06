@@ -60,6 +60,7 @@ func (s *ServerSuite) TestSendMessageError() {
 func (s *ServerSuite) TestSendMessageViaHandler() {
 	handler := new(MockIncomingMessageHandler)
 	s.srv.SetIncomingMessageHandler(handler)
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1"}, nil).Maybe()
 
 	called := make(chan struct{}, 1)
 	handler.On("HandleIncomingMessage", mock.Anything, "ch-1", "", "hello world", "").
@@ -149,12 +150,16 @@ func (s *ServerSuite) TestSendMessageOriginTags() {
 			if tc.noLookups && tc.principal == agent {
 				target = "agent-ch"
 			}
+			if target == "agent-ch" {
+				s.store.On("GetChannel", mock.Anything, target).Return(&db.Channel{ChannelID: target}, nil).Once()
+			}
 			if !tc.noLookups {
 				s.store.On("GetChannel", mock.Anything, "agent-ch").Return(tc.channel, tc.lookupErr).Once()
 				s.store.On("LatestPromptRowID", mock.Anything, "agent-ch").Return(tc.promptID, tc.promptErr).Once()
 			}
 			handler := new(MockIncomingMessageHandler)
 			s.srv.SetIncomingMessageHandler(handler)
+			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1"}, nil).Maybe()
 			var got map[string]string
 			handler.On("HandleIncomingMessage", mock.Anything, target, "", "hi", "").
 				Run(func(args mock.Arguments) { got = bot.MessageTagsFrom(args.Get(0).(context.Context)) }).Return().Once()
@@ -167,6 +172,40 @@ func (s *ServerSuite) TestSendMessageOriginTags() {
 			require.Equal(s.T(), http.StatusNoContent, rec.Code)
 			require.Equal(s.T(), tc.want, got)
 			handler.AssertExpectations(s.T())
+			s.store.AssertExpectations(s.T())
+		})
+	}
+}
+
+// The orchestrator drops a message for a channel it can't find, so the sender
+// gets the error instead, however the message was to be delivered.
+func (s *ServerSuite) TestSendMessageTargetChannel() {
+	tests := []struct {
+		name       string
+		extra      string
+		channel    *db.Channel
+		lookupErr  error
+		wantStatus int
+		wantBody   string
+	}{
+		{name: "missing", wantStatus: http.StatusNotFound, wantBody: "channel not found"},
+		{name: "missing, added", extra: `,"delivery":"add"`, wantStatus: http.StatusNotFound, wantBody: "channel not found"},
+		{name: "missing, steered", extra: `,"delivery":"steer"`, wantStatus: http.StatusNotFound, wantBody: "channel not found"},
+		{name: "missing, delayed", extra: `,"delay_seconds":60`, wantStatus: http.StatusNotFound, wantBody: "channel not found"},
+		{name: "lookup fails", lookupErr: errors.New("db down"), wantStatus: http.StatusInternalServerError, wantBody: "db down"},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			s.store.On("GetChannel", mock.Anything, "gone").Return(tc.channel, tc.lookupErr).Once()
+			handler := new(MockIncomingMessageHandler)
+			s.srv.SetIncomingMessageHandler(handler)
+
+			rec := s.testRequest("POST", "/api/messages", fmt.Sprintf(`{"channel_id":"gone","content":"hi"%s}`, tc.extra))
+
+			require.Equal(s.T(), tc.wantStatus, rec.Code)
+			require.Contains(s.T(), rec.Body.String(), tc.wantBody)
+			require.Empty(s.T(), handler.Calls)
 			s.store.AssertExpectations(s.T())
 		})
 	}
@@ -194,6 +233,7 @@ func (s *ServerSuite) TestSendMessageOriginTagsOtherDeliveries() {
 			s.store.On("MaxQueuedPriority", mock.Anything, "ch-1").Return(0, nil).Maybe()
 			handler := new(MockIncomingMessageHandler)
 			s.srv.SetIncomingMessageHandler(handler)
+			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1"}, nil).Maybe()
 			canceller := new(MockRunCanceller)
 			canceller.On("CancelActiveRun", "ch-1").Return(true).Maybe()
 			s.srv.SetRunCanceller(canceller)
@@ -225,6 +265,7 @@ func (s *ServerSuite) TestSendMessageOriginLabelWithoutHandler() {
 func (s *ServerSuite) TestSendMessageViaHandlerPlanMode() {
 	handler := new(MockIncomingMessageHandler)
 	s.srv.SetIncomingMessageHandler(handler)
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1"}, nil).Maybe()
 
 	called := make(chan struct{}, 1)
 	handler.On("HandleIncomingMessage", mock.Anything, "ch-1", "", "plan this", "plan").
@@ -247,6 +288,7 @@ func (s *ServerSuite) TestSendMessageInterrupt() {
 	handler := new(MockIncomingMessageHandler)
 	canceller := new(MockRunCanceller)
 	s.srv.SetIncomingMessageHandler(handler)
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1"}, nil).Maybe()
 	s.srv.SetRunCanceller(canceller)
 
 	// Record call order: the priority-bumped insert MUST land before
@@ -292,6 +334,7 @@ func (s *ServerSuite) TestSendMessageInterruptMaxQueuedPriorityError() {
 	handler := new(MockIncomingMessageHandler)
 	canceller := new(MockRunCanceller)
 	s.srv.SetIncomingMessageHandler(handler)
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1"}, nil).Maybe()
 	s.srv.SetRunCanceller(canceller)
 
 	canceller.On("CancelActiveRun", "ch-1").Return(true)
@@ -318,6 +361,7 @@ func (s *ServerSuite) TestSendMessageInterruptMaxQueuedPriorityError() {
 func (s *ServerSuite) TestSendMessageInterruptNoCanceller() {
 	handler := new(MockIncomingMessageHandler)
 	s.srv.SetIncomingMessageHandler(handler)
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1"}, nil).Maybe()
 	// runCanceller is nil — should not panic.
 
 	called := make(chan struct{}, 1)
@@ -341,6 +385,7 @@ func (s *ServerSuite) TestSendMessageNoInterrupt() {
 	handler := new(MockIncomingMessageHandler)
 	canceller := new(MockRunCanceller)
 	s.srv.SetIncomingMessageHandler(handler)
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1"}, nil).Maybe()
 	s.srv.SetRunCanceller(canceller)
 
 	called := make(chan struct{}, 1)
@@ -406,6 +451,7 @@ func (s *ServerSuite) TestSendMessageDelivery() {
 			handler := new(MockIncomingMessageHandler)
 			canceller := new(MockRunCanceller)
 			s.srv.SetIncomingMessageHandler(handler)
+			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1"}, nil).Maybe()
 			s.srv.SetRunCanceller(canceller)
 			tc.on(handler, canceller)
 
@@ -426,6 +472,7 @@ func (s *ServerSuite) TestSendMessageBadDelivery() {
 	} {
 		handler := new(MockIncomingMessageHandler)
 		s.srv.SetIncomingMessageHandler(handler)
+		s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1"}, nil).Maybe()
 
 		rec := s.testRequest("POST", "/api/messages", body)
 
@@ -438,6 +485,7 @@ func (s *ServerSuite) TestSendMessageDelayed() {
 	handler := new(MockIncomingMessageHandler)
 	canceller := new(MockRunCanceller)
 	s.srv.SetIncomingMessageHandler(handler)
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1"}, nil).Maybe()
 	s.srv.SetRunCanceller(canceller)
 
 	called := make(chan struct{}, 1)
@@ -602,6 +650,7 @@ func (s *ServerSuite) TestSetIncomingMessageHandler() {
 
 	handler := new(MockIncomingMessageHandler)
 	s.srv.SetIncomingMessageHandler(handler)
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1"}, nil).Maybe()
 
 	require.NotNil(s.T(), s.srv.msgHandler)
 	require.Equal(s.T(), handler, s.srv.msgHandler)
@@ -1025,6 +1074,7 @@ func (s *ServerSuite) TestWakeChannel() {
 	s.Run("queue", func() {
 		handler := new(MockIncomingMessageHandler)
 		s.srv.SetIncomingMessageHandler(handler)
+		s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1"}, nil).Maybe()
 		handler.On("HandleIncomingMessage", mock.Anything, "ch-1", "", "done", "").Return()
 
 		s.srv.WakeChannel(context.Background(), "ch-1", "done", false)
@@ -1034,6 +1084,7 @@ func (s *ServerSuite) TestWakeChannel() {
 		handler := new(MockIncomingMessageHandler)
 		canceller := new(MockRunCanceller)
 		s.srv.SetIncomingMessageHandler(handler)
+		s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1"}, nil).Maybe()
 		s.srv.SetRunCanceller(canceller)
 		var order []string
 		s.store.On("MaxQueuedPriority", mock.Anything, "ch-1").Return(4, nil)

@@ -90,6 +90,7 @@ import { SessionsPanel } from "../panels/SessionsPanel";
 import { TasksPanel } from "../panels/TasksPanel";
 import { getCloseForInstance, Terminal } from "../panels/Terminal";
 import { WorkflowsLayoutPanel } from "../panels/WorkflowsLayoutPanel";
+import { ErrorBar } from "../shared/ErrorBar";
 import type { OpenPRHandler } from "../shared/OpenPRs";
 import { ChannelHeaderInfo } from "./ChannelHeaderInfo";
 import { ChatShellPane } from "./ChatShellPane";
@@ -1818,35 +1819,13 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
 
       {/* Error bar */}
       {(error || branchError) && (
-        <div
-          role="alert"
-          style={{
-            padding: "8px 12px",
-            backgroundColor: colors.errorBannerBg,
-            color: colors.errorBannerText,
-            fontSize: "13px",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
+        <ErrorBar
+          message={(branchError || error) as string}
+          onDismiss={() => {
+            setBranchError(null);
+            onDismissError?.();
           }}
-        >
-          <span>{branchError || error}</span>
-          <button
-            onClick={() => {
-              setBranchError(null);
-              onDismissError?.();
-            }}
-            style={{
-              background: "none",
-              border: "none",
-              color: colors.errorBannerText,
-              cursor: "pointer",
-              fontSize: "16px",
-            }}
-          >
-            &times;
-          </button>
-        </div>
+        />
       )}
 
       {/* Layout buttons & tabs */}

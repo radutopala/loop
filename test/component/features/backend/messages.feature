@@ -66,6 +66,14 @@ Feature: Queued message deletion and steering
     And the WebSocket event data "tags" should be "map[origin_channel:sender-channel]"
 
   @message-origin
+  Scenario: A message to a channel that doesn't exist fails
+    When I send a POST request to "/api/messages" with body:
+      """
+      {"channel_id":"no-such-channel","content":"anyone there?"}
+      """
+    Then the response status should be 404
+
+  @message-origin
   Scenario: A message from its own channel has no tags
     Given a channel exists for directory "/tmp/bdd-message-no-origin"
     When I connect to the events WebSocket for the channel

@@ -527,7 +527,7 @@ Send a message to a channel. When an orchestrator is configured, routes through 
 - `delivery: "add"` routes through `HandleIncomingMessageAdded`, which sets `AddToTurn` on the incoming message for the orchestrator.
 - `delay_seconds > 0` routes through `HandleIncomingMessageDelayed` with a `msg_id` picked by the handler, which stamps `not_before` on the inserted row. Because the row is not yet due, the immediate drain claims nothing; the orchestrator's delay poller re-drains the channel once `not_before` passes (this also recovers pending delays across a daemon restart, since the drain is event-driven).
 
-**Errors:** `400` if `channel_id` or `content` is empty, `delivery` is not `"queue"`, `"add"` or `"steer"`, or it contradicts `interrupt`. `501` if message sending is not configured and no handler is set.
+**Errors:** `400` if `channel_id` or `content` is empty, `delivery` is not `"queue"`, `"add"` or `"steer"`, or it contradicts `interrupt`. `404` if the channel doesn't exist, for example because it was deleted. `501` if message sending is not configured and no handler is set.
 
 ---
 
