@@ -756,7 +756,7 @@ A channel's [live session](chat.md#live-sessions) started, changed or ended. The
 | `busy`       | bool   | Whether a turn is in progress |
 | `background` | string | The background tasks (shells, subagents, monitors) it still waits on, empty when there are none |
 | `background_tasks` | array | Those tasks, shaped as an [`agent.activity`](#agentactivity)'s `tasks`; left out when there are none |
-| `reason`     | string | Why it ended (when not running): `idle`, `config changed`, `session changed`, `scheduled run`, `one-shot run`, `stopped`, `closed`, `deleted`, `shutdown`, `stdin closed`, `interrupt timed out`, `exited`, `exited: …`, `restart failed: …` |
+| `reason`     | string | Why it ended (when not running): `idle`, `config changed`, `session changed`, `scheduled run`, `one-shot run`, `stopped`, `closed`, `deleted`, `shutdown`, `stdin closed`, `interrupt timed out`, `exited`, `exited: …` (the process's stderr, or the stream's error), `restart failed: …` |
 
 A turn the session starts on its own, after a background task wakes it, runs with `agent.status` `trigger: "live"`.
 

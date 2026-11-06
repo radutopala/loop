@@ -351,7 +351,7 @@ The container's log stream merges stderr into stdout, and the runner parses it a
 
 - **No result event** -- the error names the exit code and carries that output, e.g. `container exited with code 1: parsing claude response: no result event found; last output: …`. Exit code 137 means the process was killed, so it reads `killed — out of memory or out of disk space`.
 - **Error result without text** -- some error results (`error_during_execution`, `error_max_turns`) have no `result`; the error then shows the subtype, the result's `errors`, and the output tail instead of an empty `claude returned error:`.
-- **Docker out of disk space** -- the disk that fills is the Docker VM's, not the host's. Container create, file copies and the agent's own writes (its session files under `~/.claude`) then fail with `no space left on device` / `ENOSPC`, and the chat shows "Docker is out of disk space … then send again" with `docker builder prune -a` as the first thing to try.
+- **Docker out of disk space** -- the disk that fills is the Docker VM's, not the host's. Container create, file copies and the agent's own writes (its session files under `~/.claude`) then fail with `no space left on device` / `ENOSPC`, and the chat shows "Docker is out of disk space … then send again", pointing at [Reclaiming Docker Space](#reclaiming-docker-space). A live session that dies this way also says so above the composer, with a button that reclaims the space (as the settings section does by default, keeping unused images) and one to that section, and typing no longer restarts it until a message is sent.
 
 The chat shows every run error, see [Orchestrator: Agent Execution](orchestrator.md#agent-execution).
 

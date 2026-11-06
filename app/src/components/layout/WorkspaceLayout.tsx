@@ -284,6 +284,7 @@ interface WorkspaceLayoutProps {
   channel: Channel;
   /** Open Settings on the project config waiting for trust. */
   onReviewProjectTrust?: () => void;
+  onFreeDockerSpace?: () => void;
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
   onOpenPalette: () => void;
@@ -334,6 +335,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     channelId,
     channel,
     onReviewProjectTrust,
+    onFreeDockerSpace,
     sidebarOpen,
     onToggleSidebar,
     onOpenPalette,
@@ -1433,6 +1435,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                 onScrollComplete={onScrollComplete}
                 trustPending={!!channel.trust_pending}
                 onReviewTrust={onReviewProjectTrust}
+                onFreeDockerSpace={onFreeDockerSpace}
                 onSelectThread={onSelectThread}
                 subscribeChatEvents={subscribeChatEvents}
                 wsOpens={wsOpens}
@@ -1455,6 +1458,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       onScrollComplete,
       channel.trust_pending,
       onReviewProjectTrust,
+      onFreeDockerSpace,
       onSelectThread,
       subscribeChatEvents,
       wsOpens,

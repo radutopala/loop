@@ -2,6 +2,7 @@ package container
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1054,12 +1055,31 @@ func (s *RunnerSuite) TestLiveOwnTurnsUnreported() {
 
 func (s *RunnerSuite) TestLiveStreamEnds() {
 	tests := []struct {
-		name string
-		end  func(proc *fakeLiveProc)
-		want string
+		name    string
+		end     func(proc *fakeLiveProc)
+		want    string
+		wantErr string
 	}{
 		{name: "exit", end: func(p *fakeLiveProc) { _ = p.outW.Close() }, want: "exited"},
 		{name: "broken stream", end: func(p *fakeLiveProc) { _ = p.outW.CloseWithError(errors.New("boom")) }, want: "exited: boom"},
+		{
+			name: "exit after an error",
+			end: func(p *fakeLiveProc) {
+				_, _ = stdcopy.NewStdWriter(p.outW, stdcopy.Stderr).Write([]byte("\nno space left on device\n"))
+				_ = p.outW.Close()
+			},
+			want:    "exited: no space left on device",
+			wantErr: "live session: live session ended: no space left on device",
+		},
+		{
+			name: "broken stream after an error",
+			end: func(p *fakeLiveProc) {
+				_, _ = stdcopy.NewStdWriter(p.outW, stdcopy.Stderr).Write([]byte("oops"))
+				_ = p.outW.CloseWithError(errors.New("boom"))
+			},
+			want:    "exited: oops",
+			wantErr: "live session: live session ended: oops",
+		},
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
@@ -1074,9 +1094,34 @@ func (s *RunnerSuite) TestLiveStreamEnds() {
 			waitFor(s.T(), proc.stdin)
 			tc.end(proc)
 			got := waitFor(s.T(), run)
-			require.EqualError(s.T(), got.err, "live session: live session ended")
+			require.EqualError(s.T(), got.err, cmp.Or(tc.wantErr, "live session: live session ended"))
 			require.Equal(s.T(), tc.want, waitFor(s.T(), log.ended))
 			require.Empty(s.T(), s.runner.LiveChannels())
+		})
+	}
+}
+
+func (s *RunnerSuite) TestStderrTail() {
+	long := strings.Repeat("x", outputTailMaxBytes)
+	tests := []struct {
+		name   string
+		writes []string
+		want   string
+	}{
+		{name: "nothing"},
+		{name: "trimmed", writes: []string{"\n  first\n", "second\n\n"}, want: "first\nsecond"},
+		{name: "keeps the end", writes: []string{"dropped", long}, want: long},
+		{name: "drops a split character", writes: []string{"é" + long[1:]}, want: long[1:]},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			tail := &stderrTail{}
+			for _, w := range tc.writes {
+				n, err := tail.Write([]byte(w))
+				require.NoError(s.T(), err)
+				require.Equal(s.T(), len(w), n)
+			}
+			require.Equal(s.T(), tc.want, tail.String())
 		})
 	}
 }

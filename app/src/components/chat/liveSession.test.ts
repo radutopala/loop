@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LiveStatus } from "../../api/live";
-import { applyLiveEvent, endedReason, footerLabel, liveBackground, liveIcon, liveIconTitle, liveSummary, shouldWarm, shownBackground, taskTypeLabel } from "./liveSession";
+import { applyLiveEvent, endedReason, footerLabel, liveBackground, liveDiskFull, liveIcon, liveIconTitle, liveSummary, shouldWarm, shownBackground, taskTypeLabel } from "./liveSession";
 
 const event = (type: string, data: unknown, channel_id = "c1") => ({ type, channel_id, data, timestamp: 0 });
 const running: LiveStatus = { running: true, enabled: true, channel_id: "c1", busy: false };
@@ -153,7 +153,23 @@ describe("shouldWarm", () => {
     ["already asked", idle, true, false],
     ["ended event, enabled unknown", { running: false, busy: false }, false, true],
     ["not running", idle, false, true],
+    ["ended with another error", { ...idle, reason: "exited: boom" }, false, true],
+    ["ended on a full disk", { ...idle, reason: "exited: the volume holding /tmp is full (ENOSPC)." }, false, false],
   ])("%s", (_, status, asked, want) => {
     expect(shouldWarm(status as LiveStatus | null, asked as boolean)).toBe(want);
+  });
+});
+
+describe("liveDiskFull", () => {
+  const ended = (reason?: string): LiveStatus => ({ running: false, busy: false, reason });
+  it.each([
+    ["no status", null, false],
+    ["no reason", ended(), false],
+    ["another error", ended("exited: boom"), false],
+    ["errno", ended("exited: the volume holding /tmp is full (ENOSPC)."), true],
+    ["daemon error", ended("restart failed: mkdir /var/lib/docker: No space left on device"), true],
+    ["a running session", { ...ended("exited: ENOSPC"), running: true }, false],
+  ])("%s", (_, status, want) => {
+    expect(liveDiskFull(status as LiveStatus | null)).toBe(want);
   });
 });

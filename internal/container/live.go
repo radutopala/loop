@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -128,6 +129,7 @@ type liveSession struct {
 
 	attach  *AttachStream
 	stdout  *io.PipeReader
+	stderr  *stderrTail
 	writeMu sync.Mutex
 
 	mu         sync.Mutex
@@ -311,10 +313,12 @@ func (r *DockerRunner) spawnLive(ctx context.Context, req *agent.AgentRequest, h
 	}
 
 	// The attach stream multiplexes stdout and stderr; the reader wants
-	// stdout. Stderr is dropped, as a one-shot run's is.
+	// stdout. Stderr's tail is kept: it says why a process that dies, before
+	// its first event say, died. The pipe closes after the last of it.
 	pr, pw := io.Pipe()
+	stderr := &stderrTail{}
 	go func() {
-		_, copyErr := stdcopy.StdCopy(pw, io.Discard, attach.Reader)
+		_, copyErr := stdcopy.StdCopy(pw, stderr, attach.Reader)
 		_ = pw.CloseWithError(copyErr)
 	}()
 
@@ -329,6 +333,7 @@ func (r *DockerRunner) spawnLive(ctx context.Context, req *agent.AgentRequest, h
 		asked:         asked,
 		attach:        attach,
 		stdout:        pr,
+		stderr:        stderr,
 		sessionID:     req.SessionID,
 	}
 	if req.ForkSession {
@@ -1011,14 +1016,45 @@ func (r *DockerRunner) liveStreamEnded(s *liveSession, err error) {
 	s.mu.Lock()
 	turn := s.turn
 	s.mu.Unlock()
+	stderr := s.stderr.String()
 	reason := "exited"
-	if err != io.EOF {
+	turnErr := errLiveEnded
+	switch {
+	case stderr != "":
+		reason = "exited: " + stderr
+		turnErr = fmt.Errorf("%w: %s", errLiveEnded, stderr)
+	case err != io.EOF:
 		reason = "exited: " + err.Error()
 	}
 	r.endLive(s, reason)
 	if turn != nil {
-		r.finishLiveTurn(s, turn, liveOutcome{err: errLiveEnded})
+		r.finishLiveTurn(s, turn, liveOutcome{err: turnErr})
 	}
+}
+
+// stderrTail keeps the last outputTailMaxBytes a live session's process wrote
+// to stderr.
+type stderrTail struct {
+	mu  sync.Mutex
+	buf []byte
+}
+
+func (t *stderrTail) Write(p []byte) (int, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.buf = append(t.buf, p...)
+	if extra := len(t.buf) - outputTailMaxBytes; extra > 0 {
+		t.buf = t.buf[extra:]
+	}
+	return len(p), nil
+}
+
+// String is the kept output, trimmed; the cut can split a character, which
+// is dropped.
+func (t *stderrTail) String() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return strings.TrimSpace(strings.ToValidUTF8(string(t.buf), ""))
 }
 
 // SendLiveControl writes request, a stream-json control request's body, to
