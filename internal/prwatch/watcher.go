@@ -118,6 +118,9 @@ type Watcher struct {
 
 	mu      sync.Mutex
 	entries map[string]*entry
+	// claimMu makes a thread's claim of a failure, and the save that tells
+	// the other threads of it, one step.
+	claimMu sync.Mutex
 }
 
 // New returns a Watcher.
@@ -362,13 +365,18 @@ func (w *Watcher) poll(ctx context.Context, channelID string, e *entry) (bool, t
 		st.Watching = true
 		if ci.HeadSHA != st.LastFailedSHA {
 			st.Failed = nil
-			if st.Attention == events.PRAttentionFailed {
+			if st.Attention == events.PRAttentionFailed || st.Reason == events.PRReasonElsewhere {
 				st.Attention, st.Reason = "", ""
 			}
 		}
 	case ci.Checks.Failed > 0:
 		w.checkArmedHead(ctx, st, ci, agent)
 		alert = w.failure(ctx, e, t, f, ci, st, agent)
+		if alert != "" && !w.claimAlert(ctx, st, ci.HeadSHA, agent) {
+			// Another thread sharing the PR/MR shows it: its pill lights.
+			alert = ""
+			st.Attention, st.Reason = "", events.PRReasonElsewhere
+		}
 	default:
 		w.checkArmedHead(ctx, st, ci, agent)
 		st.Attention, st.Attempts, st.LastFailedSHA, st.LastLogHash = "", 0, "", ""
@@ -443,6 +451,10 @@ func (w *Watcher) mergeArmed(ctx context.Context, f forge.Forge, t *Target, st *
 // and returns the alert to tell the owner, if any.
 func (w *Watcher) failure(ctx context.Context, e *entry, t *Target, f forge.Forge, ci *forge.Status, st *db.PRState, agent bool) string {
 	armed := st.MergeArmed != ""
+	if ci.HeadSHA == st.LastFailedSHA && st.Reason == events.PRReasonElsewhere && w.shownElsewhere(ctx, st, ci.HeadSHA) {
+		st.Watching = armed
+		return ""
+	}
 	if ci.HeadSHA == st.LastFailedSHA {
 		switch st.Attention {
 		case events.PRAttentionFixing:
@@ -485,6 +497,54 @@ func (w *Watcher) failure(ctx context.Context, e *entry, t *Target, f forge.Forg
 	}
 	w.sendFix(ctx, e, st, ci.HeadSHA, hash, prompt, events.PRReasonFixSent)
 	return ""
+}
+
+// claimAlert reports whether the thread shows the failure on head: lights
+// its pill and alerts it. The threads that share a checkout share its
+// PR/MR, and one of them showing it is enough: the thread whose agent
+// pushed head, if any is open on the PR/MR, or else the first thread to see
+// the failure. The claim is saved before the next thread's is weighed.
+func (w *Watcher) claimAlert(ctx context.Context, st *db.PRState, head string, agent bool) bool {
+	w.claimMu.Lock()
+	defer w.claimMu.Unlock()
+	if !agent {
+		states, err := w.Store.ListPRStates(ctx)
+		if err != nil {
+			w.Logger.Warn("pr: listing PR state", "channel_id", st.ChannelID, "error", err)
+		}
+		if heldElsewhere(states, st, head) {
+			return false
+		}
+	}
+	w.save(ctx, st)
+	return true
+}
+
+// shownElsewhere reports whether another thread still shows the failure on
+// head, so the thread's pill stays off. It does when the state can't be
+// listed: the thread was told it's shown elsewhere.
+func (w *Watcher) shownElsewhere(ctx context.Context, st *db.PRState, head string) bool {
+	states, err := w.Store.ListPRStates(ctx)
+	if err != nil {
+		w.Logger.Warn("pr: listing PR state", "channel_id", st.ChannelID, "error", err)
+		return true
+	}
+	return heldElsewhere(states, st, head)
+}
+
+// heldElsewhere reports whether another thread open on st's PR/MR has the
+// failure on head: its agent pushed head, or its pill shows the failure or
+// a fix of it.
+func heldElsewhere(states []*db.PRState, st *db.PRState, head string) bool {
+	for _, o := range states {
+		if o.ChannelID == st.ChannelID || !o.Open || o.Forge != st.Forge || o.Number != st.Number {
+			continue
+		}
+		if agentCommit(o.AgentSHAs, head) || (o.LastFailedSHA == head && (o.Attention == events.PRAttentionFailed || o.Attention == events.PRAttentionFixing)) {
+			return true
+		}
+	}
+	return false
 }
 
 // flagReason is why a failure on the head isn't sent to the agent, "" when

@@ -41,6 +41,8 @@ const (
 	PRReasonFixSent = "fix_sent"
 	// PRReasonFixAsked: the owner sent the failure to the agent.
 	PRReasonFixAsked = "fix_asked"
+	// PRReasonElsewhere: another thread sharing the PR/MR shows the failure.
+	PRReasonElsewhere = "alerted_elsewhere"
 )
 
 // PREventData is the payload for channel.pr events: the status of the thread's

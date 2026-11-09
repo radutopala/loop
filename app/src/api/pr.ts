@@ -4,7 +4,7 @@ import { apiFetch, getApiUrl } from "./api";
 export type PRAttention = "failed" | "fixing" | "conflict";
 
 /** Why the watcher last acted as it did on a failure. */
-export type PRReason = "not_agent_commit" | "auto_fix_off" | "max_attempts" | "no_new_commit" | "same_failure" | "infra_rerun" | "infra_again" | "fix_sent" | "fix_asked";
+export type PRReason = "not_agent_commit" | "auto_fix_off" | "max_attempts" | "no_new_commit" | "same_failure" | "infra_rerun" | "infra_again" | "fix_sent" | "fix_asked" | "alerted_elsewhere";
 
 /** A head's checks: cancelled or skipped ones count only toward total. */
 export interface PRChecks {

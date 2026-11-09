@@ -37,6 +37,8 @@ A commit counts as the agent's when the thread's checkout moved to it while the 
 
 Every failure a pill lights also adds a notification ("PR #342: lint failed", "MR !57: test failed"). That bumps the unread count and fires the desktop notification, even when you aren't viewing the thread.
 
+Threads without their own worktree share their channel's checkout, so the channel and those threads all watch the same PR/MR. A failure still lights one `ci` pill and adds one notification, not one per thread. Both go to the thread whose agent pushed the failing commit. If no thread's agent pushed it, they go to the first thread that sees the failure. The other threads keep their pill off, and their PR/MR tab lists the failed checks and says another thread shows the failure. If that thread is deleted, the next of them to poll the PR/MR shows the failure instead. A new failing commit is shown once again.
+
 ### Guards
 
 Auto-fix stops, lights the `ci` pill and posts a notice in the thread when:
@@ -83,6 +85,7 @@ When the thread's branch has a PR/MR, the Git panel gets a **PR** tab (**MR** on
 | `infra_again` | The checks failed for runner reasons again after a re-run. |
 | `fix_sent` | Auto-fix sent the failure to the agent. |
 | `fix_asked` | Fix it sent the failure to the agent. |
+| `alerted_elsewhere` | Another thread that shares this PR/MR shows the failure. |
 
 Each message `loop-pr` sends carries a red `PR` badge in the chat.
 

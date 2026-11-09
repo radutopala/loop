@@ -357,6 +357,8 @@ func prReasonText(pr *statusPR) string {
 		return "Auto-fix sent the failure to the agent."
 	case "fix_asked":
 		return "Fix it sent the failure to the agent."
+	case "alerted_elsewhere":
+		return "Another thread that shares this PR/MR shows the failure."
 	default:
 		return ""
 	}
