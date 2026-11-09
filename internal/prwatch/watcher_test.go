@@ -1117,7 +1117,7 @@ func (s *WatcherSuite) TestPrompt() {
 
 // TestOneAlertPerFailure alerts a failure on a PR/MR that threads share,
 // through a shared checkout, in one of them: the thread whose agent pushed
-// the head, or else the first to see it. Every thread still flags it.
+// the head, or else the first to see it. Only that thread's pill lights.
 func (s *WatcherSuite) TestOneAlertPerFailure() {
 	const sibling = "th2"
 	tests := []struct {
@@ -1154,11 +1154,16 @@ func (s *WatcherSuite) TestOneAlertPerFailure() {
 				s.ci("h1", failing).Once()
 				s.forge.On("FailedChecks", mock.Anything, s.target.Ref).Return([]forge.FailedCheck{lint}, nil).Once()
 				s.w.poll(s.ctx, id, s.w.entry(id))
+				got := s.store.get(id)
 				if s.lastBroadcast().Alert != "" {
 					require.Equal(s.T(), "PR #12: lint failed", s.lastBroadcast().Alert)
+					require.Equal(s.T(), events.PRAttentionFailed, got.Attention)
 					alerted = append(alerted, id)
+				} else {
+					require.Empty(s.T(), got.Attention)
+					require.Equal(s.T(), events.PRReasonElsewhere, got.Reason)
+					require.Equal(s.T(), []forge.FailedCheck{lint}, got.Failed)
 				}
-				require.Equal(s.T(), events.PRAttentionFailed, s.store.get(id).Attention)
 			}
 			require.Equal(s.T(), tc.alerts, strings.Join(alerted, ","))
 			s.forge.AssertExpectations(s.T())
@@ -1182,4 +1187,25 @@ func (s *WatcherSuite) TestNewHeadAlertsAgain() {
 	require.Empty(s.T(), alert(sibling, "h1"))
 	require.NotEmpty(s.T(), alert(sibling, "h2"))
 	require.Empty(s.T(), alert(ch, "h2"))
+}
+
+// TestAlertedElsewhere keeps a thread whose failure another thread shows
+// dark on later polls of that head, without listing the failed checks
+// again, and clears why once a new head's checks run.
+func (s *WatcherSuite) TestAlertedElsewhere() {
+	s.settings()
+	s.store.put(db.PRState{ChannelID: ch, Forge: forge.KindPR, Number: 12, LastFailedSHA: "h1", Reason: events.PRReasonElsewhere, Failed: []forge.FailedCheck{lint}})
+	s.ci("h1", failing).Once()
+	s.w.poll(s.ctx, ch, s.w.entry(ch))
+	got := s.store.get(ch)
+	require.Empty(s.T(), got.Attention)
+	require.Equal(s.T(), events.PRReasonElsewhere, got.Reason)
+	require.Empty(s.T(), s.lastBroadcast().Alert)
+
+	s.ci("h2", pending).Once()
+	s.w.poll(s.ctx, ch, s.w.entry(ch))
+	got = s.store.get(ch)
+	require.Empty(s.T(), got.Reason)
+	require.Nil(s.T(), got.Failed)
+	s.forge.AssertExpectations(s.T())
 }

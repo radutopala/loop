@@ -123,6 +123,7 @@ describe("prReasonText", () => {
     [ci({ reason: "infra_again" }), "The checks failed for runner reasons again after a re-run."],
     [ci({ reason: "fix_sent" }), "Auto-fix sent the failure to the agent."],
     [ci({ reason: "fix_asked" }), "Fix it sent the failure to the agent."],
+    [ci({ reason: "alerted_elsewhere" }), "Another thread that shares this PR/MR shows the failure."],
     [ci({}), ""],
   ])("%#", (d, want) => {
     expect(prReasonText(d)).toBe(want);

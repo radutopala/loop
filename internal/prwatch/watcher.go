@@ -372,7 +372,7 @@ func (w *Watcher) poll(ctx context.Context, channelID string, e *entry) (bool, t
 		st.Watching = true
 		if ci.HeadSHA != st.LastFailedSHA {
 			st.Failed = nil
-			if st.Attention == events.PRAttentionFailed {
+			if st.Attention == events.PRAttentionFailed || st.Reason == events.PRReasonElsewhere {
 				st.Attention, st.Reason = "", ""
 			}
 		}
@@ -380,7 +380,9 @@ func (w *Watcher) poll(ctx context.Context, channelID string, e *entry) (bool, t
 		w.checkArmedHead(ctx, st, ci, agent)
 		alert = w.failure(ctx, e, t, f, ci, st, agent)
 		if alert != "" && !w.claimAlert(ctx, t, st, ci.HeadSHA, agent) {
+			// Another thread sharing the PR/MR shows it: its pill lights.
 			alert = ""
+			st.Attention, st.Reason = "", events.PRReasonElsewhere
 		}
 	default:
 		w.checkArmedHead(ctx, st, ci, agent)
@@ -456,6 +458,10 @@ func (w *Watcher) mergeArmed(ctx context.Context, f forge.Forge, t *Target, st *
 // and returns the alert to tell the owner, if any.
 func (w *Watcher) failure(ctx context.Context, e *entry, t *Target, f forge.Forge, ci *forge.Status, st *db.PRState, agent bool) string {
 	armed := st.MergeArmed != ""
+	if ci.HeadSHA == st.LastFailedSHA && st.Reason == events.PRReasonElsewhere {
+		st.Watching = armed
+		return ""
+	}
 	if ci.HeadSHA == st.LastFailedSHA {
 		switch st.Attention {
 		case events.PRAttentionFixing:
@@ -500,10 +506,10 @@ func (w *Watcher) failure(ctx context.Context, e *entry, t *Target, f forge.Forg
 	return ""
 }
 
-// claimAlert reports whether the thread alerts the failure on head. The
-// threads that share a checkout share its PR/MR, and one alert of it is
-// enough: the thread whose agent pushed head tells it, if any is open on
-// the PR/MR, or else the first thread to see the failure.
+// claimAlert reports whether the thread alerts the failure on head and
+// lights its pill. The threads that share a checkout share its PR/MR, and
+// one of them showing it is enough: the thread whose agent pushed head, if
+// any is open on the PR/MR, or else the first thread to see the failure.
 func (w *Watcher) claimAlert(ctx context.Context, t *Target, st *db.PRState, head string, agent bool) bool {
 	if !agent {
 		states, err := w.Store.ListPRStates(ctx)

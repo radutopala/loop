@@ -213,16 +213,17 @@ func (s *MCPServerSuite) TestChannelStatusPRChip() {
 
 func (s *MCPServerSuite) TestChannelStatusReasonText() {
 	reasons := map[string]string{
-		"not_agent_commit": "The head commit isn't one this thread's agent made, so auto-fix leaves it to you.",
-		"auto_fix_off":     "Auto-fix is off for this thread.",
-		"max_attempts":     "Auto-fix stopped after 3 attempts.",
-		"no_new_commit":    "The last fix pushed no new commit.",
-		"same_failure":     "The same failure came back after a fix.",
-		"infra_rerun":      "The checks failed for runner reasons, so Loop re-ran them.",
-		"infra_again":      "The checks failed for runner reasons again after a re-run.",
-		"fix_sent":         "Auto-fix sent the failure to the agent.",
-		"fix_asked":        "Fix it sent the failure to the agent.",
-		"":                 "",
+		"not_agent_commit":  "The head commit isn't one this thread's agent made, so auto-fix leaves it to you.",
+		"auto_fix_off":      "Auto-fix is off for this thread.",
+		"max_attempts":      "Auto-fix stopped after 3 attempts.",
+		"no_new_commit":     "The last fix pushed no new commit.",
+		"same_failure":      "The same failure came back after a fix.",
+		"infra_rerun":       "The checks failed for runner reasons, so Loop re-ran them.",
+		"infra_again":       "The checks failed for runner reasons again after a re-run.",
+		"fix_sent":          "Auto-fix sent the failure to the agent.",
+		"fix_asked":         "Fix it sent the failure to the agent.",
+		"alerted_elsewhere": "Another thread that shares this PR/MR shows the failure.",
+		"":                  "",
 	}
 	for reason, want := range reasons {
 		s.Run(reason, func() {
