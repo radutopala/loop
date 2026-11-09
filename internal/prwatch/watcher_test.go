@@ -1114,3 +1114,72 @@ func (s *WatcherSuite) TestPrompt() {
 	require.Equal(s.T(), "PR #12: CI failed", alertText(s.target, nil))
 	require.Equal(s.T(), "abc", short("abc"))
 }
+
+// TestOneAlertPerFailure alerts a failure on a PR/MR that threads share,
+// through a shared checkout, in one of them: the thread whose agent pushed
+// the head, or else the first to see it. Every thread still flags it.
+func (s *WatcherSuite) TestOneAlertPerFailure() {
+	const sibling = "th2"
+	tests := []struct {
+		name string
+		// other is the sibling's stored state, when it has one.
+		other   *db.PRState
+		listErr error
+		// order is the threads in the order they poll.
+		order []string
+		// alerts is the thread that alerts, "" for none.
+		alerts string
+	}{
+		{name: "the first to see it", order: []string{ch, sibling}, alerts: ch},
+		{name: "the first to see it, polled the other way", order: []string{sibling, ch}, alerts: sibling},
+		{name: "the thread whose agent pushed it", other: &db.PRState{ChannelID: sibling, Open: true, AgentSHAs: []string{"h1"}}, order: []string{ch, sibling}, alerts: sibling},
+		{name: "the agent's thread after another claimed it", other: &db.PRState{ChannelID: sibling, AgentSHAs: []string{"h1"}}, order: []string{ch, sibling}, alerts: ch + "," + sibling},
+		{name: "a closed thread's agent commit doesn't count", other: &db.PRState{ChannelID: sibling, AgentSHAs: []string{"h1"}}, order: []string{ch}, alerts: ch},
+		{name: "a state list error still alerts", listErr: errors.New("boom"), order: []string{ch, sibling}, alerts: ch},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.setup(forge.KindPR)
+			s.settings()
+			s.target.PR.AutoFix = false
+			s.store.put(db.PRState{ChannelID: ch, Forge: forge.KindPR, Number: 12})
+			if tc.other != nil {
+				o := *tc.other
+				o.Forge, o.Number = forge.KindPR, 12
+				s.store.put(o)
+			}
+			s.store.listErr = tc.listErr
+			var alerted []string
+			for _, id := range tc.order {
+				s.ci("h1", failing).Once()
+				s.forge.On("FailedChecks", mock.Anything, s.target.Ref).Return([]forge.FailedCheck{lint}, nil).Once()
+				s.w.poll(s.ctx, id, s.w.entry(id))
+				if s.lastBroadcast().Alert != "" {
+					require.Equal(s.T(), "PR #12: lint failed", s.lastBroadcast().Alert)
+					alerted = append(alerted, id)
+				}
+				require.Equal(s.T(), events.PRAttentionFailed, s.store.get(id).Attention)
+			}
+			require.Equal(s.T(), tc.alerts, strings.Join(alerted, ","))
+			s.forge.AssertExpectations(s.T())
+		})
+	}
+}
+
+// TestNewHeadAlertsAgain alerts a failure on a new head once more, in the
+// thread that sees it first.
+func (s *WatcherSuite) TestNewHeadAlertsAgain() {
+	const sibling = "th2"
+	s.settings()
+	s.target.PR.AutoFix = false
+	alert := func(id, head string) string {
+		s.ci(head, failing).Once()
+		s.forge.On("FailedChecks", mock.Anything, s.target.Ref).Return([]forge.FailedCheck{lint}, nil).Once()
+		s.w.poll(s.ctx, id, s.w.entry(id))
+		return s.lastBroadcast().Alert
+	}
+	require.NotEmpty(s.T(), alert(ch, "h1"))
+	require.Empty(s.T(), alert(sibling, "h1"))
+	require.NotEmpty(s.T(), alert(sibling, "h2"))
+	require.Empty(s.T(), alert(ch, "h2"))
+}

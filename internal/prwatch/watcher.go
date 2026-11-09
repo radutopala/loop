@@ -118,6 +118,15 @@ type Watcher struct {
 
 	mu      sync.Mutex
 	entries map[string]*entry
+	// alerted is, by PR/MR URL, the head whose failure was alerted and the
+	// thread that told it.
+	alerted map[string]alertClaim
+}
+
+// alertClaim is the thread that alerted a failure on a PR/MR's head.
+type alertClaim struct {
+	head      string
+	channelID string
 }
 
 // New returns a Watcher.
@@ -130,6 +139,7 @@ func New(d Deps) *Watcher {
 		grace:    defaultGrace,
 		parallel: defaultParallel,
 		entries:  map[string]*entry{},
+		alerted:  map[string]alertClaim{},
 	}
 }
 
@@ -369,6 +379,9 @@ func (w *Watcher) poll(ctx context.Context, channelID string, e *entry) (bool, t
 	case ci.Checks.Failed > 0:
 		w.checkArmedHead(ctx, st, ci, agent)
 		alert = w.failure(ctx, e, t, f, ci, st, agent)
+		if alert != "" && !w.claimAlert(ctx, t, st, ci.HeadSHA, agent) {
+			alert = ""
+		}
 	default:
 		w.checkArmedHead(ctx, st, ci, agent)
 		st.Attention, st.Attempts, st.LastFailedSHA, st.LastLogHash = "", 0, "", ""
@@ -485,6 +498,31 @@ func (w *Watcher) failure(ctx context.Context, e *entry, t *Target, f forge.Forg
 	}
 	w.sendFix(ctx, e, st, ci.HeadSHA, hash, prompt, events.PRReasonFixSent)
 	return ""
+}
+
+// claimAlert reports whether the thread alerts the failure on head. The
+// threads that share a checkout share its PR/MR, and one alert of it is
+// enough: the thread whose agent pushed head tells it, if any is open on
+// the PR/MR, or else the first thread to see the failure.
+func (w *Watcher) claimAlert(ctx context.Context, t *Target, st *db.PRState, head string, agent bool) bool {
+	if !agent {
+		states, err := w.Store.ListPRStates(ctx)
+		if err != nil {
+			w.Logger.Warn("pr: listing PR state", "channel_id", st.ChannelID, "error", err)
+		}
+		for _, o := range states {
+			if o.ChannelID != st.ChannelID && o.Open && o.Forge == st.Forge && o.Number == st.Number && agentCommit(o.AgentSHAs, head) {
+				return false
+			}
+		}
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if c, ok := w.alerted[t.URL]; ok && !agent && c.head == head && c.channelID != st.ChannelID {
+		return false
+	}
+	w.alerted[t.URL] = alertClaim{head: head, channelID: st.ChannelID}
+	return true
 }
 
 // flagReason is why a failure on the head isn't sent to the agent, "" when
