@@ -64,7 +64,10 @@ type TestContext struct {
 	chromeTab *chromeTab
 
 	// WebSocket
-	WSConn      *websocket.Conn
+	WSConn *websocket.Conn
+	// WSMessages gets every message read from WSConn, and is closed when a
+	// read fails.
+	WSMessages  chan []byte
 	LastWSEvent map[string]any
 }
 

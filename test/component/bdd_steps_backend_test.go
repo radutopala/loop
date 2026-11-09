@@ -1198,7 +1198,37 @@ func (tc *TestContext) dialEventsWS(channels string) error {
 		return fmt.Errorf("connecting to WebSocket: %w", err)
 	}
 	tc.WSConn = conn
-	return nil
+	tc.WSMessages = make(chan []byte, 256)
+
+	// The server finishes the upgrade before it adds the connection to its
+	// hub, so an event sent right after Dial can miss it. Its read loop, which
+	// answers pings, starts only once the connection is added, so a pong
+	// means the next event will arrive.
+	ponged := make(chan struct{})
+	var once sync.Once
+	conn.SetPongHandler(func(string) error {
+		once.Do(func() { close(ponged) })
+		return nil
+	})
+	go func() {
+		defer close(tc.WSMessages)
+		for {
+			_, msg, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			tc.WSMessages <- msg
+		}
+	}()
+	if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second)); err != nil {
+		return fmt.Errorf("pinging WebSocket: %w", err)
+	}
+	select {
+	case <-ponged:
+		return nil
+	case <-time.After(5 * time.Second):
+		return fmt.Errorf("WebSocket was not subscribed within 5s")
+	}
 }
 
 func (tc *TestContext) assertWSConnected() error {
@@ -1225,13 +1255,17 @@ func (tc *TestContext) waitForWSEventOfType(timeout, eventType string) error {
 	if err != nil {
 		return fmt.Errorf("invalid timeout %q: %w", timeout, err)
 	}
-	deadline := time.Now().Add(dur)
-	tc.WSConn.SetReadDeadline(deadline)          //nolint:errcheck
-	defer tc.WSConn.SetReadDeadline(time.Time{}) //nolint:errcheck
+	expired := time.After(dur)
 	for {
-		_, msg, err := tc.WSConn.ReadMessage()
-		if err != nil {
-			return fmt.Errorf("waiting for WS event %q: %w", eventType, err)
+		var msg []byte
+		select {
+		case m, ok := <-tc.WSMessages:
+			if !ok {
+				return fmt.Errorf("waiting for WS event %q: connection closed", eventType)
+			}
+			msg = m
+		case <-expired:
+			return fmt.Errorf("waiting for WS event %q: none within %s", eventType, dur)
 		}
 		var evt map[string]any
 		if json.Unmarshal(msg, &evt) == nil {
