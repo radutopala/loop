@@ -61,22 +61,33 @@ RUN ln -s /usr/local/aws-cli/v2/current/bin/aws /usr/local/bin/aws \
     && aws --version
 ENV AWS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 ENV USE_BUILTIN_RIPGREP=0
+# A release's latest tag comes from the release page's redirect, which has no
+# rate limit, and its tarball from the download page. GitHub's pages return a
+# 504 or an empty reply now and then, so every request retries on any error,
+# and when a page still doesn't answer the tag or the tarball comes from
+# GitHub's API instead.
 ARG LOOP_VERSION=main
 RUN ARCH=$(uname -m | sed 's/aarch64/arm64/' | sed 's/x86_64/amd64/') && \
+    gh_curl() { curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors "$@"; } && \
+    latest_tag() { \
+    gh_curl -I -o /dev/null -w '%{url_effective}' "https://github.com/$1/releases/latest" | sed -n 's#.*/releases/tag/##p' | grep . || \
+    gh_curl "https://api.github.com/repos/$1/releases/latest" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | grep .; \
+    } && \
+    release_asset() { \
+    gh_curl -o "$4" "https://github.com/$1/releases/download/$2/$3" || { \
+    url=$(gh_curl "https://api.github.com/repos/$1/releases/tags/$2" | awk -v n="\"$3\"" '/"url": *".*\/releases\/assets\//{u=$0} /"name":/ && index($0, n){sub(/.*"url": *"/, "", u); sub(/".*/, "", u); print u; exit}') && \
+    [ -n "$url" ] && gh_curl -H 'Accept: application/octet-stream' -o "$4" "$url"; \
+    }; \
+    } && \
     if [ "$LOOP_VERSION" != "main" ]; then \
     TAG="v${LOOP_VERSION#v}"; \
-    curl -fsSL -o /tmp/loop.tar.gz "https://github.com/radutopala/loop/releases/download/${TAG}/loop_${LOOP_VERSION#v}_linux_${ARCH}.tar.gz" && \
-    tar -xzf /tmp/loop.tar.gz -C /usr/local/bin loop && rm /tmp/loop.tar.gz; \
     else \
-    TAG=$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/radutopala/loop/releases/latest | sed 's#.*/##') && \
-    V="${TAG#v}" && \
-    curl -fsSL -o /tmp/loop.tar.gz "https://github.com/radutopala/loop/releases/download/${TAG}/loop_${V}_linux_${ARCH}.tar.gz" && \
-    tar -xzf /tmp/loop.tar.gz -C /usr/local/bin loop && rm /tmp/loop.tar.gz; \
-    fi
-RUN ARCH=$(uname -m | sed 's/aarch64/arm64/' | sed 's/x86_64/amd64/') && \
-    TAG=$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/radutopala/ticket/releases/latest | sed 's#.*/##') && \
-    V="${TAG#v}" && \
-    curl -fsSL -o /tmp/tk.tar.gz "https://github.com/radutopala/ticket/releases/download/${TAG}/tk_${V}_linux_${ARCH}.tar.gz" && \
+    TAG=$(latest_tag radutopala/loop); \
+    fi && \
+    release_asset radutopala/loop "$TAG" "loop_${TAG#v}_linux_${ARCH}.tar.gz" /tmp/loop.tar.gz && \
+    tar -xzf /tmp/loop.tar.gz -C /usr/local/bin loop && rm /tmp/loop.tar.gz && \
+    TAG=$(latest_tag radutopala/ticket) && \
+    release_asset radutopala/ticket "$TAG" "tk_${TAG#v}_linux_${ARCH}.tar.gz" /tmp/tk.tar.gz && \
     tar -xzf /tmp/tk.tar.gz -C /usr/local/bin tk && rm /tmp/tk.tar.gz
 ARG CLAUDE_VERSION=latest
 LABEL loop.version="${LOOP_VERSION}" \
