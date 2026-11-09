@@ -1135,7 +1135,7 @@ func (s *WatcherSuite) TestOneAlertPerFailure() {
 		{name: "the thread whose agent pushed it", other: &db.PRState{ChannelID: sibling, Open: true, AgentSHAs: []string{"h1"}}, order: []string{ch, sibling}, alerts: sibling},
 		{name: "the agent's thread after another claimed it", other: &db.PRState{ChannelID: sibling, AgentSHAs: []string{"h1"}}, order: []string{ch, sibling}, alerts: ch + "," + sibling},
 		{name: "a closed thread's agent commit doesn't count", other: &db.PRState{ChannelID: sibling, AgentSHAs: []string{"h1"}}, order: []string{ch}, alerts: ch},
-		{name: "a state list error still alerts", listErr: errors.New("boom"), order: []string{ch, sibling}, alerts: ch},
+		{name: "a state list error alerts rather than drop it", listErr: errors.New("boom"), order: []string{ch, sibling}, alerts: ch + "," + sibling},
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
@@ -1191,21 +1191,61 @@ func (s *WatcherSuite) TestNewHeadAlertsAgain() {
 
 // TestAlertedElsewhere keeps a thread whose failure another thread shows
 // dark on later polls of that head, without listing the failed checks
-// again, and clears why once a new head's checks run.
+// again, while that thread still shows it; once it doesn't, the thread
+// shows it itself. A new head's checks clear why it was dark.
 func (s *WatcherSuite) TestAlertedElsewhere() {
+	const sibling = "th2"
+	holder := db.PRState{ChannelID: sibling, Forge: forge.KindPR, Number: 12, Open: true, LastFailedSHA: "h1", Attention: events.PRAttentionFailed}
+	tests := []struct {
+		name    string
+		other   *db.PRState
+		listErr error
+		// shows is whether the thread lights its pill and alerts.
+		shows bool
+	}{
+		{name: "the other thread still shows it", other: &holder},
+		{name: "the other thread is fixing it", other: &db.PRState{ChannelID: sibling, Forge: forge.KindPR, Number: 12, Open: true, LastFailedSHA: "h1", Attention: events.PRAttentionFixing}},
+		{name: "the state can't be listed", listErr: errors.New("boom")},
+		{name: "the other thread is gone", shows: true},
+		{name: "the other thread's pill cleared", other: &db.PRState{ChannelID: sibling, Forge: forge.KindPR, Number: 12, Open: true, LastFailedSHA: "h1"}, shows: true},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.setup(forge.KindPR)
+			s.settings()
+			s.target.PR.AutoFix = false
+			s.store.put(db.PRState{ChannelID: ch, Forge: forge.KindPR, Number: 12, Open: true, LastFailedSHA: "h1", Reason: events.PRReasonElsewhere, Failed: []forge.FailedCheck{lint}})
+			if tc.other != nil {
+				s.store.put(*tc.other)
+			}
+			s.ci("h1", failing).Once()
+			if tc.shows {
+				s.forge.On("FailedChecks", mock.Anything, s.target.Ref).Return([]forge.FailedCheck{lint}, nil).Once()
+			}
+			s.store.listErr = tc.listErr
+			s.w.poll(s.ctx, ch, s.w.entry(ch))
+			got := s.store.get(ch)
+			if tc.shows {
+				require.Equal(s.T(), events.PRAttentionFailed, got.Attention)
+				require.Equal(s.T(), "PR #12: lint failed", s.lastBroadcast().Alert)
+			} else {
+				require.Empty(s.T(), got.Attention)
+				require.Equal(s.T(), events.PRReasonElsewhere, got.Reason)
+				require.Empty(s.T(), s.lastBroadcast().Alert)
+			}
+			s.forge.AssertExpectations(s.T())
+		})
+	}
+}
+
+// TestAlertedElsewhereNewHead clears why a thread was dark once a new
+// head's checks run.
+func (s *WatcherSuite) TestAlertedElsewhereNewHead() {
 	s.settings()
 	s.store.put(db.PRState{ChannelID: ch, Forge: forge.KindPR, Number: 12, LastFailedSHA: "h1", Reason: events.PRReasonElsewhere, Failed: []forge.FailedCheck{lint}})
-	s.ci("h1", failing).Once()
-	s.w.poll(s.ctx, ch, s.w.entry(ch))
-	got := s.store.get(ch)
-	require.Empty(s.T(), got.Attention)
-	require.Equal(s.T(), events.PRReasonElsewhere, got.Reason)
-	require.Empty(s.T(), s.lastBroadcast().Alert)
-
 	s.ci("h2", pending).Once()
 	s.w.poll(s.ctx, ch, s.w.entry(ch))
-	got = s.store.get(ch)
+	got := s.store.get(ch)
 	require.Empty(s.T(), got.Reason)
 	require.Nil(s.T(), got.Failed)
-	s.forge.AssertExpectations(s.T())
 }

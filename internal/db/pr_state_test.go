@@ -13,7 +13,7 @@ import (
 )
 
 // TestPRState saves, replaces, gets and lists CI states against a real
-// SQLite.
+// SQLite; a deleted channel's state isn't listed.
 func (s *IntegrationSuite) TestPRState() {
 	store, err := NewSQLiteStore(filepath.Join(s.T().TempDir(), "loop.db"))
 	require.NoError(s.T(), err)
@@ -26,7 +26,11 @@ func (s *IntegrationSuite) TestPRState() {
 	require.NoError(s.T(), err)
 	require.Nil(s.T(), none)
 
+	for _, id := range []string{"ch1", "ch2"} {
+		require.NoError(s.T(), store.UpsertChannel(ctx, &Channel{ChannelID: id, Name: id, Active: true}))
+	}
 	off := false
+	require.NoError(s.T(), store.SavePRState(ctx, &PRState{ChannelID: "gone", Open: true}))
 	require.NoError(s.T(), store.SavePRState(ctx, &PRState{ChannelID: "ch2", Watching: true}))
 	require.NoError(s.T(), store.SavePRState(ctx, &PRState{ChannelID: "ch1", Forge: "pr", Number: 4}))
 	full := &PRState{
@@ -65,17 +69,17 @@ func (s *StoreSuite) TestPRStateErrors() {
 			return err
 		}},
 		{"list query", false, func() error {
-			s.mock.ExpectQuery(`FROM pr_state ORDER`).WillReturnError(boom)
+			s.mock.ExpectQuery(`FROM pr_state\s+WHERE channel_id IN`).WillReturnError(boom)
 			_, err := s.store.ListPRStates(ctx)
 			return err
 		}},
 		{"list scan", true, func() error {
-			s.mock.ExpectQuery(`FROM pr_state ORDER`).WillReturnRows(sqlmock.NewRows(cols).AddRow("ch", "", 0, "", 0, "", "", nil, "", "", "", "", false, "", "", "", false, "", "not a time"))
+			s.mock.ExpectQuery(`FROM pr_state\s+WHERE channel_id IN`).WillReturnRows(sqlmock.NewRows(cols).AddRow("ch", "", 0, "", 0, "", "", nil, "", "", "", "", false, "", "", "", false, "", "not a time"))
 			_, err := s.store.ListPRStates(ctx)
 			return err
 		}},
 		{"list rows", false, func() error {
-			s.mock.ExpectQuery(`FROM pr_state ORDER`).WillReturnRows(sqlmock.NewRows(cols).AddRow("ch", "", 0, "", 0, "", "", nil, "", "", "", "", false, "", "", "", false, "", time.Now()).RowError(0, boom))
+			s.mock.ExpectQuery(`FROM pr_state\s+WHERE channel_id IN`).WillReturnRows(sqlmock.NewRows(cols).AddRow("ch", "", 0, "", 0, "", "", nil, "", "", "", "", false, "", "", "", false, "", time.Now()).RowError(0, boom))
 			_, err := s.store.ListPRStates(ctx)
 			return err
 		}},

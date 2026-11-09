@@ -78,9 +78,11 @@ func (s *SQLiteStore) GetPRState(ctx context.Context, channelID string) (*PRStat
 	return st, err
 }
 
-// ListPRStates returns every channel's CI state, by channel.
+// ListPRStates returns every channel's CI state, by channel. A deleted
+// channel's state is left out: its row isn't removed with it.
 func (s *SQLiteStore) ListPRStates(ctx context.Context) ([]*PRState, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+prStateColumns+` FROM pr_state ORDER BY channel_id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+prStateColumns+` FROM pr_state
+		WHERE channel_id IN (SELECT channel_id FROM channels) ORDER BY channel_id`)
 	if err != nil {
 		return nil, err
 	}
