@@ -345,6 +345,14 @@ var migrations = []Migration{
 		Description: "refresh container/ files: latest release tag without the GitHub API",
 		Apply:       refreshContainerFiles,
 	},
+	{
+		// GitHub's release pages and downloads can answer with a 504 or an
+		// empty reply for a while, which failed the image build at the
+		// loop or tk step. The refreshed Dockerfile retries every request
+		// and falls back to GitHub's API for the tag and the tarball.
+		Description: "refresh container/ files: retry GitHub release lookups and downloads",
+		Apply:       refreshContainerFiles,
+	},
 }
 
 // adoptProjectConfigs trusts the project config of every project checkout
