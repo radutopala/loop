@@ -603,8 +603,9 @@ The pass may only look and propose: its built-in tools are only reading and sear
 | rename | Renames the channel or thread. |
 | description | Sets the channel or thread's description. |
 | ticket URL | Links the channel or thread to its ticket (only a URL the run actually named). |
+| memory | Adds a memory to Claude Code's auto-memory for the project, so the next sessions start knowing it. |
 
-Config kinds are written to the project's `.loop/config.json` with your comments kept; see [Configuration: Where Apply writes](configuration.md#where-learn-proposals-are-written).
+Config kinds are written to the project's `.loop/config.json` with your comments kept, memories to the project's auto-memory dir and its `MEMORY.md`; see [Configuration: Where Apply writes](configuration.md#where-learn-proposals-are-written).
 
 ### Learn button
 
@@ -627,7 +628,7 @@ On a canvas layout, the Learn pane docks beside the chat's tile instead: to its 
 The Learn pane's header matches a pane header:
 
 - **Proposals** on top, newest first. Each card shows its kind, title, a one-line gist of exactly what Apply writes, and the rationale the pass gave. A gate rule's gist is the whole rule: its decision, what it matches (the commands and their argument patterns, the file paths and operations, or the socket path; `any command` or `any path` when it lists none) and the message the gate shows.
-  - Open cards of the kinds that edit the project config (prompt and bash shortcuts, gate rules, mounts) show the edit Apply would make as a diff of that `.loop/config.json`, worked out as apply does it (see [`GET /api/learn/proposals/{id}/preview`](api.md#get-apilearnproposalsidpreview)). It's worked out again after another proposal edits the config. If the change is already there the card says so, and if applying would fail (a shortcut of that name exists, say) it shows why.
+  - Open cards of the kinds that edit a file (prompt and bash shortcuts, gate rules, mounts, memories) show the edit Apply would make as a diff of that `.loop/config.json`, or of the memory file and `MEMORY.md`, worked out as apply does it (see [`GET /api/learn/proposals/{id}/preview`](api.md#get-apilearnproposalsidpreview)). It's worked out again after another proposal edits a file. If the change is already there the card says so, and if applying would fail (a shortcut or memory of that name exists, say) it shows why.
   - **Apply** applies it. If it fails, the error shows under the card and the button becomes **Retry**. If the request itself fails (Loop can't be reached, say), that error shows under the card until the next try. A card's buttons are disabled while its apply or dismiss is in flight. Requests in flight and their errors outlive the view: close and reopen it and they're still there.
   - **Dismiss** drops it. Pending and failed proposals can be dismissed.
   - Applied and dismissed cards stay in the list, dimmed, with their status.

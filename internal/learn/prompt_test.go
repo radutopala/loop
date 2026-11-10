@@ -24,7 +24,7 @@ func TestPromptSuite(t *testing.T) {
 // TestEveryKindDocumented makes sure each proposal kind has its own section
 // in the prompt, so adding a kind without teaching the agent fails here.
 func (s *PromptSuite) TestEveryKindDocumented() {
-	require.Len(s.T(), Kinds, 8)
+	require.Len(s.T(), Kinds, 9)
 	for _, kind := range Kinds {
 		require.Contains(s.T(), basePrompt, "\n### "+kind+"\n", kind)
 	}

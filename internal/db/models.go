@@ -400,6 +400,7 @@ const (
 	LearnKindRename         = "rename"
 	LearnKindDescription    = "description"
 	LearnKindTicketURL      = "ticket_url"
+	LearnKindMemory         = "memory"
 )
 
 // Statuses of a learn proposal. Applying is held while it's being applied,

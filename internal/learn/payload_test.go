@@ -74,6 +74,11 @@ func (s *PayloadSuite) TestValidate() {
 			name: "ticket url", kind: db.LearnKindTicketURL, title: "Link ticket",
 			payload: `{"ticket_url":"https://tracker.example.com/T-1"}`, want: &TicketURL{TicketURL: "https://tracker.example.com/T-1"},
 		},
+		{
+			name: "memory", kind: db.LearnKindMemory, title: "Remember to lint",
+			payload: `{"name":"lint-first","description":"Lint before pushing","type":"feedback","body":"Run make lint."}`,
+			want:    &Memory{Name: "lint-first", Description: "Lint before pushing", Type: "feedback", Body: "Run make lint."},
+		},
 
 		{name: "no title", kind: db.LearnKindRename, title: "  ", payload: `{"name":"x"}`, wantErr: "title is required"},
 		{name: "long title", kind: db.LearnKindRename, title: long(201), payload: `{"name":"x"}`, wantErr: "title is longer than 200"},
@@ -101,6 +106,14 @@ func (s *PayloadSuite) TestValidate() {
 		{name: "long description", kind: db.LearnKindDescription, title: "t", payload: `{"description":"` + long(501) + `"}`, wantErr: "description is longer than 500"},
 		{name: "empty ticket url", kind: db.LearnKindTicketURL, title: "t", payload: `{"ticket_url":" "}`, wantErr: "ticket_url is required"},
 		{name: "bad ticket url", kind: db.LearnKindTicketURL, title: "t", payload: `{"ticket_url":"T-1"}`, wantErr: "absolute http(s) URL"},
+		{name: "memory name", kind: db.LearnKindMemory, title: "t", payload: `{"name":"Lint First","description":"d","type":"user","body":"b"}`, wantErr: `name "Lint First" must be a kebab-case slug`},
+		{name: "memory long name", kind: db.LearnKindMemory, title: "t", payload: `{"name":"` + long(65) + `","description":"d","type":"user","body":"b"}`, wantErr: "must be a kebab-case slug"},
+		{name: "memory no description", kind: db.LearnKindMemory, title: "t", payload: `{"name":"n","description":" ","type":"user","body":"b"}`, wantErr: "description is required"},
+		{name: "memory long description", kind: db.LearnKindMemory, title: "t", payload: `{"name":"n","description":"` + long(201) + `","type":"user","body":"b"}`, wantErr: "description is longer than 200"},
+		{name: "memory description lines", kind: db.LearnKindMemory, title: "t", payload: `{"name":"n","description":"a\nb","type":"user","body":"b"}`, wantErr: "description must be one line"},
+		{name: "memory type", kind: db.LearnKindMemory, title: "t", payload: `{"name":"n","description":"d","type":"note","body":"b"}`, wantErr: `type "note" must be one of user, feedback, project, reference`},
+		{name: "memory no body", kind: db.LearnKindMemory, title: "t", payload: `{"name":"n","description":"d","type":"user","body":" "}`, wantErr: "body is required"},
+		{name: "memory long body", kind: db.LearnKindMemory, title: "t", payload: `{"name":"n","description":"d","type":"user","body":"` + long(4001) + `"}`, wantErr: "body is longer than 4000"},
 		{name: "gate rule", kind: db.LearnKindGateRule, title: "t", payload: `{"type":"socket","rule":{}}`, wantErr: `type "socket" must be`},
 	}
 	for _, tc := range tests {

@@ -1304,7 +1304,7 @@ List the proposals filed for the channel, newest first, in every status.
 | Field | Type | Description |
 |-------|------|-------------|
 | `message_id` | string | The turn (its last bot message's `msg_id`) whose learn pass filed it; omitted when unknown |
-| `kind` | string | `prompt_shortcut`, `bash_shortcut`, `scheduled_task`, `gate_rule`, `mount`, `rename`, `description` or `ticket_url` |
+| `kind` | string | `prompt_shortcut`, `bash_shortcut`, `scheduled_task`, `gate_rule`, `mount`, `rename`, `description`, `ticket_url` or `memory` |
 | `payload` | string | The kind's payload as a JSON string (see [`POST`](#post-apichannelsidlearnproposals)) |
 | `status` | string | `pending`, `applying`, `applied`, `dismissed`, `failed` or `withdrawn` |
 | `error` | string | Why the last apply failed; omitted when empty |
@@ -1358,6 +1358,7 @@ At most 5 proposals per call. Each needs a `kind`, a `title` (at most 200 charac
 | `rename` | `{"name"}`, at most 100 characters. |
 | `description` | `{"description"}`, at most 500 characters. |
 | `ticket_url` | `{"ticket_url"}`, an absolute http(s) URL, at most 2048 characters. |
+| `memory` | `{"name", "description", "type", "body"}`. `name` is the memory's file name: a kebab-case slug (lowercase letters, digits and dashes, at most 64); `description` one line, at most 200 characters; `type` is `user`, `feedback`, `project` or `reference`; `body` at most 4000 characters. |
 
 The payload is stored in canonical JSON. New proposals get the `message_id` of the learn thread's running pass, else its newest done one (a user's reply in the learn thread files against the turn that pass reviewed); none when it has neither. The withdrawals and the inserts run in one transaction: either every proposal is valid and every withdrawal allowed, and all are stored, or nothing changes. A withdrawal takes the proposal the same way apply claims it (a conditional update on its status), so one the user is applying or dismissing at that moment can't be withdrawn, and one withdrawn first can't be applied.
 
@@ -1438,7 +1439,7 @@ Apply a `pending` or `failed` proposal. It moves to `applying` first, so a doubl
 
 ### `GET /api/learn/proposals/{id}/preview`
 
-What applying a proposal would change in the project config, without changing it. The server works out the same edit apply makes, with the same duplicate checks, against the file as it is now. Owner-only.
+What applying a proposal would change in the project config, or in Claude Code's auto-memory for a `memory` proposal, without changing it. The server works out the same edit apply makes, with the same duplicate checks, against the file as it is now. Owner-only.
 
 **Response (200):**
 ```json
@@ -1450,9 +1451,9 @@ What applying a proposal would change in the project config, without changing it
 
 | Field | Description |
 |---|---|
-| `path` | The `.loop/config.json` the proposal edits (see [Where learn proposals are written](configuration.md#where-learn-proposals-are-written)) |
-| `diff` | The edit as a unified diff, from `/dev/null` when the file would be created. Omitted when the change is already there (a gate rule the config has) |
-| `error` | Why applying it would fail (a shortcut or mount that already exists, a config that doesn't parse), as apply would record it |
+| `path` | The `.loop/config.json` the proposal edits, or the memory file a `memory` proposal adds (see [Where learn proposals are written](configuration.md#where-learn-proposals-are-written)) |
+| `diff` | The edit as a unified diff, from `/dev/null` when the file would be created. A `memory` proposal's diff covers the memory file, then `MEMORY.md`. Omitted when the change is already there (a gate rule the config has) |
+| `error` | Why applying it would fail (a shortcut, mount or memory that already exists, a config that doesn't parse), as apply would record it |
 
 All fields are omitted for kinds that edit no file (`scheduled_task`, `rename`, `description`, `ticket_url`).
 
