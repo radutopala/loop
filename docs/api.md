@@ -2686,7 +2686,14 @@ Body: `{"pr_number": 42}`. Replaces any existing session for the channel.
 
 Response: `{"present": true, "session": { ... }}` — the full session, mirroring `review.Session` in `internal/review/session.go`.
 
-**Errors:** `400` on invalid `pr_number` or missing `dir_path`. `404` if the PR does not exist. `500` on `gh`/git failure.
+With `"background": true` (the Review panel) the PR loads in the
+background: the answer is `202` with the loading session
+(`"status": "loading"`, and `loading_pr`, the PR it loads, since `pr` stays
+unset until the load settles). A [`review.status`](events.md#reviewstatus) event then
+reports `ready` or `error` with the reason. Closing the session while the PR
+loads cancels the load and announces only the close.
+
+**Errors:** `400` on invalid `pr_number` or missing `dir_path`. `404` if the PR does not exist. `409` while a PR loads in the background or a review run is in flight for the channel. `500` on `gh`/git failure (for a background load, the `review.status` event carries it).
 
 ### `POST /api/channels/{id}/review/start`
 

@@ -1139,6 +1139,8 @@ Emitted once per finding the review agent reports during a run, via either the b
 | `impact` | string | With verdict `real`: `blocking` or `nice_to_have`; omitted otherwise |
 | `transcripts` | string[] | Full paths of the Claude transcripts of the agent passes that reported or changed the comment, oldest first; omitted when none |
 | `run_id` | int | History id of the review run that reported the comment; omitted when none was recorded |
+| `pushed` | bool | `true` once the comment is on GitHub; omitted before |
+| `github_id` | int | GitHub's id for the pushed comment; omitted before |
 
 **Scope:** Channel (the channel that started the review).
 
@@ -1164,7 +1166,7 @@ Emitted when a comment leaves the review session, either because it was deleted 
 
 ### `review.comment_updated`
 
-Emitted when a comment changes in place: the dedup pass (`POST /review/dedup`) appends what a kept comment's dropped duplicates added, trims a comment that bundles several issues to the ones no other comment covers, moves a finding to the line it is about, or records its verdict (and the impact of a real one) on an agent comment, and when an agent pass (a review run, the dedup pass, the verification) ends, for each comment it reported or changed, which now lists its transcript. Same payload as `review.comment`; the FE swaps in the new comment.
+Emitted when a comment changes in place: the dedup pass (`POST /review/dedup`) appends what a kept comment's dropped duplicates added, trims a comment that bundles several issues to the ones no other comment covers, moves a finding to the line it is about, or records its verdict (and the impact of a real one) on an agent comment, when a push sends it to GitHub (Push all announces each comment as it lands), and when an agent pass (a review run, the dedup pass, the verification) ends, for each comment it reported or changed, which now lists its transcript. Same payload as `review.comment`; the FE swaps in the new comment.
 
 **Scope:** Channel.
 

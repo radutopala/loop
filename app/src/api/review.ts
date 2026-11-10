@@ -90,6 +90,8 @@ export interface ReviewSession {
   raw_diff?: string;
   comments: ReviewComment[];
   status: ReviewStatus;
+  /** The PR a loading session is loading; pr is unset until it settles. */
+  loading_pr?: number;
   error?: string;
   fork_mode?: ReviewForkMode;
   fork_session_id?: string;
@@ -176,11 +178,13 @@ export async function getReviewSession(channelId: string, opts: { diff?: boolean
   return normalizeSession(await res.json());
 }
 
+// loadReviewPR starts loading a PR in the background: it answers with the
+// loading session at once, and a review.status event says when it settles.
 export async function loadReviewPR(channelId: string, prNumber: number): Promise<ReviewSessionResponse> {
   const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/review/load`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ pr_number: prNumber }),
+    body: JSON.stringify({ pr_number: prNumber, background: true }),
   });
   if (!res.ok) throw new Error((await res.text()) || `Failed to load PR: ${res.statusText}`);
   return normalizeSession(await res.json());
