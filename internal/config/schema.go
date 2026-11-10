@@ -64,7 +64,7 @@ func Models() []string {
 	return []string{
 		"claude-opus-5-5", "claude-opus-5-5[1m]", "claude-opus-5", "claude-opus-5[1m]",
 		"claude-sonnet-5-5", "claude-sonnet-5-5[1m]", "claude-sonnet-5", "claude-sonnet-5[1m]",
-		"claude-fable-5-1", "claude-fable-5-1[1m]", "claude-fable-5", "claude-fable-5[1m]",
+		"claude-fable-5-2", "claude-fable-5-2[1m]", "claude-fable-5-1", "claude-fable-5-1[1m]", "claude-fable-5", "claude-fable-5[1m]",
 		"claude-opus-4-8", "claude-opus-4-8[1m]",
 		"claude-haiku-5-5", "claude-haiku-5-5[1m]",
 	}

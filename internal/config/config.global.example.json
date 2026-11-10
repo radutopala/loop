@@ -40,7 +40,7 @@
   //"live_session_platforms": [], // platforms whose channels get live sessions ("local", "discord", "slack"); empty = all
   //"live_session_idle_sec": 600, // stop an idle live session after this long (the next message starts it again); 0 = never
   //"poll_interval_sec": 30,
-  //"claude_model": "", // defaults to "claude-sonnet-5-5"; options: "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-sonnet-5", "claude-fable-5-1", "claude-fable-5", "claude-opus-4-8", "claude-haiku-5-5"; append "[1m]" (e.g. "claude-opus-5-5[1m]") for the 1M-token context window
+  //"claude_model": "", // defaults to "claude-sonnet-5-5"; options: "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-sonnet-5", "claude-fable-5-2", "claude-fable-5-1", "claude-fable-5", "claude-opus-4-8", "claude-haiku-5-5"; append "[1m]" (e.g. "claude-opus-5-5[1m]") for the 1M-token context window
   //"claude_effort": "", // reasoning-effort level passed to Claude as --effort; empty = unset (model default); options: "low", "medium", "high", "xhigh", "max"
   //"claude_bin_path": "claude",
   //"claude_prompt_suggestions": true, // after each chat turn, ask Claude for a predicted next prompt and offer it in the composer (Tab accepts); one small extra request per turn
