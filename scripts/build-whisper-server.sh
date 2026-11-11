@@ -113,16 +113,19 @@ common_flags() {
 }
 
 build_mac() {
-	local src build osx_arch
+	local src build osx_arch metal
 	src="$(fetch_whisper)"
-	case "$ARCH" in arm64) osx_arch=arm64 ;; x64) osx_arch=x86_64 ;; esac
+	# Intel Macs run on the CPU with Accelerate: Metal there (measured on the
+	# CI's virtual GPU) transcribes garbage, after ~4 minutes of shader
+	# compilation.
+	case "$ARCH" in arm64) osx_arch=arm64 metal=ON ;; x64) osx_arch=x86_64 metal=OFF ;; esac
 	build="$WORK/build-mac-$ARCH"
 	log "configuring macOS $osx_arch"
 	# shellcheck disable=SC2046
 	cmake -S "$src" -B "$build" $(common_flags) \
 		-DBUILD_SHARED_LIBS=OFF \
-		-DGGML_METAL=ON \
-		-DGGML_METAL_EMBED_LIBRARY=ON \
+		-DGGML_METAL="$metal" \
+		-DGGML_METAL_EMBED_LIBRARY="$metal" \
 		-DGGML_BLAS=ON \
 		-DGGML_BLAS_VENDOR=Apple \
 		-DCMAKE_OSX_ARCHITECTURES="$osx_arch" \
