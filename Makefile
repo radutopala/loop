@@ -1,4 +1,4 @@
-.PHONY: help build build-linux install test test-integration test-integration-browser test-integration-plugin test-integration-pluginsdk test-component test-runner-build test-runner-push bdd-serve lint lint-go lint-app sdk-gen sdk-gen-check coverage coverage-check prove-seccomp codeql-download codeql codeql-js docker-build docs-build docs-serve docs-capture docs-architecture run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-record app-test app-install app-build-binary app-dist-linux app-icons _sync-loop-overrides
+.PHONY: help build build-linux install test test-integration test-integration-browser test-integration-plugin test-integration-pluginsdk test-component test-runner-build test-runner-push bdd-serve lint lint-go lint-app sdk-gen sdk-gen-check coverage coverage-check prove-seccomp codeql-download codeql codeql-js docker-build docs-build docs-serve docs-capture docs-architecture run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-record app-test app-install app-build-binary app-dist-linux app-icons whisper-build _sync-loop-overrides
 .DEFAULT_GOAL := help
 
 # Strip gate-child env inheritance when invoking make from inside a
@@ -368,6 +368,12 @@ app-build-binary: ## Cross-compile loop binary for app bundling (GOOS=, GOARCH=)
 	GOOS=$(GOOS) GOARCH=$(GOARCH) CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" \
 		-o app/resources/$$EB_OS/$$EB_ARCH/loop ./cmd/loop; \
 	echo "Built app/resources/$$EB_OS/$$EB_ARCH/"
+
+# Build whisper.cpp's whisper-server (dictation engine) for the host into
+# app/resources/{ebOS}/{ebArch}/, next to loop. Override WHISPER_ARCH=x64 on an
+# arm64 Mac to cross-build the Intel one. Linux builds run in Docker.
+whisper-build: ## Build whisper-server for the host into app/resources/<os>/<arch>/ (WHISPER_ARCH= to override)
+	scripts/build-whisper-server.sh $(if $(WHISPER_ARCH),--arch $(WHISPER_ARCH))
 
 app-dev: ## Start the Electron app frontend dev server
 	cd app && npm install

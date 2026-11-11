@@ -25,6 +25,7 @@ interface FieldDef {
   description?: string;
   type: "text" | "password" | "number" | "toggle" | "dropdown" | "array" | "multiselect" | "keyvalue" | "objectarray" | "objectmap";
   options?: string[];
+  optionLabels?: Record<string, string>;
   placeholder?: string;
   section: string;
   step?: number;
@@ -96,6 +97,7 @@ export function schemaToFields(schema: ConfigSchema, isGlobal: boolean): FieldDe
         description: prop.description,
         type: inferFieldType(prop),
         options: (prop.enum ?? prop.items?.enum)?.map(String),
+        optionLabels: prop["x-enum-labels"],
         placeholder: prop["x-placeholder"],
         section,
         step: prop["x-step"],
@@ -481,15 +483,16 @@ export const ConfigForm = forwardRef<ConfigFormHandle, ConfigFormProps>(function
               {!visibleSection && <div style={{ fontSize: 10, fontWeight: 700, color: colors.textDim, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 6 }}>{sec.name}</div>}
               <div style={{ backgroundColor: colors.bg, borderRadius: 8, padding: "4px 0" }}>
                 {sec.fields.map((f) => (
-                  <FieldRenderer
-                    key={f.key}
-                    field={f}
-                    value={getNestedValue(formData, f.key)}
-                    inheritedValue={inheritedConfig ? getNestedValue(inheritedConfig, f.key) : undefined}
-                    onChange={(v) => handleFormChange(f.key, v)}
-                    colors={colors}
-                    inputStyle={inputStyle}
-                  />
+                  <div key={f.key} data-config-key={f.key}>
+                    <FieldRenderer
+                      field={f}
+                      value={getNestedValue(formData, f.key)}
+                      inheritedValue={inheritedConfig ? getNestedValue(inheritedConfig, f.key) : undefined}
+                      onChange={(v) => handleFormChange(f.key, v)}
+                      colors={colors}
+                      inputStyle={inputStyle}
+                    />
+                  </div>
                 ))}
               </div>
             </div>
@@ -713,7 +716,7 @@ function DropdownFieldRow({ field, value, onChange, colors, inputStyle }: { fiel
       <select value={value} onChange={(e) => onChange(e.target.value)} style={{ ...inputStyle, ...wideInput, cursor: "pointer" }}>
         {(field.options ?? []).map((o) => (
           <option key={o} value={o}>
-            {o || "(default)"}
+            {field.optionLabels?.[o] ?? (o || "(default)")}
           </option>
         ))}
       </select>

@@ -8,10 +8,12 @@ import (
 
 // SchemaProperty describes a single configuration field for UI rendering.
 type SchemaProperty struct {
-	Type                 string                     `json:"type"`
-	Title                string                     `json:"title,omitempty"`
-	Description          string                     `json:"description,omitempty"`
-	Enum                 []any                      `json:"enum,omitempty"`
+	Type        string `json:"type"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	Enum        []any  `json:"enum,omitempty"`
+	// XEnumLabels names enum values in the settings dropdown.
+	XEnumLabels          map[string]string          `json:"x-enum-labels,omitempty"`
 	Default              any                        `json:"default,omitempty"`
 	Minimum              *float64                   `json:"minimum,omitempty"`
 	Maximum              *float64                   `json:"maximum,omitempty"`
@@ -71,6 +73,19 @@ func Models() []string {
 }
 
 // modelEnum lists the models offered by the settings form; "" means no override.
+// DictationModels lists the whisper models live dictation can download.
+func DictationModels() []string {
+	return []string{DefaultDictationModel, "large-v3-turbo"}
+}
+
+func dictationModelEnum() []any {
+	enum := []any{}
+	for _, m := range DictationModels() {
+		enum = append(enum, m)
+	}
+	return enum
+}
+
 func modelEnum() []any {
 	enum := []any{""}
 	for _, m := range Models() {
@@ -87,6 +102,7 @@ func effortEnum() []any {
 // buildSchema builds the schema for a daemon running on goos, which picks
 // glab's default config dir.
 func buildSchema(goos string) *ConfigSchema {
+	languageEnum, languageLabels := dictationLanguageEnum()
 	return &ConfigSchema{
 		Type: "object",
 		Properties: map[string]*SchemaProperty{
@@ -529,6 +545,60 @@ func buildSchema(goos string) *ConfigSchema {
 						Default:      DefaultPprofAddr,
 						XPlaceholder: DefaultPprofAddr,
 						XOrder:       2,
+					},
+				},
+			},
+
+			// ── Dictation section (nested object) ──
+			"dictation": {
+				Type:        "object",
+				XSection:    "Dictation",
+				XGlobalOnly: true,
+				Properties: map[string]*SchemaProperty{
+					"enabled": {
+						Type:        "boolean",
+						Title:       "Enabled",
+						Description: "Dictate in the composer by holding the right Option (Alt) key or with the mic button. Turning it on downloads the model; macOS asks for the microphone the first time you dictate.",
+						Default:     false,
+						XOrder:      1,
+					},
+					"model": {
+						Type:        "string",
+						Title:       "Model",
+						Description: "The whisper model live dictation transcribes with. It is downloaded to ~/.loop/models on first use; the quantized q5_0 model is a third of the size with the same accuracy.",
+						Enum:        dictationModelEnum(),
+						Default:     DefaultDictationModel,
+						XOrder:      2,
+					},
+					"language": {
+						Type:        "string",
+						Title:       "Language",
+						Description: "The language you dictate in, or auto to detect it. Detected, a dictation keeps to the first language it is sure of; pick yours if short ones come out in another language or translated.",
+						Enum:        languageEnum,
+						XEnumLabels: languageLabels,
+						Default:     DefaultDictationLanguage,
+						XOrder:      3,
+					},
+					"send_phrases": {
+						Type:        "array",
+						Title:       "Send Phrases",
+						Description: "Words that send the message when they are the last thing you dictate, such as send; they are left out of the message. None by default.",
+						Items:       &SchemaProperty{Type: "string"},
+						XOrder:      4,
+					},
+					"idle_stop_sec": {
+						Type:        "integer",
+						Title:       "Idle Stop (seconds)",
+						Description: "How long the transcriber stays loaded after the last dictation. Starting it again takes a second or two.",
+						Default:     DefaultDictationIdleStopSec,
+						XOrder:      5,
+					},
+					"threads": {
+						Type:        "integer",
+						Title:       "Threads",
+						Description: "CPU threads the transcriber uses; 0 picks one from the number of cores.",
+						Default:     0,
+						XOrder:      6,
 					},
 				},
 			},

@@ -38,7 +38,7 @@ func (s *SchemaSuite) TestTopLevelProperties() {
 		"container_timeout_sec", "keep_mcp_configs",
 		"container_image_autobuild",
 		"claude_batch_disallowed_tools", "claude_retry",
-		"browser", "memory", "playground_share", "backup", "pprof", "review",
+		"browser", "memory", "playground_share", "backup", "pprof", "dictation", "review",
 		"extra_dirs", "mounts", "copy_files",
 		"proxies",
 		"platforms",
@@ -175,6 +175,25 @@ func (s *SchemaSuite) TestPprofNestedObject() {
 	require.True(s.T(), prop.XGlobalOnly)
 	require.Equal(s.T(), false, prop.Properties["enabled"].Default)
 	require.Equal(s.T(), DefaultPprofAddr, prop.Properties["addr"].Default)
+}
+
+func (s *SchemaSuite) TestDictationNestedObject() {
+	prop := GlobalConfigSchema().Properties["dictation"]
+	require.NotNil(s.T(), prop)
+	require.Equal(s.T(), "Dictation", prop.XSection)
+	require.True(s.T(), prop.XGlobalOnly)
+	require.Equal(s.T(), []any{DefaultDictationModel, "large-v3-turbo"}, prop.Properties["model"].Enum)
+	require.Equal(s.T(), DefaultDictationModel, prop.Properties["model"].Default)
+	lang := prop.Properties["language"]
+	require.Equal(s.T(), DefaultDictationLanguage, lang.Default)
+	require.Equal(s.T(), DefaultDictationLanguage, lang.Enum[0], "auto comes first")
+	require.Len(s.T(), lang.Enum, len(DictationLanguages())+1)
+	require.Contains(s.T(), lang.Enum, "ro")
+	require.Equal(s.T(), "Romanian (ro)", lang.XEnumLabels["ro"])
+	require.Equal(s.T(), "Detect automatically", lang.XEnumLabels[DefaultDictationLanguage])
+	require.Equal(s.T(), "array", prop.Properties["send_phrases"].Type)
+	require.Equal(s.T(), DefaultDictationIdleStopSec, prop.Properties["idle_stop_sec"].Default)
+	require.Equal(s.T(), 0, prop.Properties["threads"].Default)
 }
 
 func (s *SchemaSuite) TestLearnNestedObject() {

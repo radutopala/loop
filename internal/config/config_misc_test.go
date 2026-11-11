@@ -530,6 +530,33 @@ func (s *ConfigSuite) TestPprofConfigLoad() {
 	}
 }
 
+func (s *ConfigSuite) TestDictationConfigLoad() {
+	defaults := DictationConfig{Model: DefaultDictationModel, Language: DefaultDictationLanguage, IdleStopSec: DefaultDictationIdleStopSec}
+	tests := []struct {
+		name      string
+		dictation string
+		want      DictationConfig
+	}{
+		{"unset", ``, defaults},
+		{"blank and negative use defaults", `, "dictation": {"model": " ", "language": "", "idle_stop_sec": -5, "threads": -2}`, defaults},
+		{
+			"set",
+			`, "dictation": {"enabled": true, "model": " large-v3-turbo ", "language": "ro", "send_phrases": [" send  it ", " ", "trimite"], "idle_stop_sec": 60, "threads": 4}`,
+			DictationConfig{Enabled: true, Model: "large-v3-turbo", Language: "ro", SendPhrases: []string{"send it", "trimite"}, IdleStopSec: 60, Threads: 4},
+		},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.loader.readFile = func(_ string) ([]byte, error) {
+				return []byte(`{"platforms": ["discord"], "discord_token": "t", "discord_app_id": "a"` + tt.dictation + `}`), nil
+			}
+			cfg, err := s.loader.load()
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tt.want, cfg.Dictation)
+		})
+	}
+}
+
 func (s *ConfigSuite) TestBackupConfigLoad() {
 	defaults := BackupRetention{KeepLast: DefaultBackupKeepLast, KeepDaily: DefaultBackupKeepDaily, KeepWeekly: DefaultBackupKeepWeekly, KeepMonthly: DefaultBackupKeepMonthly}
 	tests := []struct {

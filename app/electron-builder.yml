@@ -24,6 +24,8 @@ mac:
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
   notarize: true
+  extendInfo:
+    NSMicrophoneUsageDescription: Loop uses the microphone for dictation in the chat composer. Audio is transcribed on this computer.
 
 dmg:
   sign: false

@@ -78,6 +78,7 @@ type jsonConfig struct {
 	Plugins                    *PluginsConfig             `json:"plugins"`
 	Backup                     *jsonBackupConfig          `json:"backup"`
 	Pprof                      *PprofConfig               `json:"pprof"`
+	Dictation                  *DictationConfig           `json:"dictation"`
 }
 
 // jsonMemoryConfig is the JSON representation of the memory block.
@@ -497,6 +498,16 @@ func (l *Loader) parse() (*Config, error) {
 	pprof := cmp.Or(jc.Pprof, &PprofConfig{})
 	cfg.Pprof = PprofConfig{Enabled: pprof.Enabled, Addr: cmp.Or(strings.TrimSpace(pprof.Addr), DefaultPprofAddr)}
 
+	dictation := cmp.Or(jc.Dictation, &DictationConfig{})
+	cfg.Dictation = DictationConfig{
+		Enabled:     dictation.Enabled,
+		Model:       cmp.Or(strings.TrimSpace(dictation.Model), DefaultDictationModel),
+		Language:    cmp.Or(strings.TrimSpace(dictation.Language), DefaultDictationLanguage),
+		SendPhrases: sendPhrases(dictation.SendPhrases),
+		IdleStopSec: cmp.Or(max(dictation.IdleStopSec, 0), DefaultDictationIdleStopSec),
+		Threads:     max(dictation.Threads, 0),
+	}
+
 	learn := cmp.Or(jc.Learn, &jsonLearnConfig{})
 	cfg.Learn = LearnConfig{
 		Enabled:  ptrDefault(learn.Enabled, false),
@@ -692,6 +703,17 @@ func stringifyEnvs(raw map[string]any) map[string]string {
 	out := make(map[string]string, len(raw))
 	for k, v := range raw {
 		out[k] = fmt.Sprintf("%v", v)
+	}
+	return out
+}
+
+// sendPhrases is the configured send phrases, trimmed, without blanks.
+func sendPhrases(in []string) []string {
+	var out []string
+	for _, p := range in {
+		if p = strings.Join(strings.Fields(p), " "); p != "" {
+			out = append(out, p)
+		}
 	}
 	return out
 }

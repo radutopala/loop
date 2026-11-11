@@ -13,6 +13,8 @@ export interface SchemaProperty {
   title?: string;
   description?: string;
   enum?: any[];
+  /** Names for enum values in a dropdown. */
+  "x-enum-labels"?: Record<string, string>;
   default?: any;
   minimum?: number;
   maximum?: number;
@@ -53,6 +55,14 @@ export async function fetchGlobalConfig(): Promise<ConfigResponse> {
   return res.json();
 }
 
+/** Fired on window after the global config was saved or restored, for views
+ *  that follow a setting without a daemon event (dictation). */
+export const GLOBAL_CONFIG_SAVED_EVENT = "loop:global-config-saved";
+
+function globalConfigSaved(): void {
+  if (typeof window !== "undefined") window.dispatchEvent(new Event(GLOBAL_CONFIG_SAVED_EVENT));
+}
+
 export async function saveGlobalConfig(content: string): Promise<void> {
   const res = await apiFetch(`${getApiUrl()}/api/config`, {
     method: "PUT",
@@ -60,6 +70,7 @@ export async function saveGlobalConfig(content: string): Promise<void> {
     body: JSON.stringify({ content }),
   });
   if (!res.ok) throw new Error(`Failed to save global config: ${res.statusText}`);
+  globalConfigSaved();
 }
 
 /** raw, a config file's text, with path set to value, or removed when value
@@ -252,6 +263,7 @@ export async function fetchConfigRevision(id: number, against?: number): Promise
 export async function restoreConfigRevision(id: number): Promise<void> {
   const res = await apiFetch(`${getApiUrl()}/api/config/history/${id}/restore`, { method: "POST" });
   if (!res.ok) throw new Error(`Failed to restore config revision: ${res.statusText}`);
+  globalConfigSaved();
 }
 
 /** How the history list names what wrote a revision. */

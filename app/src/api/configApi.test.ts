@@ -7,6 +7,7 @@ import {
   fetchConfigRevision,
   fetchProjectConfig,
   fetchProjectTrust,
+  GLOBAL_CONFIG_SAVED_EVENT,
   ProjectTrustChangedError,
   restoreConfigRevision,
   setGlobalConfigValue,
@@ -14,9 +15,11 @@ import {
 } from "./configApi";
 
 let fetchMock: ReturnType<typeof vi.fn>;
+let dispatched: string[];
 
 beforeEach(() => {
-  vi.stubGlobal("window", { location: { hash: "" } });
+  dispatched = [];
+  vi.stubGlobal("window", { location: { hash: "" }, dispatchEvent: (e: Event) => dispatched.push(e.type) });
   vi.stubGlobal("sessionStorage", { getItem: () => null, setItem: () => {} });
   fetchMock = vi.fn();
   vi.stubGlobal("fetch", fetchMock);
@@ -157,11 +160,13 @@ describe("restoreConfigRevision", () => {
     const [url, init] = fetchMock.mock.calls[0]! as [string, RequestInit];
     expect(url).toBe("http://localhost:8222/api/config/history/2/restore");
     expect(init.method).toBe("POST");
+    expect(dispatched).toEqual([GLOBAL_CONFIG_SAVED_EVENT]);
   });
 
   it("throws on an error status", async () => {
     fetchMock.mockResolvedValue(new Response("", { status: 500, statusText: "boom" }));
     await expect(restoreConfigRevision(2)).rejects.toThrow("Failed to restore config revision: boom");
+    expect(dispatched).toEqual([]);
   });
 });
 
@@ -193,5 +198,6 @@ describe("setGlobalConfigValue", () => {
     expect(content).toContain("// mine");
     expect(content).toContain('"theme": "light"');
     expect(content).toMatch(/"hidden_pills": \[\s*"ci",\s*"comment"\s*\]/);
+    expect(dispatched).toEqual([GLOBAL_CONFIG_SAVED_EVENT]);
   });
 });

@@ -28,5 +28,6 @@ contextBridge.exposeInMainWorld("loopAPI", {
   reconcileApprovals: (reqIds) => ipcRenderer.send("reconcile-approvals", reqIds),
   setTheme: (name) => ipcRenderer.send("set-theme", name),
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
+  microphoneAccess: (ask) => ipcRenderer.invoke("microphone-access", !!ask),
   onThemeChanged: (callback) => subscribe("theme-changed", (_event, name) => callback(name)),
 });

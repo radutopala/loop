@@ -481,6 +481,8 @@ declare global {
       setTheme?: (name: string) => void;
       onThemeChanged?: (callback: (name: string) => void) => () => void;
       openExternal?: (url: string) => Promise<void>;
+      /** The OS microphone access state; with ask, prompts when undecided (macOS). */
+      microphoneAccess?: (ask?: boolean) => Promise<string>;
     };
   }
 }
