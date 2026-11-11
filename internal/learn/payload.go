@@ -136,6 +136,9 @@ func Decode(kind string, payload json.RawMessage) (any, error) {
 	case db.LearnKindTicketURL:
 		p := &TicketURL{}
 		v, check = p, p.check
+	case db.LearnKindMemory:
+		p := &Memory{}
+		v, check = p, p.check
 	default:
 		return nil, fmt.Errorf("unknown kind %q (must be one of %s)", kind, strings.Join(Kinds, ", "))
 	}

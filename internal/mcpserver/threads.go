@@ -41,9 +41,10 @@ func (s *Server) handleCreateThread(_ context.Context, _ *mcp.CallToolRequest, i
 	}
 
 	reqBody := map[string]string{
-		"channel_id": s.channelID,
-		"name":       input.Name,
-		"message":    input.Message,
+		"channel_id":      s.channelID,
+		"name":            input.Name,
+		"message":         input.Message,
+		"from_channel_id": s.channelID,
 	}
 	if s.authorID != "" {
 		reqBody["author_id"] = s.authorID
@@ -73,8 +74,9 @@ func (s *Server) handleCreateWorktreeThread(_ context.Context, _ *mcp.CallToolRe
 	}
 
 	reqBody := map[string]string{
-		"channel_id": s.channelID,
-		"branch":     input.Branch,
+		"channel_id":      s.channelID,
+		"branch":          input.Branch,
+		"from_channel_id": s.channelID,
 	}
 	if input.Name != "" {
 		reqBody["name"] = input.Name

@@ -7,6 +7,7 @@ import {
   commentEmphasis,
   commentImpact,
   commentKind,
+  commentPushState,
   type FileSummary,
   impactColor,
   navigableAnchors,
@@ -268,5 +269,16 @@ describe("threadOrder", () => {
 
   it("orders the navigator by thread too", () => {
     expect(ids(DIFF, threadOrder([gh("r1", 1), gh("other", 2), gh("r1-a", 3, 1)]))).toEqual(["r1", "r1-a", "other"]);
+  });
+});
+
+describe("commentPushState", () => {
+  const push = { pushing: new Set(["a"]), landed: new Set(["a", "b"]) };
+  it.each([
+    ["on its way", "a", "pushing"],
+    ["just landed", "b", "landed"],
+    ["neither", "c", null],
+  ] as const)("%s", (_, id, want) => {
+    expect(commentPushState(id, push)).toBe(want);
   });
 });

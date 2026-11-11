@@ -415,6 +415,7 @@ Create a new thread under a parent channel. If the channel ID points to a thread
 | `name`       | string | yes      | Thread display name |
 | `author_id`  | string | no       | Thread creator's user ID |
 | `message`    | string | no       | Initial message content |
+| `from_channel_id` | string | no | Channel the thread is created from, for an owner token. Any other token's own channel replaces it. The initial message gets [origin tags](#message-tags) for it, the parent's included, since the thread isn't the parent. |
 
 **Response (201):**
 ```json
@@ -534,7 +535,7 @@ Send a message to a channel. When an orchestrator is configured, routes through 
 
 #### Message tags
 
-Message rows and `message.created` events carry `tags`, a key/value object, when the message has any. A message sent from another channel has:
+Message rows and `message.created` events carry `tags`, a key/value object, when the message has any. A message sent from another channel, or the first message of a thread created from one (`POST /api/threads`, `POST /api/worktrees`), has:
 
 | Tag | Value |
 |-----|-------|
@@ -542,7 +543,7 @@ Message rows and `message.created` events carry `tags`, a key/value object, when
 | `origin_channel_name` | Its name when the message was sent, when it has one |
 | `origin_message` | Row ID of the last user message the sender's agent started on, when there is one |
 
-The agent reads them as `[from channel "<name>", channel_id: <id>, message_id: <id>; if it needs an answer, send it with send_message to this channel_id] <content>`; a message starting with `/` is passed as it is, so it still runs as a slash command. The chat shows a link back to that channel and message. The stored content has no label.
+The agent reads them as `[from channel "<name>", channel_id: <id>, message_id: <id>; if it needs an answer, send it with send_message to this channel_id] <content>`; a message starting with `/` is passed as it is, so it still runs as a slash command. The chat shows a link back to that channel and message. The stored content has no label. Discord and Slack keep no tags, so a thread's first message is posted there with the label in its text.
 
 ### `DELETE /api/messages/{id}`
 
@@ -1304,7 +1305,7 @@ List the proposals filed for the channel, newest first, in every status.
 | Field | Type | Description |
 |-------|------|-------------|
 | `message_id` | string | The turn (its last bot message's `msg_id`) whose learn pass filed it; omitted when unknown |
-| `kind` | string | `prompt_shortcut`, `bash_shortcut`, `scheduled_task`, `gate_rule`, `mount`, `rename`, `description` or `ticket_url` |
+| `kind` | string | `prompt_shortcut`, `bash_shortcut`, `scheduled_task`, `gate_rule`, `mount`, `rename`, `description`, `ticket_url` or `memory` |
 | `payload` | string | The kind's payload as a JSON string (see [`POST`](#post-apichannelsidlearnproposals)) |
 | `status` | string | `pending`, `applying`, `applied`, `dismissed`, `failed` or `withdrawn` |
 | `error` | string | Why the last apply failed; omitted when empty |
@@ -1358,6 +1359,7 @@ At most 5 proposals per call. Each needs a `kind`, a `title` (at most 200 charac
 | `rename` | `{"name"}`, at most 100 characters. |
 | `description` | `{"description"}`, at most 500 characters. |
 | `ticket_url` | `{"ticket_url"}`, an absolute http(s) URL, at most 2048 characters. |
+| `memory` | `{"name", "description", "type", "body"}`. `name` is the memory's file name: a kebab-case slug (lowercase letters, digits and dashes, at most 64); `description` one line, at most 200 characters; `type` is `user`, `feedback`, `project` or `reference`; `body` at most 4000 characters. |
 
 The payload is stored in canonical JSON. New proposals get the `message_id` of the learn thread's running pass, else its newest done one (a user's reply in the learn thread files against the turn that pass reviewed); none when it has neither. The withdrawals and the inserts run in one transaction: either every proposal is valid and every withdrawal allowed, and all are stored, or nothing changes. A withdrawal takes the proposal the same way apply claims it (a conditional update on its status), so one the user is applying or dismissing at that moment can't be withdrawn, and one withdrawn first can't be applied.
 
@@ -1438,7 +1440,7 @@ Apply a `pending` or `failed` proposal. It moves to `applying` first, so a doubl
 
 ### `GET /api/learn/proposals/{id}/preview`
 
-What applying a proposal would change in the project config, without changing it. The server works out the same edit apply makes, with the same duplicate checks, against the file as it is now. Owner-only.
+What applying a proposal would change in the project config, or in Claude Code's auto-memory for a `memory` proposal, without changing it. The server works out the same edit apply makes, with the same duplicate checks, against the file as it is now. Owner-only.
 
 **Response (200):**
 ```json
@@ -1450,9 +1452,9 @@ What applying a proposal would change in the project config, without changing it
 
 | Field | Description |
 |---|---|
-| `path` | The `.loop/config.json` the proposal edits (see [Where learn proposals are written](configuration.md#where-learn-proposals-are-written)) |
-| `diff` | The edit as a unified diff, from `/dev/null` when the file would be created. Omitted when the change is already there (a gate rule the config has) |
-| `error` | Why applying it would fail (a shortcut or mount that already exists, a config that doesn't parse), as apply would record it |
+| `path` | The `.loop/config.json` the proposal edits, or the memory file a `memory` proposal adds (see [Where learn proposals are written](configuration.md#where-learn-proposals-are-written)) |
+| `diff` | The edit as a unified diff, from `/dev/null` when the file would be created. A `memory` proposal's diff covers the memory file, then `MEMORY.md`. Omitted when the change is already there (a gate rule the config has) |
+| `error` | Why applying it would fail (a shortcut, mount or memory that already exists, a config that doesn't parse), as apply would record it |
 
 All fields are omitted for kinds that edit no file (`scheduled_task`, `rename`, `description`, `ticket_url`).
 
@@ -2455,7 +2457,7 @@ Create a git worktree as a new thread. The worktree gets its own branch (`worktr
 
 With `pr` set to an open PR's number (an MR's IID on GitLab), the worktree is checked out on that PR's own branch instead: `git worktree add --detach`, then `gh pr checkout <pr>` (or `glab mr checkout <pr>`) inside it, so pushes from it update the PR. `branch` is then optional, `name` defaults to `pr-<pr>`, and the thread is named `<name> (<head branch>)`. A failed checkout removes the worktree and answers `500` with the error; so does a repo without a GitHub or GitLab `origin`.
 
-If `message` is provided, the bot posts it as a self-mention into the new thread to trigger a runner immediately with that prompt — same auto-trigger semantics as `POST /api/threads`.
+If `message` is provided, the bot posts it as a self-mention into the new thread to trigger a runner immediately with that prompt — same auto-trigger semantics as `POST /api/threads`. `from_channel_id` works as it does there: the message gets [origin tags](#message-tags) for the channel the worktree thread was created from.
 
 **Response (201):**
 ```json
@@ -2685,7 +2687,14 @@ Body: `{"pr_number": 42}`. Replaces any existing session for the channel.
 
 Response: `{"present": true, "session": { ... }}` — the full session, mirroring `review.Session` in `internal/review/session.go`.
 
-**Errors:** `400` on invalid `pr_number` or missing `dir_path`. `404` if the PR does not exist. `500` on `gh`/git failure.
+With `"background": true` (the Review panel) the PR loads in the
+background: the answer is `202` with the loading session
+(`"status": "loading"`, and `loading_pr`, the PR it loads, since `pr` stays
+unset until the load settles). A [`review.status`](events.md#reviewstatus) event then
+reports `ready` or `error` with the reason. Closing the session while the PR
+loads cancels the load and announces only the close.
+
+**Errors:** `400` on invalid `pr_number` or missing `dir_path`. `404` if the PR does not exist. `409` while a PR loads in the background or a review run is in flight for the channel. `500` on `gh`/git failure (for a background load, the `review.status` event carries it).
 
 ### `POST /api/channels/{id}/review/start`
 

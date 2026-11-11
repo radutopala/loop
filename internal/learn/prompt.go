@@ -43,6 +43,7 @@ var Kinds = []string{
 	db.LearnKindRename,
 	db.LearnKindDescription,
 	db.LearnKindTicketURL,
+	db.LearnKindMemory,
 }
 
 // State is what already exists for the channel being learned from, so the

@@ -91,3 +91,18 @@ Links this channel or thread to its ticket (Jira, GitHub, Linear, …), shown in
 ```json
 {"ticket_url": "https://tracker.example.com/browse/PROJ-123"}
 ```
+
+### memory
+
+One fact for Claude Code's auto-memory, so every later session in this project starts out knowing it. It's written to the project's auto-memory dir (the root checkout's, for a worktree thread) as `<name>.md`, with a pointer added to its `MEMORY.md` index. Good for what the run had to discover or be told that the code doesn't record: a correction the user gave ("don't mock the database here"), a non-obvious constraint or gotcha the agent ran into, where an external resource lives. Not for what the repo, `CLAUDE.md` or git history already says, nor for something only this conversation needs.
+
+- `name`: a kebab-case slug, which is also the file name (`lint-before-push` → `lint-before-push.md`).
+- `description`: one line, under 200 characters, that later sessions use to judge whether the memory is relevant.
+- `type`: `user` (who the user is and how they work), `feedback` (guidance the user gave on how to work), `project` (ongoing work, goals or constraints the code doesn't show) or `reference` (a pointer to an external resource).
+- `body`: the fact itself. For `feedback` and `project`, follow it with a `**Why:**` line and a `**How to apply:**` line.
+
+When your context has an auto-memory index (`MEMORY.md`), it lists what's already remembered: don't propose a memory it covers, under any name. A run whose lesson fits a shortcut, task or rule better should propose that instead.
+
+```json
+{"name": "lint-before-push", "description": "Run make lint as the last step before every commit", "type": "feedback", "body": "Run `make lint` as the final step before committing.\n\n**Why:** CI failed twice on gofmt after the tests passed.\n\n**How to apply:** after the last edit, before git commit."}
+```

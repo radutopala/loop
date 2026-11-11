@@ -11,7 +11,7 @@ export function learnEffective(learn: "" | "on" | "off", defaultLearn: boolean):
 export function learnToggleTitle(learn: "" | "on" | "off", defaultLearn: boolean): string {
   const on = learnEffective(learn, defaultLearn);
   const source = learn === "" ? `config default (${defaultLearn ? "on" : "off"})` : "set for this channel";
-  const what = "After each run, a hidden forked session reviews it and proposes shortcuts, tasks, gate rules, mounts, a thread name, description or ticket link for you to apply.";
+  const what = "After each run, a hidden forked session reviews it and proposes shortcuts, tasks, gate rules, mounts, memories for Claude, a thread name, description or ticket link for you to apply.";
   return `Learn is ${on ? "on" : "off"} — ${source}.\n${what}\nClick to turn it ${on ? "off" : "on"}.`;
 }
 
@@ -24,25 +24,28 @@ const KIND_LABELS: Record<LearnProposalKind, string> = {
   rename: "rename",
   description: "description",
   ticket_url: "ticket",
+  memory: "memory",
 };
 
 export function learnKindLabel(kind: string): string {
   return KIND_LABELS[kind as LearnProposalKind] ?? kind;
 }
 
-// The kinds whose apply appends to the project's .loop/config.json: their
-// cards preview the edit as a diff before it's applied.
-const CONFIG_KINDS: ReadonlySet<string> = new Set<LearnProposalKind>(["prompt_shortcut", "bash_shortcut", "gate_rule", "mount"]);
+// The kinds whose apply edits a file: the config kinds append to the
+// project's .loop/config.json, a memory adds its file and a MEMORY.md
+// pointer to Claude's auto-memory. Their cards preview the edit as a diff
+// before it's applied.
+const FILE_KINDS: ReadonlySet<string> = new Set<LearnProposalKind>(["prompt_shortcut", "bash_shortcut", "gate_rule", "mount", "memory"]);
 
-export function editsProjectConfig(kind: string): boolean {
-  return CONFIG_KINDS.has(kind);
+export function editsFile(kind: string): boolean {
+  return FILE_KINDS.has(kind);
 }
 
-// Changes whenever a config-kind proposal is applied, so the open cards'
+// Changes whenever a file-editing proposal is applied, so the open cards'
 // previews are worked out again against the edited file.
 export function configPreviewRevision(proposals: LearnProposal[]): string {
   return proposals
-    .filter((p) => p.status === "applied" && editsProjectConfig(p.kind))
+    .filter((p) => p.status === "applied" && editsFile(p.kind))
     .map((p) => p.id)
     .join(",");
 }
@@ -190,6 +193,8 @@ export function proposalDetail(p: LearnProposal): string {
       return str(v.description);
     case "ticket_url":
       return str(v.ticket_url);
+    case "memory":
+      return `${str(v.type)} ${str(v.name)}: ${str(v.description)}`;
   }
   return p.payload;
 }

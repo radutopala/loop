@@ -290,9 +290,10 @@ func (s *reviewService) pushOneComment(ctx context.Context, channelID string, se
 	if ghID == 0 {
 		return nil
 	}
+	// Announced one by one, so a Push all shows each comment land.
 	if s.sessions.MarkPushed(channelID, c.ID, ghID) {
 		pushed, _ := s.sessions.FindComment(channelID, c.ID)
-		s.saveFinding(channelID, pushed)
+		s.commentUpdated(channelID, pushed)
 	}
 	return nil
 }
@@ -564,6 +565,8 @@ func reviewCommentEvent(c *review.Comment) events.ReviewCommentEventData {
 		Impact:        c.Impact,
 		Transcripts:   c.Transcripts,
 		RunID:         c.RunID,
+		Pushed:        c.Pushed,
+		GitHubID:      c.GitHubID,
 	}
 }
 

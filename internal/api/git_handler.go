@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/gitutil"
 	"github.com/radutopala/loop/internal/osutil"
 	"github.com/radutopala/loop/internal/randutil"
@@ -452,6 +453,10 @@ type createWorktreeRequest struct {
 	Name     string `json:"name,omitempty"`
 	AuthorID string `json:"author_id,omitempty"`
 	Message  string `json:"message,omitempty"`
+	// FromChannelID is the channel an owner-token caller, such as an agent on
+	// the host, creates the thread from. Any other token's own channel takes
+	// its place. The thread's first message carries it as its origin.
+	FromChannelID string `json:"from_channel_id,omitempty"`
 }
 
 type createWorktreeResponse struct {
@@ -540,7 +545,8 @@ func (s *Server) handleCreateWorktree(w http.ResponseWriter, r *http.Request) {
 	threadName := fmt.Sprintf("%s (%s)", name, threadBranch)
 	// When msgHandler is set, skip storing the message in CreateThread —
 	// HandleThreadCreated will store it as a user message instead.
-	msg := req.Message
+	tags := s.threadOriginTags(r.Context(), req.FromChannelID)
+	msg := bot.WithOriginLabel(req.Message, tags)
 	if s.msgHandler != nil {
 		msg = ""
 	}
@@ -576,9 +582,7 @@ func (s *Server) handleCreateWorktree(w http.ResponseWriter, r *http.Request) {
 		s.eventsHub.BroadcastChannelCreated(req.ChannelID, threadID)
 	}
 
-	if s.msgHandler != nil && req.Message != "" {
-		go s.msgHandler.HandleThreadCreated(context.Background(), threadID, req.AuthorID, req.Message)
-	}
+	s.startThread(r.Context(), threadID, req.AuthorID, req.Message, tags)
 
 	writeHTTPJSON(w, http.StatusCreated, createWorktreeResponse{
 		ThreadID:     threadID,

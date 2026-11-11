@@ -447,6 +447,8 @@ Applying a proposal of a config kind appends to the project config, `.loop/confi
 | `gate_rule` | `gates.agentgate.path_rules`, `command_rules` or `file_rules` | Picked by the rule's type (`path`, `command`, `file`). Project rules match before every global rule except the denies; that's why a proposed rule must name what it matches (`commands` or `args_patterns`, `paths`, `pattern`) and can't be a catch-all. A rule the merged config already has is left as it is, and the apply succeeds. |
 | `mount` | `mounts` | Fails if the merged config already has the exact mount (a relative host path is resolved against the project dir first, as project mounts are). Project mounts are added to the global ones, so only the new mount is written. |
 
+A `memory` proposal doesn't touch config either: it adds a memory to Claude Code's auto-memory for the project, `~/.claude/projects/<project>/memory/` (for a worktree thread, the root checkout's, which the worktree's agents read too). Apply writes the memory's own `<name>.md`, with the `name`, `description` and `metadata.type` frontmatter Claude Code writes, and appends a pointer line `- [<name>](<name>.md) — <description>` to `MEMORY.md`, unless the index already has one. It fails if a memory file of that name exists. Applies to the same `MEMORY.md` are serialized like config edits.
+
 `scheduled_task`, `rename`, `description` and `ticket_url` proposals don't touch config: they create an enabled task in the channel and update the channel's name, description or ticket URL, as `POST /api/tasks`, `/rename`, `/description` and `/ticket` do.
 
 #### Explain

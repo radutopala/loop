@@ -416,6 +416,9 @@ func (s *Server) applyLearnProposal(ctx context.Context, p *db.LearnProposal) er
 			s.eventsHub.BroadcastTaskCreated(events.TaskEventData{TaskID: id, ChannelID: task.ChannelID})
 		}
 		return nil
+	case *learn.Memory:
+		_, _, err := s.editLearnMemory(ctx, ch, v, true)
+		return err
 	}
 	_, _, _, err = s.editLearnConfig(ctx, ch, v, true)
 	return err
@@ -531,6 +534,12 @@ func (s *Server) handlePreviewLearnProposal(w http.ResponseWriter, r *http.Reque
 	switch {
 	case err != nil:
 		resp.Error = err.Error()
+	case isLearnMemoryKind(v):
+		path, diff, err := s.editLearnMemory(r.Context(), ch, v.(*learn.Memory), false)
+		resp.Path, resp.Diff = path, diff
+		if err != nil {
+			resp.Error = err.Error()
+		}
 	case isLearnConfigKind(v):
 		path, before, after, err := s.editLearnConfig(r.Context(), ch, v, false)
 		resp.Path = path

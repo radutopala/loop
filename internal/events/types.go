@@ -66,6 +66,9 @@ type ReviewCommentEventData struct {
 	Impact        string   `json:"impact,omitempty"`
 	Transcripts   []string `json:"transcripts,omitempty"`
 	RunID         int64    `json:"run_id,omitempty"`
+	// Pushed and GitHubID are set once the comment is on GitHub.
+	Pushed   bool  `json:"pushed,omitempty"`
+	GitHubID int64 `json:"github_id,omitempty"`
 }
 
 // ReviewStatusEventData is the payload for review.status events. Sent on
