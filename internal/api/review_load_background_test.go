@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -57,6 +58,7 @@ func (s *ReviewHandlerSuite) TestLoadBackground() {
 	require.Equal(s.T(), http.StatusAccepted, w.Code, w.Body.String())
 	require.Contains(s.T(), w.Body.String(), `"status":"loading","loading_pr":7`)
 	require.Equal(s.T(), review.StatusLoading, s.rs.Get("ch1").Status)
+	require.Equal(s.T(), events.ReviewStatusEventData{Status: string(review.StatusLoading)}, <-got)
 
 	// Another load, either kind, waits for this one.
 	w = s.loadBackground()
@@ -79,6 +81,7 @@ func (s *ReviewHandlerSuite) TestLoadBackgroundFails() {
 	s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 7).Return(nil, errors.New("api fail"))
 
 	require.Equal(s.T(), http.StatusAccepted, s.loadBackground().Code)
+	require.Equal(s.T(), events.ReviewStatusEventData{Status: string(review.StatusLoading)}, <-got)
 	require.Equal(s.T(), events.ReviewStatusEventData{Status: string(review.StatusError), Error: "api fail"}, <-got)
 	require.Equal(s.T(), review.StatusError, s.rs.Get("ch1").Status)
 	require.False(s.T(), s.srv.review.isReviewRunActive("ch1"))
@@ -130,6 +133,7 @@ func (s *ReviewHandlerSuite) TestLoadBackgroundClosed() {
 			s.wt.On("Remove", mock.Anything, "/repo", "/repo/.worktrees/pr-7").Run(func(mock.Arguments) { close(removed) }).Return(tc.removeErr)
 
 			require.Equal(s.T(), http.StatusAccepted, s.loadBackground().Code)
+			require.Equal(s.T(), events.ReviewStatusEventData{Status: string(review.StatusLoading)}, <-got)
 			w := httptest.NewRecorder()
 			s.mux.ServeHTTP(w, httptest.NewRequest("DELETE", "/api/channels/ch1/review", nil))
 			require.Equal(s.T(), http.StatusNoContent, w.Code)
@@ -145,4 +149,55 @@ func (s *ReviewHandlerSuite) TestLoadBackgroundClosed() {
 			require.Empty(s.T(), got, "only the close is announced")
 		})
 	}
+}
+
+// A background load that outlives the load timeout fails, saying so.
+func (s *ReviewHandlerSuite) TestLoadBackgroundTimesOut() {
+	got := s.statusEvents()
+	s.srv.review.loadTimeout = time.Millisecond
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
+	s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 7).
+		Run(func(args mock.Arguments) { <-args.Get(0).(context.Context).Done() }).
+		Return(nil, errors.New("context deadline exceeded"))
+
+	require.Equal(s.T(), http.StatusAccepted, s.loadBackground().Code)
+	require.Equal(s.T(), events.ReviewStatusEventData{Status: string(review.StatusLoading)}, <-got)
+	require.Equal(s.T(), events.ReviewStatusEventData{Status: string(review.StatusError), Error: "loading PR #7 timed out"}, <-got)
+	require.Equal(s.T(), "loading PR #7 timed out", s.rs.Get("ch1").Error)
+}
+
+// A Stop while a PR loads ends the load: the session says it was stopped,
+// not what the cancelled gh call printed.
+func (s *ReviewHandlerSuite) TestLoadStopped() {
+	got := s.statusEvents()
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
+	s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 7).
+		Run(func(args mock.Arguments) { <-args.Get(0).(context.Context).Done() }).
+		Return(nil, errors.New("context canceled"))
+
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- s.postJSON("/api/channels/ch1/review/load", map[string]any{"pr_number": 7}) }()
+	require.Equal(s.T(), events.ReviewStatusEventData{Status: string(review.StatusLoading)}, <-got)
+	require.Equal(s.T(), http.StatusAccepted, s.postJSON("/api/channels/ch1/review/stop", nil).Code)
+
+	w := <-done
+	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
+	require.Contains(s.T(), w.Body.String(), "loading PR #7 was stopped")
+	require.Equal(s.T(), events.ReviewStatusEventData{Status: string(review.StatusError), Error: "loading PR #7 was stopped"}, <-got)
+	require.False(s.T(), s.srv.review.isReviewRunActive("ch1"))
+}
+
+// A load that didn't settle leaves the checkout alone when the channel's
+// session points at it after all.
+func (s *ReviewHandlerSuite) TestRemoveLoadCheckoutKeepsTheSessions() {
+	s.rs.Put("ch1", &review.Session{Status: review.StatusReady, WorktreePath: "/repo/.worktrees/pr-7"})
+	s.srv.review.removeLoadCheckout(context.Background(), "ch1", "/repo", "/repo/.worktrees/pr-7")
+	s.wt.AssertNotCalled(s.T(), "Remove", mock.Anything, mock.Anything, mock.Anything)
+}
+
+// A nil comment updates nothing.
+func (s *ReviewHandlerSuite) TestCommentUpdatedNil() {
+	got := s.statusEvents()
+	require.NotPanics(s.T(), func() { s.srv.review.commentUpdated("ch1", nil) })
+	require.Empty(s.T(), got)
 }

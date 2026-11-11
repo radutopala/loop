@@ -102,6 +102,19 @@ func (s *ServerSuite) TestCreateThreadOriginLabelWithoutHandler() {
 	s.threads.AssertExpectations(s.T())
 }
 
+// A thread created without a message gets none, not a bare origin label.
+func (s *ServerSuite) TestCreateThreadNoMessageNoLabel() {
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1"}, nil)
+	s.store.On("LatestPromptRowID", mock.Anything, "ch-1").Return(int64(0), nil)
+	s.threads.On("CreateThread", mock.Anything, "ch-1", "t", "", "").Return("thread-1", nil)
+
+	rec := callAs(s.srv.handleCreateThread, "/api/threads", `{"channel_id":"ch-1","name":"t"}`,
+		apiauth.Principal{Kind: apiauth.KindAgent, ChannelID: "ch-1"})
+
+	require.Equal(s.T(), http.StatusCreated, rec.Code, rec.Body.String())
+	s.threads.AssertExpectations(s.T())
+}
+
 func (s *ServerSuite) TestCreateWorktreeOriginTags() {
 	dir := initGitRepo(s.T())
 	cmd := exec.Command("git", "branch", "feature/origin")

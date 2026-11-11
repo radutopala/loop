@@ -33,10 +33,11 @@ var originLabelEscaper = strings.NewReplacer("[", "(", "]", ")")
 // WithOriginLabel returns the text an agent reads for a message: content, with
 // a label naming the channel it came from and how to answer it. Without that
 // last part an agent answers in its own chat, where the sender never sees it.
-// A slash command stays as it is, or it wouldn't run as one.
+// An empty message stays empty, and a slash command as it is, or it
+// wouldn't run as one.
 func WithOriginLabel(content string, tags map[string]string) string {
 	from := tags[TagOriginChannel]
-	if from == "" || strings.HasPrefix(content, "/") {
+	if from == "" || strings.TrimSpace(content) == "" || strings.HasPrefix(content, "/") {
 		return content
 	}
 	label := "channel_id: " + from

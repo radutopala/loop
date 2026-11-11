@@ -352,17 +352,26 @@ func (s *ReviewHandlerSuite) TestLoadWorktreeError() {
 	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
 }
 
+// A failed diff removes the checkout the load made; failing to remove it
+// only logs.
 func (s *ReviewHandlerSuite) TestLoadDiffError() {
-	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
-	s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 7).Return(&githubapi.PRInfo{Number: 7, BaseRef: "main"}, nil)
-	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("abc", nil)
-	s.wt.On("Add", mock.Anything, "/repo", 7, mock.Anything).Return("/repo/.worktrees/pr-7", nil)
-	// Comment fetch happens before Diff so its mock has to be in place.
-	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return((*githubapi.RepoSlug)(nil), errors.New("no slug"))
-	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return(nil, errors.New("diff failed"))
-	w := s.postJSON("/api/channels/ch1/review/load", map[string]any{"pr_number": 7})
-	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
-	require.Equal(s.T(), review.StatusError, s.rs.Get("ch1").Status)
+	for _, removeErr := range []error{nil, errors.New("busy")} {
+		s.Run(fmt.Sprint(removeErr), func() {
+			s.SetupTest()
+			s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
+			s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 7).Return(&githubapi.PRInfo{Number: 7, BaseRef: "main"}, nil)
+			s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("abc", nil)
+			s.wt.On("Add", mock.Anything, "/repo", 7, mock.Anything).Return("/repo/.worktrees/pr-7", nil)
+			// Comment fetch happens before Diff so its mock has to be in place.
+			s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return((*githubapi.RepoSlug)(nil), errors.New("no slug"))
+			s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return(nil, errors.New("diff failed"))
+			s.wt.On("Remove", mock.Anything, "/repo", "/repo/.worktrees/pr-7").Return(removeErr).Once()
+			w := s.postJSON("/api/channels/ch1/review/load", map[string]any{"pr_number": 7})
+			require.Equal(s.T(), http.StatusInternalServerError, w.Code)
+			require.Equal(s.T(), review.StatusError, s.rs.Get("ch1").Status)
+			s.wt.AssertExpectations(s.T())
+		})
+	}
 }
 
 func (s *ReviewHandlerSuite) TestLoadHappyPath() {

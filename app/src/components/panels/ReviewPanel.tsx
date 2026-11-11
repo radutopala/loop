@@ -265,6 +265,16 @@ export function isSessionOpen(session: ReviewSession | null): boolean {
   return session !== null && session.status !== "idle" && session.status !== "error" && session.status !== "loading";
 }
 
+// statusNeedsSession reports whether a review.status event of status needs
+// the whole session fetched rather than held's status flipped: a PR load
+// started or settled, here or in another window, so the session held isn't
+// the one it loads (none, a closed or failed one, or the loading one, with
+// no PR or diff).
+export function statusNeedsSession(held: ReviewSession | null, status: ReviewStatus): boolean {
+  if (status === "loading") return true;
+  return (status === "ready" || status === "error") && !isSessionOpen(held);
+}
+
 // pickerLoadingPR is the PR the picker marks as loading: the one the
 // channel's session is loading, which a panel opened mid-load learns only
 // from the session, else the one just clicked.
@@ -518,6 +528,9 @@ interface ReviewPanelProps {
   /** Drop a resolved gate from the store. Called when the inline
    *  ApprovalCard fires its `onResolved`. */
   onClearGateApproval?: (source: string) => void;
+  /** Bumped on each WS open: a reconnect refetches the session, whose
+   *  review.status events may have been missed meanwhile. */
+  wsOpens?: number;
 }
 
 function statusLabel(status: ReviewStatus): string {
@@ -537,7 +550,16 @@ function statusLabel(status: ReviewStatus): string {
   }
 }
 
-export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITER, subscribeChatEvents, registerReviewView, hasChatPanel, gateApprovals, onClearGateApproval }: ReviewPanelProps) {
+export function ReviewPanel({
+  channelId,
+  defaultMaxIter = DEFAULT_REVIEW_MAX_ITER,
+  subscribeChatEvents,
+  registerReviewView,
+  hasChatPanel,
+  gateApprovals,
+  onClearGateApproval,
+  wsOpens = 0,
+}: ReviewPanelProps) {
   const { colors, fontSizes } = useTheme();
   const [session, setSession] = useState<ReviewSession | null>(null);
   // A run's verification step holds the session like the run does.
@@ -613,8 +635,13 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
   const [pushAllTotal, setPushAllTotal] = useState<number | null>(null);
   const [pushNotice, setPushNotice] = useState<string | null>(null);
   const pushState = useMemo(() => ({ pushing, landed }), [pushing, landed]);
-  const markLanded = useCallback((ids: string[]) => {
+  // The comments shown landing so far: each lands once, whether the
+  // daemon's announcement or the push's answer tells of it first.
+  const landedRef = useRef<Set<string>>(new Set());
+  const markLanded = useCallback((all: string[]) => {
+    const ids = all.filter((id) => !landedRef.current.has(id));
     if (ids.length === 0) return;
+    for (const id of ids) landedRef.current.add(id);
     setPushing((prev) => ids.reduce(withoutId, prev));
     setLanded((prev) => ids.reduce(withId, prev));
     setTimeout(() => setLanded((prev) => ids.reduce(withoutId, prev)), PUSH_LANDED_MS);
@@ -626,6 +653,28 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
   useEffect(() => {
     sessionRef.current = session;
   }, [session]);
+  // refetchSession takes the channel's whole session from the daemon, none
+  // when it has none. Only the latest fetch's answer is taken: a load's
+  // "loading" answer arriving after its "ready" one would stick.
+  const fetchSeq = useRef(0);
+  const refetchSession = useCallback(() => {
+    const seq = ++fetchSeq.current;
+    getReviewSession(channelId)
+      .then((resp) => {
+        if (seq === fetchSeq.current) setSession(resp.present && resp.session ? resp.session : null);
+      })
+      .catch((e) => {
+        if (seq === fetchSeq.current) setError(e instanceof Error ? e.message : String(e));
+      });
+  }, [channelId]);
+  // A reconnect refetches: the review.status events of a load or run that
+  // settled meanwhile were missed. The first open isn't a reconnect.
+  const wsOpensRef = useRef(wsOpens);
+  useEffect(() => {
+    const prev = wsOpensRef.current;
+    wsOpensRef.current = wsOpens;
+    if (prev !== wsOpens && prev !== 0) refetchSession();
+  }, [wsOpens, refetchSession]);
   const outcome = useMemo(() => (session ? deriveOutcome(session) : null), [session]);
   const threadedComments = useMemo(() => withThreads(session?.comments ?? [], session?.threads), [session]);
 
@@ -996,25 +1045,22 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
         setSession((prev) => withoutComment(prev, id));
       } else if (event.type === "review.status") {
         const d = event.data as { status: ReviewStatus; error?: string };
-        const held = sessionRef.current;
+        if (statusNeedsSession(sessionRef.current, d.status)) {
+          refetchSession();
+          return;
+        }
         setSession((prev) => (prev ? { ...prev, status: d.status, error: d.error ?? "" } : prev));
-        if ((d.status === "ready" || d.status === "error") && (!held || held.status === "loading")) {
-          // A PR load settled (the panel may have been elsewhere when it
-          // started): the loading session has no PR or diff, so take the
-          // whole session.
-          getReviewSession(channelId)
-            .then((resp) => {
-              if (resp.present && resp.session) setSession(resp.session);
-            })
-            .catch(() => {});
-        } else if (d.status === "ready" || d.status === "reviewing") {
+        if (d.status === "ready" || d.status === "reviewing") {
           // Thread assessments, the reviewed head and the review's runs
           // change behind no event of their own; a run starting, or a run
           // or verification settling, is when they move.
           getReviewSession(channelId, { diff: false })
             .then((resp) => {
               const fresh = resp.session;
-              if (fresh) setSession((prev) => withVerdictState(prev, fresh));
+              // Another PR's session now (a load this window missed the
+              // start of): take it whole, diff and all.
+              if (!fresh || fresh.pr?.number !== sessionRef.current?.pr?.number) refetchSession();
+              else setSession((prev) => withVerdictState(prev, fresh));
             })
             .catch(() => {});
         }
@@ -1031,7 +1077,7 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
       }
     };
     return subscribeChatEvents(listener);
-  }, [channelId, subscribeChatEvents, markLanded]);
+  }, [channelId, subscribeChatEvents, markLanded, refetchSession]);
 
   const onSelectPR = useCallback(
     async (pr: ReviewPR) => {
@@ -1429,7 +1475,8 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
       // Each comment shows as on its way, and lands as the daemon announces
       // it; the banner counts them.
       const ids = pushTargets(sessionRef.current?.comments ?? [], blockingOnly);
-      setPushing(new Set(ids));
+      // A single push still on its way keeps its spinner.
+      setPushing((prev) => ids.reduce(withId, prev));
       setPushAllTotal(ids.length);
       try {
         const result = await pushAllReviewComments(channelId, blockingOnly ? { impact: "blocking" } : {});
@@ -1442,7 +1489,8 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
         if (resp.present && resp.session) {
           const fresh = resp.session;
           setSession(fresh);
-          // Those whose announcement this window missed land now.
+          // Those whose announcement this window missed land now; the
+          // others have.
           markLanded(ids.filter((id) => fresh.comments.some((x) => x.id === id && x.pushed)));
         }
         if (result.pushed > 0) {
@@ -1456,7 +1504,7 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       } finally {
-        setPushing(new Set());
+        setPushing((prev) => ids.reduce(withoutId, prev));
         setPushAllTotal(null);
         setBusy(false);
       }
@@ -1566,6 +1614,11 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
             <div style={{ flex: 1, fontSize: 12, color: colors.textDim, fontFamily: fonts.sans }}>
               {showStats ? "Review stats" : prLoading !== null ? `Loading PR #${prLoading}…` : "Select a PR to review"}
             </div>
+            {session?.status === "loading" && (
+              <button data-testid="review-cancel-load-btn" onClick={() => void onCloseSession()} disabled={closeDisabled} style={btnStyle} title="Stop loading this PR">
+                Cancel
+              </button>
+            )}
             {statsBtn}
           </>
         ) : (

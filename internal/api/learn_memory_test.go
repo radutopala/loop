@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -32,7 +33,7 @@ func (s *ServerSuite) TestApplyLearnMemory() {
 	tests := []struct {
 		name      string
 		index     string // "" = no MEMORY.md
-		existing  bool
+		existing  string // "" = no memory file
 		wantIndex string
 		wantErr   string
 	}{
@@ -47,19 +48,20 @@ func (s *ServerSuite) TestApplyLearnMemory() {
 			index:     "- [Lint](lint-first.md) — old\n",
 			wantIndex: "- [Lint](lint-first.md) — old\n",
 		},
-		{name: "exists", index: "keep\n", existing: true, wantIndex: "keep\n", wantErr: `a memory named "lint-first" already exists`},
+		{name: "exists", index: "keep\n", existing: "mine\n", wantIndex: "keep\n", wantErr: `a memory named "lint-first" already exists`},
+		{name: "retry after the index failed", index: "keep\n", existing: learnMemoryContent, wantIndex: "keep\n- [lint-first](lint-first.md) — Lint before pushing\n"},
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			s.SetupTest()
 			memDir := s.memorySetup()
 			path, indexPath := filepath.Join(memDir, "lint-first.md"), filepath.Join(memDir, "MEMORY.md")
-			if tc.index != "" || tc.existing {
+			if tc.index != "" || tc.existing != "" {
 				require.NoError(s.T(), os.MkdirAll(memDir, 0o700))
 				require.NoError(s.T(), os.WriteFile(indexPath, []byte(tc.index), 0o644))
 			}
-			if tc.existing {
-				require.NoError(s.T(), os.WriteFile(path, []byte("mine\n"), 0o644))
+			if tc.existing != "" {
+				require.NoError(s.T(), os.WriteFile(path, []byte(tc.existing), 0o644))
 			}
 
 			status, errText := s.applyProposal(db.LearnKindMemory, learnMemoryPayload)
@@ -84,15 +86,17 @@ func (s *ServerSuite) TestApplyLearnMemoryErrors() {
 	memDir := filepath.Join("/home/testuser", ".claude", "projects", osutil.EncodeClaudeProjectPath("/p"), "memory")
 	path, indexPath := filepath.Join(memDir, "lint-first.md"), filepath.Join(memDir, "MEMORY.md")
 	tests := []struct {
-		name    string
-		channel *db.Channel
-		setup   func()
-		wantErr string
+		name     string
+		channel  *db.Channel
+		fileErr  error // reading the memory file; none = no file yet
+		indexErr error // reading MEMORY.md; none = an empty one
+		setup    func()
+		wantErr  string
 	}{
 		{name: "no project dir", channel: &db.Channel{ChannelID: "ch-1"}, wantErr: "has no dir_path"},
 		{name: "no home", setup: func() { s.sys.Override("UserHomeDir").Return("", errors.New("no home")) }, wantErr: "getting home dir"},
-		{name: "stat fails", setup: func() { s.sys.Override("Stat", path).Return(nil, os.ErrPermission) }, wantErr: "checking the memory file"},
-		{name: "index unreadable", setup: func() { s.sys.Override("ReadFile", indexPath).Return(nil, os.ErrPermission) }, wantErr: "reading MEMORY.md"},
+		{name: "memory file unreadable", fileErr: os.ErrPermission, wantErr: "checking the memory file"},
+		{name: "index unreadable", indexErr: os.ErrPermission, wantErr: "reading MEMORY.md"},
 		{name: "mkdir fails", setup: func() { s.sys.Override("MkdirAll", memDir, os.FileMode(0o700)).Return(os.ErrPermission) }, wantErr: "creating the memory dir"},
 		{name: "file write fails", setup: func() {
 			s.sys.Override("WriteFile", path, mock.Anything, os.FileMode(0o644)).Return(os.ErrPermission)
@@ -111,6 +115,8 @@ func (s *ServerSuite) TestApplyLearnMemoryErrors() {
 				ch = &db.Channel{ChannelID: "ch-1", DirPath: "/p"}
 			}
 			s.store.On("GetChannel", mock.Anything, "ch-1").Return(ch, nil)
+			s.sys.Override("ReadFile", path).Return(nil, cmp.Or(tc.fileErr, os.ErrNotExist))
+			s.sys.On("ReadFile", indexPath).Return(nil, tc.indexErr)
 			if tc.setup != nil {
 				tc.setup()
 			}
@@ -127,7 +133,7 @@ func (s *ServerSuite) TestPreviewLearnMemory() {
 	tests := []struct {
 		name     string
 		index    string // "" = no MEMORY.md
-		existing bool
+		existing string // "" = no memory file
 		wantDiff string
 		wantErr  string
 	}{
@@ -141,7 +147,11 @@ func (s *ServerSuite) TestPreviewLearnMemory() {
 			wantDiff: "--- /dev/null\n+++ FILE\n@@ -0,0 +1,10 @@\n" + prefixLines(learnMemoryContent, "+") +
 				"--- INDEX\n+++ INDEX\n@@ -1 +1,2 @@\n # Memory\n+- [lint-first](lint-first.md) — Lint before pushing\n",
 		},
-		{name: "exists", index: "# Memory\n", existing: true, wantErr: "already exists"},
+		{name: "exists", index: "# Memory\n", existing: "mine\n", wantErr: "already exists"},
+		{
+			name: "retry after the index failed", index: "# Memory\n", existing: learnMemoryContent,
+			wantDiff: "--- INDEX\n+++ INDEX\n@@ -1 +1,2 @@\n # Memory\n+- [lint-first](lint-first.md) — Lint before pushing\n",
+		},
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
@@ -152,8 +162,8 @@ func (s *ServerSuite) TestPreviewLearnMemory() {
 				require.NoError(s.T(), os.MkdirAll(memDir, 0o700))
 				require.NoError(s.T(), os.WriteFile(indexPath, []byte(tc.index), 0o644))
 			}
-			if tc.existing {
-				require.NoError(s.T(), os.WriteFile(path, []byte("mine\n"), 0o644))
+			if tc.existing != "" {
+				require.NoError(s.T(), os.WriteFile(path, []byte(tc.existing), 0o644))
 			}
 			s.store.On("GetLearnProposal", mock.Anything, int64(7)).Return(&db.LearnProposal{ID: 7, ChannelID: "ch-1", Kind: db.LearnKindMemory, Payload: learnMemoryPayload, Status: db.LearnPending}, nil)
 
@@ -164,11 +174,14 @@ func (s *ServerSuite) TestPreviewLearnMemory() {
 			require.Equal(s.T(), path, got.Path)
 			want := strings.NewReplacer("FILE", path, "INDEX", indexPath).Replace(tc.wantDiff)
 			require.Equal(s.T(), want, got.Diff)
-			if tc.wantErr == "" {
+			switch {
+			case tc.wantErr != "":
+				require.Contains(s.T(), got.Error, tc.wantErr)
+			case tc.existing == "":
 				require.Empty(s.T(), got.Error)
 				require.NoFileExists(s.T(), path, "the preview writes nothing")
-			} else {
-				require.Contains(s.T(), got.Error, tc.wantErr)
+			default:
+				require.Empty(s.T(), got.Error)
 			}
 			if tc.index == "" {
 				require.NoFileExists(s.T(), indexPath, "the preview writes nothing")

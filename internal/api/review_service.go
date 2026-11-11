@@ -48,6 +48,9 @@ type reviewService struct {
 	runIDs map[string]int64
 	// newReviewID names a review a Run starts.
 	newReviewID func() string
+	// loadTimeout bounds a background PR load, so a stalled gh or git
+	// can't hold the channel's run slot until Loop restarts.
+	loadTimeout time.Duration
 	// pinned reports whether channelID's review-only loop is running or
 	// paused, so its runs stay on the session's ReviewHead. Nil without a
 	// workflow engine.
@@ -59,7 +62,7 @@ type reviewService struct {
 // arrives later via the Server setters — the daemon builds those after the
 // server exists, and tests inject only the pieces a case needs.
 func newReviewService(deps *serverDeps) *reviewService {
-	return &reviewService{deps: deps, active: map[string]context.CancelFunc{}, runIDs: map[string]int64{}, newReviewID: rand.Text}
+	return &reviewService{deps: deps, active: map[string]context.CancelFunc{}, runIDs: map[string]int64{}, newReviewID: rand.Text, loadTimeout: reviewLoadTimeout}
 }
 
 // GitHubReview is the subset of githubapi.Client the review panel needs.
@@ -542,8 +545,12 @@ func (s *reviewService) setVerdict(channelID string, v review.DedupVerdict) *rev
 	return c
 }
 
-// commentUpdated records a comment changed in place and broadcasts it.
+// commentUpdated records a comment changed in place and broadcasts it. A
+// nil c, a comment deleted meanwhile, is skipped.
 func (s *reviewService) commentUpdated(channelID string, c *review.Comment) {
+	if c == nil {
+		return
+	}
 	s.saveFinding(channelID, c)
 	if hub := s.deps.eventsHub; hub != nil {
 		hub.BroadcastReviewCommentUpdated(channelID, reviewCommentEvent(c))

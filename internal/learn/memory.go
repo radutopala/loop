@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Limits on a memory proposal.
@@ -37,6 +39,10 @@ func (m *Memory) check() error {
 	if !memoryName.MatchString(m.Name) {
 		return fmt.Errorf("name %q must be a kebab-case slug: lowercase letters, digits and dashes, at most 64", m.Name)
 	}
+	// On a case-insensitive filesystem, memory.md is the index.
+	if strings.EqualFold(m.File(), MemoryIndex) {
+		return fmt.Errorf("name %q is taken by the memory index", m.Name)
+	}
 	if err := checkText("description", m.Description, maxMemoryDescriptionLen, true); err != nil {
 		return err
 	}
@@ -58,7 +64,7 @@ func (m *Memory) File() string {
 // body.
 func (m *Memory) Content() string {
 	return fmt.Sprintf("---\nname: %s\ndescription: %s\nmetadata:\n  type: %s\n---\n\n%s\n",
-		m.Name, yamlScalar(strings.TrimSpace(m.Description)), m.Type, strings.TrimSpace(m.Body))
+		yamlScalar(m.Name), yamlScalar(strings.TrimSpace(m.Description)), m.Type, strings.TrimSpace(m.Body))
 }
 
 // IndexLine is the pointer to the memory that MEMORY.md gets.
@@ -71,13 +77,16 @@ func (m *Memory) Indexed(index string) bool {
 	return strings.Contains(index, "]("+m.File()+")")
 }
 
-// yamlScalar returns s as a YAML scalar: plain when YAML reads it back
-// unchanged, else double-quoted (a JSON string is a valid one).
+// yamlScalar returns s as a YAML scalar: plain when YAML reads it back as
+// the same string, else double-quoted (a JSON string is a valid one). So
+// true, null, 123 or a trailing comment come back quoted.
 func yamlScalar(s string) string {
-	if s == "" || strings.ContainsAny(s[:1], `!&*[]{}|>'"%@`+"`#,?:-") ||
-		strings.Contains(s, ": ") || strings.Contains(s, " #") || strings.HasSuffix(s, ":") {
-		q, _ := json.Marshal(s) // a string always marshals
-		return string(q)
+	var v any
+	if err := yaml.Unmarshal([]byte("v: "+s), &v); err == nil {
+		if m, ok := v.(map[string]any); ok && len(m) == 1 && m["v"] == s {
+			return s
+		}
 	}
-	return s
+	q, _ := json.Marshal(s) // a string always marshals
+	return string(q)
 }
