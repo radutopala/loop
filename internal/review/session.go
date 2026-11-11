@@ -114,8 +114,11 @@ type Session struct {
 	RawDiff      string            `json:"raw_diff,omitempty"`
 	Comments     []*Comment        `json:"comments"`
 	Status       Status            `json:"status"`
-	Error        string            `json:"error,omitempty"`
-	UpdatedAt    time.Time         `json:"updated_at"`
+	// LoadingPR is the PR a loading session is loading, which PR stays nil
+	// for until the load settles.
+	LoadingPR int       `json:"loading_pr,omitempty"`
+	Error     string    `json:"error,omitempty"`
+	UpdatedAt time.Time `json:"updated_at"`
 	// ForkMode / ForkSessionID are the user's choice for what the *next*
 	// run forks from. They live on the session (not the request) so the
 	// choice survives the FE's workflow-driven Run button, which reaches
@@ -286,19 +289,24 @@ func (s *Store) Put(channelID string, sess *Session) {
 
 // Settle replaces the loading session for channelID with sess, its PR now
 // loaded. The run choices made on the loading session while the PR loaded
-// carry over to sess: they are newer than those sess was built with.
-func (s *Store) Settle(channelID string, sess *Session) {
+// carry over to sess: they are newer than those sess was built with. It
+// returns false, changing nothing, when channelID's session isn't loading
+// any more: it was deleted while the PR loaded.
+func (s *Store) Settle(channelID string, sess *Session) bool {
 	sess.ChannelID = channelID
 	sess.UpdatedAt = time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if cur, ok := s.sessions[channelID]; ok && cur.Status == StatusLoading {
-		sess.ForkMode, sess.ForkSessionID = cur.ForkMode, cur.ForkSessionID
-		sess.Model, sess.Effort = cur.Model, cur.Effort
-		sess.Scope = cur.Scope
+	cur, ok := s.sessions[channelID]
+	if !ok || cur.Status != StatusLoading {
+		return false
 	}
+	sess.ForkMode, sess.ForkSessionID = cur.ForkMode, cur.ForkSessionID
+	sess.Model, sess.Effort = cur.Model, cur.Effort
+	sess.Scope = cur.Scope
 	s.sessions[channelID] = sess
 	s.save(sess)
+	return true
 }
 
 // Kept returns what was last kept of channelID's session while it was on

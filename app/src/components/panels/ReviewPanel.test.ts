@@ -8,8 +8,13 @@ import {
   buildDiscussDraft,
   isActionable,
   isBlocking,
+  isSessionOpen,
   liveReviewRun,
   moreMenuItems,
+  pickerLoadingPR,
+  pushAllProgress,
+  pushedNote,
+  pushTargets,
   reviewEffortOptions,
   reviewModelOptions,
   reviewScopeChip,
@@ -17,7 +22,9 @@ import {
   skippedNote,
   startedReviewRun,
   WHY_QUESTION,
+  withId,
   withoutComment,
+  withoutId,
   withThreads,
   withUpdatedComment,
   withVerdictState,
@@ -582,5 +589,77 @@ describe("reviewScopeChip", () => {
     expect(reviewScopeChip(null)).toBe("");
     expect(reviewScopeChip(session())).toBe("");
     expect(reviewScopeChip(session({ last_run_scope: "incremental" }))).toBe("");
+  });
+});
+
+describe("isSessionOpen", () => {
+  it.each([
+    ["no session", null, false],
+    ["idle", session({ status: "idle" }), false],
+    ["error", session({ status: "error" }), false],
+    ["loading", session({ status: "loading" }), false],
+    ["ready", session({ status: "ready" }), true],
+    ["reviewing", session({ status: "reviewing" }), true],
+  ] as const)("%s", (_, s, want) => {
+    expect(isSessionOpen(s)).toBe(want);
+  });
+});
+
+describe("pickerLoadingPR", () => {
+  it.each([
+    ["nothing loading", null, null, null],
+    ["just clicked", null, 7, 7],
+    ["loading session", session({ status: "loading", loading_pr: 9 }), null, 9],
+    ["loading session, number unknown", session({ status: "loading" }), 7, 7],
+    ["settled session", session({ status: "ready", loading_pr: 9 }), null, null],
+  ] as const)("%s", (_, s, clicked, want) => {
+    expect(pickerLoadingPR(s, clicked)).toBe(want);
+  });
+});
+
+describe("withId / withoutId", () => {
+  it("adds and removes, keeping the set when nothing changes", () => {
+    const empty: ReadonlySet<string> = new Set();
+    const one = withId(empty, "a");
+    expect([...one]).toEqual(["a"]);
+    expect(withId(one, "a")).toBe(one);
+    expect([...withoutId(one, "a")]).toEqual([]);
+    expect(withoutId(one, "b")).toBe(one);
+    expect([...one]).toEqual(["a"]);
+  });
+});
+
+describe("pushTargets", () => {
+  const comments = [
+    comment("x", { id: "a", impact: "blocking" }),
+    comment("x", { id: "b", impact: "nice_to_have" }),
+    comment("x", { id: "c", impact: "blocking", pushed: true }),
+    comment("x", { id: "d", verdict: "false_positive" }),
+  ];
+  it.each([
+    ["all", false, ["a", "b"]],
+    ["blocking", true, ["a"]],
+  ] as const)("%s", (_, blockingOnly, want) => {
+    expect(pushTargets(comments, blockingOnly)).toEqual(want);
+  });
+});
+
+describe("pushAllProgress", () => {
+  it.each([
+    [5, 5, "Pushing to GitHub… 0 of 5"],
+    [5, 2, "Pushing to GitHub… 3 of 5"],
+    [5, 0, "Pushing to GitHub… 5 of 5"],
+    [2, 3, "Pushing to GitHub… 0 of 2"],
+  ])("%i total, %i pending", (total, pending, want) => {
+    expect(pushAllProgress(total, pending)).toBe(want);
+  });
+});
+
+describe("pushedNote", () => {
+  it.each([
+    [1, "✓ Pushed 1 comment to GitHub"],
+    [3, "✓ Pushed 3 comments to GitHub"],
+  ])("%i", (n, want) => {
+    expect(pushedNote(n)).toBe(want);
   });
 });

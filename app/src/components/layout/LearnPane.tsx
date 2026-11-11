@@ -10,7 +10,7 @@ import { SIDE_PANE } from "../../uiBridge/sideText";
 import { useChatPaneInput } from "../../uiBridge/useChatPaneInput";
 import { logErr } from "../../utils/log";
 import { ChatView } from "../chat/ChatView";
-import { configPreviewRevision, editsProjectConfig, isSettledProposal, learnKindLabel, proposalCaveat, proposalDetail } from "../chat/learnState";
+import { configPreviewRevision, editsFile, isSettledProposal, learnKindLabel, proposalCaveat, proposalDetail } from "../chat/learnState";
 import { UnifiedDiff } from "../shared/UnifiedDiff";
 
 interface LearnPaneProps {
@@ -320,7 +320,7 @@ function ProposalCard({
       <div style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.textDim, marginTop: 4, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{proposalDetail(p)}</div>
       {p.rationale && <div style={{ fontSize: 11, color: colors.textDim, marginTop: 4 }}>{p.rationale}</div>}
       {caveat && <div style={{ fontSize: 11, color: colors.warning, marginTop: 4 }}>{caveat}</div>}
-      {open && editsProjectConfig(p.kind) && <ConfigPreview id={p.id} status={p.status} revision={previewRevision} />}
+      {open && editsFile(p.kind) && <ConfigPreview id={p.id} status={p.status} revision={previewRevision} />}
       {p.status === "failed" && p.error && <div style={{ fontSize: 11, color: colors.error, marginTop: 4 }}>{p.error}</div>}
       {p.status === "withdrawn" && p.withdrawn_reason && (
         <div data-testid="learn-withdrawn-reason" style={{ fontSize: 11, color: colors.textDim, marginTop: 4 }}>

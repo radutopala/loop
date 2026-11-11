@@ -582,16 +582,19 @@ func (s *SessionSuite) TestKeep() {
 }
 
 // Settle carries the choices made on the loading session over to the
-// loaded one; with no loading session there, the loaded one's own stand.
+// loaded one; with no loading session there (it was deleted, or isn't
+// loading), it changes nothing.
 func (s *SessionSuite) TestSettle() {
 	cases := []struct {
-		name string
-		prev *Session
-		want Session
+		name    string
+		prev    *Session
+		settled bool
+		want    Session
 	}{
-		{"none", nil, Session{ForkMode: ForkCurrent, Model: "sonnet"}},
-		{"ready", &Session{Status: StatusReady, Effort: "low"}, Session{ForkMode: ForkCurrent, Model: "sonnet"}},
-		{"loading", &Session{Status: StatusLoading, ForkMode: ForkCustom, ForkSessionID: "s0", Model: "opus", Effort: "xhigh", Scope: ScopeFull}, Session{ForkMode: ForkCustom, ForkSessionID: "s0", Model: "opus", Effort: "xhigh", Scope: ScopeFull}},
+		{name: "none"},
+		{name: "ready", prev: &Session{Status: StatusReady, Effort: "low"}, want: Session{Status: StatusReady, Effort: "low"}},
+		{name: "loading", prev: &Session{Status: StatusLoading, ForkMode: ForkCustom, ForkSessionID: "s0", Model: "opus", Effort: "xhigh", Scope: ScopeFull}, settled: true,
+			want: Session{Status: StatusReady, ForkMode: ForkCustom, ForkSessionID: "s0", Model: "opus", Effort: "xhigh", Scope: ScopeFull}},
 	}
 	for _, tc := range cases {
 		s.Run(tc.name, func() {
@@ -599,17 +602,23 @@ func (s *SessionSuite) TestSettle() {
 			if tc.prev != nil {
 				store.Put("ch1", tc.prev)
 			}
-			store.Settle("ch1", &Session{PR: &githubapi.PRInfo{Number: 7}, Status: StatusReady, ForkMode: ForkCurrent, Model: "sonnet"})
+			require.Equal(s.T(), tc.settled, store.Settle("ch1", &Session{PR: &githubapi.PRInfo{Number: 7}, Status: StatusReady, ForkMode: ForkCurrent, Model: "sonnet"}))
 			got := store.Get("ch1")
-			require.Equal(s.T(), StatusReady, got.Status)
+			if tc.prev == nil {
+				require.Nil(s.T(), got)
+				return
+			}
+			require.Equal(s.T(), tc.want.Status, got.Status)
 			require.Equal(s.T(), "ch1", got.ChannelID)
-			require.False(s.T(), got.UpdatedAt.IsZero())
 			require.Equal(s.T(), tc.want.ForkMode, got.ForkMode)
 			require.Equal(s.T(), tc.want.ForkSessionID, got.ForkSessionID)
 			require.Equal(s.T(), tc.want.Model, got.Model)
 			require.Equal(s.T(), tc.want.Effort, got.Effort)
 			require.Equal(s.T(), tc.want.Scope, got.Scope)
-			require.Equal(s.T(), tc.want.Effort, store.Kept("ch1", 7).Effort)
+			if tc.settled {
+				require.Equal(s.T(), 7, got.PR.Number)
+				require.Equal(s.T(), tc.want.Effort, store.Kept("ch1", 7).Effort)
+			}
 		})
 	}
 }

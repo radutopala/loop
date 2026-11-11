@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReviewComment, ReviewImpact, ReviewVerdict } from "../../api/review";
 import { useTheme } from "../../ThemeContext";
 import type { ColorPalette } from "../../theme";
@@ -1478,6 +1478,22 @@ export function threadOrder(comments: ReviewComment[]): ReviewComment[] {
   return out;
 }
 
+/** The comments a push to GitHub is sending, and those one just landed. */
+export interface ReviewPushState {
+  pushing: ReadonlySet<string>;
+  landed: ReadonlySet<string>;
+}
+
+/** ReviewPushContext hands the panel's push state to every comment card. */
+export const ReviewPushContext = createContext<ReviewPushState>({ pushing: new Set(), landed: new Set() });
+
+// The card's push state: on its way to GitHub, just landed there, or neither.
+export function commentPushState(id: string, push: ReviewPushState): "pushing" | "landed" | null {
+  if (push.pushing.has(id)) return "pushing";
+  if (push.landed.has(id)) return "landed";
+  return null;
+}
+
 function InlineComment({
   comment,
   colors,
@@ -1517,9 +1533,14 @@ function InlineComment({
   const isReply = isGitHub && !!comment.reply_to;
   const headerLabel = `${isReply ? "↳ " : ""}${isGitHub ? (comment.author ? `@${comment.author}` : "github") : "agent"}`;
   const impact = commentImpact(comment);
+  const pushState = commentPushState(comment.id, useContext(ReviewPushContext));
+  // A card on its way to GitHub pulses its outline; one that just landed
+  // there is outlined green for a moment.
+  const pushOutline = pushState === "pushing" ? `1px solid ${colors.warning}` : pushState === "landed" ? `2px solid ${colors.diffAddText}` : undefined;
   return (
     <div
       data-testid={`review-comment-${comment.id}`}
+      data-push-state={pushState ?? undefined}
       ref={(el) => registerRef(comment.id, el)}
       style={{
         // Replies sit indented under the comment that starts their thread.
@@ -1529,7 +1550,9 @@ function InlineComment({
         background: emphasis === "current" ? colors.selectedBg : colors.surface,
         // Outlined so new findings stand out from older ones, and the one
         // the navigator stepped to stands out from those.
-        outline: emphasis ? `${emphasis === "current" ? 2 : 1}px solid ${colors.active}` : undefined,
+        outline: pushOutline ?? (emphasis ? `${emphasis === "current" ? 2 : 1}px solid ${colors.active}` : undefined),
+        animation: pushState === "pushing" ? "loop-review-push-pulse 1s ease-in-out infinite" : undefined,
+        transition: "outline-color 0.3s",
         borderRadius: 3,
         display: "flex",
         flexDirection: "column",
@@ -1702,24 +1725,35 @@ function InlineComment({
           {sending ? "Sending..." : "Address"}
         </button>
         {comment.pushed ? (
-          <span style={{ fontSize: 10, color: colors.textDim }}>{isGitHub ? "on github" : "pushed"}</span>
+          pushState === "landed" ? (
+            <span data-testid={`review-comment-pushed-${comment.id}`} style={{ fontSize: 10, color: colors.diffAddText, fontWeight: 600 }}>
+              ✓ Pushed to GitHub
+            </span>
+          ) : (
+            <span style={{ fontSize: 10, color: colors.textDim }}>{isGitHub ? "on github" : "pushed"}</span>
+          )
         ) : (
           <button
             data-testid={`review-comment-push-${comment.id}`}
             onClick={() => void onPush(comment)}
+            disabled={pushState === "pushing"}
             style={{
               background: "transparent",
-              color: colors.text,
-              border: `1px solid ${colors.border}`,
+              color: pushState === "pushing" ? colors.warning : colors.text,
+              border: `1px solid ${pushState === "pushing" ? colors.warning : colors.border}`,
               borderRadius: 3,
               padding: "1px 6px",
               fontSize: 10,
               fontFamily: fonts.sans,
-              cursor: "pointer",
+              cursor: pushState === "pushing" ? "progress" : "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
             }}
-            title="Push this comment to GitHub"
+            title={pushState === "pushing" ? "Pushing this comment to GitHub" : "Push this comment to GitHub"}
           >
-            Push to GitHub
+            {pushState === "pushing" && <PushSpinner color={colors.warning} />}
+            {pushState === "pushing" ? "Pushing…" : "Push to GitHub"}
           </button>
         )}
         <button
@@ -1825,3 +1859,24 @@ function OrphanCommentsSection({
     </div>
   );
 }
+
+/** PushSpinner is the small spinner a push in flight shows. */
+export function PushSpinner({ color, size = 8 }: { color: string; size?: number }) {
+  return (
+    <span
+      aria-hidden
+      style={{
+        width: size,
+        height: size,
+        border: `1.5px solid ${color}`,
+        borderTopColor: "transparent",
+        borderRadius: "50%",
+        display: "inline-block",
+        animation: "loop-review-push-spin 0.8s linear infinite",
+      }}
+    />
+  );
+}
+
+/** The keyframes the push state's spinner and pulse run on. */
+export const REVIEW_PUSH_KEYFRAMES = "@keyframes loop-review-push-spin { to { transform: rotate(360deg); } } @keyframes loop-review-push-pulse { 50% { outline-color: transparent; } }";

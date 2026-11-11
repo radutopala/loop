@@ -45,6 +45,11 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
      when that checkout is clean and `review.update_base` isn't turned off, by a
      `git merge --ff-only` there, as a pull would. Whatever is left is
      logged, and the pass runs anyway.
+
+   The panel loads in the background: it says `Loading PR #<n>…` over the
+   list while the daemon works, and you can switch channels meanwhile.
+   Coming back mid-load shows the same, and the panel takes the loaded
+   session when the `review.status` event settles it, or shows the error.
 2. **Run** — the user clicks the primary **Run** button. The button is a
    **split button** with a caret dropdown that picks one of two modes:
 
@@ -204,7 +209,11 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
    comments the dedup pass marked `false_positive` or `already_fixed`;
    their own **Push** still sends them. When some, but not all, of
    those are judged blocking, **Push blocking to GitHub (N)** sends only
-   the blocking ones (`push-all?impact=blocking`). The backend uses `gh api ... /pulls/N/comments` against the
+   the blocking ones (`push-all?impact=blocking`). The panel shows each
+   push as it happens: a comment on its way pulses with a spinning
+   **Pushing…** button and is outlined green with **✓ Pushed to GitHub**
+   once it lands. Push all also shows a banner counting them
+   (`Pushing to GitHub… 2 of 5`), then how many were pushed. The backend uses `gh api ... /pulls/N/comments` against the
    captured head SHA so comments anchor to the right commit even if the PR
    is force-pushed later. A pushed comment stays one comment: when Sync or
    a run reads the PR's comments back, GitHub's copy of it is folded into

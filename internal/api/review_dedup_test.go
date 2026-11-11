@@ -219,9 +219,9 @@ func (s *ReviewHandlerSuite) TestDedupRemovesDuplicates() {
 		{ID: "a", Path: "x.go", Line: 10, Body: keptA.Body},
 		{ID: "a", Path: "x.go", Line: 11, Body: keptA.Body},
 		{ID: "a", Path: "x.go", Line: 11, Body: keptA.Body, Verdict: review.VerdictReal, VerdictReason: "no make()"},
-		{ID: "c", Path: "x.go", Line: 40, Body: keptC.Body, Verdict: review.VerdictFalsePositive, VerdictReason: "made in init"},
+		{ID: "c", Path: "x.go", Line: 40, Body: keptC.Body, Verdict: review.VerdictFalsePositive, VerdictReason: "made in init", Pushed: true, GitHubID: 5},
 		{ID: "a", Path: "x.go", Line: 11, Body: keptA.Body, Verdict: review.VerdictReal, VerdictReason: "no make()", Transcripts: transcript},
-		{ID: "c", Path: "x.go", Line: 40, Body: keptC.Body, Verdict: review.VerdictFalsePositive, VerdictReason: "made in init", Transcripts: transcript},
+		{ID: "c", Path: "x.go", Line: 40, Body: keptC.Body, Verdict: review.VerdictFalsePositive, VerdictReason: "made in init", Transcripts: transcript, Pushed: true, GitHubID: 5},
 	}, updated)
 	hubMu.Unlock()
 	require.False(s.T(), s.srv.review.isReviewRunActive("ch1"))

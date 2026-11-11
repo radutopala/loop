@@ -86,7 +86,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tags := s.originTags(r.Context(), &req)
+	tags := s.originTags(r.Context(), req.FromChannelID, req.ChannelID)
 	ctx := bot.WithMessageTags(r.Context(), tags)
 
 	// The orchestrator drops a message for a channel it can't find, so the
@@ -140,17 +140,18 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// originTags returns the tags naming the channel a message came from, or nil
-// when it was sent from its own channel or from no channel, as the app sends
-// the user's. A token's own channel is what counts, so an agent can't pass a
-// message off as another channel's. The name and prompt are extras: without
-// them the channel id still lets the agent reply.
-func (s *Server) originTags(ctx context.Context, req *sendMessageRequest) map[string]string {
-	from := req.FromChannelID
+// originTags returns the tags naming the channel a message to target came
+// from, or nil when it was sent from target itself or from no channel, as the
+// app sends the user's. fromChannelID is what an owner-token caller says it
+// sends from; any other token's own channel takes its place, so an agent
+// can't pass a message off as another channel's. The name and prompt are
+// extras: without them the channel id still lets the agent reply.
+func (s *Server) originTags(ctx context.Context, fromChannelID, target string) map[string]string {
+	from := fromChannelID
 	if p, ok := apiauth.PrincipalFrom(ctx); ok && p.Kind != apiauth.KindOwner {
 		from = p.ChannelID
 	}
-	if from == "" || from == req.ChannelID {
+	if from == "" || from == target {
 		return nil
 	}
 	tags := map[string]string{bot.TagOriginChannel: from}

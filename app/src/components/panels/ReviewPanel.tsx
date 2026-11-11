@@ -32,7 +32,7 @@ import { ApprovalCard } from "../chat/ApprovalCard";
 import { EFFORT_PRESETS, shortModel } from "../chat/agentPresets";
 import { ContextMenu, type MenuItem } from "../shared/ContextMenu";
 import { ReviewApproveDialog } from "./ReviewApproveDialog";
-import { ReviewDiffView } from "./ReviewDiffView";
+import { PushSpinner, REVIEW_PUSH_KEYFRAMES, ReviewDiffView, ReviewPushContext } from "./ReviewDiffView";
 import { ReviewRunDrawer } from "./ReviewRunDrawer";
 import { ReviewStatsView } from "./ReviewStatsView";
 import { approveBody, approveDisabledReason, canApprove, deriveOutcome, isApprovedAtHead, outcomeColor, outcomeLabel, outcomeTitle } from "./reviewOutcome";
@@ -259,6 +259,20 @@ export function withVerdictState(session: ReviewSession | null, fresh: ReviewSes
   };
 }
 
+// isSessionOpen reports whether the panel shows session's PR: not when
+// there is none, it was closed or failed, or its PR is still loading.
+export function isSessionOpen(session: ReviewSession | null): boolean {
+  return session !== null && session.status !== "idle" && session.status !== "error" && session.status !== "loading";
+}
+
+// pickerLoadingPR is the PR the picker marks as loading: the one the
+// channel's session is loading, which a panel opened mid-load learns only
+// from the session, else the one just clicked.
+export function pickerLoadingPR(session: ReviewSession | null, clicked: number | null): number | null {
+  if (session?.status === "loading") return session.loading_pr ?? clicked;
+  return clicked;
+}
+
 // withThreads hands each GitHub comment that starts a thread the
 // verification step's assessment of it, for its badge.
 export function withThreads(comments: ReviewComment[], threads?: ReviewSession["threads"]): ReviewComment[] {
@@ -361,6 +375,41 @@ export function isActionable(c: ReviewComment): boolean {
 export function isBlocking(c: ReviewComment): boolean {
   return isActionable(c) && c.impact === "blocking";
 }
+
+// withId and withoutId return set with id added or removed, as a new set
+// for React state.
+export function withId(set: ReadonlySet<string>, id: string): ReadonlySet<string> {
+  return set.has(id) ? set : new Set([...set, id]);
+}
+
+export function withoutId(set: ReadonlySet<string>, id: string): ReadonlySet<string> {
+  if (!set.has(id)) return set;
+  const next = new Set(set);
+  next.delete(id);
+  return next;
+}
+
+// pushTargets are the ids Push all (or with blockingOnly Push blocking)
+// sends, as the daemon picks them.
+export function pushTargets(comments: ReviewComment[], blockingOnly: boolean): string[] {
+  return comments.filter((c) => (blockingOnly ? isBlocking(c) : isActionable(c))).map((c) => c.id);
+}
+
+// pushAllProgress is the banner's line while a Push all runs: total
+// comments, of which pending haven't landed yet.
+export function pushAllProgress(total: number, pending: number): string {
+  return `Pushing to GitHub… ${Math.min(total, Math.max(0, total - pending))} of ${total}`;
+}
+
+// pushedNote is the banner's line once a Push all finished.
+export function pushedNote(pushed: number): string {
+  return `✓ Pushed ${pushed} comment${pushed === 1 ? "" : "s"} to GitHub`;
+}
+
+// How long a comment that landed on GitHub stays outlined, and the Push all
+// banner stays up after it finished.
+const PUSH_LANDED_MS = 2500;
+const PUSH_NOTICE_MS = 4000;
 
 // skippedNote names the unpushed comments Address all and Push all leave
 // out, in the verdict badges' words: " · skips 1 false positive, 2 already
@@ -556,7 +605,27 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
   // an outcome that doesn't allow it.
   const [approveDraft, setApproveDraft] = useState<{ body: string; force: boolean } | null>(null);
 
-  const hasSession = session !== null && session.status !== "idle" && session.status !== "error";
+  const hasSession = isSessionOpen(session);
+  // The comments on their way to GitHub, those that just landed there, and
+  // the Push all in progress (its comment count) or just finished.
+  const [pushing, setPushing] = useState<ReadonlySet<string>>(() => new Set());
+  const [landed, setLanded] = useState<ReadonlySet<string>>(() => new Set());
+  const [pushAllTotal, setPushAllTotal] = useState<number | null>(null);
+  const [pushNotice, setPushNotice] = useState<string | null>(null);
+  const pushState = useMemo(() => ({ pushing, landed }), [pushing, landed]);
+  const markLanded = useCallback((ids: string[]) => {
+    if (ids.length === 0) return;
+    setPushing((prev) => ids.reduce(withoutId, prev));
+    setLanded((prev) => ids.reduce(withId, prev));
+    setTimeout(() => setLanded((prev) => ids.reduce(withoutId, prev)), PUSH_LANDED_MS);
+  }, []);
+  const prLoading = pickerLoadingPR(session, loadingPR);
+  // The session as last rendered, for the WS listener to tell a load
+  // settling from a run settling.
+  const sessionRef = useRef(session);
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
   const outcome = useMemo(() => (session ? deriveOutcome(session) : null), [session]);
   const threadedComments = useMemo(() => withThreads(session?.comments ?? [], session?.threads), [session]);
 
@@ -913,8 +982,12 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
           return { ...prev, comments: [...prev.comments, c] };
         });
       } else if (event.type === "review.comment_updated") {
-        // The dedup pass appended what a kept comment's dropped duplicates added.
+        // The dedup pass appended what a kept comment's dropped duplicates
+        // added, or the comment landed on GitHub: from a push here (Push
+        // all announces each one) or in another window.
         const c = event.data as ReviewComment;
+        const held = sessionRef.current?.comments.find((x) => x.id === c.id);
+        if (c.pushed && held && !held.pushed) markLanded([c.id]);
         setSession((prev) => withUpdatedComment(prev, c));
       } else if (event.type === "review.comment_removed") {
         // Deleted here or in another window, or dropped as a duplicate by
@@ -923,11 +996,21 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
         setSession((prev) => withoutComment(prev, id));
       } else if (event.type === "review.status") {
         const d = event.data as { status: ReviewStatus; error?: string };
+        const held = sessionRef.current;
         setSession((prev) => (prev ? { ...prev, status: d.status, error: d.error ?? "" } : prev));
-        // Thread assessments, the reviewed head and the review's runs change
-        // behind no event of their own; a run starting, or a run or
-        // verification settling, is when they move.
-        if (d.status === "ready" || d.status === "reviewing") {
+        if ((d.status === "ready" || d.status === "error") && (!held || held.status === "loading")) {
+          // A PR load settled (the panel may have been elsewhere when it
+          // started): the loading session has no PR or diff, so take the
+          // whole session.
+          getReviewSession(channelId)
+            .then((resp) => {
+              if (resp.present && resp.session) setSession(resp.session);
+            })
+            .catch(() => {});
+        } else if (d.status === "ready" || d.status === "reviewing") {
+          // Thread assessments, the reviewed head and the review's runs
+          // change behind no event of their own; a run starting, or a run
+          // or verification settling, is when they move.
           getReviewSession(channelId, { diff: false })
             .then((resp) => {
               const fresh = resp.session;
@@ -948,17 +1031,23 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
       }
     };
     return subscribeChatEvents(listener);
-  }, [channelId, subscribeChatEvents]);
+  }, [channelId, subscribeChatEvents, markLanded]);
 
   const onSelectPR = useCallback(
     async (pr: ReviewPR) => {
       setBusy(true);
       setError(null);
       setLoadingPR(pr.number);
+      const before = sessionRef.current;
       try {
+        // The PR loads in the background; the review.status event that
+        // settles it brings the loaded session.
         const resp = await loadReviewPR(channelId, pr.number);
         if (resp.present && resp.session) {
-          setSession(resp.session);
+          const loading = resp.session;
+          // A load that failed or finished before this answer came back has
+          // already replaced the session; keep that.
+          setSession((prev) => (prev !== before ? prev : loading));
           // A load starts a new session with the daemon's default fork
           // choice; seed the control from it like the initial fetch does.
           setForkModeDraft(resp.session.fork_mode ?? "");
@@ -1180,8 +1269,10 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
   const onPushOne = useCallback(
     async (c: ReviewComment) => {
       setError(null);
+      setPushing((prev) => withId(prev, c.id));
       try {
         await pushReviewComment(channelId, c.id);
+        markLanded([c.id]);
         setSession((prev) =>
           prev
             ? {
@@ -1192,9 +1283,11 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
         );
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setPushing((prev) => withoutId(prev, c.id));
       }
     },
-    [channelId],
+    [channelId, markLanded],
   );
 
   const onDeleteOne = useCallback(
@@ -1332,6 +1425,12 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
     async (blockingOnly = false) => {
       setBusy(true);
       setError(null);
+      setPushNotice(null);
+      // Each comment shows as on its way, and lands as the daemon announces
+      // it; the banner counts them.
+      const ids = pushTargets(sessionRef.current?.comments ?? [], blockingOnly);
+      setPushing(new Set(ids));
+      setPushAllTotal(ids.length);
       try {
         const result = await pushAllReviewComments(channelId, blockingOnly ? { impact: "blocking" } : {});
         // The backend's PushAllResult only reports aggregate counts, not
@@ -1340,17 +1439,29 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
         // reflects the authoritative pushed/unpushed split and the user
         // can retry just the ones that actually failed.
         const resp = await getReviewSession(channelId);
-        if (resp.present && resp.session) setSession(resp.session);
+        if (resp.present && resp.session) {
+          const fresh = resp.session;
+          setSession(fresh);
+          // Those whose announcement this window missed land now.
+          markLanded(ids.filter((id) => fresh.comments.some((x) => x.id === id && x.pushed)));
+        }
+        if (result.pushed > 0) {
+          const note = pushedNote(result.pushed);
+          setPushNotice(note);
+          setTimeout(() => setPushNotice((prev) => (prev === note ? null : prev)), PUSH_NOTICE_MS);
+        }
         if (result.failed > 0) {
           setError(`${result.failed} comment(s) failed to push: ${(result.errors ?? []).join("; ")}`);
         }
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       } finally {
+        setPushing(new Set());
+        setPushAllTotal(null);
         setBusy(false);
       }
     },
-    [channelId],
+    [channelId, markLanded],
   );
 
   const pendingCount = useMemo(() => (session?.comments ?? []).filter(isActionable).length, [session]);
@@ -1452,7 +1563,9 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
       >
         {!hasSession ? (
           <>
-            <div style={{ flex: 1, fontSize: 12, color: colors.textDim, fontFamily: fonts.sans }}>{showStats ? "Review stats" : "Select a PR to review"}</div>
+            <div style={{ flex: 1, fontSize: 12, color: colors.textDim, fontFamily: fonts.sans }}>
+              {showStats ? "Review stats" : prLoading !== null ? `Loading PR #${prLoading}…` : "Select a PR to review"}
+            </div>
             {statsBtn}
           </>
         ) : (
@@ -1802,6 +1915,30 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
       )}
 
       {/* Error banner */}
+      <style>{REVIEW_PUSH_KEYFRAMES}</style>
+      {pushAllTotal !== null ? (
+        <div
+          data-testid="review-push-progress"
+          style={{
+            padding: "4px 8px",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            color: colors.warning,
+            fontSize: 11,
+            borderBottom: `1px solid ${colors.border}`,
+          }}
+        >
+          <PushSpinner color={colors.warning} />
+          {pushAllProgress(pushAllTotal, pushing.size)}
+        </div>
+      ) : (
+        pushNotice && (
+          <div data-testid="review-push-notice" style={{ padding: "4px 8px", background: colors.diffAddBg, color: colors.diffAddText, fontSize: 11, borderBottom: `1px solid ${colors.border}` }}>
+            {pushNotice}
+          </div>
+        )
+      )}
       {(error || session?.error) && (
         <div
           data-testid="review-error"
@@ -1837,23 +1974,25 @@ export function ReviewPanel({ channelId, defaultMaxIter = DEFAULT_REVIEW_MAX_ITE
           );
         })()}
         {showStats && <ReviewStatsView channelId={channelId} prNumber={hasSession ? session?.pr?.number : undefined} colors={colors} />}
-        {!showStats && !hasSession && <PRListPicker prs={prList} loading={listLoading} loadingPR={loadingPR} disabled={busy} colors={colors} onSelect={onSelectPR} />}
+        {!showStats && !hasSession && <PRListPicker prs={prList} loading={listLoading} loadingPR={prLoading} disabled={busy || prLoading !== null} colors={colors} onSelect={onSelectPR} />}
         {!showStats && hasSession && session && session.status === "reviewing" && session.comments.length === 0 && (
           <div style={{ padding: "6px 12px", color: colors.textDim, fontSize: 11, borderBottom: `1px solid ${colors.border}` }}>Reviewing... comments will appear inline as the agent emits them.</div>
         )}
         {!showStats && hasSession && session && (
-          <ReviewDiffView
-            channelId={channelId}
-            rawDiff={session.raw_diff ?? ""}
-            comments={threadedComments}
-            reviewRuns={session.review_runs}
-            worktreePath={session.worktree_path}
-            onPushComment={onPushOne}
-            onDiscussComment={onDiscussOne}
-            onWhyComment={onWhyOne}
-            onAddressComment={onAddressOne}
-            onDeleteComment={onDeleteOne}
-          />
+          <ReviewPushContext.Provider value={pushState}>
+            <ReviewDiffView
+              channelId={channelId}
+              rawDiff={session.raw_diff ?? ""}
+              comments={threadedComments}
+              reviewRuns={session.review_runs}
+              worktreePath={session.worktree_path}
+              onPushComment={onPushOne}
+              onDiscussComment={onDiscussOne}
+              onWhyComment={onWhyOne}
+              onAddressComment={onAddressOne}
+              onDeleteComment={onDeleteOne}
+            />
+          </ReviewPushContext.Provider>
         )}
       </div>
 

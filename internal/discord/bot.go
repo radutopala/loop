@@ -616,7 +616,8 @@ func (b *DiscordBot) HandleIncomingMessageDelayed(_ context.Context, _, _, _, _,
 
 // HandleThreadCreated posts the initial message (with a bot mention) to the
 // thread so that the normal message event handler picks it up and triggers a
-// new agent run.
+// new agent run. A message from another channel is posted with its origin
+// label, as the platform keeps no tags.
 func (b *DiscordBot) HandleThreadCreated(ctx context.Context, threadID, _, message string) {
 	if message == "" {
 		return
@@ -624,7 +625,7 @@ func (b *DiscordBot) HandleThreadCreated(ctx context.Context, threadID, _, messa
 	b.mu.RLock()
 	username := b.botUsername
 	b.mu.RUnlock()
-	message = bot.FormatThreadMessage(b.BotUserID(), username, "", message)
+	message = bot.FormatThreadMessage(b.BotUserID(), username, "", bot.WithOriginLabel(message, bot.MessageTagsFrom(ctx)))
 	if _, err := b.session.ChannelMessageSend(threadID, message); err != nil {
 		b.logger.WarnContext(ctx, "posting thread initial message", "error", err, "thread_id", threadID)
 	}

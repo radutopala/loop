@@ -1105,12 +1105,22 @@ func (s *ReviewHandlerSuite) TestPushCommentHappyPath() {
 	slug := &githubapi.RepoSlug{Owner: "o", Name: "r"}
 	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return(slug, nil)
 	s.gh.On("PostPRComment", mock.Anything, "/repo", "", *slug, 7, "abc", "x.go", "RIGHT", 1, "b").Return(int64(555), nil)
+	var updated []events.ReviewCommentEventData
+	hub := NewEventsHub(slog.Default())
+	hub.captureHook = func(e Event) {
+		if e.Type == EventReviewCommentUpdated {
+			updated = append(updated, e.Data.(events.ReviewCommentEventData))
+		}
+	}
+	s.srv.SetEventsHub(hub)
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/comments/a/push", nil))
 	require.Equal(s.T(), http.StatusOK, w.Code)
 	c, _ := s.rs.FindComment("ch1", "a")
 	require.True(s.T(), c.Pushed)
 	require.Equal(s.T(), int64(555), c.GitHubID)
+	// Announced, so other windows, and a Push all in progress, show it land.
+	require.Equal(s.T(), []events.ReviewCommentEventData{{ID: "a", Path: "x.go", Line: 1, Side: "RIGHT", Body: "b", Pushed: true, GitHubID: 555}}, updated)
 }
 
 func (s *ReviewHandlerSuite) TestPushCommentChannelLookupError() {

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { LearnPass, LearnProposal } from "../../api/learn";
 import {
   configPreviewRevision,
-  editsProjectConfig,
+  editsFile,
   inBulk,
   isOpenProposal,
   isSettledProposal,
@@ -268,6 +268,7 @@ describe("proposalDetail", () => {
     ["rename", { name: "login bug" }, "→ login bug"],
     ["description", { description: "chasing it" }, "chasing it"],
     ["ticket_url", { ticket_url: "https://tracker.example.com/T-1" }, "https://tracker.example.com/T-1"],
+    ["memory", { name: "lint-first", description: "Lint before pushing", type: "feedback", body: "Run make lint." }, "feedback lint-first: Lint before pushing"],
     ["rename", { name: 7 }, "→ "],
   ] as const)("%s %j", (kind, payload, want) => {
     expect(proposalDetail(proposal({ kind, payload: JSON.stringify(payload) }))).toBe(want);
@@ -287,7 +288,7 @@ describe("proposalCaveat", () => {
   });
 });
 
-describe("editsProjectConfig", () => {
+describe("editsFile", () => {
   it.each([
     ["prompt_shortcut", true],
     ["bash_shortcut", true],
@@ -297,9 +298,10 @@ describe("editsProjectConfig", () => {
     ["rename", false],
     ["description", false],
     ["ticket_url", false],
+    ["memory", true],
     ["unknown", false],
   ])("%s → %j", (kind, want) => {
-    expect(editsProjectConfig(kind)).toBe(want);
+    expect(editsFile(kind)).toBe(want);
   });
 });
 
