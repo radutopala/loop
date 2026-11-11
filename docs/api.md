@@ -415,6 +415,7 @@ Create a new thread under a parent channel. If the channel ID points to a thread
 | `name`       | string | yes      | Thread display name |
 | `author_id`  | string | no       | Thread creator's user ID |
 | `message`    | string | no       | Initial message content |
+| `from_channel_id` | string | no | Channel the thread is created from, for an owner token. Any other token's own channel replaces it. The initial message gets [origin tags](#message-tags) for it, the parent's included, since the thread isn't the parent. |
 
 **Response (201):**
 ```json
@@ -534,7 +535,7 @@ Send a message to a channel. When an orchestrator is configured, routes through 
 
 #### Message tags
 
-Message rows and `message.created` events carry `tags`, a key/value object, when the message has any. A message sent from another channel has:
+Message rows and `message.created` events carry `tags`, a key/value object, when the message has any. A message sent from another channel, or the first message of a thread created from one (`POST /api/threads`, `POST /api/worktrees`), has:
 
 | Tag | Value |
 |-----|-------|
@@ -542,7 +543,7 @@ Message rows and `message.created` events carry `tags`, a key/value object, when
 | `origin_channel_name` | Its name when the message was sent, when it has one |
 | `origin_message` | Row ID of the last user message the sender's agent started on, when there is one |
 
-The agent reads them as `[from channel "<name>", channel_id: <id>, message_id: <id>; if it needs an answer, send it with send_message to this channel_id] <content>`; a message starting with `/` is passed as it is, so it still runs as a slash command. The chat shows a link back to that channel and message. The stored content has no label.
+The agent reads them as `[from channel "<name>", channel_id: <id>, message_id: <id>; if it needs an answer, send it with send_message to this channel_id] <content>`; a message starting with `/` is passed as it is, so it still runs as a slash command. The chat shows a link back to that channel and message. The stored content has no label. Discord and Slack keep no tags, so a thread's first message is posted there with the label in its text.
 
 ### `DELETE /api/messages/{id}`
 
@@ -2456,7 +2457,7 @@ Create a git worktree as a new thread. The worktree gets its own branch (`worktr
 
 With `pr` set to an open PR's number (an MR's IID on GitLab), the worktree is checked out on that PR's own branch instead: `git worktree add --detach`, then `gh pr checkout <pr>` (or `glab mr checkout <pr>`) inside it, so pushes from it update the PR. `branch` is then optional, `name` defaults to `pr-<pr>`, and the thread is named `<name> (<head branch>)`. A failed checkout removes the worktree and answers `500` with the error; so does a repo without a GitHub or GitLab `origin`.
 
-If `message` is provided, the bot posts it as a self-mention into the new thread to trigger a runner immediately with that prompt — same auto-trigger semantics as `POST /api/threads`.
+If `message` is provided, the bot posts it as a self-mention into the new thread to trigger a runner immediately with that prompt — same auto-trigger semantics as `POST /api/threads`. `from_channel_id` works as it does there: the message gets [origin tags](#message-tags) for the channel the worktree thread was created from.
 
 **Response (201):**
 ```json

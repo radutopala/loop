@@ -162,6 +162,18 @@ func (s *BotSuite) TestHandleThreadCreatedPostsMessage() {
 	s.session.AssertExpectations(s.T())
 }
 
+// The platform keeps no tags, so a message from another channel is posted
+// with its origin label.
+func (s *BotSuite) TestHandleThreadCreatedLabelsOrigin() {
+	s.bot.botUserID = "bot-123"
+	s.session.On("ChannelMessageSend", "thread-1", "<@bot-123> [from channel_id: ch-9; if it needs an answer, send it with send_message to this channel_id] do the task", mock.Anything).
+		Return(&discordgo.Message{}, nil)
+
+	ctx := bot.WithMessageTags(context.Background(), map[string]string{bot.TagOriginChannel: "ch-9"})
+	s.bot.HandleThreadCreated(ctx, "thread-1", "user-1", "do the task")
+	s.session.AssertExpectations(s.T())
+}
+
 func (s *BotSuite) TestHandleThreadCreatedStripsExistingMention() {
 	s.bot.botUserID = "bot-123"
 	s.session.On("ChannelMessageSend", "thread-1", "<@bot-123> do the task", mock.Anything).

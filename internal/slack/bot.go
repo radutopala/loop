@@ -582,7 +582,8 @@ func (b *SlackBot) HandleIncomingMessageDelayed(_ context.Context, _, _, _, _, _
 
 // HandleThreadCreated posts the initial message (with a bot mention) to the
 // thread so that the normal message event handler picks it up and triggers a
-// new agent run.
+// new agent run. A message from another channel is posted with its origin
+// label, as the platform keeps no tags.
 func (b *SlackBot) HandleThreadCreated(ctx context.Context, threadID, _, message string) {
 	if message == "" {
 		return
@@ -594,7 +595,7 @@ func (b *SlackBot) HandleThreadCreated(ctx context.Context, threadID, _, message
 	b.mu.RLock()
 	username := b.botUsername
 	b.mu.RUnlock()
-	message = bot.FormatThreadMessage(b.BotUserID(), username, "", message)
+	message = bot.FormatThreadMessage(b.BotUserID(), username, "", bot.WithOriginLabel(message, bot.MessageTagsFrom(ctx)))
 	if _, _, err := b.session.PostMessage(chID, goslack.MsgOptionText(message, false), goslack.MsgOptionTS(threadTS)); err != nil {
 		b.logger.WarnContext(ctx, "posting thread initial message", "error", err, "thread_id", threadID)
 	}

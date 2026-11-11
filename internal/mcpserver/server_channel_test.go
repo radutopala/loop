@@ -135,6 +135,7 @@ func (s *MCPServerSuite) TestCreateThreadSuccess() {
 		require.Contains(s.T(), string(body), `"channel_id":"test-channel"`)
 		require.Contains(s.T(), string(body), `"name":"my-thread"`)
 		require.Contains(s.T(), string(body), `"message":"Check the status"`)
+		require.Contains(s.T(), string(body), `"from_channel_id":"test-channel"`)
 		return jsonResponse(http.StatusCreated, `{"thread_id":"thread-1"}`), nil
 	}
 
@@ -190,6 +191,7 @@ func (s *MCPServerSuite) TestCreateWorktreeThreadSuccess() {
 		require.Contains(s.T(), string(body), `"channel_id":"test-channel"`)
 		require.Contains(s.T(), string(body), `"branch":"feat/foo"`)
 		require.Contains(s.T(), string(body), `"name":"my-wt"`)
+		require.Contains(s.T(), string(body), `"from_channel_id":"test-channel"`)
 		return jsonResponse(http.StatusCreated, `{"thread_id":"thread-1","worktree_path":"/tmp/wt/my-wt"}`), nil
 	}
 
