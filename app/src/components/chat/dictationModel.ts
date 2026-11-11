@@ -43,7 +43,7 @@ export function micButtonTip(a: DictationAvailability, s: DictationStatus | null
     case "downloading":
       return `Dictation\n${s ? downloadProgressText(s) : "Downloading…"}`;
     default:
-      return `Dictation\nHold ${dictationKeyName(isMac)} in the composer, or hold this button, and speak. Release to finish; Esc cancels.`;
+      return `Dictation\nHold ${dictationKeyName(isMac)} in the composer and speak; release to finish. Or click this button to start and again to stop. Esc cancels.`;
   }
 }
 

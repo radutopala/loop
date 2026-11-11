@@ -45,14 +45,17 @@ type Phase = "idle" | "armed" | "active";
  * The hold-to-talk state machine. The key alone, held for holdMs, starts
  * dictation; releasing it stops. Any other key while armed aborts (so the
  * key's combos still type); while active it cancels, as does Esc. The mic
- * button starts at once on press and stops on release; while it is held
- * only Esc cancels. Each key method returns true when it took the event, for
+ * button starts at once on press. Released within holdMs it latches, and
+ * dictation goes on until the next press; held longer, the release stops
+ * it. While the button is pressed or latched only Esc cancels. Each key method returns true when it took the event, for
  * the caller to prevent its default.
  */
 export class HoldToTalk {
   private phase: Phase = "idle";
   private source: "key" | "pointer" = "key";
   private timer: unknown = null;
+  /** A quick click left the mic on until the next press. */
+  private latched = false;
 
   constructor(
     private readonly cb: HoldCallbacks,
@@ -117,24 +120,50 @@ export class HoldToTalk {
     this.keyUp({ code: this.code, key: "" });
   }
 
+  /** Whether a click left the mic on, to stop on the next press. */
+  get latchedOn(): boolean {
+    return this.latched;
+  }
+
   pointerDown(): void {
+    if (this.latched) {
+      this.reset();
+      this.cb.stop();
+      return;
+    }
     if (this.phase !== "idle") return;
     this.phase = "active";
     this.source = "pointer";
+    this.timer = this.timers.set(() => {
+      this.timer = null;
+    }, this.holdMs);
     this.cb.prepare();
     this.cb.start();
   }
 
   pointerUp(): void {
-    if (this.source !== "pointer" || this.phase !== "active") return;
+    if (this.source !== "pointer" || this.phase !== "active" || this.latched) return;
+    if (this.timer !== null) {
+      // A click, not a hold: stay on until the next press.
+      this.timers.clear(this.timer);
+      this.timer = null;
+      this.latched = true;
+      return;
+    }
     this.reset();
     this.cb.stop();
   }
 
   pointerCancel(): void {
-    if (this.source !== "pointer" || this.phase !== "active") return;
+    if (this.source !== "pointer" || this.phase !== "active" || this.latched) return;
     this.reset();
     this.cb.cancel();
+  }
+
+  /** Dictation ended on its own (an error, or the controller gave up): drop
+   *  any latch so the next press starts afresh. */
+  release(): void {
+    if (this.source === "pointer") this.reset();
   }
 
   private reset(): void {
@@ -142,5 +171,6 @@ export class HoldToTalk {
     this.timer = null;
     this.phase = "idle";
     this.source = "key";
+    this.latched = false;
   }
 }

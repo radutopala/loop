@@ -563,7 +563,7 @@ func buildSchema(goos string) *ConfigSchema {
 					"language": {
 						Type:         "string",
 						Title:        "Language",
-						Description:  "The language you dictate in, as a whisper language code such as en or ro, or auto to detect it.",
+						Description:  "The language you dictate in, as a whisper language code, or auto to detect it.",
 						Default:      DefaultDictationLanguage,
 						XPlaceholder: DefaultDictationLanguage,
 						XOrder:       2,

@@ -30,6 +30,8 @@ export interface DictationDeps {
   /** The microphone access state; with ask, prompts when it's undecided. */
   micAccess(ask: boolean): Promise<MicAccess>;
   availability(): DictationAvailability;
+  /** Asks the daemon for the dictation status again. */
+  refresh(): Promise<void>;
   onState(s: DictationUiState): void;
   timers?: HoldTimers;
 }
@@ -61,6 +63,7 @@ export class DictationController {
   private micGranted = false;
   /** Bumped per session, so late callbacks from an old one are dropped. */
   private session = 0;
+  private refreshing: Promise<void> | null = null;
 
   constructor(private readonly d: DictationDeps) {
     this.hold = new HoldToTalk(
@@ -109,6 +112,10 @@ export class DictationController {
   }
 
   private prepare(): void {
+    // A status that isn't ready may be stale (the daemon was restarting, or
+    // the model was fetched elsewhere): ask again, so the hold that follows
+    // goes by what the daemon says now.
+    if (this.d.availability() !== "ready") void this.refreshStatus();
     if (this.stream || this.d.availability() !== "ready" || !this.micGranted) return;
     this.openMic();
   }
@@ -119,8 +126,8 @@ export class DictationController {
     const a = this.d.availability();
     if (a !== "ready") {
       this.abort();
-      if (a === "unknown") this.set({ error: "Dictation isn't available from the daemon." });
-      else this.set({ notice: a === "unavailable" ? "unavailable" : "needs_model", error: null });
+      this.hold.release();
+      void this.refreshStatus().then(() => this.notReady(this.d.availability()));
       return;
     }
     this.holding = true;
@@ -149,6 +156,22 @@ export class DictationController {
         }
         this.micDenied();
       });
+  }
+
+  /** One status refresh at a time; the start that follows a prepare waits
+   *  on the same one. */
+  private refreshStatus(): Promise<void> {
+    this.refreshing ??= this.d.refresh().finally(() => {
+      this.refreshing = null;
+    });
+    return this.refreshing;
+  }
+
+  /** Tells why a hold didn't start; once ready, the next hold does. */
+  private notReady(a: DictationAvailability): void {
+    if (a === "ready") return;
+    if (a === "unknown") this.set({ error: "Dictation isn't available from the daemon." });
+    else this.set({ notice: a === "unavailable" ? "unavailable" : "needs_model", error: null });
   }
 
   private openMic(): void {
@@ -260,6 +283,7 @@ export class DictationController {
     this.base = null;
     this.committed = "";
     this.holding = false;
+    this.hold.release();
     if (this.state.phase !== "idle" || this.state.level !== 0) this.set({ phase: "idle", level: 0 });
   }
 }

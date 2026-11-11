@@ -134,8 +134,8 @@ describe("HoldToTalk", () => {
     expect(calls).toHaveLength(5);
   });
 
-  it("starts the button at once and stops on release; only Esc cancels it", () => {
-    const { hold, calls } = make();
+  it("starts the button at once and, held, stops on release; only Esc cancels it", () => {
+    const { hold, calls, advance } = make();
     hold.pointerDown();
     expect(calls).toEqual(["prepare", "start"]);
     // Typing, or the hold key, doesn't end a button hold.
@@ -143,8 +143,10 @@ describe("HoldToTalk", () => {
     expect(hold.keyDown(alt)).toBe(false);
     expect(hold.keyUp(alt)).toBe(false);
     hold.blur();
+    advance(DICTATION_HOLD_MS);
     hold.pointerUp();
     expect(calls).toEqual(["prepare", "start", "stop"]);
+    expect(hold.busy).toBe(false);
 
     hold.pointerDown();
     expect(hold.keyDown({ code: "Escape", key: "Escape" })).toBe(true);
@@ -154,6 +156,57 @@ describe("HoldToTalk", () => {
     hold.pointerDown();
     hold.pointerCancel();
     expect(calls.slice(-1)).toEqual(["cancel"]);
+  });
+
+  it("latches on a click and stops on the next press", () => {
+    const { hold, calls, advance, pending } = make();
+    hold.pointerDown();
+    hold.pointerUp();
+    expect(hold.latchedOn).toBe(true);
+    expect(hold.active).toBe(true);
+    expect(pending.size).toBe(0);
+    // Still on: time, typing, blur and a stray release or cancel leave it.
+    advance(10 * DICTATION_HOLD_MS);
+    expect(hold.keyDown(key("a"))).toBe(false);
+    hold.blur();
+    hold.pointerUp();
+    hold.pointerCancel();
+    expect(calls).toEqual(["prepare", "start"]);
+
+    hold.pointerDown();
+    expect(calls).toEqual(["prepare", "start", "stop"]);
+    expect(hold.latchedOn).toBe(false);
+    // That press's release doesn't start or stop anything.
+    hold.pointerUp();
+    expect(calls).toHaveLength(3);
+    expect(hold.busy).toBe(false);
+  });
+
+  it("cancels a latched mic on Esc", () => {
+    const { hold, calls } = make();
+    hold.pointerDown();
+    hold.pointerUp();
+    expect(hold.keyDown({ code: "Escape", key: "Escape" })).toBe(true);
+    expect(calls).toEqual(["prepare", "start", "cancel"]);
+    expect(hold.latchedOn).toBe(false);
+  });
+
+  it("drops a pointer session on release() and leaves a key hold alone", () => {
+    const { hold, calls, advance } = make();
+    hold.pointerDown();
+    hold.pointerUp();
+    hold.release();
+    expect(hold.busy).toBe(false);
+    hold.pointerDown();
+    expect(calls).toEqual(["prepare", "start", "prepare", "start"]);
+    hold.release();
+
+    hold.keyDown(alt);
+    advance(DICTATION_HOLD_MS);
+    hold.release();
+    expect(hold.active).toBe(true);
+    hold.keyUp(alt);
+    expect(calls.slice(-1)).toEqual(["stop"]);
   });
 
   it("ignores a button press during a key hold and the reverse", () => {

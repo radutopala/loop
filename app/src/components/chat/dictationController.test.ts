@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AudioCapture } from "./dictationCapture";
-import { DictationController, type DictationUiState, type MicAccess } from "./dictationController";
+import { DictationController, type DictationUiState, IDLE_DICTATION, type MicAccess } from "./dictationController";
 import { DICTATION_HOLD_CODE, type HoldTimers } from "./dictationHold";
 import type { DictationAvailability } from "./dictationModel";
 import { FakeSocket } from "./dictationTestSocket";
@@ -26,7 +26,7 @@ class FakeCapture implements AudioCapture {
   }
 }
 
-function make(opts: { access?: MicAccess; availability?: DictationAvailability; text?: string; caret?: number } = {}) {
+function make(opts: { access?: MicAccess; availability?: DictationAvailability; refreshed?: DictationAvailability; text?: string; caret?: number } = {}) {
   const composer = { text: opts.text ?? "", start: opts.caret ?? (opts.text ?? "").length, end: opts.caret ?? (opts.text ?? "").length };
   const sockets: FakeSocket[] = [];
   const captures: FakeCapture[] = [];
@@ -42,7 +42,7 @@ function make(opts: { access?: MicAccess; availability?: DictationAvailability; 
     },
   };
   const access = { value: opts.access ?? "granted", asked: 0 };
-  const avail = { value: opts.availability ?? "ready" };
+  const avail = { value: opts.availability ?? "ready", refreshes: 0 };
   const c = new DictationController({
     read: () => ({ ...composer }),
     write: (text, start, end) => Object.assign(composer, { text, start, end }),
@@ -61,6 +61,11 @@ function make(opts: { access?: MicAccess; availability?: DictationAvailability; 
       return access.value as MicAccess;
     },
     availability: () => avail.value as DictationAvailability,
+    refresh: async () => {
+      avail.refreshes++;
+      await Promise.resolve();
+      if (opts.refreshed) avail.value = opts.refreshed;
+    },
     onState: (s) => states.push(s),
     timers,
   });
@@ -232,12 +237,39 @@ describe("DictationController", () => {
     t.press();
     expect(t.captures).toHaveLength(0);
     t.held();
+    await t.flush();
     expect(t.sockets).toHaveLength(0);
     expect(t.last()).toMatchObject({ phase: "idle", ...want });
     t.release();
     expect(t.last()?.phase).toBe("idle");
     t.c.dismiss();
     expect(t.last()).toMatchObject({ notice: null, error: null });
+  });
+
+  it.each([
+    ["needs_model", { notice: "needs_model", error: null }],
+    ["ready", { notice: null, error: null }],
+  ] as const)("asks the daemon again when its status was never read, then tells it's %s", async (refreshed, want) => {
+    const t = make({ availability: "unknown", refreshed });
+    await t.c.init();
+    t.press();
+    t.held();
+    // The start waits on the refresh the press began instead of asking twice.
+    expect(t.avail.refreshes).toBe(1);
+    await t.flush();
+    expect(t.sockets).toHaveLength(0);
+    expect(t.last() ?? IDLE_DICTATION).toMatchObject({ phase: "idle", ...want });
+  });
+
+  it("asks again on the next hold once a refresh is done", async () => {
+    const t = make({ availability: "unknown" });
+    await t.c.init();
+    t.press();
+    await t.flush();
+    t.held();
+    await t.flush();
+    expect(t.avail.refreshes).toBe(2);
+    expect(t.last()?.error).toBe("Dictation isn't available from the daemon.");
   });
 
   it("keeps the committed words and shows the error when the server fails", async () => {
@@ -274,11 +306,55 @@ describe("DictationController", () => {
     expect(t.last()?.phase).toBe("recording");
     const ws = t.sockets[0]!;
     ws.open();
+    t.held();
     t.c.hold.pointerUp();
     await t.flush();
     expect(ws.controls).toEqual([{ type: "stop" }]);
     ws.server({ type: "final", text: "from the button" });
     expect(t.composer.text).toBe("from the button");
+  });
+
+  it("keeps a clicked mic on until the next click", async () => {
+    const t = make({ text: "" });
+    await t.c.init();
+    t.c.hold.pointerDown();
+    t.c.hold.pointerUp();
+    const ws = t.sockets[0]!;
+    ws.open();
+    expect(t.last()?.phase).toBe("recording");
+    t.c.hold.pointerDown();
+    await t.flush();
+    expect(ws.controls).toEqual([{ type: "stop" }]);
+    ws.server({ type: "final", text: "clicked" });
+    ws.close();
+    expect(t.composer.text).toBe("clicked");
+    expect(t.c.hold.busy).toBe(false);
+  });
+
+  it("frees a clicked mic when its session fails, so the next click starts again", async () => {
+    const t = make({ text: "" });
+    await t.c.init();
+    t.c.hold.pointerDown();
+    t.c.hold.pointerUp();
+    t.sockets[0]!.open();
+    t.sockets[0]!.server({ type: "error", code: "internal", message: "boom" });
+    t.sockets[0]!.close();
+    expect(t.c.hold.busy).toBe(false);
+    t.c.hold.pointerDown();
+    expect(t.sockets).toHaveLength(2);
+  });
+
+  it("asks the daemon again when the model looked missing, and refreshes once per hold", async () => {
+    const t = make({ availability: "needs_model", refreshed: "ready" });
+    await t.c.init();
+    t.c.hold.pointerDown();
+    await t.flush();
+    expect(t.avail.refreshes).toBe(1);
+    expect(t.sockets).toHaveLength(0);
+    expect(t.c.hold.busy).toBe(false);
+    // The status is fresh now: the next press starts.
+    t.c.hold.pointerDown();
+    expect(t.sockets).toHaveLength(1);
   });
 
   it("ignores a new hold while the last one is still transcribing", async () => {

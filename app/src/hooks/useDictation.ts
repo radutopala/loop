@@ -5,6 +5,7 @@ import { DictationController, type DictationUiState, IDLE_DICTATION, type MicAcc
 import { dictationAvailability, downloadDictationModel, MODEL_POLL_MS } from "../components/chat/dictationModel";
 
 const ERROR_SHOW_MS = 5000;
+const STATUS_RETRY_MS = 5000;
 
 async function micAccess(ask: boolean): Promise<MicAccess> {
   // A plain browser tab asks through getUserMedia itself.
@@ -52,6 +53,9 @@ export function useDictation(inputRef: RefObject<HTMLTextAreaElement | null>, se
       createCapture: () => new MicCapture(),
       micAccess,
       availability: () => dictationAvailability(statusRef.current),
+      refresh: async () => {
+        await refreshRef.current();
+      },
       onState: (s) => {
         if (mounted.current) setUi(s);
       },
@@ -68,6 +72,15 @@ export function useDictation(inputRef: RefObject<HTMLTextAreaElement | null>, se
       return null;
     }
   }, []);
+  const refreshRef = useRef(refresh);
+  refreshRef.current = refresh;
+
+  // Until the daemon answers (it may be starting or restarting), ask again.
+  useEffect(() => {
+    if (status) return;
+    const t = setInterval(() => void refresh(), STATUS_RETRY_MS);
+    return () => clearInterval(t);
+  }, [status, refresh]);
 
   useEffect(() => {
     mounted.current = true;
@@ -144,14 +157,13 @@ export function useDictation(inputRef: RefObject<HTMLTextAreaElement | null>, se
     }
   }, []);
 
-  /** Pointer handlers for the mic button: press and hold to talk. */
+  /** Pointer handlers for the mic button: click to toggle, or press and hold to talk. */
   const micButton = {
     onPointerDown: (e: React.PointerEvent<HTMLElement>) => {
       if (e.button !== 0) return;
       // Keep focus (and the caret) in the composer.
       e.preventDefault();
       e.currentTarget.setPointerCapture?.(e.pointerId);
-      if (dictationAvailability(statusRef.current) === "unknown") void refresh();
       ctrl.hold.pointerDown();
     },
     onPointerUp: () => ctrl.hold.pointerUp(),

@@ -573,7 +573,7 @@ Available at both global and project level. Project values override global value
 
 #### Dictation
 
-Hold the right Option key (right Alt on Linux and Windows) in the app's composer to dictate: text appears while you speak and is finalized when you release the key. Speech is transcribed on the host by a local [whisper.cpp](https://github.com/ggml-org/whisper.cpp) `whisper-server`, which ships next to the `loop` binary in the app. The daemon starts it on first use and stops it once it has been idle. No audio leaves the machine. The model (about 574 MB for the default) is downloaded once to `~/.loop/models`, from the composer's Download prompt.
+Hold the right Option key (right Alt on Linux and Windows) in the app's composer to dictate: text appears while you speak and is finalized when you release the key. You can also click the composer's mic button to start and click it again to stop, or press and hold it to talk. Speech is transcribed on the host by a local [whisper.cpp](https://github.com/ggml-org/whisper.cpp) `whisper-server`, which ships next to the `loop` binary in the app. The daemon starts it on first use and stops it once it has been idle. No audio leaves the machine. The model (about 574 MB for the default) is downloaded once to `~/.loop/models`, from the composer's Download prompt.
 
 ```jsonc
 "dictation": {
@@ -587,7 +587,7 @@ Hold the right Option key (right Alt on Linux and Windows) in the app's composer
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `dictation.model` | `string` | `"large-v3-turbo-q5_0"` | Whisper model: `"large-v3-turbo-q5_0"` (quantized, 574 MB) or `"large-v3-turbo"` (1.6 GB). A change applies to the next dictation. |
-| `dictation.language` | `string` | `"auto"` | Whisper language code (e.g. `"en"`, `"ro"`), or `"auto"` to detect it each time. Setting it avoids misdetected short phrases. |
+| `dictation.language` | `string` | `"auto"` | Whisper language code, or `"auto"` to detect it each time. Setting it avoids misdetected short phrases. |
 | `dictation.idle_stop_sec` | `int` | `300` | Seconds `whisper-server` stays running without a request. |
 | `dictation.threads` | `int` | `0` | CPU threads for `whisper-server`; `0` keeps its default. |
 

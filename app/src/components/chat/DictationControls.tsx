@@ -21,7 +21,8 @@ export function MicIcon({ size }: { size: number }) {
 }
 
 /**
- * The composer's mic switch: press and hold to dictate. Red and pulsing
+ * The composer's mic switch: click to start and again to stop, or press
+ * and hold to talk. Red and pulsing
  * while recording; dim and inert when the transcriber isn't installed (the
  * tip says why). Hidden while the daemon's dictation status is unknown.
  */
