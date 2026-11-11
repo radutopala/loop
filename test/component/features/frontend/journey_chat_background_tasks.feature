@@ -32,6 +32,11 @@ Feature: Background tasks above the composer
     And the element "[data-testid='background-task-elapsed']" should contain text "h"
     # A one-shot run's tasks can't be stopped.
     And the element "[data-testid='background-task-stop']" should not exist
+    # Hovering the description shows the whole command in a tip.
+    When I rest the pointer on the element "[data-testid='background-task-description']"
+    Then I wait for "[data-testid='hover-tip']" to be visible
+    And the element "[data-testid='hover-tip']" should contain text "Shell"
+    And the element "[data-testid='hover-tip']" should contain text "watch CI"
 
     # None are left: the pill goes.
     When I inject a "agent.activity" event for the channel with data:
