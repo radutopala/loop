@@ -25,6 +25,8 @@ interface ChannelItemProps {
   onCreateThread: (parentId: string, name: string) => void;
   onCreateWorktree?: (channelId: string, branch: string) => void;
   onOpenPR?: OpenPRHandler;
+  /** Imports an existing worktree of the channel's repo as a thread. */
+  onImportWorktree?: (channelId: string, worktreePath: string) => void;
   threadReorder?: ThreadReorder;
   onOpenConfig?: (dirPath: string) => void;
   onContextMenu: (e: React.MouseEvent, channel: Channel) => void;
@@ -53,6 +55,7 @@ export function ChannelItem({
   onCreateThread,
   onCreateWorktree,
   onOpenPR,
+  onImportWorktree,
   threadReorder,
   onOpenConfig,
   onContextMenu,
@@ -300,7 +303,9 @@ export function ChannelItem({
             >
               + thread
             </button>
-            {channel.dir_path && onCreateWorktree && <SidebarWorktreeButton channelId={channel.id} onCreateWorktree={onCreateWorktree} onOpenPR={onOpenPR} />}
+            {channel.dir_path && onCreateWorktree && (
+              <SidebarWorktreeButton channelId={channel.id} onCreateWorktree={onCreateWorktree} onOpenPR={onOpenPR} onImportWorktree={onImportWorktree} onSelectThread={onSelect} />
+            )}
           </div>
         )}
       </div>

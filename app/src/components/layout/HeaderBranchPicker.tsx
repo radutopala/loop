@@ -4,6 +4,7 @@ import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import { logErr } from "../../utils/log";
 import { type OpenPRHandler, OpenPRRows, SectionHeader, showsPRs, useOpenPRs } from "../shared/OpenPRs";
+import { WorktreeRows } from "../shared/WorktreeRows";
 
 export function HeaderBranchPicker({
   channelId,
@@ -64,9 +65,6 @@ export function HeaderBranchPicker({
   );
 
   const filtered = branchInfo?.branches.filter((b) => !search || b.toLowerCase().includes(search.toLowerCase())) ?? [];
-
-  const lowerSearch = search.toLowerCase();
-  const filteredWorktrees = (branchInfo?.worktrees ?? []).filter((wt) => !search || wt.branch.toLowerCase().includes(lowerSearch) || wt.path.split("/").pop()?.toLowerCase().includes(lowerSearch));
 
   const hasWorktrees = (branchInfo?.worktrees ?? []).length > 0 && (!!onImportWorktree || !!onSelectThread);
   const hasPRs = !!onOpenPR && showsPRs(prs, prsError, forge);
@@ -292,117 +290,14 @@ export function HeaderBranchPicker({
           {/* Worktrees section */}
           {hasWorktrees && (
             <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "0 0 4px", borderTop: `1px solid ${colors.border}` }}>
-              <SectionHeader>Worktrees</SectionHeader>
-              {filteredWorktrees.map((wt) => {
-                const dirName = wt.path.split("/").pop() || wt.path;
-                const hasThread = !!wt.thread_id;
-                return (
-                  <div
-                    key={wt.path}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      borderRadius: 4,
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)";
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.backgroundColor = "transparent";
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 6,
-                        flex: 1,
-                        padding: "5px 0 5px 12px",
-                        fontSize: 12,
-                        fontFamily: fonts.mono,
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        minWidth: 0,
-                      }}
-                    >
-                      {/* Folder icon */}
-                      <svg
-                        width="12"
-                        height="12"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke={colors.textDim}
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        style={{ flexShrink: 0, opacity: 0.5 }}
-                      >
-                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                      </svg>
-                      <span style={{ color: colors.text, overflow: "hidden", textOverflow: "ellipsis" }}>{wt.branch || "(detached)"}</span>
-                      <span style={{ color: colors.textDim, fontSize: 10, flexShrink: 0 }}>{dirName}</span>
-                    </div>
-                    {hasThread && onSelectThread ? (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setOpen(false);
-                          onSelectThread(wt.thread_id!);
-                        }}
-                        title="Go to thread"
-                        style={{
-                          padding: "2px 6px",
-                          border: "none",
-                          background: "transparent",
-                          color: colors.active,
-                          cursor: "pointer",
-                          borderRadius: 4,
-                          flexShrink: 0,
-                          fontSize: 10,
-                          fontFamily: fonts.mono,
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.opacity = "0.7";
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.opacity = "1";
-                        }}
-                      >
-                        go
-                      </button>
-                    ) : onImportWorktree ? (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setOpen(false);
-                          onImportWorktree(channelId, wt.path);
-                        }}
-                        title="Import worktree as thread"
-                        style={{
-                          padding: "2px 6px",
-                          border: "none",
-                          background: "transparent",
-                          color: colors.textDim,
-                          cursor: "pointer",
-                          borderRadius: 4,
-                          flexShrink: 0,
-                          fontSize: 10,
-                          fontFamily: fonts.mono,
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.color = colors.active;
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.color = colors.textDim;
-                        }}
-                      >
-                        imp
-                      </button>
-                    ) : null}
-                  </div>
-                );
-              })}
-              {filteredWorktrees.length === 0 && <div style={{ padding: "8px 12px", color: colors.textDim, fontSize: 12 }}>No worktrees found</div>}
+              <WorktreeRows
+                testId="branch-picker-worktrees"
+                worktrees={branchInfo?.worktrees ?? []}
+                search={search}
+                onSelectThread={onSelectThread}
+                onImport={onImportWorktree && ((path) => onImportWorktree(channelId, path))}
+                onDone={() => setOpen(false)}
+              />
             </div>
           )}
         </div>

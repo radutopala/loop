@@ -5,19 +5,34 @@ import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import { logErr } from "../../utils/log";
 import { type OpenPRHandler, OpenPRRows, SectionHeader, showsPRs, useOpenPRs } from "../shared/OpenPRs";
+import { WorktreeRows } from "../shared/WorktreeRows";
 
 /**
  * A "+wt" button for a sidebar channel row. Clicking it opens a branch
  * dropdown (the same data the header branch picker uses); picking a branch
  * creates a worktree thread from it. With onOpenPR it also lists the repo's
- * open PRs; picking one opens it in a worktree on its own branch. Only
- * rendered for channels backed by a git repo (a dir_path).
+ * open PRs; picking one opens it in a worktree on its own branch. Like the
+ * header's picker it lists the repo's existing worktrees too, each going to
+ * its thread or imported as one. Only rendered for channels backed by a git
+ * repo (a dir_path).
  *
  * The dropdown is portaled to the document body and positioned at the button's
  * lower-right via fixed coordinates, so it opens down-and-to-the-right of the
  * click instead of being clipped by the sidebar's overflow.
  */
-export function SidebarWorktreeButton({ channelId, onCreateWorktree, onOpenPR }: { channelId: string; onCreateWorktree: (channelId: string, branch: string) => void; onOpenPR?: OpenPRHandler }) {
+export function SidebarWorktreeButton({
+  channelId,
+  onCreateWorktree,
+  onOpenPR,
+  onImportWorktree,
+  onSelectThread,
+}: {
+  channelId: string;
+  onCreateWorktree: (channelId: string, branch: string) => void;
+  onOpenPR?: OpenPRHandler;
+  onImportWorktree?: (channelId: string, worktreePath: string) => void;
+  onSelectThread?: (threadId: string) => void;
+}) {
   const { colors } = useTheme();
   const [open, setOpen] = useState(false);
   const [coords, setCoords] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
@@ -28,9 +43,11 @@ export function SidebarWorktreeButton({ channelId, onCreateWorktree, onOpenPR }:
   const searchRef = useRef<HTMLInputElement>(null);
   const { prs, error: prsError, forge } = useOpenPRs(channelId, open && !!onOpenPR);
   const hasPRs = !!onOpenPR && showsPRs(prs, prsError, forge);
-  // Tall only with PRs to list, or while they load: a section saying there
-  // are none needs just its line.
-  const tall = hasPRs && (prs === null || prs.length > 0);
+  const hasWorktrees = (branchInfo?.worktrees ?? []).length > 0 && (!!onImportWorktree || !!onSelectThread);
+  // Tall only with PRs or worktrees to list, or while PRs load: a section
+  // saying there are none needs just its line.
+  const tall = (hasPRs && (prs === null || prs.length > 0)) || hasWorktrees;
+  const sectioned = hasPRs || hasWorktrees;
 
   useEffect(() => {
     if (!open) return;
@@ -106,7 +123,7 @@ export function SidebarWorktreeButton({ channelId, onCreateWorktree, onOpenPR }:
               border: `1px solid ${colors.border}`,
               borderRadius: 8,
               zIndex: 1000,
-              minWidth: hasPRs ? 340 : 260,
+              minWidth: sectioned ? 340 : 260,
               maxWidth: 480,
               maxHeight: tall ? undefined : "min(360px, 60vh)",
               height: tall ? "min(400px, 70vh)" : undefined,
@@ -132,8 +149,8 @@ export function SidebarWorktreeButton({ channelId, onCreateWorktree, onOpenPR }:
                 />
               </div>
             </div>
-            <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: hasPRs ? "0 0 4px" : "4px 0" }}>
-              {hasPRs && <SectionHeader>Branches</SectionHeader>}
+            <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: sectioned ? "0 0 4px" : "4px 0" }}>
+              {sectioned && <SectionHeader>Branches</SectionHeader>}
               {filtered.map((b) => (
                 <button
                   key={b}
@@ -199,6 +216,18 @@ export function SidebarWorktreeButton({ channelId, onCreateWorktree, onOpenPR }:
                     setOpen(false);
                     onOpenPR(channelId, pr, existing);
                   }}
+                />
+              </div>
+            )}
+            {hasWorktrees && (
+              <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "0 0 4px", borderTop: `1px solid ${colors.border}` }}>
+                <WorktreeRows
+                  testId="sidebar-worktree-worktrees"
+                  worktrees={branchInfo?.worktrees ?? []}
+                  search={search}
+                  onSelectThread={onSelectThread}
+                  onImport={onImportWorktree && ((path) => onImportWorktree(channelId, path))}
+                  onDone={() => setOpen(false)}
                 />
               </div>
             )}

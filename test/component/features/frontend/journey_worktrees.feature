@@ -236,3 +236,35 @@ Feature: Worktrees Journey
     Then the element "[data-testid='branch-picker-prs-42']" should contain text "go"
     When I click on "[data-testid='branch-picker-prs-42']"
     Then the element "[data-testid='header-info']" should contain text "fix-login"
+
+  @sidebar-wt-existing
+  Scenario: The sidebar +wt picker lists existing worktrees, going to a thread or importing one
+    Given I set up a test channel via API for git repo "bdd-sb-wt"
+    And I set up a worktree "sb-wt-go" on branch "main" under the current channel via API
+    And I create a disk-only git worktree "sb-wt-orphan" on branch "main"
+    And I open the app in a browser
+    And I wait for text "bdd-sb-wt" to appear
+
+    When I hover over "bdd-sb-wt" in the sidebar
+    And I click the worktree button for "bdd-sb-wt" in the sidebar
+    Then the element "[data-testid='sidebar-worktree-worktrees']" should contain text "sb-wt-go"
+    And the element "[data-testid='sidebar-worktree-worktrees']" should contain text "sb-wt-orphan"
+
+    # A worktree with a thread goes to it.
+    When I click on "[data-testid='sidebar-worktree-worktrees'] [data-testid='worktree-go']"
+    Then I wait up to "5s" for "[data-testid='sidebar-worktree-picker']" to disappear
+    And the element "[data-testid='header-info']" should contain text "sb-wt-go"
+
+    # One without a thread is imported as one.
+    When I hover over "bdd-sb-wt" in the sidebar
+    And I click the worktree button for "bdd-sb-wt" in the sidebar
+    And I type "orphan" into "[data-testid='sidebar-worktree-picker'] input"
+    Then the element "[data-testid='sidebar-worktree-worktrees']" should not contain text "sb-wt-go"
+    When I click on "[data-testid='sidebar-worktree-worktrees'] [data-testid='worktree-import']"
+    Then the element "[data-testid='header-info']" should contain text "sb-wt-orphan"
+
+    # The header's branch picker lists the same worktrees, now both with threads.
+    When I click on "bdd-sb-wt" in the sidebar
+    And I click on the button with title "Branch"
+    Then the element "[data-testid='branch-picker-worktrees']" should contain text "sb-wt-orphan"
+    And the element "[data-testid='branch-picker-worktrees']" should not contain text "imp"

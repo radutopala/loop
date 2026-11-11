@@ -91,6 +91,8 @@ interface SidebarProps {
   onCreateThread: (parentId: string, name: string) => void;
   onCreateWorktree?: (channelId: string, branch: string) => void;
   onOpenPR?: OpenPRHandler;
+  /** Imports an existing worktree of the channel's repo as a thread. */
+  onImportWorktree?: (channelId: string, worktreePath: string) => void;
   onDeleteThread: (threadId: string) => void;
   onRenameThread?: (threadId: string, newName: string) => void;
   /** Sets what a thread is for; empty clears it. */
@@ -135,6 +137,7 @@ export function Sidebar({
   onCreateThread,
   onCreateWorktree,
   onOpenPR,
+  onImportWorktree,
   onDeleteThread,
   onRenameThread,
   onSetDescription,
@@ -678,6 +681,7 @@ export function Sidebar({
               onCreateThread={onCreateThread}
               onCreateWorktree={onCreateWorktree}
               onOpenPR={onOpenPR}
+              onImportWorktree={onImportWorktree}
               threadReorder={{
                 onDragStart: handleThreadDragStart,
                 onDragOver: handleThreadDragOver,
