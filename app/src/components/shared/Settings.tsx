@@ -15,6 +15,7 @@ import { ConfigForm, type ConfigFormHandle, getSections } from "./ConfigForm";
 import { ConfigHistory } from "./ConfigHistory";
 import { GlobalPluginsSection, ProjectPluginsSection } from "./PluginsSection";
 import { ProjectTrustNotice } from "./ProjectTrustNotice";
+import { type SettingsKeyMatch, searchSettings } from "./settingsSearch";
 
 const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
 
@@ -118,6 +119,10 @@ export function Settings({
   const [restoreMsgByKind, setRestoreMsgByKind] = useState<Record<BuiltinKind, string | null>>({ workflows: null, shortcuts: null });
   const [reclaiming, setReclaiming] = useState(false);
   const [reclaimMsg, setReclaimMsg] = useState<string | null>(null);
+  const [navQuery, setNavQuery] = useState("");
+  // The field a search result jumps to once its section renders.
+  const [jumpKey, setJumpKey] = useState<string | null>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const globalFormRef = useRef<ConfigFormHandle>(null);
   const projectFormRef = useRef<ConfigFormHandle>(null);
 
@@ -145,6 +150,42 @@ export function Settings({
   const HARDCODED_GLOBAL = ["Daemon", "Docker Image", "Containers"];
   const globalSchemaSections = getSections(schema, true);
   const projectSchemaSections = projectDirPath ? getSections(schema, false) : [];
+  const globalNav = [...HARDCODED_GLOBAL.map((n) => ({ id: n, name: n })), ...globalSchemaSections.map((n) => ({ id: n, name: n }))];
+  if (globalConfig) globalNav.push({ id: "__global_json__", name: "JSON" }, { id: "__global_history__", name: "History" });
+  const projectNav = projectSchemaSections.map((n) => ({ id: `__proj_${n}`, name: n }));
+  if (projectSchemaSections.length > 0) {
+    if (channelId) projectNav.push({ id: "__project_plugins__", name: "Plugins" });
+    projectNav.push({ id: "__project_json__", name: "JSON" }, { id: "__project_history__", name: "History" });
+  }
+  const globalHits = searchSettings(
+    schema,
+    true,
+    globalNav.map((n) => n.name),
+    navQuery,
+  );
+  const projectHits = searchSettings(
+    schema,
+    false,
+    projectNav.map((n) => n.name),
+    navQuery,
+  );
+  const visibleGlobalNav = globalHits ? globalNav.filter((n) => globalHits.has(n.name)) : globalNav;
+  const visibleProjectNav = projectHits ? projectNav.filter((n) => projectHits.has(n.name)) : projectNav;
+
+  const openSearchHit = (section: string, field: string | null) => {
+    setActiveSection(section);
+    setJumpKey(field);
+  };
+
+  // Scroll to and flash the field a search result points at.
+  useEffect(() => {
+    if (!jumpKey) return;
+    const el = contentRef.current?.querySelector<HTMLElement>(`[data-config-key="${CSS.escape(jumpKey)}"]`);
+    setJumpKey(null);
+    if (!el) return;
+    el.scrollIntoView({ block: "center" });
+    el.animate?.([{ backgroundColor: colors.hoverBg }, { backgroundColor: "transparent" }], { duration: 1600, easing: "ease-out" });
+  }, [jumpKey, activeSection, colors.hoverBg]);
 
   const headerBtnStyle = buildHeaderBtnStyle(colors);
   const hoverIn = (e: React.MouseEvent<HTMLButtonElement>) => {
@@ -439,32 +480,36 @@ export function Settings({
               padding: "8px 0",
             }}
           >
+            <SettingsSearchInput colors={colors} value={navQuery} onChange={setNavQuery} />
+
             {/* Global group */}
-            <NavGroupLabel colors={colors}>Global</NavGroupLabel>
-            {[...HARDCODED_GLOBAL, ...globalSchemaSections].map((name) => (
-              <NavButton key={name} name={name} active={activeSection === name} colors={colors} onClick={() => setActiveSection(name)} />
+            {visibleGlobalNav.length > 0 && <NavGroupLabel colors={colors}>Global</NavGroupLabel>}
+            {visibleGlobalNav.map((n) => (
+              <NavEntry key={n.id} id={n.id} name={n.name} activeSection={activeSection} hits={globalHits?.get(n.name)} colors={colors} onOpen={openSearchHit} />
             ))}
-            {globalConfig && <NavButton name="JSON" active={activeSection === "__global_json__"} colors={colors} onClick={() => setActiveSection("__global_json__")} />}
-            {globalConfig && <NavButton name="History" active={activeSection === "__global_history__"} colors={colors} onClick={() => setActiveSection("__global_history__")} />}
 
             {/* Project group */}
-            {projectSchemaSections.length > 0 && (
+            {visibleProjectNav.length > 0 && (
               <>
                 <div style={{ height: 1, backgroundColor: colors.border, margin: "8px 12px" }} />
                 <NavGroupLabel colors={colors}>Project</NavGroupLabel>
-                {projectSchemaSections.map((name) => (
-                  <NavButton key={`proj_${name}`} name={name} active={activeSection === `__proj_${name}`} colors={colors} onClick={() => setActiveSection(`__proj_${name}`)} />
+                {visibleProjectNav.map((n) => (
+                  <NavEntry key={n.id} id={n.id} name={n.name} activeSection={activeSection} hits={projectHits?.get(n.name)} colors={colors} onOpen={openSearchHit} />
                 ))}
-                {channelId && <NavButton name="Plugins" active={activeSection === "__project_plugins__"} colors={colors} onClick={() => setActiveSection("__project_plugins__")} />}
-                <NavButton name="JSON" active={activeSection === "__project_json__"} colors={colors} onClick={() => setActiveSection("__project_json__")} />
-                <NavButton name="History" active={activeSection === "__project_history__"} colors={colors} onClick={() => setActiveSection("__project_history__")} />
               </>
+            )}
+
+            {visibleGlobalNav.length === 0 && visibleProjectNav.length === 0 && (
+              <div data-testid="settings-search-empty" style={{ fontSize: 11, color: colors.textDim, padding: "6px 16px" }}>
+                No matching settings
+              </div>
             )}
           </div>
         )}
 
         {/* Right: section content */}
         <div
+          ref={contentRef}
           style={{
             flex: 1,
             display: "flex",
@@ -753,6 +798,94 @@ function NavGroupLabel({ colors, children }: { colors: ColorPalette; children: R
     >
       {children}
     </div>
+  );
+}
+
+function SettingsSearchInput({ colors, value, onChange }: { colors: ColorPalette; value: string; onChange: (v: string) => void }) {
+  return (
+    <div style={{ padding: "0 8px 6px" }}>
+      <input
+        data-testid="settings-search"
+        type="search"
+        value={value}
+        placeholder="Search settings"
+        spellCheck={false}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape" && value) {
+            e.stopPropagation();
+            onChange("");
+          }
+        }}
+        style={{
+          width: "100%",
+          boxSizing: "border-box",
+          padding: "4px 8px",
+          fontSize: 11,
+          fontFamily: "inherit",
+          color: colors.text,
+          backgroundColor: colors.bg,
+          border: `1px solid ${colors.border}`,
+          borderRadius: 5,
+          outline: "none",
+        }}
+      />
+    </div>
+  );
+}
+
+// NavEntry is a sidebar section, and while searching, the keys inside it
+// that matched; clicking a key opens the section on that field.
+function NavEntry({
+  id,
+  name,
+  activeSection,
+  hits,
+  colors,
+  onOpen,
+}: {
+  id: string;
+  name: string;
+  activeSection: string;
+  hits?: SettingsKeyMatch[];
+  colors: ColorPalette;
+  onOpen: (section: string, field: string | null) => void;
+}) {
+  return (
+    <>
+      <NavButton name={name} active={activeSection === id} colors={colors} onClick={() => onOpen(id, null)} />
+      {hits?.map((h) => (
+        <button
+          key={h.path}
+          data-testid={`settings-search-hit-${h.path}`}
+          title={h.path}
+          onClick={() => onOpen(id, h.field)}
+          style={{
+            display: "block",
+            width: "100%",
+            textAlign: "left",
+            padding: "2px 16px 2px 26px",
+            border: "none",
+            background: "transparent",
+            color: colors.textDim,
+            fontSize: 10,
+            fontFamily: fonts.mono,
+            cursor: "pointer",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color = colors.text;
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = colors.textDim;
+          }}
+        >
+          {h.path}
+        </button>
+      ))}
+    </>
   );
 }
 
