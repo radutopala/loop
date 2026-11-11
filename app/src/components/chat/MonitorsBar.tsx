@@ -6,6 +6,7 @@ import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import { logErr } from "../../utils/log";
 import { elapsed } from "../../utils/workflowHelpers";
+import { HoverTip } from "./HoverTip";
 import { applyMonitorEvent } from "./monitorEvents";
 
 interface MonitorsBarProps {
@@ -69,7 +70,6 @@ export function MonitorsBar({ channelId, subscribeChatEvents, wsOpens }: Monitor
         <div
           key={m.id}
           data-testid="monitor-row"
-          title={m.command}
           style={{
             display: "flex",
             alignItems: "center",
@@ -88,8 +88,13 @@ export function MonitorsBar({ channelId, subscribeChatEvents, wsOpens }: Monitor
           }}
         >
           <span style={{ color: colors.textDim }}>Monitoring</span>
-          <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: colors.text }}>{m.description}</span>
-          <span style={{ fontFamily: fonts.mono, color: colors.textDim }}>{elapsed(m.started_at, null)}</span>
+          {/* The watch script shows on hover, as the composer's tips do. */}
+          <HoverTip text={`${m.description || "Monitor"}\n${m.command}`} shrink mono width={420}>
+            <span data-testid="monitor-description" style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: colors.text }}>
+              {m.description}
+            </span>
+          </HoverTip>
+          <span style={{ marginLeft: "auto", fontFamily: fonts.mono, color: colors.textDim }}>{elapsed(m.started_at, null)}</span>
           <button
             data-testid="monitor-cancel"
             onClick={() => cancel(m.id)}

@@ -5,6 +5,7 @@ import { fonts } from "../../theme";
 import type { BackgroundTask } from "../../types";
 import { logErr } from "../../utils/log";
 import { elapsed } from "../../utils/workflowHelpers";
+import { HoverTip } from "./HoverTip";
 import { taskTypeLabel } from "./liveSession";
 
 interface BackgroundTasksBarProps {
@@ -51,7 +52,6 @@ export function BackgroundTasksBar({ channelId, tasks, stoppable }: BackgroundTa
         <div
           key={t.id || i}
           data-testid="background-task-row"
-          title={t.description}
           style={{
             display: "flex",
             alignItems: "center",
@@ -70,8 +70,13 @@ export function BackgroundTasksBar({ channelId, tasks, stoppable }: BackgroundTa
           }}
         >
           <span style={{ color: colors.textDim }}>{taskTypeLabel(t.type)}</span>
-          <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: colors.text }}>{t.description || "Background task"}</span>
-          <span data-testid="background-task-elapsed" style={{ fontFamily: fonts.mono, color: colors.textDim }}>
+          {/* The whole command shows on hover, as the composer's tips do. */}
+          <HoverTip text={t.description ? `${taskTypeLabel(t.type)}\n${t.description}` : ""} shrink mono width={420}>
+            <span data-testid="background-task-description" style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: colors.text }}>
+              {t.description || "Background task"}
+            </span>
+          </HoverTip>
+          <span data-testid="background-task-elapsed" style={{ marginLeft: "auto", fontFamily: fonts.mono, color: colors.textDim }}>
             {elapsed(t.started_at, null)}
           </span>
           {stoppable && t.id && (

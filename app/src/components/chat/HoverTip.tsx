@@ -13,9 +13,10 @@ const MARGIN = 8;
  * popovers. The first line is the heading; the rest wraps below it. It
  * renders on the body, kept inside the window, so a pane's edge can't cut it.
  * With `shrink` the anchor gives up width like its child would, for a pill
- * whose label ellipsises.
+ * whose label ellipsises. With `mono` the lines below the heading are code,
+ * such as a command, in the monospace font and `width` pixels wide.
  */
-export function HoverTip({ text, shrink, children }: { text: string; shrink?: boolean; children: ReactNode }) {
+export function HoverTip({ text, shrink, mono, width = WIDTH, children }: { text: string; shrink?: boolean; mono?: boolean; width?: number; children: ReactNode }) {
   const { colors } = useTheme();
   const [at, setAt] = useState<{ left: number; bottom: number } | null>(null);
   const anchor = useRef<HTMLSpanElement>(null);
@@ -24,12 +25,13 @@ export function HoverTip({ text, shrink, children }: { text: string; shrink?: bo
 
   const show = () => {
     window.clearTimeout(timer.current);
+    if (!text) return;
     timer.current = window.setTimeout(() => {
       const r = anchor.current?.getBoundingClientRect();
       if (!r) return;
-      const centred = r.left + r.width / 2 - WIDTH / 2;
+      const centred = r.left + r.width / 2 - width / 2;
       setAt({
-        left: Math.max(MARGIN, Math.min(centred, window.innerWidth - WIDTH - MARGIN)),
+        left: Math.max(MARGIN, Math.min(centred, window.innerWidth - width - MARGIN)),
         bottom: window.innerHeight - r.top + 6,
       });
     }, SHOW_DELAY_MS);
@@ -53,7 +55,7 @@ export function HoverTip({ text, shrink, children }: { text: string; shrink?: bo
               left: at.left,
               bottom: at.bottom,
               zIndex: 1000,
-              width: WIDTH,
+              width,
               padding: "6px 8px",
               backgroundColor: colors.surface,
               border: `1px solid ${colors.border}`,
@@ -64,12 +66,14 @@ export function HoverTip({ text, shrink, children }: { text: string; shrink?: bo
               fontFamily: fonts.sans,
               fontSize: 11,
               lineHeight: 1.4,
-              whiteSpace: "pre-line",
+              whiteSpace: mono ? "pre-wrap" : "pre-line",
+              // A long path or URL wraps instead of running out of the box.
+              overflowWrap: "anywhere",
               pointerEvents: "none",
             }}
           >
             <span style={{ display: "block", color: colors.text, fontWeight: 600, marginBottom: rest.length ? 2 : 0 }}>{heading}</span>
-            {rest.join("\n")}
+            {mono ? <span style={{ fontFamily: fonts.mono }}>{rest.join("\n")}</span> : rest.join("\n")}
           </span>,
           document.body,
         )}
