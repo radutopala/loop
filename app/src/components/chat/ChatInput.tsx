@@ -4,6 +4,7 @@ import { fetchShortcuts, type PromptShortcut } from "../../api/configApi";
 import { type FileSearchResult, type RootEntry, searchFiles } from "../../api/files";
 import { resolveGateApproval, sendCommand, sendMessage } from "../../api/loopApi";
 import { ShortcutsVersionContext } from "../../hooks/shortcutsVersion";
+import { useDictation } from "../../hooks/useDictation";
 import type { QueuedEditSaveResult } from "../../hooks/useQueuedEdit";
 import { useTheme } from "../../ThemeContext";
 import type { ColorPalette } from "../../theme";
@@ -16,6 +17,7 @@ import { ComposerSwitchPills } from "./ComposerSwitchPills";
 import { ContinueIcon } from "./ContinueIcon";
 import { draftText } from "./chatDrafts";
 import { composerHeight, composerMaxHeight } from "./composerHeight";
+import { DictationBanner, DictationMicButton } from "./DictationControls";
 import { ExplainToggle } from "./ExplainToggle";
 import { HoverTip } from "./HoverTip";
 import { LearnToggle } from "./LearnToggle";
@@ -326,6 +328,16 @@ export function ChatInput({
   }
   const effectiveIsRunning = isRunning && !stoppedOptimistic;
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // Dictated text lands in the composer like typed text, draft included.
+  const setDictatedText = useCallback(
+    (val: string) => {
+      setText(val);
+      if (val) draftText.set(channelId, val);
+      else draftText.delete(channelId);
+    },
+    [channelId],
+  );
+  const dictation = useDictation(inputRef, setDictatedText);
   const cmdDropdownRef = useRef<HTMLDivElement>(null);
   const shortcutDropdownRef = useRef<HTMLDivElement>(null);
 
@@ -1219,13 +1231,16 @@ export function ChatInput({
           </div>
         </div>
       )}
+      <DictationBanner d={dictation} />
       <textarea
         ref={inputRef}
         style={{ ...styles.textarea, width: "100%" }}
         value={text}
         onChange={handleChange}
-        onKeyDown={handleKeyDown}
+        // While dictating the text is the dictation's: keys don't edit or send it.
+        onKeyDown={dictation.busy ? undefined : handleKeyDown}
         onKeyUp={handleKeyUp}
+        readOnly={dictation.busy}
         onMouseDown={cancelModifierTap}
         onBlur={cancelModifierTap}
         onPaste={handlePaste}
@@ -1297,6 +1312,7 @@ export function ChatInput({
           </HoverTip>
         )}
         <div style={{ flex: 1 }} />
+        <DictationMicButton d={dictation} />
         <LearnToggle />
         <ExplainToggle />
         <ComposerSwitchPills />

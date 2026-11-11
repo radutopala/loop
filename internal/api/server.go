@@ -167,6 +167,7 @@ type Server struct {
 	newBackupKey            func() (*age.X25519Identity, error)   // generates the backups' key pair
 	messages                MessageSender
 	memoryIndexer           MemoryIndexer
+	dictation               DictationService // runs voice dictation; nil disables /api/dictation/*
 	termManager             TerminalManager
 	hostTermManager         TerminalManager
 	cmdBuilder              InteractiveCmdBuilder
@@ -698,6 +699,9 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/browser/profile/reset", s.browser.handleBrowserProfileReset)
 	mux.HandleFunc("GET /api/browser/cookies/sources", s.browser.handleBrowserCookieSources)
 	mux.HandleFunc("POST /api/browser/cookies/import", s.browser.handleBrowserCookieImport)
+	mux.HandleFunc("GET /api/dictation/status", s.handleDictationStatus)
+	mux.HandleFunc("POST /api/dictation/model", s.handleDictationModel)
+	mux.HandleFunc("GET /api/dictation/stream", s.handleDictationStream)
 	mux.HandleFunc("GET /api/config/schema", s.handleConfigSchema)
 	mux.HandleFunc("GET /api/config", s.handleGetConfig)
 	mux.HandleFunc("PUT /api/config", s.handleSaveConfig)

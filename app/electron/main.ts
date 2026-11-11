@@ -3,8 +3,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell, systemPreferences } from "electron";
 import { autoUpdater } from "electron-updater";
+import { allowPermissionCheck, allowPermissionRequest, isAppEntryURL } from "./mediaPermission";
 import { allowFrameNavigation } from "./pluginFrameGuard";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -330,19 +331,6 @@ function isExternalURL(url: string): boolean {
   try {
     const { protocol } = new URL(url);
     return protocol === "http:" || protocol === "https:" || protocol === "mailto:";
-  } catch {
-    return false;
-  }
-}
-
-/** Whether url is the app's own page: the entry URL, whatever its hash (the app routes by hash). */
-function isAppEntryURL(url: string, entryURL: string): boolean {
-  try {
-    const target = new URL(url);
-    const entry = new URL(entryURL);
-    target.hash = "";
-    entry.hash = "";
-    return target.href === entry.href;
   } catch {
     return false;
   }
@@ -678,7 +666,17 @@ function setupAutoUpdater() {
   );
 }
 
+/** Narrows media permissions to the microphone for the app's own page
+ *  (dictation); everything else stays granted as by Electron's default. */
+function setupPermissionHandlers() {
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback, details) => {
+    callback(allowPermissionRequest(permission, details, appEntryURL));
+  });
+  session.defaultSession.setPermissionCheckHandler((_wc, permission, _origin, details) => allowPermissionCheck(permission, details, appEntryURL));
+}
+
 app.on("ready", async () => {
+  setupPermissionHandlers();
   buildMenu();
   if (!VITE_DEV_SERVER_URL) {
     await ensureDaemon();
@@ -917,6 +915,15 @@ ipcMain.handle("onboard-local", async (_event, dirPath: string) => {
   } catch (err) {
     return { ok: false, error: String(err) };
   }
+});
+
+// Microphone access for dictation. macOS asks the user once per app (with
+// ask, when still undecided); elsewhere the OS doesn't gate it here.
+ipcMain.handle("microphone-access", async (_event, ask?: boolean) => {
+  if (process.platform !== "darwin") return "granted";
+  const status = systemPreferences.getMediaAccessStatus("microphone");
+  if (status !== "not-determined" || !ask) return status;
+  return (await systemPreferences.askForMediaAccess("microphone")) ? "granted" : "denied";
 });
 
 ipcMain.handle("get-api-url", () => {

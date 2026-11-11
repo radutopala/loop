@@ -344,6 +344,29 @@ type PprofConfig struct {
 	Addr    string `json:"addr"`
 }
 
+// DictationConfig configures live dictation in the app's composer: speech is
+// transcribed on the host by a local whisper-server the daemon starts on
+// first use and stops after IdleStopSec without requests. Global only.
+type DictationConfig struct {
+	// Model names the whisper model file, ggml-<model>.bin under
+	// ~/.loop/models.
+	Model string `json:"model"`
+	// Language is a whisper language code, or "auto" to detect it.
+	Language string `json:"language"`
+	// IdleStopSec is how long whisper-server stays up without a request.
+	IdleStopSec int `json:"idle_stop_sec"`
+	// Threads is whisper-server's CPU thread count; 0 picks one from the
+	// machine's core count.
+	Threads int `json:"threads"`
+}
+
+// Dictation defaults.
+const (
+	DefaultDictationModel       = "large-v3-turbo-q5_0"
+	DefaultDictationLanguage    = "auto"
+	DefaultDictationIdleStopSec = 300
+)
+
 // DefaultPprofAddr is where the pprof listener binds when pprof.addr is unset:
 // loopback only, since the profiles show the daemon's command line and code.
 const DefaultPprofAddr = "127.0.0.1:6060"
@@ -654,6 +677,7 @@ type Config struct {
 	PR                         PRConfig
 	Backup                     BackupConfig
 	Pprof                      PprofConfig
+	Dictation                  DictationConfig
 	Learn                      LearnConfig
 	Explain                    ExplainConfig
 	Plugins                    PluginsConfig

@@ -819,6 +819,10 @@ func (a *app) serve() error {
 		}
 	}
 
+	dictationSvc, whisperServer := newDictation(ctx, cfg, reloadConfig, a.httpTransport, logger)
+	apiSrv.SetDictation(dictationSvc)
+	go whisperServer.RunIdleMonitor(ctx, 30*time.Second)
+
 	eventsHub := api.NewEventsHub(logger)
 	apiSrv.SetEventsHub(eventsHub)
 	if ns, ok := store.(api.NotificationStore); ok {

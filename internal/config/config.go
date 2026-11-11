@@ -78,6 +78,7 @@ type jsonConfig struct {
 	Plugins                    *PluginsConfig             `json:"plugins"`
 	Backup                     *jsonBackupConfig          `json:"backup"`
 	Pprof                      *PprofConfig               `json:"pprof"`
+	Dictation                  *DictationConfig           `json:"dictation"`
 }
 
 // jsonMemoryConfig is the JSON representation of the memory block.
@@ -496,6 +497,14 @@ func (l *Loader) parse() (*Config, error) {
 
 	pprof := cmp.Or(jc.Pprof, &PprofConfig{})
 	cfg.Pprof = PprofConfig{Enabled: pprof.Enabled, Addr: cmp.Or(strings.TrimSpace(pprof.Addr), DefaultPprofAddr)}
+
+	dictation := cmp.Or(jc.Dictation, &DictationConfig{})
+	cfg.Dictation = DictationConfig{
+		Model:       cmp.Or(strings.TrimSpace(dictation.Model), DefaultDictationModel),
+		Language:    cmp.Or(strings.TrimSpace(dictation.Language), DefaultDictationLanguage),
+		IdleStopSec: cmp.Or(max(dictation.IdleStopSec, 0), DefaultDictationIdleStopSec),
+		Threads:     max(dictation.Threads, 0),
+	}
 
 	learn := cmp.Or(jc.Learn, &jsonLearnConfig{})
 	cfg.Learn = LearnConfig{

@@ -71,6 +71,19 @@ func Models() []string {
 }
 
 // modelEnum lists the models offered by the settings form; "" means no override.
+// DictationModels lists the whisper models live dictation can download.
+func DictationModels() []string {
+	return []string{DefaultDictationModel, "large-v3-turbo"}
+}
+
+func dictationModelEnum() []any {
+	enum := []any{}
+	for _, m := range DictationModels() {
+		enum = append(enum, m)
+	}
+	return enum
+}
+
 func modelEnum() []any {
 	enum := []any{""}
 	for _, m := range Models() {
@@ -529,6 +542,45 @@ func buildSchema(goos string) *ConfigSchema {
 						Default:      DefaultPprofAddr,
 						XPlaceholder: DefaultPprofAddr,
 						XOrder:       2,
+					},
+				},
+			},
+
+			// ── Dictation section (nested object) ──
+			"dictation": {
+				Type:        "object",
+				XSection:    "Dictation",
+				XGlobalOnly: true,
+				Properties: map[string]*SchemaProperty{
+					"model": {
+						Type:        "string",
+						Title:       "Model",
+						Description: "The whisper model live dictation transcribes with. It is downloaded to ~/.loop/models on first use; the quantized q5_0 model is a third of the size with the same accuracy.",
+						Enum:        dictationModelEnum(),
+						Default:     DefaultDictationModel,
+						XOrder:      1,
+					},
+					"language": {
+						Type:         "string",
+						Title:        "Language",
+						Description:  "The language you dictate in, as a whisper language code such as en or ro, or auto to detect it.",
+						Default:      DefaultDictationLanguage,
+						XPlaceholder: DefaultDictationLanguage,
+						XOrder:       2,
+					},
+					"idle_stop_sec": {
+						Type:        "integer",
+						Title:       "Idle Stop (seconds)",
+						Description: "How long the transcriber stays loaded after the last dictation. Starting it again takes a second or two.",
+						Default:     DefaultDictationIdleStopSec,
+						XOrder:      3,
+					},
+					"threads": {
+						Type:        "integer",
+						Title:       "Threads",
+						Description: "CPU threads the transcriber uses; 0 picks one from the number of cores.",
+						Default:     0,
+						XOrder:      4,
 					},
 				},
 			},

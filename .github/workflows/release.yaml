@@ -44,8 +44,15 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
+  # whisper-server (dictation engine) for every app target, smoke-tested;
+  # bundled next to loop in each app's Resources/bin.
+  whisper:
+    uses: ./.github/workflows/whisper.yaml
+    with:
+      ref: ${{ inputs.tag || github.ref_name }}
+
   electron-darwin:
-    needs: goreleaser
+    needs: [goreleaser, whisper]
     runs-on: macos-26
     strategy:
       matrix:
@@ -72,6 +79,15 @@ jobs:
           # though the file is there.
           curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "/tmp/$ARCHIVE" "https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/$ARCHIVE"
           tar -xzf "/tmp/$ARCHIVE" -C app/resources/mac/${{ matrix.arch }}
+
+      - name: Download whisper-server build
+        uses: actions/download-artifact@v8
+        with:
+          name: whisper-server-mac-${{ matrix.arch }}
+          path: whisper-artifact
+
+      - name: Add whisper-server next to loop
+        run: tar -xzf whisper-artifact/whisper-server-mac-${{ matrix.arch }}.tar.gz -C app/resources/mac/${{ matrix.arch }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -120,7 +136,7 @@ jobs:
           path: app/release/latest-mac.yml
 
   electron-linux:
-    needs: goreleaser
+    needs: [goreleaser, whisper]
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -147,6 +163,15 @@ jobs:
           # though the file is there.
           curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "/tmp/$ARCHIVE" "https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/$ARCHIVE"
           tar -xzf "/tmp/$ARCHIVE" -C app/resources/linux/${{ matrix.arch }}
+
+      - name: Download whisper-server build
+        uses: actions/download-artifact@v8
+        with:
+          name: whisper-server-linux-${{ matrix.arch }}
+          path: whisper-artifact
+
+      - name: Add whisper-server next to loop
+        run: tar -xzf whisper-artifact/whisper-server-linux-${{ matrix.arch }}.tar.gz -C app/resources/linux/${{ matrix.arch }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -177,7 +202,7 @@ jobs:
           path: app/release/latest-linux.yml
 
   electron-windows:
-    needs: goreleaser
+    needs: [goreleaser, whisper]
     runs-on: windows-latest
     strategy:
       matrix:
@@ -205,6 +230,16 @@ jobs:
           # though the file is there.
           curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "$RUNNER_TEMP/$ARCHIVE" "https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/$ARCHIVE"
           unzip "$RUNNER_TEMP/$ARCHIVE" -d app/resources/win/${{ matrix.arch }}
+
+      - name: Download whisper-server build
+        uses: actions/download-artifact@v8
+        with:
+          name: whisper-server-win-${{ matrix.arch }}
+          path: whisper-artifact
+
+      - name: Add whisper-server next to loop
+        shell: bash
+        run: tar -xzf whisper-artifact/whisper-server-win-${{ matrix.arch }}.tar.gz -C app/resources/win/${{ matrix.arch }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v7

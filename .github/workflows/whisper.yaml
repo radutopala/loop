@@ -1,0 +1,186 @@
+name: whisper-server
+
+# Builds whisper.cpp's whisper-server for every desktop target the Electron
+# app ships, smoke-tests each build on a native runner, and uploads one
+# artifact per target, whisper-server-<os>-<arch> (a .tar.gz of the files that
+# go next to loop in app/resources/<os>/<arch>/). The build script pins the
+# whisper.cpp version; builds are cached by the script's hash.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: "Git ref to build from (default: the triggering ref)"
+        type: string
+        required: false
+        default: ""
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - scripts/build-whisper-server.sh
+      - scripts/smoke-whisper-server.sh
+      - .github/workflows/whisper.yaml
+  # Runs on main seed the build cache that release (tag) runs restore.
+  push:
+    branches: [main]
+    paths:
+      - scripts/build-whisper-server.sh
+      - scripts/smoke-whisper-server.sh
+      - .github/workflows/whisper.yaml
+
+permissions:
+  contents: read
+
+env:
+  # Smoke-test model and audio, verified by checksum.
+  SMOKE_MODEL_URL: https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin
+  SMOKE_MODEL_SHA256: 921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f
+  SMOKE_AUDIO_SHA256: 59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e
+
+jobs:
+  build:
+    name: build ${{ matrix.os }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: mac, arch: arm64, runner: macos-26 }
+          # Cross-built on the arm64 runner.
+          - { os: mac, arch: x64, runner: macos-26 }
+          - { os: linux, arch: x64, runner: ubuntu-24.04 }
+          - { os: linux, arch: arm64, runner: ubuntu-24.04-arm }
+          - { os: win, arch: x64, runner: windows-2025 }
+          - { os: win, arch: arm64, runner: windows-11-arm }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Restore cached build
+        id: cache
+        uses: actions/cache@v6
+        with:
+          path: whisper-out
+          key: whisper-server-${{ matrix.os }}-${{ matrix.arch }}-${{ hashFiles('scripts/build-whisper-server.sh') }}
+
+      - name: Set up MSVC
+        if: matrix.os == 'win' && steps.cache.outputs.cache-hit != 'true'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }}
+
+      - name: Install Ninja
+        if: matrix.os == 'win' && steps.cache.outputs.cache-hit != 'true'
+        run: command -v ninja || choco install ninja -y --no-progress
+
+      - name: Build
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          WHISPER_WORK_DIR: ${{ runner.temp }}/whisper-work
+        run: scripts/build-whisper-server.sh --os ${{ matrix.os }} --arch ${{ matrix.arch }} --out whisper-out
+
+      - name: Check the build
+        run: |
+          ls -l whisper-out
+          case "${{ matrix.os }}" in
+            mac)
+              file whisper-out/whisper-server
+              # Only system frameworks and libraries.
+              otool -L whisper-out/whisper-server
+              if otool -L whisper-out/whisper-server | tail -n +2 | grep -Ev '^[[:space:]]+(/System/Library/|/usr/lib/)'; then
+                echo "unexpected non-system library dependency"; exit 1
+              fi
+              ;;
+            linux)
+              readelf -d whisper-out/whisper-server | grep -E 'NEEDED|RUNPATH|RPATH'
+              # glibc 2.28 is the floor the manylinux_2_28 build targets.
+              max="$(objdump -T whisper-out/whisper-server whisper-out/*.so* | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)"
+              echo "highest glibc symbol version: $max"
+              [ "$(printf '%s\n' "$max" GLIBC_2.28 | sort -V | tail -1)" = GLIBC_2.28 ]
+              ;;
+          esac
+
+      - name: Pack
+        run: tar -czf whisper-server-${{ matrix.os }}-${{ matrix.arch }}.tar.gz -C whisper-out .
+
+      - name: Upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: whisper-server-${{ matrix.os }}-${{ matrix.arch }}
+          path: whisper-server-${{ matrix.os }}-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+
+  smoke:
+    name: smoke ${{ matrix.os }}-${{ matrix.arch }}
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: mac, arch: arm64, runner: macos-26 }
+          # Runs under Rosetta 2.
+          - { os: mac, arch: x64, runner: macos-26 }
+          - { os: linux, arch: x64, runner: ubuntu-24.04 }
+          - { os: linux, arch: arm64, runner: ubuntu-24.04-arm }
+          - { os: win, arch: x64, runner: windows-2025 }
+          - { os: win, arch: arm64, runner: windows-11-arm }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Download build
+        uses: actions/download-artifact@v8
+        with:
+          name: whisper-server-${{ matrix.os }}-${{ matrix.arch }}
+          path: whisper-artifact
+
+      - name: Unpack build
+        run: |
+          mkdir -p whisper-bin
+          tar -xzf whisper-artifact/whisper-server-${{ matrix.os }}-${{ matrix.arch }}.tar.gz -C whisper-bin
+          ls -l whisper-bin
+
+      - name: Restore smoke-test model
+        id: model-cache
+        uses: actions/cache@v6
+        with:
+          path: smoke
+          key: whisper-smoke-${{ env.SMOKE_MODEL_SHA256 }}-${{ env.SMOKE_AUDIO_SHA256 }}
+
+      - name: Download smoke-test model and audio
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p smoke
+          version="$(scripts/build-whisper-server.sh --print-version)"
+          curl -fsSL --retry 5 -o smoke/ggml-tiny.en.bin "$SMOKE_MODEL_URL"
+          curl -fsSL --retry 5 -o smoke/jfk.wav "https://raw.githubusercontent.com/ggml-org/whisper.cpp/$version/samples/jfk.wav"
+
+      - name: Verify smoke-test files
+        run: |
+          check() { [ "$( (sha256sum "$1" 2>/dev/null || shasum -a 256 "$1") | cut -d' ' -f1)" = "$2" ] || { echo "checksum mismatch: $1"; exit 1; }; }
+          check smoke/ggml-tiny.en.bin "$SMOKE_MODEL_SHA256"
+          check smoke/jfk.wav "$SMOKE_AUDIO_SHA256"
+
+      - name: Install Rosetta 2
+        if: matrix.os == 'mac' && matrix.arch == 'x64'
+        run: /usr/sbin/softwareupdate --install-rosetta --agree-to-license || true
+
+      - name: Smoke test
+        run: scripts/smoke-whisper-server.sh --bin whisper-bin --model smoke/ggml-tiny.en.bin --audio smoke/jfk.wav --expect country
+
+      # The oldest glibc the build targets, with no Vulkan loader installed:
+      # the server must still start and transcribe on the CPU backends.
+      - name: Smoke test on glibc 2.28 without a Vulkan loader
+        if: matrix.os == 'linux'
+        run: scripts/smoke-whisper-server.sh --bin whisper-bin --model smoke/ggml-tiny.en.bin --audio smoke/jfk.wav --expect country --docker almalinux:8
