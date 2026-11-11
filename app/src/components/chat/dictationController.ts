@@ -3,7 +3,7 @@ import { type HoldKey, type HoldTimers, HoldToTalk } from "./dictationHold";
 import type { DictationAvailability } from "./dictationModel";
 import { pcmLevel } from "./dictationPcm";
 import { DictationStream, type SocketLike } from "./dictationStream";
-import { type ComposerSnapshot, previewDictation, spliceDictation } from "./dictationText";
+import { type ComposerSnapshot, previewDictation, spliceDictation, stripSendPhrase } from "./dictationText";
 
 /** The OS's answer on microphone access (macOS asks once per app). */
 export type MicAccess = "granted" | "denied" | "not-determined" | "restricted" | "unknown";
@@ -32,6 +32,10 @@ export interface DictationDeps {
   availability(): DictationAvailability;
   /** Asks the daemon for the dictation status again. */
   refresh(): Promise<void>;
+  /** Phrases that, said last, send the message (dictation.send_phrases). */
+  sendPhrases(): readonly string[];
+  /** Sends the composer's message, once the final text is written. */
+  send(): void;
   onState(s: DictationUiState): void;
   timers?: HoldTimers;
 }
@@ -48,7 +52,8 @@ function isPermissionError(err: unknown): boolean {
  * the stream opens once the hold counts. Partials replace the dictated span
  * live, with the tentative tail selected so it stands apart; the final text
  * takes its place and the caret goes after it. A cancel puts the composer
- * back as it was. Nothing is ever sent.
+ * back as it was. The message is sent only when the dictation ends with a
+ * send phrase, which is left out of it.
  */
 export class DictationController {
   readonly hold: HoldToTalk;
@@ -257,8 +262,10 @@ export class DictationController {
 
   private final(text: string): void {
     if (!this.base) return;
-    const out = spliceDictation(this.base, text);
+    const rest = stripSendPhrase(text, this.d.sendPhrases());
+    const out = spliceDictation(this.base, rest ?? text);
     this.d.write(out.text, out.to, out.to);
+    if (rest !== null) this.d.send();
   }
 
   private failed(code: string, message: string): void {

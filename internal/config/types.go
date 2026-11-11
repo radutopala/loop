@@ -356,6 +356,9 @@ type DictationConfig struct {
 	Model string `json:"model"`
 	// Language is a whisper language code, or "auto" to detect it.
 	Language string `json:"language"`
+	// SendPhrases are words that, said at the end of a dictation, are
+	// dropped and send the message. None by default.
+	SendPhrases []string `json:"send_phrases"`
 	// IdleStopSec is how long whisper-server stays up without a request.
 	IdleStopSec int `json:"idle_stop_sec"`
 	// Threads is whisper-server's CPU thread count; 0 picks one from the

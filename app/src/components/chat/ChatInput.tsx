@@ -337,7 +337,11 @@ export function ChatInput({
     },
     [channelId],
   );
-  const dictation = useDictation(inputRef, setDictatedText);
+  // A dictation ending with a send phrase sends once its text is rendered,
+  // so handleSend reads it.
+  const [dictationSend, setDictationSend] = useState(0);
+  const requestDictationSend = useCallback(() => setDictationSend((n) => n + 1), []);
+  const dictation = useDictation(inputRef, setDictatedText, requestDictationSend);
   const cmdDropdownRef = useRef<HTMLDivElement>(null);
   const shortcutDropdownRef = useRef<HTMLDivElement>(null);
 
@@ -654,6 +658,12 @@ export function ChatInput({
     },
     [channelId, text, sending, isLoopCommand, quotedMessage, onClearQuote, onSent, deliver, editingQueued, onSaveEdit, restoreParkedText, onDismissEditNotice],
   );
+
+  const handleSendRef = useRef(handleSend);
+  handleSendRef.current = handleSend;
+  useEffect(() => {
+    if (dictationSend) void handleSendRef.current();
+  }, [dictationSend]);
 
   const updateCommandDropdown = useCallback((val: string) => {
     const trimmed = val.trimStart();

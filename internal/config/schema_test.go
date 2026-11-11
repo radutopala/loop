@@ -184,7 +184,14 @@ func (s *SchemaSuite) TestDictationNestedObject() {
 	require.True(s.T(), prop.XGlobalOnly)
 	require.Equal(s.T(), []any{DefaultDictationModel, "large-v3-turbo"}, prop.Properties["model"].Enum)
 	require.Equal(s.T(), DefaultDictationModel, prop.Properties["model"].Default)
-	require.Equal(s.T(), DefaultDictationLanguage, prop.Properties["language"].Default)
+	lang := prop.Properties["language"]
+	require.Equal(s.T(), DefaultDictationLanguage, lang.Default)
+	require.Equal(s.T(), DefaultDictationLanguage, lang.Enum[0], "auto comes first")
+	require.Len(s.T(), lang.Enum, len(DictationLanguages())+1)
+	require.Contains(s.T(), lang.Enum, "ro")
+	require.Equal(s.T(), "Romanian (ro)", lang.XEnumLabels["ro"])
+	require.Equal(s.T(), "Detect automatically", lang.XEnumLabels[DefaultDictationLanguage])
+	require.Equal(s.T(), "array", prop.Properties["send_phrases"].Type)
 	require.Equal(s.T(), DefaultDictationIdleStopSec, prop.Properties["idle_stop_sec"].Default)
 	require.Equal(s.T(), 0, prop.Properties["threads"].Default)
 }

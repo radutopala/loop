@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { previewDictation, spliceDictation } from "./dictationText";
+import { previewDictation, spliceDictation, stripSendPhrase } from "./dictationText";
 
 describe("spliceDictation", () => {
   it.each([
@@ -51,5 +51,27 @@ describe("previewDictation", () => {
 
   it("is the original text before any words", () => {
     expect(previewDictation(base, "", "").text).toBe("Q: ?");
+  });
+});
+
+describe("stripSendPhrase", () => {
+  const phrases = ["send", "send it now", "trimite"];
+  it.each([
+    ["fix the bug send", "fix the bug"],
+    ["Fix the bug, Send.", "Fix the bug"],
+    ["Fix the bug. Send it now!", "Fix the bug."],
+    ["gata — trimite", "gata"],
+    ["TRIMIȚE", ""],
+    ["send", ""],
+  ])("%s → %s", (text, want) => {
+    expect(stripSendPhrase(text, phrases)).toBe(want);
+  });
+
+  it.each([["fix the bug"], ["send the fix"], ["resend"], [""], ["it now"]])("leaves %j alone", (text) => {
+    expect(stripSendPhrase(text, phrases)).toBeNull();
+  });
+
+  it("skips blank phrases and ones longer than the text", () => {
+    expect(stripSendPhrase("now", [" ", "send it now"])).toBeNull();
   });
 });

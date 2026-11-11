@@ -100,7 +100,7 @@ func (s *DictationHandlerSuite) TestDownloadModel() {
 	rec := s.serve("POST", "/api/dictation/model")
 
 	require.Equal(s.T(), http.StatusAccepted, rec.Code)
-	require.JSONEq(s.T(), `{"enabled":false,"available":false,"reason":"","model":"","model_ready":false,"model_size_bytes":0,"download":{"active":true,"error":"","received":0,"total":0},"running":false}`, rec.Body.String())
+	require.JSONEq(s.T(), `{"enabled":false,"available":false,"reason":"","model":"","model_ready":false,"model_size_bytes":0,"download":{"active":true,"error":"","received":0,"total":0},"running":false,"send_phrases":null}`, rec.Body.String())
 }
 
 func (s *DictationHandlerSuite) TestStreamNeedsWebSocket() {
@@ -179,11 +179,11 @@ func (s *DictationHandlerSuite) TestStreamBeginFails() {
 func (s *DictationHandlerSuite) TestStreamStop() {
 	var mu sync.Mutex
 	var heard []int16
-	transcribe := dictation.TranscribeFunc(func(_ context.Context, samples []int16, language, _ string) (string, error) {
+	transcribe := dictation.TranscribeFunc(func(_ context.Context, samples []int16, language, _ string) (dictation.Transcript, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		heard = samples
-		return " hello " + language, nil
+		return dictation.Transcript{Text: " hello " + language}, nil
 	})
 	s.svc.On("Begin", mock.Anything, "ro").Return(transcribe, nil)
 	s.svc.On("release").Return()

@@ -13,6 +13,8 @@ export interface SchemaProperty {
   title?: string;
   description?: string;
   enum?: any[];
+  /** Names for enum values in a dropdown. */
+  "x-enum-labels"?: Record<string, string>;
   default?: any;
   minimum?: number;
   maximum?: number;

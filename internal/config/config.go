@@ -503,6 +503,7 @@ func (l *Loader) parse() (*Config, error) {
 		Enabled:     dictation.Enabled,
 		Model:       cmp.Or(strings.TrimSpace(dictation.Model), DefaultDictationModel),
 		Language:    cmp.Or(strings.TrimSpace(dictation.Language), DefaultDictationLanguage),
+		SendPhrases: sendPhrases(dictation.SendPhrases),
 		IdleStopSec: cmp.Or(max(dictation.IdleStopSec, 0), DefaultDictationIdleStopSec),
 		Threads:     max(dictation.Threads, 0),
 	}
@@ -702,6 +703,17 @@ func stringifyEnvs(raw map[string]any) map[string]string {
 	out := make(map[string]string, len(raw))
 	for k, v := range raw {
 		out[k] = fmt.Sprintf("%v", v)
+	}
+	return out
+}
+
+// sendPhrases is the configured send phrases, trimmed, without blanks.
+func sendPhrases(in []string) []string {
+	var out []string
+	for _, p := range in {
+		if p = strings.Join(strings.Fields(p), " "); p != "" {
+			out = append(out, p)
+		}
 	}
 	return out
 }

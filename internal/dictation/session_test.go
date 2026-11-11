@@ -34,16 +34,18 @@ type call struct {
 	language, prompt string
 }
 
-// fakeTranscriber answers with texts in order, recording the calls.
+// fakeTranscriber answers with texts in order, recording the calls. A
+// pass's detected language comes from langs, in order, when it's set.
 type fakeTranscriber struct {
 	mu     sync.Mutex
 	texts  []string
+	langs  []Transcript
 	err    error
 	calls  []call
 	during func()
 }
 
-func (f *fakeTranscriber) transcribe(_ context.Context, samples []int16, language, prompt string) (string, error) {
+func (f *fakeTranscriber) transcribe(_ context.Context, samples []int16, language, prompt string) (Transcript, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, call{samples: len(samples), language: language, prompt: prompt})
@@ -51,11 +53,15 @@ func (f *fakeTranscriber) transcribe(_ context.Context, samples []int16, languag
 		f.during()
 	}
 	if f.err != nil {
-		return "", f.err
+		return Transcript{}, f.err
 	}
-	text := f.texts[0]
+	t := Transcript{Text: f.texts[0]}
 	f.texts = f.texts[1:]
-	return text, nil
+	if len(f.langs) > 0 {
+		t.Language, t.Probability = f.langs[0].Language, f.langs[0].Probability
+		f.langs = f.langs[1:]
+	}
+	return t, nil
 }
 
 type SessionSuite struct {
@@ -212,6 +218,9 @@ func (s *SessionSuite) TestStepError() {
 	require.EqualError(s.T(), s.sess.step(context.Background()), "boom")
 }
 
+// The final text is the whole recording transcribed again, without a
+// prompt; when that comes back empty, the live text and a pass over the
+// audio left after it.
 func (s *SessionSuite) TestFinalize() {
 	tests := []struct {
 		name  string
@@ -219,17 +228,24 @@ func (s *SessionSuite) TestFinalize() {
 		texts []string
 		err   error
 		want  Event
-		calls int
+		calls []call
 	}{
 		{
-			name:  "speech left",
+			name:  "whole recording again",
 			audio: speech(SampleRate),
-			texts: []string{"agreed more"},
-			want:  Event{Type: EventFinal, Text: "done agreed more"},
-			calls: 1,
+			texts: []string{" Done, agreed [BLANK_AUDIO] and more."},
+			want:  Event{Type: EventFinal, Text: "Done, agreed and more."},
+			calls: []call{{samples: SampleRate, language: "en"}},
 		},
 		{
-			name:  "only silence left",
+			name:  "empty pass keeps the live text",
+			audio: speech(SampleRate),
+			texts: []string{"[BLANK_AUDIO]", "agreed more"},
+			want:  Event{Type: EventFinal, Text: "done agreed more"},
+			calls: []call{{samples: SampleRate, language: "en"}, {samples: SampleRate, language: "en", prompt: "done"}},
+		},
+		{
+			name:  "only silence",
 			audio: silence(SampleRate),
 			want:  Event{Type: EventFinal, Text: "done agreed"},
 		},
@@ -238,7 +254,7 @@ func (s *SessionSuite) TestFinalize() {
 			audio: speech(SampleRate),
 			err:   errors.New("gone"),
 			want:  Event{Type: EventError, Code: CodeEngineFailed, Message: "gone"},
-			calls: 1,
+			calls: []call{{samples: SampleRate, language: "en"}},
 		},
 	}
 	for _, tc := range tests {
@@ -251,10 +267,83 @@ func (s *SessionSuite) TestFinalize() {
 			s.sess.finalize(context.Background())
 
 			require.Equal(s.T(), []Event{tc.want}, s.emitted())
-			require.Len(s.T(), s.tr.calls, tc.calls)
-			if tc.calls > 0 {
-				require.Equal(s.T(), "done", s.tr.calls[0].prompt)
+			require.Equal(s.T(), tc.calls, s.tr.calls)
+		})
+	}
+}
+
+// A recording too long to transcribe again keeps its live text; only the
+// audio left after it is transcribed.
+func (s *SessionSuite) TestFinalizeLongRecording() {
+	s.tr.texts = []string{"more", "unused"}
+	s.sess.Write(speech(maxFinalPass))
+	require.Len(s.T(), s.sess.all, maxFinalPass)
+	s.sess.Write(speech(1))
+	require.Nil(s.T(), s.sess.all)
+	s.sess.Write(speech(1))
+	require.Nil(s.T(), s.sess.all, "stays dropped")
+	s.sess.done, s.sess.audio = []string{"done"}, speech(SampleRate)
+
+	s.sess.finalize(context.Background())
+
+	require.Equal(s.T(), []Event{{Type: EventFinal, Text: "done more"}}, s.emitted())
+	require.Equal(s.T(), []call{{samples: SampleRate, language: "en", prompt: "done"}}, s.tr.calls)
+}
+
+func (s *SessionSuite) TestFinalizeLongRecordingFails() {
+	s.tr.err = errors.New("gone")
+	s.sess.long, s.sess.audio = true, speech(SampleRate)
+
+	s.sess.finalize(context.Background())
+
+	require.Equal(s.T(), []Event{{Type: EventError, Code: CodeEngineFailed, Message: "gone"}}, s.emitted())
+}
+
+// An auto session keeps to the first language a pass is sure of, so a later
+// short pass isn't decoded, and translated, as another one. A set language
+// is never changed.
+func (s *SessionSuite) TestLanguageLock() {
+	tests := []struct {
+		name     string
+		language string
+		langs    []Transcript
+		want     []string
+	}{
+		{
+			name:     "unsure, then sure",
+			language: "auto",
+			langs:    []Transcript{{Language: "spanish", Probability: 0.3}, {Language: "romanian", Probability: 0.99}, {Language: "english", Probability: 0.95}, {}},
+			want:     []string{"auto", "auto", "romanian", "romanian"},
+		},
+		{
+			name:     "nothing detected",
+			language: "auto",
+			langs:    []Transcript{{Probability: 1}, {}, {}, {}},
+			want:     []string{"auto", "auto", "auto", "auto"},
+		},
+		{
+			name:     "set language",
+			language: "ro",
+			langs:    []Transcript{{Language: "english", Probability: 1}, {}, {}, {}},
+			want:     []string{"ro", "ro", "ro", "ro"},
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			s.sess.language = tc.language
+			s.tr.texts, s.tr.langs = []string{"a", "a b", "a b c", "a b c d"}, tc.langs
+			for range 3 {
+				s.sess.Write(speech(minSamples))
+				require.NoError(s.T(), s.sess.step(context.Background()))
 			}
+			s.sess.finalize(context.Background())
+
+			var got []string
+			for _, c := range s.tr.calls {
+				got = append(got, c.language)
+			}
+			require.Equal(s.T(), tc.want, got)
 		})
 	}
 }
@@ -271,7 +360,8 @@ func (s *SessionSuite) run(ctx context.Context) <-chan struct{} {
 }
 
 func (s *SessionSuite) TestRunStreamsThenStops() {
-	s.tr.texts = []string{"hello", "hello there"}
+	// A pass may run between the last write and the stop.
+	s.tr.texts = []string{"hello", "hello there", "hello there"}
 	done := s.run(context.Background())
 	s.sess.Write(speech(minSamples))
 	require.Eventually(s.T(), func() bool { return len(s.emitted()) == 1 }, testWait, testTick)

@@ -11,6 +11,7 @@ function status(patch: Partial<DictationStatus> = {}, download: Partial<Dictatio
     model_ready: false,
     model_size_bytes: 574041195,
     running: false,
+    send_phrases: null,
     ...patch,
     download: { active: false, received: 0, total: 0, error: "", ...download },
   };

@@ -18,11 +18,11 @@ async function micAccess(ask: boolean): Promise<MicAccess> {
 /**
  * Push-to-talk dictation for one composer: the daemon's status and model
  * download, and a DictationController writing into the textarea through
- * setText. The hold key is watched on the window in the capture phase so its
+ * setText, and send for a dictation that ends with a send phrase. The hold key is watched on the window in the capture phase so its
  * release, Esc and other keys are seen wherever focus goes; a hold only
  * begins while this composer's textarea has focus.
  */
-export function useDictation(inputRef: RefObject<HTMLTextAreaElement | null>, setText: (text: string) => void) {
+export function useDictation(inputRef: RefObject<HTMLTextAreaElement | null>, setText: (text: string) => void, send?: () => void) {
   const [status, setStatus] = useState<DictationStatus | null>(null);
   const [ui, setUi] = useState<DictationUiState>(IDLE_DICTATION);
   const [downloading, setDownloading] = useState(false);
@@ -31,6 +31,8 @@ export function useDictation(inputRef: RefObject<HTMLTextAreaElement | null>, se
   statusRef.current = status;
   const setTextRef = useRef(setText);
   setTextRef.current = setText;
+  const sendRef = useRef(send);
+  sendRef.current = send;
   const mounted = useRef(true);
 
   const ctrlRef = useRef<DictationController | null>(null);
@@ -57,6 +59,8 @@ export function useDictation(inputRef: RefObject<HTMLTextAreaElement | null>, se
       refresh: async () => {
         await refreshRef.current();
       },
+      sendPhrases: () => statusRef.current?.send_phrases ?? [],
+      send: () => sendRef.current?.(),
       onState: (s) => {
         if (mounted.current) setUi(s);
       },

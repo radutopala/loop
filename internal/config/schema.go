@@ -8,10 +8,12 @@ import (
 
 // SchemaProperty describes a single configuration field for UI rendering.
 type SchemaProperty struct {
-	Type                 string                     `json:"type"`
-	Title                string                     `json:"title,omitempty"`
-	Description          string                     `json:"description,omitempty"`
-	Enum                 []any                      `json:"enum,omitempty"`
+	Type        string `json:"type"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	Enum        []any  `json:"enum,omitempty"`
+	// XEnumLabels names enum values in the settings dropdown.
+	XEnumLabels          map[string]string          `json:"x-enum-labels,omitempty"`
 	Default              any                        `json:"default,omitempty"`
 	Minimum              *float64                   `json:"minimum,omitempty"`
 	Maximum              *float64                   `json:"maximum,omitempty"`
@@ -100,6 +102,7 @@ func effortEnum() []any {
 // buildSchema builds the schema for a daemon running on goos, which picks
 // glab's default config dir.
 func buildSchema(goos string) *ConfigSchema {
+	languageEnum, languageLabels := dictationLanguageEnum()
 	return &ConfigSchema{
 		Type: "object",
 		Properties: map[string]*SchemaProperty{
@@ -568,26 +571,34 @@ func buildSchema(goos string) *ConfigSchema {
 						XOrder:      2,
 					},
 					"language": {
-						Type:         "string",
-						Title:        "Language",
-						Description:  "The language you dictate in, as a whisper language code, or auto to detect it.",
-						Default:      DefaultDictationLanguage,
-						XPlaceholder: DefaultDictationLanguage,
-						XOrder:       3,
+						Type:        "string",
+						Title:       "Language",
+						Description: "The language you dictate in, or auto to detect it. Detected, a dictation keeps to the first language it is sure of; pick yours if short ones come out in another language or translated.",
+						Enum:        languageEnum,
+						XEnumLabels: languageLabels,
+						Default:     DefaultDictationLanguage,
+						XOrder:      3,
+					},
+					"send_phrases": {
+						Type:        "array",
+						Title:       "Send Phrases",
+						Description: "Words that send the message when they are the last thing you dictate, such as send; they are left out of the message. None by default.",
+						Items:       &SchemaProperty{Type: "string"},
+						XOrder:      4,
 					},
 					"idle_stop_sec": {
 						Type:        "integer",
 						Title:       "Idle Stop (seconds)",
 						Description: "How long the transcriber stays loaded after the last dictation. Starting it again takes a second or two.",
 						Default:     DefaultDictationIdleStopSec,
-						XOrder:      4,
+						XOrder:      5,
 					},
 					"threads": {
 						Type:        "integer",
 						Title:       "Threads",
 						Description: "CPU threads the transcriber uses; 0 picks one from the number of cores.",
 						Default:     0,
-						XOrder:      5,
+						XOrder:      6,
 					},
 				},
 			},

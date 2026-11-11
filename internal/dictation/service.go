@@ -15,6 +15,9 @@ type Config struct {
 	Model    string
 	Language string
 	Threads  int
+	// SendPhrases end a dictation by sending the message; the client
+	// matches them.
+	SendPhrases []string
 }
 
 // Status describes whether dictation can run.
@@ -27,6 +30,7 @@ type Status struct {
 	ModelSizeBytes int64    `json:"model_size_bytes"`
 	Download       Progress `json:"download"`
 	Running        bool     `json:"running"`
+	SendPhrases    []string `json:"send_phrases"`
 }
 
 // Error is a failure the client is told about by its code.
@@ -97,6 +101,7 @@ func (s *Service) Status() Status {
 		ModelSizeBytes: m.Size,
 		Download:       s.downloader.Progress(),
 		Running:        s.server.Running(),
+		SendPhrases:    cfg.SendPhrases,
 	}
 	if _, err := s.server.FindBinary(); err != nil {
 		st.Available, st.Reason = false, CodeBinaryMissing
@@ -174,7 +179,7 @@ func (s *Service) Begin(ctx context.Context, language string, emit func(Event)) 
 	if language == "" {
 		language = cfg.Language
 	}
-	transcribe := func(ctx context.Context, samples []int16, language, prompt string) (string, error) {
+	transcribe := func(ctx context.Context, samples []int16, language, prompt string) (Transcript, error) {
 		return s.engine.Transcribe(ctx, base, samples, language, prompt)
 	}
 	return NewSession(transcribe, language, emit), s.server.Release, nil

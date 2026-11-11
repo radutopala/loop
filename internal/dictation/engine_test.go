@@ -72,19 +72,19 @@ func (s *EngineSuite) TestTranscribe() {
 		f, _, err := r.FormFile("file")
 		require.NoError(s.T(), err)
 		audio, _ = io.ReadAll(f)
-		_, _ = w.Write([]byte(`{"text":" hello there\n"}`))
+		_, _ = w.Write([]byte(`{"text":" hello there\n","detected_language":"romanian","detected_language_probability":0.97}`))
 	}))
 	defer ts.Close()
 
-	text, err := NewEngine(ts.Client()).Transcribe(context.Background(), ts.URL, make([]int16, SampleRate), "ro", "before")
+	t, err := NewEngine(ts.Client()).Transcribe(context.Background(), ts.URL, make([]int16, SampleRate), "ro", "before")
 
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), " hello there\n", text)
+	require.Equal(s.T(), Transcript{Text: " hello there\n", Language: "romanian", Probability: 0.97}, t)
 	require.Equal(s.T(), "/inference", got.URL.Path)
 	require.Equal(s.T(), "ro", got.FormValue("language"))
 	require.Equal(s.T(), "before", got.FormValue("prompt"))
 	require.Equal(s.T(), "0", got.FormValue("temperature"))
-	require.Equal(s.T(), "json", got.FormValue("response_format"))
+	require.Equal(s.T(), "verbose_json", got.FormValue("response_format"))
 	require.Equal(s.T(), "512", got.FormValue("audio_ctx"))
 	// One second of audio is padded to two.
 	require.Len(s.T(), audio, 44+minSamples*2)

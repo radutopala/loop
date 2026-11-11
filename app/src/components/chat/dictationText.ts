@@ -44,3 +44,34 @@ export function previewDictation(base: ComposerSnapshot, committed: string, tent
   const out = spliceDictation(base, joined);
   return { ...out, tentativeFrom: t ? out.to - t.length : out.to };
 }
+
+/** A word without case, accents or surrounding punctuation, for matching. */
+function plainWord(w: string): string {
+  return w
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/^[\p{P}\p{S}]+|[\p{P}\p{S}]+$/gu, "")
+    .toLowerCase();
+}
+
+/**
+ * When dictated text ends with one of phrases (any case, accents or
+ * punctuation), returns the text before it, without the comma or similar
+ * that led into it; otherwise null.
+ */
+export function stripSendPhrase(text: string, phrases: readonly string[]): string | null {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  const plain = words.map(plainWord);
+  for (const phrase of phrases) {
+    const want = phrase.split(/\s+/).map(plainWord).filter(Boolean);
+    if (!want.length || want.length > words.length) continue;
+    const tail = plain.slice(words.length - want.length);
+    if (tail.every((w, i) => w === want[i])) {
+      return words
+        .slice(0, words.length - want.length)
+        .join(" ")
+        .replace(/[\s,;:\u2013\u2014-]+$/u, "");
+    }
+  }
+  return null;
+}

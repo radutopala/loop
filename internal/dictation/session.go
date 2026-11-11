@@ -55,8 +55,24 @@ func (e Event) MarshalJSON() ([]byte, error) {
 	return json.Marshal(m)
 }
 
-// TranscribeFunc returns the text spoken in samples.
-type TranscribeFunc func(ctx context.Context, samples []int16, language, prompt string) (string, error)
+// Transcript is what a pass heard: its text, and the language whisper
+// detected in the audio, with how sure it was.
+type Transcript struct {
+	Text        string
+	Language    string
+	Probability float64
+}
+
+// TranscribeFunc returns what was spoken in samples.
+type TranscribeFunc func(ctx context.Context, samples []int16, language, prompt string) (Transcript, error)
+
+// autoLanguage has whisper detect the language.
+const autoLanguage = "auto"
+
+// lockProbability is how sure a pass must be of the language it detected
+// for the rest of the session to use it. Short audio is often taken for
+// another language; decoding in the wrong one gives a translation.
+const lockProbability = 0.8
 
 const (
 	// maxSegment ends a segment of uninterrupted speech, so passes stay short.
@@ -70,11 +86,16 @@ const (
 	frameLen = 480
 	// promptWords is how much finished text is given to whisper as context.
 	promptWords = 50
+	// maxFinalPass is the longest recording transcribed again as a whole
+	// when the session stops; a longer one keeps its live text.
+	maxFinalPass = 120 * SampleRate
 )
 
 // Session turns streamed audio into live text. Audio is split into segments
 // at pauses; every interval the current segment is transcribed again, and
-// the words two passes in a row agree on are committed.
+// the words two passes in a row agree on are committed. When it stops, the
+// whole recording is transcribed once more, so the final text is read with
+// all of its context rather than pieced together from segments.
 type Session struct {
 	transcribe TranscribeFunc
 	language   string
@@ -83,12 +104,18 @@ type Session struct {
 	// threshold is the RMS above which a frame is speech.
 	threshold float64
 
-	mu        sync.Mutex
-	audio     []int16
-	fresh     bool
-	done      []string
-	agreed    []string
-	last      []string
+	mu    sync.Mutex
+	audio []int16
+	// all is the whole recording, for the final pass; nil once it is
+	// longer than maxFinalPass.
+	all    []int16
+	long   bool
+	fresh  bool
+	done   []string
+	agreed []string
+	last   []string
+	// detected is the language an auto session settled on.
+	detected  string
 	cancelled bool
 	finish    chan struct{}
 	once      sync.Once
@@ -113,6 +140,14 @@ func (s *Session) Write(samples []int16) {
 	defer s.mu.Unlock()
 	s.audio = append(s.audio, samples...)
 	s.fresh = true
+	if s.long {
+		return
+	}
+	if len(s.all)+len(samples) > maxFinalPass {
+		s.all, s.long = nil, true
+		return
+	}
+	s.all = append(s.all, samples...)
 }
 
 // Stop ends the session: Run transcribes what's left and emits the final text.
@@ -174,11 +209,11 @@ func (s *Session) step(ctx context.Context) error {
 	prompt := s.prompt()
 	s.mu.Unlock()
 
-	text, err := s.transcribe(ctx, snap, s.language, prompt)
+	t, err := s.pass(ctx, snap, prompt)
 	if err != nil {
 		return err
 	}
-	words := Words(text)
+	words := Words(t.Text)
 
 	s.mu.Lock()
 	rest := continuation(s.agreed, words)
@@ -197,25 +232,62 @@ func (s *Session) step(ctx context.Context) error {
 	return nil
 }
 
-// finalize transcribes what's left of the audio and emits the final text.
+// finalize emits the final text: the whole recording transcribed again,
+// or, when that is too long or comes back empty, the live text with what's
+// left of the audio transcribed after it.
 func (s *Session) finalize(ctx context.Context) {
+	s.mu.Lock()
+	all := slices.Clone(s.all)
+	s.mu.Unlock()
+	if s.voiced(all) {
+		t, err := s.pass(ctx, all, "")
+		if err != nil {
+			s.fail(err)
+			return
+		}
+		if w := Words(t.Text); len(w) > 0 {
+			s.emit(Event{Type: EventFinal, Text: strings.Join(w, " ")})
+			return
+		}
+	}
 	s.mu.Lock()
 	snap := slices.Clone(s.audio)
 	prompt := s.prompt()
 	words := slices.Clone(s.agreed)
 	s.mu.Unlock()
 	if s.voiced(snap) {
-		text, err := s.transcribe(ctx, snap, s.language, prompt)
+		t, err := s.pass(ctx, snap, prompt)
 		if err != nil {
 			s.fail(err)
 			return
 		}
-		words = slices.Concat(words, continuation(words, Words(text)))
+		words = slices.Concat(words, continuation(words, Words(t.Text)))
 	}
 	s.mu.Lock()
-	all := strings.Join(slices.Concat(s.done, words), " ")
+	text := strings.Join(slices.Concat(s.done, words), " ")
 	s.mu.Unlock()
-	s.emit(Event{Type: EventFinal, Text: all})
+	s.emit(Event{Type: EventFinal, Text: text})
+}
+
+// pass transcribes samples in the session's language. An auto session
+// keeps to the first language a pass is sure of.
+func (s *Session) pass(ctx context.Context, samples []int16, prompt string) (Transcript, error) {
+	s.mu.Lock()
+	language := s.language
+	if language == autoLanguage && s.detected != "" {
+		language = s.detected
+	}
+	s.mu.Unlock()
+	t, err := s.transcribe(ctx, samples, language, prompt)
+	if err != nil {
+		return t, err
+	}
+	s.mu.Lock()
+	if s.language == autoLanguage && s.detected == "" && t.Language != "" && t.Probability >= lockProbability {
+		s.detected = t.Language
+	}
+	s.mu.Unlock()
+	return t, nil
 }
 
 // prompt is the end of the finished text. Callers hold mu.

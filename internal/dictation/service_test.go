@@ -241,9 +241,9 @@ func (s *ServiceSuite) TestBegin() {
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "auto", sess.language)
 	require.Equal(s.T(), []string{"-m", q5, "--host", "127.0.0.1", "--port", "7", "-bs", "1", "-bo", "1", "-nt", "-sns", "-t", "3"}, s.svc.ServerArgs(7))
-	text, err := sess.transcribe(context.Background(), nil, "en", "")
+	t, err := sess.transcribe(context.Background(), nil, "en", "")
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), "hi", text)
+	require.Equal(s.T(), "hi", t.Text)
 	release()
 
 	sess, _, err = s.svc.Begin(context.Background(), "ro", func(Event) {})

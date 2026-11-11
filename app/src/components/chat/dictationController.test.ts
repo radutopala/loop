@@ -26,7 +26,7 @@ class FakeCapture implements AudioCapture {
   }
 }
 
-function make(opts: { access?: MicAccess; availability?: DictationAvailability; refreshed?: DictationAvailability; text?: string; caret?: number } = {}) {
+function make(opts: { access?: MicAccess; availability?: DictationAvailability; refreshed?: DictationAvailability; text?: string; caret?: number; sendPhrases?: string[] } = {}) {
   const composer = { text: opts.text ?? "", start: opts.caret ?? (opts.text ?? "").length, end: opts.caret ?? (opts.text ?? "").length };
   const sockets: FakeSocket[] = [];
   const captures: FakeCapture[] = [];
@@ -43,6 +43,7 @@ function make(opts: { access?: MicAccess; availability?: DictationAvailability; 
   };
   const access = { value: opts.access ?? "granted", asked: 0 };
   const avail = { value: opts.availability ?? "ready", refreshes: 0 };
+  const sent: string[] = [];
   const c = new DictationController({
     read: () => ({ ...composer }),
     write: (text, start, end) => Object.assign(composer, { text, start, end }),
@@ -66,6 +67,8 @@ function make(opts: { access?: MicAccess; availability?: DictationAvailability; 
       await Promise.resolve();
       if (opts.refreshed) avail.value = opts.refreshed;
     },
+    sendPhrases: () => opts.sendPhrases ?? [],
+    send: () => sent.push(composer.text),
     onState: (s) => states.push(s),
     timers,
   });
@@ -79,7 +82,7 @@ function make(opts: { access?: MicAccess; availability?: DictationAvailability; 
   const release = () => c.keyUp(alt);
   const last = () => states[states.length - 1];
   const flush = () => new Promise((r) => setTimeout(r, 0));
-  return { c, composer, sockets, captures, states, access, avail, press, held, release, last, flush };
+  return { c, composer, sockets, captures, states, access, avail, sent, press, held, release, last, flush };
 }
 
 const pcm = (n: number) => new Uint8Array([n, 0]).buffer;
@@ -120,6 +123,23 @@ describe("DictationController", () => {
     expect(t.last()?.phase).toBe("idle");
     // Nothing was sent as a message: the stream only ever saw audio and a stop.
     expect(ws.controls).toEqual([{ type: "stop" }]);
+    expect(t.sent).toEqual([]);
+  });
+
+  it("sends the message when the dictation ends with a send phrase, without the phrase", async () => {
+    const t = make({ text: "Note:", sendPhrases: ["send it", "trimite"] });
+    await t.c.init();
+    t.press();
+    t.held();
+    const ws = t.sockets[0]!;
+    ws.open();
+    t.release();
+    await t.flush();
+
+    ws.server({ type: "final", text: "repară testul, Trimite." });
+
+    expect(t.composer.text).toBe("Note: repară testul");
+    expect(t.sent).toEqual(["Note: repară testul"]);
   });
 
   it("shows a level while recording", async () => {

@@ -21,4 +21,9 @@ describe("schemaToFields", () => {
     expect(fields.map((f) => f.key)).toEqual(["mounts", "inherit_mounts"]);
     expect(fields[1]).toMatchObject({ type: "toggle", defaultValue: true });
   });
+
+  it("carries a dropdown's option labels", () => {
+    const fields = schemaToFields({ type: "object", properties: { lang: { type: "string", enum: ["auto", "ro"], "x-enum-labels": { ro: "Romanian (ro)" }, "x-section": "Dictation" } } }, true);
+    expect(fields[0]).toMatchObject({ type: "dropdown", options: ["auto", "ro"], optionLabels: { ro: "Romanian (ro)" } });
+  });
 });

@@ -13,6 +13,8 @@ export interface DictationStatus {
   model_size_bytes: number;
   download: { active: boolean; received: number; total: number; error: string };
   running: boolean;
+  /** dictation.send_phrases: said last, they send the message. */
+  send_phrases: string[] | null;
 }
 
 export async function fetchDictationStatus(): Promise<DictationStatus> {

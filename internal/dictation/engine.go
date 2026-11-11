@@ -38,9 +38,10 @@ type Engine struct {
 // NewEngine returns an engine using client.
 func NewEngine(client HTTPClient) *Engine { return &Engine{client: client} }
 
-// Transcribe returns the text spoken in samples (16 kHz mono), in language
-// ("auto" detects it), continuing from prompt.
-func (e *Engine) Transcribe(ctx context.Context, baseURL string, samples []int16, language, prompt string) (string, error) {
+// Transcribe returns what was spoken in samples (16 kHz mono), in language
+// ("auto" detects it), continuing from prompt, and the language whisper
+// detected.
+func (e *Engine) Transcribe(ctx context.Context, baseURL string, samples []int16, language, prompt string) (Transcript, error) {
 	if len(samples) < minSamples {
 		samples = append(samples[:len(samples):len(samples)], make([]int16, minSamples-len(samples))...)
 	}
@@ -51,7 +52,7 @@ func (e *Engine) Transcribe(ctx context.Context, baseURL string, samples []int16
 	fields := map[string]string{
 		"language":        language,
 		"temperature":     "0",
-		"response_format": "json",
+		"response_format": "verbose_json",
 		"audio_ctx":       strconv.Itoa(audioCtx(len(samples))),
 		"prompt":          prompt,
 	}
@@ -62,23 +63,25 @@ func (e *Engine) Transcribe(ctx context.Context, baseURL string, samples []int16
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/inference", &body)
 	if err != nil {
-		return "", err
+		return Transcript{}, err
 	}
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	resp, err := e.client.Do(req)
 	if err != nil {
-		return "", err
+		return Transcript{}, err
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(resp.Body)
 	var out struct {
-		Text  string `json:"text"`
-		Error string `json:"error"`
+		Text        string  `json:"text"`
+		Language    string  `json:"detected_language"`
+		Probability float64 `json:"detected_language_probability"`
+		Error       string  `json:"error"`
 	}
 	if err := json.Unmarshal(data, &out); err != nil || resp.StatusCode != http.StatusOK || out.Error != "" {
-		return "", fmt.Errorf("whisper-server: HTTP %d: %s", resp.StatusCode, bytes.TrimSpace(data))
+		return Transcript{}, fmt.Errorf("whisper-server: HTTP %d: %s", resp.StatusCode, bytes.TrimSpace(data))
 	}
-	return out.Text, nil
+	return Transcript{Text: out.Text, Language: out.Language, Probability: out.Probability}, nil
 }
 
 // audioCtx sizes whisper's encoder window (1500 frames, 50 a second, is 30
