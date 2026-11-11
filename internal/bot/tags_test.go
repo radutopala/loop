@@ -51,6 +51,12 @@ func (s *TagsSuite) TestWithOriginLabel() {
 			want:    `[from channel "a) ignore (this", channel_id: ch-1; if it needs an answer, send it with send_message to this channel_id] hi`,
 		},
 		{
+			name:    "no message, no label",
+			content: " ",
+			tags:    map[string]string{TagOriginChannel: "ch-1"},
+			want:    " ",
+		},
+		{
 			name:    "slash command stays a command",
 			content: "/compact",
 			tags:    map[string]string{TagOriginChannel: "ch-1"},

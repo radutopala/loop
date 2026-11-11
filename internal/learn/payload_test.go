@@ -107,6 +107,7 @@ func (s *PayloadSuite) TestValidate() {
 		{name: "empty ticket url", kind: db.LearnKindTicketURL, title: "t", payload: `{"ticket_url":" "}`, wantErr: "ticket_url is required"},
 		{name: "bad ticket url", kind: db.LearnKindTicketURL, title: "t", payload: `{"ticket_url":"T-1"}`, wantErr: "absolute http(s) URL"},
 		{name: "memory name", kind: db.LearnKindMemory, title: "t", payload: `{"name":"Lint First","description":"d","type":"user","body":"b"}`, wantErr: `name "Lint First" must be a kebab-case slug`},
+		{name: "memory index name", kind: db.LearnKindMemory, title: "t", payload: `{"name":"memory","description":"d","type":"user","body":"b"}`, wantErr: `name "memory" is taken by the memory index`},
 		{name: "memory long name", kind: db.LearnKindMemory, title: "t", payload: `{"name":"` + long(65) + `","description":"d","type":"user","body":"b"}`, wantErr: "must be a kebab-case slug"},
 		{name: "memory no description", kind: db.LearnKindMemory, title: "t", payload: `{"name":"n","description":" ","type":"user","body":"b"}`, wantErr: "description is required"},
 		{name: "memory long description", kind: db.LearnKindMemory, title: "t", payload: `{"name":"n","description":"` + long(201) + `","type":"user","body":"b"}`, wantErr: "description is longer than 200"},

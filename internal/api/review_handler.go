@@ -112,16 +112,16 @@ func (s *reviewService) handleReviewLoad(w http.ResponseWriter, r *http.Request)
 
 // loadPRInBackground starts loading PR prNumber for channelID and answers
 // 202 with the loading session; the gh and git work runs after the request,
-// on a context of its own. The load holds the channel's run slot, so a
-// second load or a run waits for it, and deleting the session (or Loop
-// stopping) cancels it. It settles with a review.status event: ready, or
+// on a context of its own, bounded by s.loadTimeout. The load holds the
+// channel's run slot, so a second load or a run waits for it, and a Stop,
+// deleting the session or Loop stopping cancels it. It settles with a review.status event: ready, or
 // error with the reason. A load whose session was deleted meanwhile
 // settles with none, the delete having sent its own.
 func (s *reviewService) loadPRInBackground(w http.ResponseWriter, r *http.Request, channelID string, prNumber int) {
-	loadCtx, cancel := context.WithCancel(context.Background())
+	loadCtx, cancel := context.WithTimeout(context.Background(), s.loadTimeout)
 	if !s.registerReviewRun(channelID, cancel) {
 		cancel()
-		http.Error(w, "a PR is loading or a review run is in flight for this channel", http.StatusConflict)
+		http.Error(w, errReviewSlotBusy, http.StatusConflict)
 		return
 	}
 	l, err := s.beginLoad(r.Context(), channelID, prNumber, nil)
@@ -138,15 +138,29 @@ func (s *reviewService) loadPRInBackground(w http.ResponseWriter, r *http.Reques
 		// Free the slot before saying so: a Run clicked on the ready event
 		// must find it free.
 		s.unregisterReviewRun(channelID)
-		switch {
-		case errors.Is(err, errReviewLoadGone):
-		case err != nil:
-			s.broadcastReviewStatus(channelID, review.StatusError, errorMessage(err))
-		default:
-			s.broadcastReviewStatus(channelID, review.StatusReady, "")
-		}
+		s.broadcastLoadSettled(channelID, err)
 	}()
 	writeHTTPJSON(w, http.StatusAccepted, resp, s.deps.logger)
+}
+
+// reviewLoadTimeout bounds a background PR load: fetching the PR, checking
+// it out and rendering its diff.
+const reviewLoadTimeout = 10 * time.Minute
+
+// errReviewSlotBusy answers a load while the channel's run slot is taken.
+const errReviewSlotBusy = "a PR is loading or a review run is in flight for this channel"
+
+// broadcastLoadSettled tells every window how a load ended: ready, or error
+// with the reason. A load whose session was deleted meanwhile says nothing,
+// the delete having sent its own.
+func (s *reviewService) broadcastLoadSettled(channelID string, err error) {
+	switch {
+	case errors.Is(err, errReviewLoadGone):
+	case err != nil:
+		s.broadcastReviewStatus(channelID, review.StatusError, errorMessage(err))
+	default:
+		s.broadcastReviewStatus(channelID, review.StatusReady, "")
+	}
 }
 
 // errReviewLoadGone is a load's error when the session it was loading went
@@ -167,24 +181,30 @@ type reviewLoad struct {
 // status other than 500 are *reviewHTTPError; respondReviewError answers
 // either kind.
 func (s *reviewService) loadPR(ctx context.Context, channelID string, prNumber int, seed *review.Saved) (*review.Session, error) {
-	// Refuse to Load over an in-flight run (or background load). The async
-	// run goroutine would otherwise stomp the new StatusLoading session on
-	// completion, and emit comments from the previous PR into the new
-	// session.
-	if s.isReviewRunActive(channelID) {
-		return nil, &reviewHTTPError{http.StatusConflict, "review run in flight for this channel"}
+	// The load holds the run slot like a background one, so no run or other
+	// load can replace its session meanwhile: an in-flight run would stomp
+	// the new loading session on completion, and a second load would settle
+	// over this one and remove the checkout it points at. A Stop or a
+	// delete cancels it.
+	loadCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if !s.registerReviewRun(channelID, cancel) {
+		return nil, &reviewHTTPError{http.StatusConflict, errReviewSlotBusy}
 	}
-	l, err := s.beginLoad(ctx, channelID, prNumber, seed)
+	l, err := s.beginLoad(loadCtx, channelID, prNumber, seed)
 	if err != nil {
+		s.unregisterReviewRun(channelID)
 		return nil, err
 	}
-	return s.finishLoad(ctx, l)
+	sess, err := s.finishLoad(loadCtx, l)
+	s.unregisterReviewRun(channelID)
+	s.broadcastLoadSettled(channelID, err)
+	return sess, err
 }
 
 // beginLoad checks the channel can load PR prNumber, drops the session it
 // replaces and puts a loading one in its place: the quick part of a load,
-// which the caller answers from. The caller has checked no run is in
-// flight.
+// which the caller answers from. The caller holds the channel's run slot.
 func (s *reviewService) beginLoad(ctx context.Context, channelID string, prNumber int, seed *review.Saved) (*reviewLoad, error) {
 	ch, err := s.deps.store.GetChannel(ctx, channelID)
 	if err != nil {
@@ -232,6 +252,8 @@ func (s *reviewService) beginLoad(ctx context.Context, channelID string, prNumbe
 		seed.Apply(loading)
 	}
 	s.sessions.Put(channelID, loading)
+	// Other windows still show the session this one replaces.
+	s.broadcastReviewStatus(channelID, review.StatusLoading, "")
 	return &reviewLoad{channelID: channelID, dirPath: dirPath, parentDirPath: parentDirPath, ghUser: ghUser, prNumber: prNumber, seed: seed}, nil
 }
 
@@ -242,6 +264,7 @@ func (s *reviewService) beginLoad(ctx context.Context, channelID string, prNumbe
 func (s *reviewService) finishLoad(ctx context.Context, l *reviewLoad) (*review.Session, error) {
 	channelID, dirPath, parentDirPath, ghUser, prNumber, seed := l.channelID, l.dirPath, l.parentDirPath, l.ghUser, l.prNumber, l.seed
 	fail := func(err error) (*review.Session, error) {
+		err = loadStopped(ctx, prNumber, err)
 		if !s.sessions.UpdateStatus(channelID, review.StatusError, errorMessage(err)) {
 			return nil, errReviewLoadGone
 		}
@@ -264,6 +287,11 @@ func (s *reviewService) finishLoad(ctx context.Context, l *reviewLoad) (*review.
 	// agent) can read the actual files in their post-merge form.
 	worktreePath, err := s.worktree.Add(ctx, dirPath, prNumber, channelID)
 	if err != nil {
+		return fail(err)
+	}
+	// Past here a failed load removes the checkout: no session points at it.
+	failCheckout := func(err error) (*review.Session, error) {
+		s.removeLoadCheckout(ctx, channelID, dirPath, worktreePath)
 		return fail(err)
 	}
 
@@ -291,7 +319,7 @@ func (s *reviewService) finishLoad(ctx context.Context, l *reviewLoad) (*review.
 
 	diff, err := s.worktree.Diff(ctx, dirPath, worktreePath, pr.BaseRef, comments)
 	if err != nil {
-		return fail(err)
+		return failCheckout(err)
 	}
 
 	sess := &review.Session{
@@ -312,14 +340,35 @@ func (s *reviewService) finishLoad(ctx context.Context, l *reviewLoad) (*review.
 	}
 	s.restoreRuns(ctx, channelID, sess)
 	if !s.sessions.Settle(channelID, sess) {
-		if err := s.worktree.Remove(context.WithoutCancel(ctx), dirPath, worktreePath); err != nil {
-			s.deps.logger.Warn("review worktree remove failed after the session closed",
-				"channel_id", channelID, "path", worktreePath, "err", err)
-		}
+		s.removeLoadCheckout(ctx, channelID, dirPath, worktreePath)
 		return nil, errReviewLoadGone
 	}
 	s.saveOutcomes(channelID, restored, comments)
 	return sess, nil
+}
+
+// removeLoadCheckout removes the checkout a load that didn't settle made,
+// unless the channel's session points at it after all.
+func (s *reviewService) removeLoadCheckout(ctx context.Context, channelID, dirPath, worktreePath string) {
+	if cur := s.sessions.Get(channelID); cur != nil && cur.WorktreePath == worktreePath {
+		return
+	}
+	if err := s.worktree.Remove(context.WithoutCancel(ctx), dirPath, worktreePath); err != nil {
+		s.deps.logger.Warn("review worktree remove failed after the load didn't settle",
+			"channel_id", channelID, "path", worktreePath, "err", err)
+	}
+}
+
+// loadStopped is err for a load of PR prNumber, said plainly when ctx ended
+// it: stopped (a Stop, or the session closing) or timed out.
+func loadStopped(ctx context.Context, prNumber int, err error) error {
+	switch cause := ctx.Err(); {
+	case errors.Is(cause, context.DeadlineExceeded):
+		return fmt.Errorf("loading PR #%d timed out", prNumber)
+	case cause != nil:
+		return fmt.Errorf("loading PR #%d was stopped", prNumber)
+	}
+	return err
 }
 
 // handleReviewSync re-fetches the PR head, the diff, and the GitHub

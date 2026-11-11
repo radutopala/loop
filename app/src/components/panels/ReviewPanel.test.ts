@@ -21,6 +21,7 @@ import {
   runSettingsSummary,
   skippedNote,
   startedReviewRun,
+  statusNeedsSession,
   WHY_QUESTION,
   withId,
   withoutComment,
@@ -602,6 +603,23 @@ describe("isSessionOpen", () => {
     ["reviewing", session({ status: "reviewing" }), true],
   ] as const)("%s", (_, s, want) => {
     expect(isSessionOpen(s)).toBe(want);
+  });
+});
+
+describe("statusNeedsSession", () => {
+  it.each([
+    ["a load starts", session({ status: "ready" }), "loading", true],
+    ["a load settles ready, none held", null, "ready", true],
+    ["a load settles ready over the loading session", session({ status: "loading" }), "ready", true],
+    ["a load settles ready over a closed session", session({ status: "idle" }), "ready", true],
+    ["a load settles ready over a failed one", session({ status: "error" }), "ready", true],
+    ["a load fails", session({ status: "loading" }), "error", true],
+    ["a run settles", session({ status: "reviewing" }), "ready", false],
+    ["a run fails", session({ status: "reviewing" }), "error", false],
+    ["a run starts", session({ status: "ready" }), "reviewing", false],
+    ["closed", session({ status: "ready" }), "idle", false],
+  ] as const)("%s", (_, held, status, want) => {
+    expect(statusNeedsSession(held, status)).toBe(want);
   });
 });
 

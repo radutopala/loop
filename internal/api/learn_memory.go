@@ -25,7 +25,9 @@ func isLearnMemoryKind(v any) bool {
 // MEMORY.md. It returns the memory file's path and a diff of both files.
 // With write false it only works out the edit, for the preview. The index
 // stays locked from the duplicate check to the write, so proposals applied
-// at once (Apply all) don't drop each other's pointers.
+// at once (Apply all) don't drop each other's pointers. A memory file that
+// already holds this memory counts as written, so a retry after a failed
+// index write finishes the job.
 func (s *Server) editLearnMemory(ctx context.Context, ch *db.Channel, m *learn.Memory, write bool) (string, string, error) {
 	dir, err := s.resolveProjectConfigDirPath(ctx, ch.ChannelID)
 	if err != nil {
@@ -37,9 +39,16 @@ func (s *Server) editLearnMemory(ctx context.Context, ch *db.Channel, m *learn.M
 	}
 	path, indexPath := filepath.Join(memDir, m.File()), filepath.Join(memDir, learn.MemoryIndex)
 	defer s.configLocks.lock(indexPath)()
-	if _, err := s.sys.Stat(path); err == nil {
+	content := m.Content()
+	// The file holding this very memory is a retry's, after the index
+	// write failed: only the index is left to do.
+	existing, err := s.sys.ReadFile(path)
+	written := err == nil && string(existing) == content
+	switch {
+	case written:
+	case err == nil:
 		return path, "", fmt.Errorf("a memory named %q already exists", m.Name)
-	} else if !errors.Is(err, fs.ErrNotExist) {
+	case !errors.Is(err, fs.ErrNotExist):
 		return path, "", fmt.Errorf("checking the memory file: %w", err)
 	}
 	index, err := s.sys.ReadFile(indexPath)
@@ -50,7 +59,7 @@ func (s *Server) editLearnMemory(ctx context.Context, ch *db.Channel, m *learn.M
 	if err != nil {
 		indexFrom = "/dev/null"
 	}
-	content, newIndex := m.Content(), string(index)
+	newIndex := string(index)
 	if !m.Indexed(newIndex) {
 		if newIndex != "" && newIndex[len(newIndex)-1] != '\n' {
 			newIndex += "\n"
@@ -61,8 +70,10 @@ func (s *Server) editLearnMemory(ctx context.Context, ch *db.Channel, m *learn.M
 		if err := s.sys.MkdirAll(memDir, 0o700); err != nil {
 			return path, "", fmt.Errorf("creating the memory dir: %w", err)
 		}
-		if err := s.sys.WriteFile(path, []byte(content), 0o644); err != nil {
-			return path, "", fmt.Errorf("writing the memory file: %w", err)
+		if !written {
+			if err := s.sys.WriteFile(path, []byte(content), 0o644); err != nil {
+				return path, "", fmt.Errorf("writing the memory file: %w", err)
+			}
 		}
 		if newIndex != string(index) {
 			if err := s.sys.WriteFile(indexPath, []byte(newIndex), 0o644); err != nil {
@@ -70,6 +81,9 @@ func (s *Server) editLearnMemory(ctx context.Context, ch *db.Channel, m *learn.M
 			}
 		}
 	}
-	diff := unidiff.Diff("/dev/null", path, "", content) + unidiff.Diff(indexFrom, indexPath, string(index), newIndex)
+	diff := unidiff.Diff(indexFrom, indexPath, string(index), newIndex)
+	if !written {
+		diff = unidiff.Diff("/dev/null", path, "", content) + diff
+	}
 	return path, diff, nil
 }

@@ -1650,6 +1650,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               hasChatPanel={tree ? collectLeaves(tree).some((l) => l.panel === "chat") : false}
               gateApprovals={chatState.gateApprovals}
               onClearGateApproval={(source) => chatState.clearGateApproval(source)}
+              wsOpens={wsOpens}
             />
           );
         default:

@@ -22,6 +22,12 @@ func (s *MemorySuite) TestFile() {
 	require.Equal(s.T(), "- [lint-first](lint-first.md) — Lint before pushing", m.IndexLine())
 }
 
+// A slug YAML reads as another type is quoted in the frontmatter.
+func (s *MemorySuite) TestContentQuotesName() {
+	m := &Memory{Name: "true", Description: "123", Type: "user", Body: "b"}
+	require.Equal(s.T(), "---\nname: \"true\"\ndescription: \"123\"\nmetadata:\n  type: user\n---\n\nb\n", m.Content())
+}
+
 func (s *MemorySuite) TestIndexed() {
 	m := &Memory{Name: "lint-first"}
 	tests := []struct {
@@ -55,6 +61,14 @@ func (s *MemorySuite) TestYAMLScalar() {
 		{"- a list?", `"- a list?"`},
 		{`"quoted" start`, `"\"quoted\" start"`},
 		{"[bracket]", `"[bracket]"`},
+		{"true", `"true"`},
+		{"null", `"null"`},
+		{"~", `"~"`},
+		{"123", `"123"`},
+		{"1e3", `"1e3"`},
+		{"tab\t# comment", `"tab\t# comment"`},
+		{"a\nb", `"a\nb"`},
+		{"x: y: z", `"x: y: z"`},
 	}
 	for _, tc := range tests {
 		s.Run(tc.in, func() {
