@@ -57,9 +57,12 @@ host_os() {
 host_arch() {
 	local m
 	m="$(uname -m)"
-	# Git Bash on Windows arm64 can report the x64 emulation layer.
-	if [ "$(host_os)" = win ] && [ "${PROCESSOR_ARCHITECTURE:-}" = ARM64 ]; then
-		m=arm64
+	# Git Bash on Windows arm64 runs under x64 emulation, so uname and
+	# PROCESSOR_ARCHITECTURE both say x64; the registry has the native arch.
+	if [ "$(host_os)" = win ]; then
+		case "$(reg query 'HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment' //v PROCESSOR_ARCHITECTURE 2>/dev/null)${PROCESSOR_ARCHITECTURE:-}${PROCESSOR_ARCHITEW6432:-}" in
+			*ARM64*) m=arm64 ;;
+		esac
 	fi
 	case "$m" in
 		arm64 | aarch64) echo arm64 ;;
