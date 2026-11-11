@@ -4,6 +4,7 @@ import { dictationAvailability, downloadDictationModel, downloadProgressText, MO
 
 function status(patch: Partial<DictationStatus> = {}, download: Partial<DictationStatus["download"]> = {}): DictationStatus {
   return {
+    enabled: true,
     available: true,
     reason: "",
     model: "large-v3-turbo-q5_0",
@@ -18,6 +19,7 @@ function status(patch: Partial<DictationStatus> = {}, download: Partial<Dictatio
 describe("dictationAvailability", () => {
   it.each([
     ["no status", null, "unknown"],
+    ["turned off, whatever else holds", status({ enabled: false, model_ready: true }), "disabled"],
     ["no transcriber", status({ available: false, reason: "binary_missing" }), "unavailable"],
     ["no model", status(), "needs_model"],
     ["a download running", status({}, { active: true }), "downloading"],

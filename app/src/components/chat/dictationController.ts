@@ -88,6 +88,8 @@ export class DictationController {
   }
 
   keyDown(e: HoldKey): boolean {
+    // Turned off in the config, the hold key types as usual.
+    if (!this.hold.busy && this.d.availability() === "disabled") return false;
     return this.hold.keyDown(e);
   }
 

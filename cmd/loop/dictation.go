@@ -17,6 +17,10 @@ import (
 // model: several seconds on a busy machine.
 const dictationStartupTimeout = time.Minute
 
+// dictationAutoDownloadInterval is how often the daemon checks whether
+// dictation was turned on and its model needs fetching.
+const dictationAutoDownloadInterval = 30 * time.Second
+
 // newDictation returns the dictation service and the whisper-server it runs
 // on the host. Models download through download (the proxy-aware transport);
 // whisper-server is reached on loopback without a proxy. The model, language
@@ -38,7 +42,7 @@ func newDictation(ctx context.Context, cfg *config.Config, reload func() (*confi
 		if err != nil {
 			c = cfg
 		}
-		return dictation.Config{Model: c.Dictation.Model, Language: c.Dictation.Language, Threads: c.Dictation.Threads}
+		return dictation.Config{Enabled: c.Dictation.Enabled, Model: c.Dictation.Model, Language: c.Dictation.Language, Threads: c.Dictation.Threads}
 	}
 	args.svc = dictation.NewService(ctx, current, server, downloader, dictation.NewEngine(local))
 	return args.svc, server

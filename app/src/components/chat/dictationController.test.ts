@@ -357,6 +357,15 @@ describe("DictationController", () => {
     expect(t.sockets).toHaveLength(1);
   });
 
+  it("leaves the hold key alone while dictation is turned off", async () => {
+    const t = make({ availability: "disabled" });
+    await t.c.init();
+    expect(t.press()).toBe(false);
+    expect(t.c.hold.busy).toBe(false);
+    expect(t.captures).toHaveLength(0);
+    expect(t.avail.refreshes).toBe(0);
+  });
+
   it("ignores a new hold while the last one is still transcribing", async () => {
     const t = make();
     await t.c.init();

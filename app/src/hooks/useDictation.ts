@@ -1,4 +1,5 @@
 import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
+import { GLOBAL_CONFIG_SAVED_EVENT } from "../api/configApi";
 import { type DictationStatus, fetchDictationStatus, openDictationSocket, startDictationModelDownload } from "../api/dictation";
 import { MicCapture } from "../components/chat/dictationCapture";
 import { DictationController, type DictationUiState, IDLE_DICTATION, type MicAccess } from "../components/chat/dictationController";
@@ -81,6 +82,19 @@ export function useDictation(inputRef: RefObject<HTMLTextAreaElement | null>, se
     const t = setInterval(() => void refresh(), STATUS_RETRY_MS);
     return () => clearInterval(t);
   }, [status, refresh]);
+
+  // dictation.enabled has no daemon event: read the status again after a
+  // settings save (turning it on starts the model download) and when the
+  // window comes back.
+  useEffect(() => {
+    const again = () => void refresh();
+    window.addEventListener(GLOBAL_CONFIG_SAVED_EVENT, again);
+    window.addEventListener("focus", again);
+    return () => {
+      window.removeEventListener(GLOBAL_CONFIG_SAVED_EVENT, again);
+      window.removeEventListener("focus", again);
+    };
+  }, [refresh]);
 
   useEffect(() => {
     mounted.current = true;

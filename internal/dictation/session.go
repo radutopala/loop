@@ -22,6 +22,7 @@ const (
 
 // Error codes an error event carries.
 const (
+	CodeDisabled      = "disabled"
 	CodeBinaryMissing = "binary_missing"
 	CodeModelMissing  = "model_missing"
 	CodeEngineFailed  = "engine_failed"

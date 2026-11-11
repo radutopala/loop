@@ -573,10 +573,13 @@ Available at both global and project level. Project values override global value
 
 #### Dictation
 
-Hold the right Option key (right Alt on Linux and Windows) in the app's composer to dictate: text appears while you speak and is finalized when you release the key. You can also click the composer's mic button to start and click it again to stop, or press and hold it to talk. Speech is transcribed on the host by a local [whisper.cpp](https://github.com/ggml-org/whisper.cpp) `whisper-server`, which ships next to the `loop` binary in the app. The daemon starts it on first use and stops it once it has been idle. No audio leaves the machine. The model (about 574 MB for the default) is downloaded once to `~/.loop/models`, from the composer's Download prompt.
+Dictation is off until you set `dictation.enabled` (Settings › Dictation). Turning it on makes the daemon download the selected model, and shows the composer's mic button. On macOS the system asks for microphone access the first time you dictate, not before.
+
+Hold the right Option key (right Alt on Linux and Windows) in the app's composer to dictate: text appears while you speak and is finalized when you release the key. You can also click the composer's mic button to start and click it again to stop, or press and hold it to talk. Speech is transcribed on the host by a local [whisper.cpp](https://github.com/ggml-org/whisper.cpp) `whisper-server`, which ships next to the `loop` binary in the app. The daemon starts it on first use and stops it once it has been idle. No audio leaves the machine. The model (about 574 MB for the default) is downloaded once to `~/.loop/models` when dictation is turned on; if that download fails, the composer's Download prompt retries it.
 
 ```jsonc
 "dictation": {
+  "enabled": true,
   "model": "large-v3-turbo-q5_0",
   "language": "auto",
   "idle_stop_sec": 300,
@@ -586,6 +589,7 @@ Hold the right Option key (right Alt on Linux and Windows) in the app's composer
 
 | Field | Type | Default | Description |
 |---|---|---|---|
+| `dictation.enabled` | `bool` | `false` | Turns dictation on: the mic button, the hold key, and the model's download. Off, the right Option/Alt key types as usual. |
 | `dictation.model` | `string` | `"large-v3-turbo-q5_0"` | Whisper model: `"large-v3-turbo-q5_0"` (quantized, 574 MB) or `"large-v3-turbo"` (1.6 GB). A change applies to the next dictation. |
 | `dictation.language` | `string` | `"auto"` | Whisper language code, or `"auto"` to detect it each time. Setting it avoids misdetected short phrases. |
 | `dictation.idle_stop_sec` | `int` | `300` | Seconds `whisper-server` stays running without a request. |
@@ -971,6 +975,7 @@ The AWS CLI saves a token in `~/.aws/sso/cache` or `~/.aws/cli/cache` by writing
 
   // Live dictation in the app's composer, transcribed locally
   //"dictation": {
+  //  "enabled": false,
   //  "model": "large-v3-turbo-q5_0",
   //  "language": "auto",
   //  "idle_stop_sec": 300,

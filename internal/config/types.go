@@ -348,6 +348,9 @@ type PprofConfig struct {
 // transcribed on the host by a local whisper-server the daemon starts on
 // first use and stops after IdleStopSec without requests. Global only.
 type DictationConfig struct {
+	// Enabled turns dictation on: the composer's mic button and the hold
+	// key, and the configured model's download. Off by default.
+	Enabled bool `json:"enabled"`
 	// Model names the whisper model file, ggml-<model>.bin under
 	// ~/.loop/models.
 	Model string `json:"model"`

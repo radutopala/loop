@@ -224,7 +224,7 @@ describe("setPluginEnabled", () => {
     const { content } = JSON.parse(putInit.body);
     expect(content).toContain("// mine");
     expect(content).toContain('"enabled": true');
-    expect((window.dispatchEvent as ReturnType<typeof vi.fn>).mock.calls[0]![0].type).toBe(PLUGINS_CHANGED);
+    expect((window.dispatchEvent as ReturnType<typeof vi.fn>).mock.calls.at(-1)![0].type).toBe(PLUGINS_CHANGED);
   });
 
   it("writes an empty file", async () => {

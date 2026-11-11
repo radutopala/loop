@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -57,7 +58,7 @@ func (s *ServiceSuite) SetupTest() {
 	s.T().Cleanup(s.ts.Close)
 	s.dl = NewDownloader(s.T().TempDir(), s.ts.Client(), slog.New(slog.DiscardHandler))
 	s.dl.baseURL = s.ts.URL + "/"
-	s.cfg = Config{Model: "large-v3-turbo-q5_0", Language: "auto", Threads: 3}
+	s.cfg = Config{Enabled: true, Model: "large-v3-turbo-q5_0", Language: "auto", Threads: 3}
 	s.svc = NewService(context.Background(), func() Config { return s.cfg }, s.server, s.dl, NewEngine(s.ts.Client()))
 }
 
@@ -94,6 +95,8 @@ func (s *ServiceSuite) TestStatus() {
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			s.SetupTest()
+			// Turned off, so Status doesn't start the download.
+			s.cfg.Enabled = false
 			s.cfg.Model = tc.model
 			s.server.On("Running").Return(false)
 			if tc.missing {
@@ -111,8 +114,77 @@ func (s *ServiceSuite) TestStatusModelReady() {
 	s.server.On("Running").Return(true)
 	s.server.On("FindBinary").Return("/bin/whisper-server", nil)
 	st := s.svc.Status()
+	require.True(s.T(), st.Enabled)
 	require.True(s.T(), st.ModelReady)
 	require.True(s.T(), st.Running)
+	require.False(s.T(), st.Download.Active)
+}
+
+// downloadFailed waits for the background download to end on the test
+// server's 404.
+func (s *ServiceSuite) downloadFailed() {
+	require.Eventually(s.T(), func() bool {
+		p := s.dl.Progress()
+		return !p.Active && p.Error != ""
+	}, 5*time.Second, time.Millisecond)
+}
+
+// Enabled with the model missing, Status starts the download.
+func (s *ServiceSuite) TestStatusStartsDownloadWhenEnabled() {
+	s.server.On("Running").Return(false)
+	s.server.On("FindBinary").Return("/bin/whisper-server", nil)
+	st := s.svc.Status()
+	require.True(s.T(), st.Download.Active)
+	s.downloadFailed()
+}
+
+func (s *ServiceSuite) TestEnsureModel() {
+	tests := []struct {
+		name    string
+		enabled bool
+		install bool
+		failed  bool
+		starts  bool
+	}{
+		{name: "enabled, model missing", enabled: true, starts: true},
+		{name: "turned off", enabled: false},
+		{name: "model there", enabled: true, install: true},
+		{name: "last download failed: not retried on its own", enabled: true, failed: true},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			s.cfg.Enabled = tc.enabled
+			if tc.install {
+				s.installModel("large-v3-turbo-q5_0")
+			}
+			if tc.failed {
+				done := make(chan struct{})
+				require.True(s.T(), s.svc.DownloadModel(done))
+				<-done
+			}
+			s.svc.EnsureModel()
+			require.Equal(s.T(), tc.starts, s.dl.Progress().Active)
+			if tc.starts {
+				s.downloadFailed()
+			}
+		})
+	}
+}
+
+func (s *ServiceSuite) TestRunAutoDownload() {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		s.svc.RunAutoDownload(ctx, time.Millisecond)
+		close(done)
+	}()
+	s.downloadFailed()
+	// Let a few ticks pass: the failed download isn't retried.
+	time.Sleep(10 * time.Millisecond)
+	require.False(s.T(), s.dl.Progress().Active)
+	cancel()
+	<-done
 }
 
 func (s *ServiceSuite) TestDownloadModel() {
@@ -130,6 +202,7 @@ func (s *ServiceSuite) TestBeginErrors() {
 		err     error
 		code    string
 	}{
+		{name: "turned off", code: CodeDisabled},
 		{name: "model missing", code: CodeModelMissing},
 		{name: "binary missing", install: true, err: fmt.Errorf("x: %w", localserver.ErrBinaryMissing), code: CodeBinaryMissing},
 		{name: "server fails", install: true, err: errors.New("crashed"), code: CodeEngineFailed},
@@ -137,6 +210,7 @@ func (s *ServiceSuite) TestBeginErrors() {
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			s.SetupTest()
+			s.cfg.Enabled = tc.code != CodeDisabled
 			if tc.install {
 				s.installModel("large-v3-turbo-q5_0")
 				s.server.On("Stop").Return()

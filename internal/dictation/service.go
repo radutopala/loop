@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/radutopala/loop/internal/localserver"
 )
 
 // Config is the dictation configuration in effect.
 type Config struct {
+	Enabled  bool
 	Model    string
 	Language string
 	Threads  int
@@ -17,6 +19,7 @@ type Config struct {
 
 // Status describes whether dictation can run.
 type Status struct {
+	Enabled        bool     `json:"enabled"`
 	Available      bool     `json:"available"`
 	Reason         string   `json:"reason"`
 	Model          string   `json:"model"`
@@ -81,10 +84,13 @@ func (s *Service) current() (Config, Model) {
 	return cfg, m
 }
 
-// Status reports whether dictation can run.
+// Status reports whether dictation can run. When it's enabled and the model
+// is missing, it starts the download (see EnsureModel).
 func (s *Service) Status() Status {
-	_, m := s.current()
+	cfg, m := s.current()
+	s.ensureModel(cfg, m)
 	st := Status{
+		Enabled:        cfg.Enabled,
 		Available:      true,
 		Model:          m.Name,
 		ModelReady:     s.downloader.Ready(m),
@@ -98,12 +104,45 @@ func (s *Service) Status() Status {
 	return st
 }
 
+// EnsureModel starts downloading the configured model when dictation is
+// enabled and the model isn't there. A download that failed isn't retried
+// on its own; the composer's Download prompt does that.
+func (s *Service) EnsureModel() {
+	cfg, m := s.current()
+	s.ensureModel(cfg, m)
+}
+
+func (s *Service) ensureModel(cfg Config, m Model) {
+	if !cfg.Enabled || s.downloader.Progress().Error != "" {
+		return
+	}
+	s.downloader.Start(s.ctx, m, nil)
+}
+
+// RunAutoDownload calls EnsureModel now and then every interval until ctx
+// ends, so turning dictation on fetches its model without a prompt.
+func (s *Service) RunAutoDownload(ctx context.Context, interval time.Duration) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		s.EnsureModel()
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
 // DownloadModel starts downloading the configured model. done, when not nil,
 // is closed once a started download ends.
 func (s *Service) DownloadModel(done chan<- struct{}) bool {
 	_, m := s.current()
 	return s.downloader.Start(s.ctx, m, done)
 }
+
+// errDisabled reports dictation turned off in the config.
+var errDisabled = errors.New("dictation is turned off")
 
 // errModelMissing reports a model that isn't downloaded yet.
 var errModelMissing = errors.New("model not downloaded")
@@ -115,6 +154,9 @@ func (s *Service) Begin(ctx context.Context, language string, emit func(Event)) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cfg, m := s.current()
+	if !cfg.Enabled {
+		return nil, nil, &Error{Code: CodeDisabled, Err: errDisabled}
+	}
 	if !s.downloader.Ready(m) {
 		return nil, nil, &Error{Code: CodeModelMissing, Err: errModelMissing}
 	}

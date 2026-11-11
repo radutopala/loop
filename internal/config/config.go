@@ -500,6 +500,7 @@ func (l *Loader) parse() (*Config, error) {
 
 	dictation := cmp.Or(jc.Dictation, &DictationConfig{})
 	cfg.Dictation = DictationConfig{
+		Enabled:     dictation.Enabled,
 		Model:       cmp.Or(strings.TrimSpace(dictation.Model), DefaultDictationModel),
 		Language:    cmp.Or(strings.TrimSpace(dictation.Language), DefaultDictationLanguage),
 		IdleStopSec: cmp.Or(max(dictation.IdleStopSec, 0), DefaultDictationIdleStopSec),

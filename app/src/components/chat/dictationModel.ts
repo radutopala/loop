@@ -2,10 +2,11 @@ import type { DictationStatus } from "../../api/dictation";
 import { formatBytes } from "../../utils/formatBytes";
 
 /** Where dictation stands for the composer's mic button. */
-export type DictationAvailability = "unknown" | "unavailable" | "needs_model" | "downloading" | "ready";
+export type DictationAvailability = "unknown" | "disabled" | "unavailable" | "needs_model" | "downloading" | "ready";
 
 export function dictationAvailability(s: DictationStatus | null): DictationAvailability {
   if (!s) return "unknown";
+  if (!s.enabled) return "disabled";
   if (!s.available) return "unavailable";
   if (s.model_ready) return "ready";
   return s.download.active ? "downloading" : "needs_model";

@@ -3,6 +3,8 @@ import { apiFetch, getApiUrl, getWsUrl, wsProtocols } from "./api";
 /** The daemon's dictation state: whether the transcriber is installed, and
  *  whether its model is on disk or being downloaded. */
 export interface DictationStatus {
+  /** dictation.enabled: off, the mic button hides and the hold key types. */
+  enabled: boolean;
   available: boolean;
   /** Why it isn't available: "" or "binary_missing". */
   reason: string;

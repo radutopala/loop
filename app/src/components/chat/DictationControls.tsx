@@ -24,11 +24,12 @@ export function MicIcon({ size }: { size: number }) {
  * The composer's mic switch: click to start and again to stop, or press
  * and hold to talk. Red and pulsing
  * while recording; dim and inert when the transcriber isn't installed (the
- * tip says why). Hidden while the daemon's dictation status is unknown.
+ * tip says why). Hidden while the daemon's dictation status is unknown, and
+ * when dictation is turned off.
  */
 export function DictationMicButton({ d }: { d: Dictation }) {
   const { colors } = useTheme();
-  if (d.availability === "unknown") return null;
+  if (d.availability === "unknown" || d.availability === "disabled") return null;
   const disabled = d.availability === "unavailable";
   const recording = d.ui.phase === "recording";
   const c = recording ? colors.error : d.ui.phase === "transcribing" ? colors.active : colors.textDim;

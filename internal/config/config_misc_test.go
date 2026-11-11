@@ -541,8 +541,8 @@ func (s *ConfigSuite) TestDictationConfigLoad() {
 		{"blank and negative use defaults", `, "dictation": {"model": " ", "language": "", "idle_stop_sec": -5, "threads": -2}`, defaults},
 		{
 			"set",
-			`, "dictation": {"model": " large-v3-turbo ", "language": "ro", "idle_stop_sec": 60, "threads": 4}`,
-			DictationConfig{Model: "large-v3-turbo", Language: "ro", IdleStopSec: 60, Threads: 4},
+			`, "dictation": {"enabled": true, "model": " large-v3-turbo ", "language": "ro", "idle_stop_sec": 60, "threads": 4}`,
+			DictationConfig{Enabled: true, Model: "large-v3-turbo", Language: "ro", IdleStopSec: 60, Threads: 4},
 		},
 	}
 	for _, tt := range tests {

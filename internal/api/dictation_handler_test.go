@@ -100,7 +100,7 @@ func (s *DictationHandlerSuite) TestDownloadModel() {
 	rec := s.serve("POST", "/api/dictation/model")
 
 	require.Equal(s.T(), http.StatusAccepted, rec.Code)
-	require.JSONEq(s.T(), `{"available":false,"reason":"","model":"","model_ready":false,"model_size_bytes":0,"download":{"active":true,"error":"","received":0,"total":0},"running":false}`, rec.Body.String())
+	require.JSONEq(s.T(), `{"enabled":false,"available":false,"reason":"","model":"","model_ready":false,"model_size_bytes":0,"download":{"active":true,"error":"","received":0,"total":0},"running":false}`, rec.Body.String())
 }
 
 func (s *DictationHandlerSuite) TestStreamNeedsWebSocket() {
