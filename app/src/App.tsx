@@ -837,6 +837,7 @@ function AppInner() {
           onCreateThread={handleCreateThread}
           onCreateWorktree={handleCreateWorktree}
           onOpenPR={handleOpenPR}
+          onImportWorktree={handleImportWorktree}
           onDeleteThread={handleDelete}
           onRenameThread={handleRename}
           onSetDescription={handleSetDescription}

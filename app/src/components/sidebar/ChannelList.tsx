@@ -12,6 +12,8 @@ interface ChannelListProps {
   onCreateThread: (parentId: string, name: string) => void;
   onCreateWorktree?: (channelId: string, branch: string) => void;
   onOpenPR?: OpenPRHandler;
+  /** Imports an existing worktree of the channel's repo as a thread. */
+  onImportWorktree?: (channelId: string, worktreePath: string) => void;
   threadReorder?: ThreadReorder;
   onOpenConfig?: (dirPath: string) => void;
   onContextMenu: (e: React.MouseEvent, channel: Channel) => void;
@@ -38,6 +40,7 @@ export function ChannelList({
   onCreateThread,
   onCreateWorktree,
   onOpenPR,
+  onImportWorktree,
   threadReorder,
   onOpenConfig,
   onContextMenu,
@@ -69,6 +72,7 @@ export function ChannelList({
           onCreateThread={onCreateThread}
           onCreateWorktree={onCreateWorktree}
           onOpenPR={onOpenPR}
+          onImportWorktree={onImportWorktree}
           threadReorder={threadReorder}
           onOpenConfig={onOpenConfig}
           onContextMenu={onContextMenu}
@@ -98,6 +102,7 @@ export function ChannelList({
           onCreateThread={onCreateThread}
           onCreateWorktree={onCreateWorktree}
           onOpenPR={onOpenPR}
+          onImportWorktree={onImportWorktree}
           threadReorder={threadReorder}
           onOpenConfig={onOpenConfig}
           onContextMenu={onContextMenu}
