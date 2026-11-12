@@ -730,14 +730,46 @@ The gate runs a seccomp `RET_USER_NOTIF` filter inside each agent container and 
 | `gates.docker_proxy.http_rules` | `[]HTTPServiceRule` | 3 rules | Method × path-regex rules: exec and `docker cp` approve, swarm/nodes/secrets/configs/plugins deny; everything else falls through to `default_decision`. A non-empty global list **replaces** the baseline. |
 | `gates.docker_proxy.body_rules` | `[]BodyRule` | 5 rules | JSON-body inspection on `POST /containers/create`, `/containers/{id}/update` and `/volumes/create`. The baseline denies bind sources under system paths, the docker socket and Docker Desktop's VM paths (`/host_mnt`, `/run/host-services`), `Privileged`, host namespaces (PID, network, IPC, user, cgroup, UTS), `CgroupParent`, runtimes other than runc, `CapAdd` outside an allowlist (Docker's defaults plus `SYS_NICE`, `IPC_LOCK`), `*unconfined` security opts, `Devices`/`DeviceCgroupRules`/`VolumesFrom`, and empty `MaskedPaths`/`ReadonlyPaths`; it asks before joining another container's PID/IPC namespace or mounting a device-backed volume. Loop also appends a rule per container that asks before binds outside the agent's own mounts (read-only binds of its read-only mounts pass). A non-empty global list **replaces** the baseline; the per-container rule is added either way. Keys match case-insensitively, like the daemon. Decisions follow `http_rules`: `deny` returns 403 with no prompt, `approve` blocks and prompts the user, `allow` passes through silently. See [Default policy](gates.md#default-policy) for the full list, and [Binds are pinned to the agent's mounts](gates.md#binds-are-pinned-to-the-agents-mounts). |
 
+#### Editor
+
+The desktop app's [editor](editor.md#editor-settings): whether the file tree follows the active tab, formatting and cleanups on save, indentation, and what the searches skip. A project sets each flag and `tab_size` over the global value; its formatters go before the global ones, and its `search_exclude` globs add to them.
+
+```json
+"editor": {
+  "follow_active_file": true,
+  "format_on_save": true,
+  "formatters": [
+    { "glob": "*.go", "command": "gofmt" }
+  ],
+  "tab_size": 4,
+  "insert_spaces": true,
+  "trim_trailing_whitespace": true,
+  "insert_final_newline": true,
+  "search_exclude": ["*.min.js", "testdata"],
+  "auto_save_on_blur": false,
+  "preview_tabs": true
+}
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `editor.follow_active_file` | `bool` | `true` | The file tree reveals the active tab's file on every tab switch. The tree's toggle overrides it per channel. |
+| `editor.format_on_save` | `bool` | `false` | Saving a file in the editor runs the first formatter whose glob matches it (see [Format on save](editor.md#format-on-save)). |
+| `editor.formatters` | `object[]` | `[]` | `{ "glob", "command" }` pairs. The command runs on the host in the file's root, reads the content on stdin and prints the formatted content; `{file}` is the file's path. |
+| `editor.tab_size` | `int` | `4` | How wide a tab shows, and how many spaces an indent is (1 to 16; other values are ignored). |
+| `editor.insert_spaces` | `bool` | `true` | Indent with spaces; `false` indents with a tab. |
+| `editor.trim_trailing_whitespace` | `bool` | `false` | Saving a file in the editor strips spaces and tabs from the end of each line. |
+| `editor.insert_final_newline` | `bool` | `false` | Saving a file in the editor ends it with a newline. |
+| `editor.search_exclude` | `string[]` | `[]` | Globs the file and content searches skip, on top of `.gitignore`. Each matches a file or directory name, or the root-relative path when it holds a `/`. |
+| `editor.auto_save_on_blur` | `bool` | `false` | Save the open editor tabs when the window loses focus. |
+| `editor.preview_tabs` | `bool` | `true` | A single click opens a file in a transient preview tab, which the next file opened replaces. A double-click or an edit keeps it. |
+
 #### Desktop (Electron App)
 
 ```jsonc
 "desktop": {
   "theme": "dark",
   "islands": true,
-  "preview_tabs": true,
-  "auto_save_on_blur": false,
   "stop_daemon_on_quit": false,
   "font_sizes": {
     "sidebar": 12,
@@ -754,13 +786,11 @@ The gate runs a seccomp `RET_USER_NOTIF` filter inside each agent container and 
 |---|---|---|---|
 | `desktop.theme` | `string` | `"dark"` | Color theme. One of `"dark"`, `"light"`, `"claude"`. |
 | `desktop.islands` | `bool` | `true` | Islands layout — panels float as rounded cards over a deep canvas with gaps between them. |
-| `desktop.preview_tabs` | `bool` | `true` | Single-click opens files in a transient preview tab. Double-click promotes to permanent. |
-| `desktop.auto_save_on_blur` | `bool` | `false` | Save open editor tabs when the window loses focus. |
 | `desktop.stop_daemon_on_quit` | `bool` | `false` | Uninstalls the daemon service on quit. Re-installed on next app launch. |
 | `desktop.font_sizes` | `object` | See above | Per-area font size overrides (in px). Keys: `sidebar`, `chat`, `terminal`, `editor`, `panels`. |
 | `desktop.hidden_pills` | `[]string` | `[]` | Sidebar pills that neither show nor count as [needing you](sidebar.md#showing-only-what-needs-you). Any of `gate`, `rev`, `ask`, `plan`, `trust`, `ci`, `conflict`, `comment`. Also set by right-clicking the sidebar's bell. |
 
-These settings are global-only (not available in project configs). Changes are applied live when saving the config — no restart required.
+These settings are global-only (not available in project configs). Changes are applied live when saving the config — no restart required. `preview_tabs` and `auto_save_on_blur` were desktop settings before; they are [editor settings](#editor) now, and an upgrade moves them there.
 
 ---
 
@@ -819,6 +849,7 @@ Not all global fields are available in project configs. The following fields can
 | `pr.auto_fix` / `pr.max_attempts` / `pr.merge_method` / `pr.poll_sec` / `pr.idle_poll_sec` | Each field **overrides** the global value when set, once the project config is trusted: `auto_fix` when present, the counts when positive, `merge_method` when it's a known value (see [PR watching](#pr-watching)). |
 | `learn.enabled` / `learn.min_turns` / `learn.model` / `learn.effort` / `learn.prompt` | Each field **overrides** the global value only when set: `enabled` and `min_turns` when present, the strings when non-empty (see [Learn](#learn)). |
 | `explain.enabled` / `explain.model` / `explain.effort` / `explain.prompt` | Each field **overrides** the global value only when set: `enabled` when present, the strings when non-empty (see [Explain](#explain)). |
+| `editor.*` | The flags and `tab_size` **override** the global value when set. The formatters are **added** before the global ones, once the project config is trusted (see [Format on save](editor.md#format-on-save)); the `search_exclude` globs are **added** to the global ones. |
 | `gates.agentgate.enabled` | **Ignored**: the global setting decides, so a project can neither switch the gate off nor on. |
 | `gates.agentgate.path_rules` / `command_rules` / `file_rules` | **Layered**: the global `deny` rules you wrote and Loop's pinned default denies first, then the project rules, then the rest of the global rules (first-match-wins). Once the project config is trusted, the overridable default denies (credential dirs such as `~/.aws` and `~/.kube`, registry credential writes, `rm -rf` on an absolute path) move after the project rules, so a trusted project can allow them; until it is trusted, or after it changes, they stay first. A project can loosen a global `approve` or `allow`, never a deny you wrote. |
 | `gates.agentgate.default_decision` | **Ignored** — global wins unconditionally. |
@@ -849,6 +880,7 @@ The project config lives in the workspace, so an agent can edit it. The fields t
 - `anthropic_base_url` (the global credentials are sent there)
 - `browser.mode`, `browser.host_cdp_port`, `browser.extensions`, `browser.cookie_import`
 - `memory.paths`
+- `editor.formatters` (they run on the host when the editor saves a file)
 - `github.mount_gh_config`, `gitlab.glab_config_dir`, `gitlab.mount_glab_config` (they hand the host's `gh`/`glab` credentials to the agent)
 - `ci` (a failing check sends the agent a prompt, which starts a run unattended, and it picks how "merge when ready" merges)
 

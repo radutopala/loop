@@ -38,7 +38,7 @@ func (s *SchemaSuite) TestTopLevelProperties() {
 		"container_timeout_sec", "keep_mcp_configs",
 		"container_image_autobuild",
 		"claude_batch_disallowed_tools", "claude_retry",
-		"browser", "memory", "playground_share", "backup", "pprof", "dictation", "review",
+		"browser", "memory", "playground_share", "editor", "backup", "pprof", "dictation", "review",
 		"extra_dirs", "mounts", "copy_files",
 		"proxies",
 		"platforms",

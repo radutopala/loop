@@ -25,6 +25,7 @@ Feature: Per-Channel Tasks Journey
 
     # Delete task thread
     When I click on "Delete Thread" in the context menu
+    And I click on "[data-testid='context-menu-confirm'] [data-testid='confirm-yes']"
     Then I wait for text "task-thread-mega" to disappear
 
     # Select channel, open Tasks panel, verify empty

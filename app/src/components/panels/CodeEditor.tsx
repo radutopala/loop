@@ -23,9 +23,12 @@ import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import { renderMarkdownSafe } from "../../utils/markdownSafe";
 import { ContextMenu, type MenuItem } from "../shared/ContextMenu";
+import { type CompareSource, compareExtension, minimalChange } from "./editorCompare";
 import { emptyGitLineChanges, type GitLineChanges, gitChangeGutterExtension, setGitLineChanges } from "./editorGitGutter";
 import { GitChangeOverview } from "./editorGitOverview";
+import { indentExtension } from "./editorIndent";
 import { langIdFor } from "./editorLanguage";
+import { clampTabView, type TabView } from "./editorTabViews";
 import { buildEditorTheme } from "./editorTheme";
 import {
   selectedRange,
@@ -113,7 +116,7 @@ export function formatSize(bytes: number): string {
 export interface CodeEditorHandle {
   /** Get the current document text. */
   getContent(): string | null;
-  /** Replace the entire document with new content (not reported as an edit). */
+  /** Replace the document with new content (not reported as an edit). */
   replaceContent(content: string): void;
   /** Append a trailing newline if missing. */
   appendNewlineIfMissing(): void;
@@ -178,6 +181,19 @@ interface CodeEditorProps {
   /** Asks the agent about the selected lines; the context menu offers it
    *  when set. */
   onAskAgent?: (selection: WalkthroughRange) => void;
+  /** Where the tab was left, restored as the file opens. */
+  tabViewFor?: (pathKey: string) => TabView | undefined;
+  /** Called, settled, as the tab's selection or scroll changes, and as
+   *  the file closes. */
+  onTabViewChange?: (pathKey: string, view: TabView) => void;
+  /** The text to show the document's changes against, inline; null hides the diff. */
+  compareWith?: string | null;
+  /** What compareWith is, for its buttons' labels: the file on disk (default) or at HEAD. */
+  compareSource?: CompareSource;
+  /** How wide a tab shows and how many spaces an indent is. */
+  tabSize?: number;
+  /** Indent with spaces rather than a tab. */
+  insertSpaces?: boolean;
 }
 
 export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function CodeEditor(
@@ -204,6 +220,12 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
     walkthroughHandlers,
     onSelectionChange,
     onAskAgent,
+    tabViewFor,
+    onTabViewChange,
+    compareWith,
+    compareSource = "disk",
+    tabSize = 4,
+    insertSpaces = true,
   },
   ref,
 ) {
@@ -212,6 +234,14 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
   const viewRef = useRef<EditorView | null>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const themeCompartment = useRef(new Compartment());
+  const compareCompartment = useRef(new Compartment());
+  const indentCompartment = useRef(new Compartment());
+  const indentRef = useRef({ tabSize, insertSpaces });
+  indentRef.current = { tabSize, insertSpaces };
+  const compareWithRef = useRef(compareWith);
+  compareWithRef.current = compareWith;
+  const compareSourceRef = useRef(compareSource);
+  compareSourceRef.current = compareSource;
   const scrollSyncSource = useRef<"editor" | "preview" | null>(null);
   const previewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -226,6 +256,10 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
   gitChangesRef.current = gitChanges;
   const onSelectionChangeRef = useRef(onSelectionChange);
   onSelectionChangeRef.current = onSelectionChange;
+  const tabViewForRef = useRef(tabViewFor);
+  tabViewForRef.current = tabViewFor;
+  const onTabViewChangeRef = useRef(onTabViewChange);
+  onTabViewChangeRef.current = onTabViewChange;
   const walkthroughHandlersRef = useRef(walkthroughHandlers);
   walkthroughHandlersRef.current = walkthroughHandlers;
   // The card's handlers for the life of the component: they call the latest
@@ -268,10 +302,9 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
     replaceContent(content: string) {
       const view = viewRef.current;
       if (!view) return;
-      const current = view.state.doc.toString();
-      if (content !== current) {
-        view.dispatch({ changes: { from: 0, to: current.length, insert: content }, annotations: contentReplaced.of(true) });
-      }
+      // Only the span that differs, so the cursor and scroll stay put.
+      const change = minimalChange(view.state.doc.toString(), content);
+      if (change) view.dispatch({ changes: change, annotations: contentReplaced.of(true) });
     },
     appendNewlineIfMissing() {
       const view = viewRef.current;
@@ -330,6 +363,23 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       viewRef.current = null;
     }
 
+    // Where this tab was left. It's tracked as it changes, not read back on
+    // close: by then the view may be off the page and report no scroll.
+    const tabPath = selectedPath;
+    const saved = tabPath ? tabViewForRef.current?.(tabPath) : undefined;
+    let tabView: TabView = saved ? clampTabView(saved, fileContent.length) : { anchor: 0, head: 0, top: 0 };
+    let restoring = !!saved;
+    let reportTimer: ReturnType<typeof setTimeout> | null = null;
+    const reportTabView = () => {
+      reportTimer = null;
+      if (tabPath) onTabViewChangeRef.current?.(tabPath, tabView);
+    };
+    const tabViewChanged = (next: Partial<TabView>) => {
+      tabView = { ...tabView, ...next };
+      if (reportTimer) clearTimeout(reportTimer);
+      reportTimer = setTimeout(reportTabView, 250);
+    };
+
     const extensions = [
       lineNumbers(),
       highlightActiveLine(),
@@ -344,9 +394,15 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       search({ top: true }),
       themeCompartment.current.of([buildEditorTheme(colors, fontSizes.editor), walkthroughTheme(colors)]),
       walkthroughExtension(cardHandlers.current),
+      compareCompartment.current.of(compareExtension(compareWithRef.current, compareSourceRef.current)),
+      indentCompartment.current.of(indentExtension(indentRef.current.tabSize, indentRef.current.insertSpaces)),
       keymap.of([...defaultKeymap, ...historyKeymap, ...foldKeymap, ...searchKeymap, indentWithTab]),
       EditorView.updateListener.of((update) => {
-        if (update.selectionSet || update.docChanged) onSelectionChangeRef.current?.(selectedRange(update.state));
+        if (update.selectionSet || update.docChanged) {
+          onSelectionChangeRef.current?.(selectedRange(update.state));
+          const { anchor, head } = update.state.selection.main;
+          if (anchor !== tabView.anchor || head !== tabView.head) tabViewChanged({ anchor, head });
+        }
         if (update.docChanged) {
           if (!update.transactions.some((tr) => tr.annotation(contentReplaced))) onDocChangedRef.current();
           const curRel = selectedRelPathRef.current;
@@ -367,6 +423,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
     const state = EditorState.create({
       doc: fileContent,
       extensions,
+      selection: saved ? EditorSelection.single(tabView.anchor, tabView.head) : undefined,
     });
 
     const view = new EditorView({
@@ -384,7 +441,21 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
 
     // Sync editor scroll -> preview.
     const scroller = editorRef.current;
+    // Scroll back to the line that was at the top; the view measures the
+    // lines it draws before it scrolls, so its own scroll lands on it.
+    if (saved && tabView.top > 0) view.dispatch({ effects: EditorView.scrollIntoView(tabView.top, { y: "start", yMargin: 0 }) });
+    // Scrolls until that one has landed are the restore's, not the user's.
+    let restoreFrame = requestAnimationFrame(() => {
+      restoreFrame = requestAnimationFrame(() => {
+        restoring = false;
+      });
+    });
     const onEditorScroll = () => {
+      if (!restoring && scroller) {
+        // 1px down: a line ending right at the edge isn't in view.
+        const top = view.lineBlockAtHeight(scroller.getBoundingClientRect().top - view.documentTop + 1).from;
+        if (top !== tabView.top) tabViewChanged({ top });
+      }
       if (scrollSyncSource.current === "preview" || !scroller) return;
       scrollSyncSource.current = "editor";
       const el = previewRef.current;
@@ -400,6 +471,12 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
 
     return () => {
       scroller?.removeEventListener("scroll", onEditorScroll);
+      cancelAnimationFrame(restoreFrame);
+      if (reportTimer) {
+        clearTimeout(reportTimer);
+        reportTimer = null;
+        reportTabView();
+      }
       view.destroy();
       viewRef.current = null;
       onSelectionChangeRef.current?.(null);
@@ -415,6 +492,16 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       });
     }
   }, [colors, fontSizes.editor]);
+
+  // Show or hide the inline diff.
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: compareCompartment.current.reconfigure(compareExtension(compareWith, compareSource)) });
+  }, [compareWith, compareSource]);
+
+  // Follow the indent settings as the config changes.
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: indentCompartment.current.reconfigure(indentExtension(tabSize, insertSpaces)) });
+  }, [tabSize, insertSpaces]);
 
   // Push VCS change markers into the live view without rebuilding it.
   useEffect(() => {

@@ -1,7 +1,7 @@
 import type { WorktreeInfo } from "../../api/git";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
-import { SectionHeader } from "./OpenPRs";
+import { PickerSection } from "./OpenPRs";
 
 /** The worktrees whose branch or directory name holds search, ignoring case. */
 export function filterWorktrees(worktrees: readonly WorktreeInfo[], search: string): WorktreeInfo[] {
@@ -44,8 +44,7 @@ export function WorktreeRows({
   } as const;
 
   return (
-    <div data-testid={testId}>
-      <SectionHeader>Worktrees</SectionHeader>
+    <PickerSection testId={testId} title="Worktrees" divided>
       {shown.map((wt) => {
         const dirName = wt.path.split("/").pop() || wt.path;
         return (
@@ -124,6 +123,6 @@ export function WorktreeRows({
         );
       })}
       {shown.length === 0 && <div style={{ padding: "8px 12px", color: colors.textDim, fontSize: 12 }}>No worktrees found</div>}
-    </div>
+    </PickerSection>
   );
 }

@@ -19,6 +19,7 @@ import (
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/filewatch"
 	"github.com/radutopala/loop/internal/osutil"
 	"github.com/radutopala/loop/internal/scheduler"
 	"github.com/radutopala/loop/internal/uibridge"
@@ -167,7 +168,10 @@ type Server struct {
 	newBackupKey            func() (*age.X25519Identity, error)   // generates the backups' key pair
 	messages                MessageSender
 	memoryIndexer           MemoryIndexer
-	dictation               DictationService // runs voice dictation; nil disables /api/dictation/*
+	dictation               DictationService                  // runs voice dictation; nil disables /api/dictation/*
+	newFileWatcher          func() (filewatch.Watcher, error) // starts each /files/watch connection's watcher
+	editorCmds              editorCommands                    // runs the editor's formatters and content search
+	fileWatchDebounce       time.Duration                     // how long file changes gather before /files/watch reports them
 	termManager             TerminalManager
 	hostTermManager         TerminalManager
 	cmdBuilder              InteractiveCmdBuilder
@@ -411,15 +415,17 @@ func NewServer(sched scheduler.Scheduler, channels ChannelEnsurer, threads Threa
 			sys:       sys,
 			workspace: workspaceResolver{store: store},
 		},
-		scheduler:       sched,
-		channels:        channels,
-		threads:         threads,
-		messages:        messages,
-		removeMCPConfig: bot.RemoveMCPConfig,
-		newBackupKey:    age.GenerateX25519Identity,
-		deliverAsync:    func(f func()) { go f() },
-		termDelays:      defaultTerminalDelays(),
-		suggestions:     newPromptSuggestions(),
+		scheduler:         sched,
+		channels:          channels,
+		threads:           threads,
+		messages:          messages,
+		removeMCPConfig:   bot.RemoveMCPConfig,
+		newFileWatcher:    filewatch.New,
+		fileWatchDebounce: filewatch.DefaultDebounce,
+		newBackupKey:      age.GenerateX25519Identity,
+		deliverAsync:      func(f func()) { go f() },
+		termDelays:        defaultTerminalDelays(),
+		suggestions:       newPromptSuggestions(),
 		worktreeCreator: &worktree.Creator{
 			Sys: sys,
 			Run: worktree.ExecCommandRunner,
@@ -516,6 +522,8 @@ func (s *Server) registerTaskRoutes(mux *http.ServeMux) {
 }
 
 // registerGitRoutes registers the git, diff, and PR routes.
+//
+//nolint:dupl // route registrars are intentionally parallel lists
 func (s *Server) registerGitRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/channels/{id}/diff", s.handleGitDiff)
 	mux.HandleFunc("GET /api/channels/{id}/pr", s.handleChannelPR)
@@ -567,6 +575,8 @@ func (s *Server) registerReviewRoutes(mux *http.ServeMux) {
 }
 
 // registerFileRoutes registers the file tree, paste-image, readme, and memory routes.
+//
+//nolint:dupl // route registrars are intentionally parallel lists
 func (s *Server) registerFileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/memory/search", s.handleMemorySearch)
 	mux.HandleFunc("POST /api/memory/index", s.handleMemoryIndex)
@@ -578,9 +588,13 @@ func (s *Server) registerFileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/channels/{id}/roots", s.handleListRoots)
 	mux.HandleFunc("GET /api/channels/{id}/files", s.handleListFiles)
 	mux.HandleFunc("GET /api/channels/{id}/files/search", s.handleSearchFiles)
+	mux.HandleFunc("GET /api/channels/{id}/files/grep", s.handleGrepFiles)
+	mux.HandleFunc("GET /api/channels/{id}/editor-config", s.handleEditorConfig)
+	mux.HandleFunc("GET /api/channels/{id}/files/watch", s.handleFileWatch)
 	mux.HandleFunc("GET /api/channels/{id}/file", s.handleReadFile)
 	mux.HandleFunc("PUT /api/channels/{id}/file", s.handleWriteFile)
 	mux.HandleFunc("DELETE /api/channels/{id}/file", s.handleDeleteFile)
+	mux.HandleFunc("POST /api/channels/{id}/file/rename", s.handleRenameFile)
 	mux.HandleFunc("GET /api/channels/{id}/raw/{root}/{path...}", s.handleRawFile)
 	mux.HandleFunc("POST /api/channels/{id}/files/exists", s.handleFilesExists)
 	mux.HandleFunc("POST /api/channels/{id}/dir", s.handleCreateDir)

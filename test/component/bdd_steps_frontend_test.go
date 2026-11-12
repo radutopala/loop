@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -262,6 +263,13 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I open the file "([^"]*)" in the editor tree$`, tc.openFileInEditorTree)
 	ctx.Step(`^I append "([^"]*)" to the code editor$`, tc.appendToCodeEditor)
 	ctx.Step(`^I save the editor$`, tc.saveEditor)
+	ctx.Step(`^I click the code editor line "([^"]*)"$`, tc.clickCodeEditorLine)
+	ctx.Step(`^I scroll the code editor until "([^"]*)" is the top line$`, tc.scrollCodeEditorTo)
+	ctx.Step(`^the code editor's top line should be "([^"]*)"$`, tc.assertCodeEditorTopLine)
+	ctx.Step(`^the code editor cursor should be on the line "([^"]*)"$`, tc.assertCodeEditorCursorLine)
+	ctx.Step(`^the editor tabs overflow their strip$`, tc.assertEditorTabsOverflow)
+	ctx.Step(`^the editor tab "([^"]*)" should be in the strip's view$`, tc.assertEditorTabInView)
+	ctx.Step(`^I scroll the editor tab strip to its start$`, tc.scrollEditorTabsToStart)
 	ctx.Step(`^I record messages posted by frames$`, tc.recordFrameMessages)
 	ctx.Step(`^I delay requests matching "([^"]*)" by "([^"]*)"$`, tc.delayRequests)
 	ctx.Step(`^I record requests matching "([^"]*)"$`, tc.recordRequests)
@@ -271,6 +279,8 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I wait for a frame message "([^"]*)"$`, tc.waitForFrameMessage)
 	ctx.Step(`^I wait for "([^"]*)" to be at least (\d+)px tall$`, tc.waitForElementHeight)
 	ctx.Step(`^I wait for "([^"]*)" to be at most (\d+)px tall$`, tc.waitForElementMaxHeight)
+	ctx.Step(`^I note the height of "([^"]*)"$`, tc.noteElementHeight)
+	ctx.Step(`^"([^"]*)" is still the height I noted$`, tc.assertElementHeightKept)
 	ctx.Step(`^I click the last "([^"]*)"$`, tc.clickLast)
 	ctx.Step(`^the element "([^"]*)" should fit inside the window$`, tc.assertElementInsideWindow)
 	ctx.Step(`^the element "([^"]*)" should be below "([^"]*)"$`, tc.assertElementBelow)
@@ -1827,6 +1837,127 @@ func (tc *TestContext) appendToCodeEditor(text string) error {
 	)
 }
 
+// codeEditorScrollerJS finds the element the code editor scrolls in: the
+// one holding CodeMirror's view.
+const codeEditorScrollerJS = `document.querySelector('.cm-editor')?.parentElement`
+
+// tabViewSettle outlasts the editor's wait before it records where a tab is.
+const tabViewSettle = 500 * time.Millisecond
+
+// clickCodeEditorLine clicks a visible line of the code editor by its text,
+// putting the cursor there.
+func (tc *TestContext) clickCodeEditorLine(text string) error {
+	js := fmt.Sprintf(`(() => {
+		const line = [...document.querySelectorAll('.cm-line')].find((l) => l.textContent === %q);
+		if (!line) return null;
+		const r = line.getBoundingClientRect();
+		return { x: r.left + Math.min(20, r.width / 2), y: r.top + r.height / 2, ok: true };
+	})()`, text)
+	var box struct {
+		X, Y float64
+		OK   bool
+	}
+	if err := chromedp.Run(tc.chromeTab.ctx,
+		chromedp.Poll(fmt.Sprintf(`[...document.querySelectorAll('.cm-line')].some((l) => l.textContent === %q)`, text), nil, chromedp.WithPollingTimeout(10*time.Second)),
+		chromedp.Evaluate(js, &box),
+	); err != nil {
+		return err
+	}
+	if !box.OK {
+		return fmt.Errorf("code editor line %q not found", text)
+	}
+	return chromedp.Run(tc.chromeTab.ctx, chromedp.MouseClickXY(box.X, box.Y), chromedp.Sleep(tabViewSettle))
+}
+
+// codeEditorTopLineJS returns the text of the first line in view.
+const codeEditorTopLineJS = `(() => {
+	const s = ` + codeEditorScrollerJS + `;
+	if (!s) return "";
+	const top = s.getBoundingClientRect().top;
+	const line = [...document.querySelectorAll('.cm-line')].find((l) => l.getBoundingClientRect().bottom > top + 1);
+	return line?.textContent ?? "";
+})()`
+
+// scrollCodeEditorTo scrolls the code editor down until the line reading
+// text is the first in view, then waits for the tab to record it. Lines are
+// drawn as they come into view, so it scrolls a screen at a time until the
+// line is drawn, then lines it up.
+func (tc *TestContext) scrollCodeEditorTo(text string) error {
+	js := fmt.Sprintf(`(() => {
+		const s = %s;
+		if (!s) return false;
+		const line = [...document.querySelectorAll('.cm-line')].find((l) => l.textContent === %q);
+		if (!line) { s.scrollTop += s.clientHeight; return false; }
+		const delta = line.getBoundingClientRect().top - s.getBoundingClientRect().top;
+		s.scrollTop += delta;
+		return Math.abs(delta) < 1;
+	})()`, codeEditorScrollerJS, text)
+	for range 100 {
+		var done bool
+		if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &done), chromedp.Sleep(50*time.Millisecond)); err != nil {
+			return err
+		}
+		if done {
+			return chromedp.Run(tc.chromeTab.ctx, chromedp.Sleep(tabViewSettle))
+		}
+	}
+	return fmt.Errorf("couldn't scroll the code editor to %q", text)
+}
+
+// assertCodeEditorTopLine polls until the first line in view reads text.
+func (tc *TestContext) assertCodeEditorTopLine(text string) error {
+	poll := fmt.Sprintf(`%s === %q`, codeEditorTopLineJS, text)
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Poll(poll, nil, chromedp.WithPollingTimeout(10*time.Second))); err != nil {
+		var got string
+		_ = chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(codeEditorTopLineJS, &got))
+		return fmt.Errorf("top line %q, want %q: %w", got, text, err)
+	}
+	return nil
+}
+
+// assertEditorTabsOverflow checks the tabs don't all fit, so whether the
+// active one is in view means something.
+func (tc *TestContext) assertEditorTabsOverflow() error {
+	var ok bool
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(`(() => { const s = document.querySelector('[data-testid="editor-tabs"]'); return !!s && s.scrollWidth > s.clientWidth + 20; })()`, &ok)); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("the editor tabs fit their strip")
+	}
+	return nil
+}
+
+// assertEditorTabInView polls until the tab for path lies fully inside the
+// tab strip's visible part.
+func (tc *TestContext) assertEditorTabInView(path string) error {
+	poll := fmt.Sprintf(`(() => {
+		const s = document.querySelector('[data-testid="editor-tabs"]');
+		const t = s?.querySelector('[data-testid="editor-tab"][data-path=%q]');
+		if (!s || !t) return false;
+		const sr = s.getBoundingClientRect(), tr = t.getBoundingClientRect();
+		return tr.left >= sr.left - 1 && tr.right <= sr.left + s.clientWidth + 1;
+	})()`, path)
+	return chromedp.Run(tc.chromeTab.ctx, chromedp.Poll(poll, nil, chromedp.WithPollingTimeout(10*time.Second)))
+}
+
+// scrollEditorTabsToStart scrolls the tab strip back to its first tab.
+func (tc *TestContext) scrollEditorTabsToStart() error {
+	var ok bool
+	return chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(`(() => { const s = document.querySelector('[data-testid="editor-tabs"]'); if (s) s.scrollLeft = 0; return true; })()`, &ok))
+}
+
+// assertCodeEditorCursorLine polls until the line holding the cursor reads text.
+func (tc *TestContext) assertCodeEditorCursorLine(text string) error {
+	poll := fmt.Sprintf(`document.querySelector('.cm-activeLine')?.textContent === %q`, text)
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Poll(poll, nil, chromedp.WithPollingTimeout(10*time.Second))); err != nil {
+		var got string
+		_ = chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(`document.querySelector('.cm-activeLine')?.textContent ?? ''`, &got))
+		return fmt.Errorf("cursor on %q, want %q: %w", got, text, err)
+	}
+	return nil
+}
+
 // saveEditor triggers the editor's Cmd/Ctrl+S save handler (registered on
 // window) so the edited buffer is flushed to disk before the agent commits it.
 func (tc *TestContext) saveEditor() error {
@@ -3362,7 +3493,8 @@ func (tc *TestContext) injectExitPlanEvent(planText string) error {
 }
 
 // injectAskUserEvent fires a synthetic agent.ask_user event into the chat
-// store. options is a comma-separated list of option labels (e.g. "yes,no").
+// store. options is a comma-separated list of option labels (e.g. "yes,no"),
+// each optionally with a description after "=" ("pg=Relational,kv=Cache").
 // Builds one question with those options; for tests that need multi-question
 // scenarios extend with a richer step signature.
 func (tc *TestContext) injectAskUserEvent(question, options string) error {
@@ -3382,7 +3514,11 @@ func (tc *TestContext) injectAskUserEvent(question, options string) error {
 		if label == "" {
 			continue
 		}
-		opts = append(opts, map[string]string{"label": label})
+		opt := map[string]string{"label": label}
+		if l, desc, ok := strings.Cut(label, "="); ok {
+			opt = map[string]string{"label": l, "description": desc}
+		}
+		opts = append(opts, opt)
 	}
 	payload, err := json.Marshal(map[string]any{
 		"type":       "agent.ask_user",
@@ -3757,6 +3893,34 @@ func (tc *TestContext) waitForElementMaxHeight(selector string, maxPx int) error
 		var h float64
 		_ = chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(fmt.Sprintf(`document.querySelector(%q)?.getBoundingClientRect().height ?? -1`, selector), &h))
 		return fmt.Errorf("element %q is %.0fpx tall, want at most %dpx: %w", selector, h, maxPx, err)
+	}
+	return nil
+}
+
+// noteElementHeight notes how tall the element is, for
+// assertElementHeightKept.
+func (tc *TestContext) noteElementHeight(selector string) error {
+	var ok bool
+	js := fmt.Sprintf(`(() => { const el = document.querySelector(%q); if (!el) return false; (window.__notedHeights ??= {})[%q] = el.getBoundingClientRect().height; return true; })()`, selector, selector)
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &ok)); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("element %q not found", selector)
+	}
+	return nil
+}
+
+// assertElementHeightKept checks the element is as tall as noteElementHeight
+// noted.
+func (tc *TestContext) assertElementHeightKept(selector string) error {
+	var got []float64
+	js := fmt.Sprintf(`(() => { const el = document.querySelector(%q); return [window.__notedHeights?.[%q] ?? -1, el ? el.getBoundingClientRect().height : -1]; })()`, selector, selector)
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &got)); err != nil {
+		return err
+	}
+	if len(got) != 2 || got[0] < 0 || got[1] < 0 || math.Abs(got[0]-got[1]) > 0.5 {
+		return fmt.Errorf("element %q height changed: noted vs now %v", selector, got)
 	}
 	return nil
 }

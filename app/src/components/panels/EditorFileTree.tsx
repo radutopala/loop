@@ -184,6 +184,8 @@ export function FileTree({
         return (
           <div key={pathKey}>
             <button
+              data-testid="file-tree-entry"
+              data-path={pathKey}
               onClick={() => (isDir ? onDirClick(pathKey) : onFileClick(pathKey, entry))}
               onDoubleClick={() => {
                 if (!isDir) onFileDoubleClick(pathKey, entry);

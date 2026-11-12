@@ -68,6 +68,7 @@ type projectConfig struct {
 	GitLab                     *projectGitLabConfig       `json:"gitlab"`
 	Review                     *jsonReviewConfig          `json:"review"`
 	PlaygroundShare            *jsonPlaygroundShareConfig `json:"playground_share"`
+	Editor                     *jsonEditorConfig          `json:"editor"`
 	PR                         *jsonPRConfig              `json:"pr"`
 	Learn                      *jsonLearnConfig           `json:"learn"`
 	Explain                    *jsonExplainConfig         `json:"explain"`
@@ -671,6 +672,10 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 	if pc.PlaygroundShare != nil && pc.PlaygroundShare.Enabled != nil {
 		merged.PlaygroundShare.Enabled = *pc.PlaygroundShare.Enabled
 	}
+
+	// Editor: the flags override only when set; formatters go before the
+	// outer layer's, so a project's win.
+	merged.Editor = merged.Editor.overlay(pc.Editor, FromProject)
 
 	// CI: each field overrides only when set in the project.
 	merged.PR = merged.PR.overlay(pc.PR)

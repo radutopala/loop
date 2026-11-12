@@ -415,6 +415,79 @@ func buildSchema(goos string) *ConfigSchema {
 				},
 			},
 
+			"editor": {
+				Type:     "object",
+				XSection: "Editor",
+				Properties: map[string]*SchemaProperty{
+					"follow_active_file": {
+						Type:        "boolean",
+						Title:       "Follow Active File",
+						Description: "Reveal the active tab's file in the file tree as you switch tabs. The tree's toolbar button overrides it per channel.",
+						Default:     true,
+					},
+					"format_on_save": {
+						Type:        "boolean",
+						Title:       "Format On Save",
+						Description: "Run the first matching formatter over a file when the editor saves it.",
+						Default:     false,
+					},
+					"formatters": {
+						Type:        "array",
+						Title:       "Formatters",
+						Description: "Tried in order, a project's before the global ones. The command runs on the host in the file's root, reads the content on stdin and prints the formatted content; {file} stands for the file's path.",
+						Items: &SchemaProperty{
+							Type: "object",
+							Properties: map[string]*SchemaProperty{
+								"glob":    {Type: "string", Title: "Glob", Description: "Matches the file name, or the root-relative path when it holds a /. Braces list alternatives: *.{ts,tsx}"},
+								"command": {Type: "string", Title: "Command", Description: "For example: gofmt, or npx prettier --stdin-filepath {file}"},
+							},
+						},
+					},
+					"tab_size": {
+						Type:        "integer",
+						Title:       "Tab Size",
+						Description: "How wide a tab shows, and how many spaces an indent is: 1 to 16.",
+						Default:     4,
+					},
+					"insert_spaces": {
+						Type:        "boolean",
+						Title:       "Insert Spaces",
+						Description: "Indent with spaces; off indents with a tab.",
+						Default:     true,
+					},
+					"trim_trailing_whitespace": {
+						Type:        "boolean",
+						Title:       "Trim Trailing Whitespace",
+						Description: "Strip spaces and tabs from the end of each line when the editor saves a file.",
+						Default:     false,
+					},
+					"insert_final_newline": {
+						Type:        "boolean",
+						Title:       "Insert Final Newline",
+						Description: "End a file with a newline when the editor saves it.",
+						Default:     false,
+					},
+					"search_exclude": {
+						Type:        "array",
+						Title:       "Search Exclude",
+						Description: "Globs the file and content searches skip, on top of .gitignore. Each matches a file or directory name, or the root-relative path when it holds a /. A project's add to the global ones.",
+						Items:       &SchemaProperty{Type: "string"},
+					},
+					"auto_save_on_blur": {
+						Type:        "boolean",
+						Title:       "Auto-save on Blur",
+						Description: "Save open editor tabs when the window loses focus.",
+						Default:     false,
+					},
+					"preview_tabs": {
+						Type:        "boolean",
+						Title:       "Preview Tabs",
+						Description: "Single-click opens files in a transient preview tab. Double-click or an edit keeps it.",
+						Default:     true,
+					},
+				},
+			},
+
 			"pr": {
 				Type:     "object",
 				XSection: "PR",
@@ -1142,17 +1215,6 @@ func buildSchema(goos string) *ConfigSchema {
 						Type:        "boolean",
 						Title:       "Stop Daemon on Quit",
 						Description: "Uninstalls the daemon service on quit. It will be re-installed on next app launch.",
-					},
-					"auto_save_on_blur": {
-						Type:        "boolean",
-						Title:       "Auto-save on Blur",
-						Description: "Save open editor tabs when the window loses focus.",
-					},
-					"preview_tabs": {
-						Type:        "boolean",
-						Title:       "Preview Tabs",
-						Description: "Single-click opens files in a transient preview tab. Double-click promotes to permanent.",
-						Default:     true,
 					},
 					"islands": {
 						Type:        "boolean",

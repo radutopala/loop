@@ -353,6 +353,13 @@ var migrations = []Migration{
 		Description: "refresh container/ files: retry GitHub release lookups and downloads",
 		Apply:       refreshContainerFiles,
 	},
+	{
+		// Auto-save on blur and preview tabs are editor settings now, which
+		// a project can set too: they leave the global desktop block for
+		// the editor block.
+		Description: "move auto_save_on_blur and preview_tabs from desktop to editor",
+		Apply:       moveEditorPrefs,
+	},
 }
 
 // adoptProjectConfigs trusts the project config of every project checkout
@@ -1938,4 +1945,112 @@ func renameCIBlockAt(sys System, configPath string) error {
 		return fmt.Errorf("writing %s: %w", configPath, err)
 	}
 	return nil
+}
+
+// movedEditorPrefs are the desktop keys moveEditorPrefs moves to editor.
+var movedEditorPrefs = []string{"auto_save_on_blur", "preview_tabs"}
+
+// moveEditorPrefs moves movedEditorPrefs from the desktop block of the
+// global config, the only one with a desktop block, to its editor block.
+func moveEditorPrefs(_ context.Context, c *Ctx) error {
+	v, configPath, err := loadConfigHJSON(c)
+	if err != nil || v == nil {
+		return err
+	}
+	rootObj, ok := v.Value.(*hujson.Object)
+	if !ok {
+		return fmt.Errorf("parsing %s: expected JSON object at top level", configPath)
+	}
+	if !moveEditorPrefsIn(rootObj) {
+		return nil
+	}
+	if err := atomicWriteConfig(c.Sys, configPath, v.Pack(), 0644); err != nil {
+		return fmt.Errorf("writing %s: %w", configPath, err)
+	}
+	return nil
+}
+
+// moveEditorPrefsIn moves movedEditorPrefs out of root's desktop object into
+// its editor object, created after desktop when there is none, and reports
+// whether it moved any. A key editor sets already keeps editor's value; the
+// comments above a moved key stay in desktop. A desktop or editor member
+// that is not an object is left alone.
+func moveEditorPrefsIn(root *hujson.Object) bool {
+	di := objectMemberIndex(root, "desktop")
+	if di < 0 {
+		return false
+	}
+	desktop, ok := root.Members[di].Value.Value.(*hujson.Object)
+	if !ok {
+		return false
+	}
+	editorVal := findObjectMember(root, "editor")
+	if editorVal != nil {
+		if _, ok := editorVal.Value.(*hujson.Object); !ok {
+			return false
+		}
+	}
+
+	var moved []hujson.ObjectMember
+	for i := 0; i < len(desktop.Members); {
+		m := desktop.Members[i]
+		if !slices.ContainsFunc(movedEditorPrefs, func(k string) bool { return memberNamed(m, k) }) {
+			i++
+			continue
+		}
+		before := " "
+		if b := string(m.Name.BeforeExtra); strings.Contains(b, "\n") {
+			before = b[strings.LastIndex(b, "\n"):]
+		}
+		m.Name.BeforeExtra = hujson.Extra(before)
+		m.Value.AfterExtra = nil
+		moved = append(moved, m)
+		deleteMember(desktop, i)
+	}
+	if len(moved) == 0 {
+		return false
+	}
+
+	if editorVal == nil {
+		indent := " "
+		if b := string(root.Members[di].Name.BeforeExtra); strings.Contains(b, "\n") {
+			indent = b[strings.LastIndex(b, "\n"):]
+		}
+		closing := hujson.Extra(nil)
+		if strings.Contains(indent, "\n") {
+			closing = hujson.Extra(indent)
+		}
+		var members []hujson.ObjectMember
+		for _, m := range moved {
+			if findObjectMember(&hujson.Object{Members: members}, m.Name.Value.(hujson.Literal).String()) == nil {
+				members = append(members, m)
+			}
+		}
+		member := hujson.ObjectMember{
+			Name:  hujson.Value{BeforeExtra: hujson.Extra(indent), Value: hujson.String("editor")},
+			Value: hujson.Value{BeforeExtra: hujson.Extra(" "), Value: &hujson.Object{Members: members, AfterExtra: closing}},
+		}
+		if di == len(root.Members)-1 {
+			// The new last member: the trailing comma desktop had, if any,
+			// moves with it.
+			member.Value.AfterExtra = root.Members[di].Value.AfterExtra
+			root.Members[di].Value.AfterExtra = hujson.Extra("")
+		}
+		root.Members = slices.Insert(root.Members, di+1, member)
+		return true
+	}
+
+	editor := editorVal.Value.(*hujson.Object)
+	for _, m := range moved {
+		if findObjectMember(editor, m.Name.Value.(hujson.Literal).String()) != nil {
+			continue
+		}
+		if n := len(editor.Members); n > 0 {
+			// A trailing comma on editor's last member stays the last one's.
+			last := &editor.Members[n-1].Value
+			m.Value.AfterExtra, last.AfterExtra = last.AfterExtra, hujson.Extra("")
+		}
+		editor.Members = append(editor.Members, m)
+	}
+	return true
 }

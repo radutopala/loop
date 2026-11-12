@@ -207,6 +207,26 @@
   //  "merge_method": "rebase"
   //},
 
+  // Editor settings for this project (flags and tab_size override global
+  // when set; formatters go before the global ones and need trust, since they
+  // run on the host; search_exclude adds to the global globs; see
+  // docs/editor.md#editor-settings)
+  //"editor": {
+  //  "follow_active_file": false,
+  //  "format_on_save": true,
+  //  "formatters": [
+  //    { "glob": "*.go", "command": "gofmt" },
+  //    { "glob": "*.{ts,tsx,js,json,css,md}", "command": "npx --no-install prettier --stdin-filepath {file}" }
+  //  ],
+  //  "tab_size": 2,
+  //  "insert_spaces": true,
+  //  "trim_trailing_whitespace": true,
+  //  "insert_final_newline": true,
+  //  "search_exclude": ["testdata", "*.pb.go"],
+  //  "auto_save_on_blur": true,
+  //  "preview_tabs": false
+  //},
+
   // Learn pass for this project (each field overrides global when set; see docs/chat.md#learn-from-a-run)
   //"learn": {
   //  "enabled": true,

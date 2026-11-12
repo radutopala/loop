@@ -101,3 +101,21 @@ Feature: Ask user question card
     And I click on the button with text "Skip"
     Then I wait for text "CLAUDE HAS QUESTIONS" to disappear
     And the element "[data-testid='sidebar'] [data-pill='ask']" should not exist
+
+  Scenario: An option's details float over the chat without resizing the card
+    # The chat is bottom-anchored: a details panel in the card's flow moved
+    # the card under the pointer as it opened or resized, so it flickered or
+    # jumped. It floats above the options instead.
+    When I inject an ask_user event with question "Which store?" and options "postgres=Relational and durable,redis=Fast in-memory cache"
+    And I wait for text "CLAUDE HAS QUESTIONS" to appear
+    And I note the height of "[data-testid='ask-user-card']"
+    And I hover over the element with text "postgres"
+    Then the element "[data-testid='ask-option-details']" should contain text "Relational and durable"
+    And the element "[data-testid='ask-option-details']" should not contain text "Fast in-memory cache"
+    And "[data-testid='ask-user-card']" is still the height I noted
+    When I hover over the element with text "redis"
+    Then the element "[data-testid='ask-option-details']" should contain text "Fast in-memory cache"
+    And the element "[data-testid='ask-option-details']" should not contain text "Relational and durable"
+    And "[data-testid='ask-user-card']" is still the height I noted
+    When I click on the button with text "Other..."
+    Then the element "[data-testid='ask-option-details']" should not exist

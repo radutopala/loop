@@ -1,5 +1,5 @@
 import type { RootEntry } from "../api/files";
-import { makePathKey } from "../components/panels/EditorFileTree";
+import { makePathKey, parsePathKey } from "../components/panels/EditorFileTree";
 
 /**
  * Map a tool's absolute file path to a `{rootIndex}:{relativePath}` pathKey,
@@ -74,4 +74,11 @@ export function tabDescriptions(tabs: TabPathInfo[], showRoot: boolean): Map<str
     }
   }
   return out;
+}
+
+/** The key of the directory holding a file: its root's key for a top-level file. */
+export function parentDirKey(pathKey: string): string {
+  const { rootIndex, relativePath } = parsePathKey(pathKey);
+  const slash = relativePath.lastIndexOf("/");
+  return makePathKey(rootIndex, slash < 0 ? "" : relativePath.slice(0, slash));
 }

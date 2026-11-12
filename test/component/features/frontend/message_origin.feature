@@ -33,3 +33,17 @@ Feature: Messages from another channel
     When I click on "[data-testid='message-origin']"
     Then I wait for text "doesn't exist anymore" to appear
     And I wait for text "question from the gone thread" to appear
+
+  Scenario: A long origin name ends in an ellipsis and shows whole on hover
+    Given I set up a test channel via API for git repo "bdd-message-origin-long"
+    And I create a thread "origin-with-a-very-long-thread-name-that-cannot-fit-in-the-message-footer-at-all-even-on-a-wide-window" under the current channel via API
+    And the latest thread queues "question from the long thread" for the current channel
+    And I open the app in a browser
+    And I wait for text "bdd-message-origin-long" to appear
+
+    When I click on "bdd-message-origin-long" in the sidebar
+    And I wait for text "question from the long thread" to appear
+    And I wait for "[data-testid='message-origin']" to be visible
+    And I rest the pointer on the element "[data-testid='message-origin']"
+    Then I wait for "[data-testid='hover-tip']" to be visible
+    And the element "[data-testid='hover-tip']" should contain text "even-on-a-wide-window"

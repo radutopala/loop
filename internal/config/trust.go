@@ -62,6 +62,9 @@ type trustedFields struct {
 	// starts a run unattended, and how the owner's "merge when ready"
 	// merges.
 	PR *jsonPRConfig `json:"pr,omitempty"`
+	// Editor is the formatters, commands that run on the host over every
+	// file the editor saves.
+	Editor *trustedEditor `json:"editor,omitempty"`
 	// ContainerImage and ContainerImageAutobuild pick the image the agent
 	// runs in, built from the project's .loop/container when autobuild is
 	// on. The gate and the docker proxy run from inside that image, and the
@@ -74,6 +77,10 @@ type trustedFields struct {
 	// it's read from the project dir along with it, and the image is only
 	// built from the trusted version (see ChildImageManager).
 	ContainerBuild buildctx.Files `json:"container_build,omitempty"`
+}
+
+type trustedEditor struct {
+	Formatters []Formatter `json:"formatters,omitempty"`
 }
 
 type trustedGitHub struct {
@@ -136,6 +143,9 @@ func trustedFieldsOf(pc *projectConfig) trustedFields {
 	}
 	if c := pc.PR; c != nil && *c != (jsonPRConfig{}) {
 		t.PR = c
+	}
+	if e := pc.Editor; e != nil && len(e.Formatters) > 0 {
+		t.Editor = &trustedEditor{Formatters: e.Formatters}
 	}
 	if pc.Plugins != nil {
 		for id, c := range pc.Plugins.ByID {
@@ -208,6 +218,15 @@ func (t trustedFields) apply(pc *projectConfig) {
 		pc.GitLab = &projectGitLabConfig{GlabConfigDir: g.GlabConfigDir, MountGlabConfig: g.MountGlabConfig}
 	}
 	pc.PR = t.PR
+	if pc.Editor != nil || t.Editor != nil {
+		if pc.Editor == nil {
+			pc.Editor = &jsonEditorConfig{}
+		}
+		pc.Editor.Formatters = nil
+		if t.Editor != nil {
+			pc.Editor.Formatters = t.Editor.Formatters
+		}
+	}
 	if pc.Plugins != nil || t.Plugins != nil || t.PluginSchedules != nil {
 		if pc.Plugins == nil {
 			pc.Plugins = &PluginsConfig{}

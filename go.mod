@@ -19,6 +19,7 @@ require (
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/docker/go-connections v0.8.2
 	github.com/docker/go-units v0.5.0
+	github.com/fsnotify/fsnotify v1.10.1
 	github.com/go-json-experiment/json v1.27.2
 	github.com/google/jsonschema-go v0.4.3
 	github.com/google/uuid v1.6.0

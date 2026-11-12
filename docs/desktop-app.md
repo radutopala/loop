@@ -239,7 +239,6 @@ App-level settings are stored separately in `~/.loop/app.json`:
 
 ```json
 {
-  "stopDaemonOnQuit": false,
-  "autoSaveOnBlur": true
+  "stopDaemonOnQuit": false
 }
 ```

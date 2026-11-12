@@ -66,7 +66,17 @@ Feature: Channels & Threads Journey
     When I right-click on "mega-thread-one" in the sidebar
     Then the page should contain text "Delete Thread"
     When I click on "Delete Thread" in the context menu
+    Then the element "[data-testid='context-menu-confirm']" should contain text "Delete this thread?"
+    # No keeps the thread
+    When I click on "[data-testid='context-menu-confirm'] [data-testid='confirm-no']"
+    Then the element "[data-testid='context-menu-confirm']" should not exist
+    And the page should contain text "mega-thread-one"
+    When I click on "Delete Thread" in the context menu
+    And I click on "[data-testid='context-menu-confirm'] [data-testid='confirm-yes']"
     Then I wait for text "mega-thread-one" to disappear
+    And I wait up to "5s" for "[data-testid='deleting-overlay']" to disappear
+    # The deleted thread was selected, so its channel gets selected
+    And I wait for "textarea" to be visible
     And the page should contain text "mega-thread-two"
 
     # Navigate between thread and parent
@@ -82,4 +92,8 @@ Feature: Channels & Threads Journey
     # Delete channel
     When I right-click on "bdd-mega-chan-b" in the sidebar
     And I click on "Delete Channel" in the context menu
+    And I click on "[data-testid='context-menu-confirm'] [data-testid='confirm-yes']"
     Then I wait for text "bdd-mega-chan-b" to disappear
+    # A deleted selected channel leaves the empty view
+    And I wait up to "5s" for "[data-testid='deleting-overlay']" to disappear
+    And the element "textarea" should not exist

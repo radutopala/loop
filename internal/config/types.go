@@ -337,6 +337,74 @@ type jsonPlaygroundShareConfig struct {
 	Enabled *bool `json:"enabled"`
 }
 
+// Config layers a value can come from, as EditorConfig reports them.
+const (
+	FromDefault = "default"
+	FromGlobal  = "global"
+	FromProject = "project"
+)
+
+// EditorConfig holds the editor panel's settings. Layered global → project
+// → worktree; the *From fields name the layer each value came from, which
+// the editor shows next to its own per-channel override.
+type EditorConfig struct {
+	// FollowActiveFile reveals the active tab's file in the file tree as
+	// tabs switch. On by default.
+	FollowActiveFile     bool
+	FollowActiveFileFrom string
+	// FormatOnSave runs the first matching formatter over a file the
+	// editor saves. Off by default.
+	FormatOnSave     bool
+	FormatOnSaveFrom string
+	// Formatters are tried in order, a project's before the global ones.
+	Formatters []Formatter
+	// TabSize is how wide a tab shows and how many spaces an indent is;
+	// 4 by default.
+	TabSize int
+	// InsertSpaces indents with spaces rather than a tab. On by default.
+	InsertSpaces bool
+	// TrimTrailingWhitespace strips spaces and tabs from the end of each
+	// line of a file the editor saves. Off by default.
+	TrimTrailingWhitespace bool
+	// InsertFinalNewline ends a file the editor saves with a newline. Off
+	// by default.
+	InsertFinalNewline bool
+	// SearchExclude are globs the file and content searches skip, a
+	// project's and the global ones together.
+	SearchExclude []string
+	// AutoSaveOnBlur saves the open tabs when the window loses focus. Off by
+	// default.
+	AutoSaveOnBlur bool
+	// PreviewTabs opens a single-clicked file in a transient tab, which a
+	// double-click or an edit keeps. On by default.
+	PreviewTabs bool
+}
+
+// Formatter formats the files its glob matches: Command runs on the host
+// in the file's root, gets the content on stdin and prints the formatted
+// content; {file} in it stands for the file's absolute path.
+type Formatter struct {
+	// Glob matches the file's name, or its root-relative path when it holds
+	// a "/". Braces list alternatives: "*.{ts,tsx}".
+	Glob    string `json:"glob"`
+	Command string `json:"command"`
+}
+
+// jsonEditorConfig is the JSON form of EditorConfig, with pointers telling
+// "unset" (inherit the outer layer) from an explicit value.
+type jsonEditorConfig struct {
+	FollowActiveFile       *bool       `json:"follow_active_file"`
+	FormatOnSave           *bool       `json:"format_on_save"`
+	Formatters             []Formatter `json:"formatters"`
+	TabSize                *int        `json:"tab_size"`
+	InsertSpaces           *bool       `json:"insert_spaces"`
+	TrimTrailingWhitespace *bool       `json:"trim_trailing_whitespace"`
+	InsertFinalNewline     *bool       `json:"insert_final_newline"`
+	SearchExclude          []string    `json:"search_exclude"`
+	AutoSaveOnBlur         *bool       `json:"auto_save_on_blur"`
+	PreviewTabs            *bool       `json:"preview_tabs"`
+}
+
 // PprofConfig serves Go's net/http/pprof profiles of the daemon on their own
 // listener. Global only; the daemon picks a change up without a restart.
 type PprofConfig struct {
@@ -680,6 +748,7 @@ type Config struct {
 	GitLab                     GitLabConfig
 	Review                     ReviewConfig
 	PlaygroundShare            PlaygroundShareConfig
+	Editor                     EditorConfig
 	PR                         PRConfig
 	Backup                     BackupConfig
 	Pprof                      PprofConfig
@@ -839,8 +908,6 @@ func GlabConfigMount(goos, dir string) string {
 // DesktopConfig holds Electron desktop app preferences.
 type DesktopConfig struct {
 	StopDaemonOnQuit bool              `json:"stop_daemon_on_quit"`
-	AutoSaveOnBlur   bool              `json:"auto_save_on_blur"`
-	PreviewTabs      bool              `json:"preview_tabs"`
 	Islands          bool              `json:"islands"`
 	Theme            string            `json:"theme,omitempty"`
 	FontSizes        *DesktopFontSizes `json:"font_sizes,omitempty"`

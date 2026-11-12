@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { fetchOpenPRs, type PRInfo, type WorktreeInfo } from "../../api/git";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
@@ -83,27 +83,32 @@ export function useOpenPRs(channelId: string, enabled: boolean): { prs: PRInfo[]
 }
 
 /**
- * SectionHeader titles a branch picker's section and stays at the top of its
- * scroll area. Its section's scroll area has no top padding, so no row shows
- * above it.
+ * PickerSection is one section of a branch picker: a full-width title band
+ * over the section's own scroll area (just the area, without a title). divided
+ * draws a line above it, for a section below another.
  */
-export function SectionHeader({ children }: { children: string }) {
+export function PickerSection({ title, testId, divided, children }: { title?: string; testId?: string; divided?: boolean; children: ReactNode }) {
   const { colors } = useTheme();
   return (
-    <div
-      style={{
-        position: "sticky",
-        top: 0,
-        zIndex: 1,
-        padding: "8px 12px 2px",
-        backgroundColor: colors.surface,
-        fontSize: 10,
-        color: colors.textDim,
-        textTransform: "uppercase",
-        letterSpacing: 1,
-      }}
-    >
-      {children}
+    <div data-testid={testId} style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", borderTop: divided ? `1px solid ${colors.border}` : undefined }}>
+      {title && (
+        <div
+          style={{
+            flexShrink: 0,
+            padding: "5px 12px",
+            backgroundColor: colors.bg,
+            borderBottom: `1px solid ${colors.border}`,
+            fontSize: 10,
+            fontWeight: 600,
+            color: colors.textMuted,
+            textTransform: "uppercase",
+            letterSpacing: 1,
+          }}
+        >
+          {title}
+        </div>
+      )}
+      <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: title ? "2px 0 4px" : "4px 0" }}>{children}</div>
     </div>
   );
 }
@@ -136,8 +141,7 @@ export function OpenPRRows({
   const shown = prs?.filter((pr) => matchesPR(pr, search)) ?? [];
   const note = (text: string) => <div style={{ padding: "4px 12px 6px", color: colors.textDim, fontSize: 12, whiteSpace: "pre-wrap" }}>{text}</div>;
   return (
-    <div data-testid={testId}>
-      <SectionHeader>{prs?.[0]?.kind === "mr" || forge === "gitlab" ? "Merge requests" : "Pull requests"}</SectionHeader>
+    <PickerSection testId={testId} title={prs?.[0]?.kind === "mr" || forge === "gitlab" ? "Merge requests" : "Pull requests"} divided>
       {!prs && note("Loading…")}
       {error && note(error)}
       {prs && !error && shown.length === 0 && note(emptyPRsNote(prs, forge))}
@@ -184,6 +188,6 @@ export function OpenPRRows({
           </button>
         );
       })}
-    </div>
+    </PickerSection>
   );
 }
