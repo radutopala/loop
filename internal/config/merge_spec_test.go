@@ -41,6 +41,8 @@ const (
 	mergeReplace mergeKind = "replace"
 	// mergeAppend: the layer's entries go after the ones below.
 	mergeAppend mergeKind = "append"
+	// mergePrepend: the layer's entries go before the ones below.
+	mergePrepend mergeKind = "prepend"
 	// mergeOverlay: the layer's keys replace the same keys below; the
 	// other keys below stay.
 	mergeOverlay mergeKind = "overlay"
@@ -108,6 +110,9 @@ func (f mergeField) layer(c *Config, raw string, l mergeLayer) {
 	case mergeAppend:
 		out := reflect.MakeSlice(dst.Type(), 0, dst.Len()+v.Len())
 		dst.Set(reflect.AppendSlice(reflect.AppendSlice(out, dst), v))
+	case mergePrepend:
+		out := reflect.MakeSlice(dst.Type(), 0, dst.Len()+v.Len())
+		dst.Set(reflect.AppendSlice(reflect.AppendSlice(out, v), dst))
 	case mergeOverlay:
 		out := reflect.MakeMap(dst.Type())
 		for _, m := range []reflect.Value{dst, v} {
@@ -176,6 +181,15 @@ func layerMounts(c *Config, raw string, l mergeLayer) {
 // configMount is the rule for a credentials mount switch: the value
 // replaces the one below, and turning it off drops the mounts at or under
 // target too.
+// editorFlag is the merge of an editor flag: the layer's value replaces
+// the one below, and the project becomes where it came from.
+func editorFlag(field func(c *Config) (*bool, *string)) func(c *Config, raw string, l mergeLayer) {
+	return func(c *Config, raw string, _ mergeLayer) {
+		on, from := field(c)
+		*on, *from = decodeJSON[bool](raw), FromProject
+	}
+}
+
 func configMount(field func(c *Config) *bool, target string) func(c *Config, raw string, l mergeLayer) {
 	return func(c *Config, raw string, _ mergeLayer) {
 		on := decodeJSON[bool](raw)
@@ -437,6 +451,18 @@ var mergeFields = []mergeField{
 	{path: "review.max_iterations", kind: mergeReplace, field: func(c *Config) any { return &c.Review.MaxIterations }, global: `1`, project: `2`, worktree: `3`},
 	{path: "review.update_base", kind: mergeReplace, field: func(c *Config) any { return &c.Review.UpdateBase }, global: `true`, project: `false`, worktree: `true`},
 	{path: "playground_share.enabled", kind: mergeReplace, field: func(c *Config) any { return &c.PlaygroundShare.Enabled }, global: `true`, project: `false`, worktree: `true`},
+	{path: "editor.follow_active_file", kind: mergeCustom, field: func(c *Config) any { return &c.Editor.FollowActiveFile }, global: `true`, project: `false`, worktree: `true`,
+		apply: editorFlag(func(c *Config) (*bool, *string) { return &c.Editor.FollowActiveFile, &c.Editor.FollowActiveFileFrom }), reason: "replaces the one below, and records the project as where it came from"},
+	{path: "editor.format_on_save", kind: mergeCustom, field: func(c *Config) any { return &c.Editor.FormatOnSave }, global: `true`, project: `false`, worktree: `true`,
+		apply: editorFlag(func(c *Config) (*bool, *string) { return &c.Editor.FormatOnSave, &c.Editor.FormatOnSaveFrom }), reason: "replaces the one below, and records the project as where it came from"},
+	{path: "editor.formatters", kind: mergePrepend, field: func(c *Config) any { return &c.Editor.Formatters }, global: `[{"glob": "*.g", "command": "g"}]`, project: `[{"glob": "*.p", "command": "p"}]`, worktree: `[{"glob": "*.w", "command": "w"}]`},
+	{path: "editor.tab_size", kind: mergeReplace, field: func(c *Config) any { return &c.Editor.TabSize }, global: `2`, project: `3`, worktree: `8`},
+	{path: "editor.insert_spaces", kind: mergeReplace, field: func(c *Config) any { return &c.Editor.InsertSpaces }, global: `true`, project: `false`, worktree: `true`},
+	{path: "editor.trim_trailing_whitespace", kind: mergeReplace, field: func(c *Config) any { return &c.Editor.TrimTrailingWhitespace }, global: `true`, project: `false`, worktree: `true`},
+	{path: "editor.insert_final_newline", kind: mergeReplace, field: func(c *Config) any { return &c.Editor.InsertFinalNewline }, global: `true`, project: `false`, worktree: `true`},
+	{path: "editor.auto_save_on_blur", kind: mergeReplace, field: func(c *Config) any { return &c.Editor.AutoSaveOnBlur }, global: `true`, project: `false`, worktree: `true`},
+	{path: "editor.preview_tabs", kind: mergeReplace, field: func(c *Config) any { return &c.Editor.PreviewTabs }, global: `false`, project: `true`, worktree: `false`},
+	{path: "editor.search_exclude", kind: mergePrepend, field: func(c *Config) any { return &c.Editor.SearchExclude }, global: `["g"]`, project: `["p"]`, worktree: `["w"]`},
 	{path: "pr.auto_fix", kind: mergeReplace, field: func(c *Config) any { return &c.PR.AutoFix }, global: `true`, project: `false`, worktree: `true`},
 	{path: "pr.max_attempts", kind: mergeReplace, field: func(c *Config) any { return &c.PR.MaxAttempts }, global: `1`, project: `2`, worktree: `3`},
 	{path: "pr.merge_method", kind: mergeReplace, field: func(c *Config) any { return &c.PR.MergeMethod }, global: `"merge"`, project: `"squash"`, worktree: `"rebase"`},

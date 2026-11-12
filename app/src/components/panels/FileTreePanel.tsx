@@ -1,12 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { RootEntry } from "../../api/loopApi";
+import { parentDirKey } from "../../hooks/editorPaths";
 import type { EditorStateApi } from "../../hooks/useEditorState";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
+import { storageGet, storageRemove, storageSet } from "../../utils/storage";
 import { HoverTip } from "../chat/HoverTip";
 import { ContextMenu, type MenuItem } from "../shared/ContextMenu";
+import { type ContentSearch, contentHits, contentSummary, highlightParts, MIN_CONTENT_QUERY, useContentSearch } from "./contentSearch";
 import { FileTree, makePathKey, parsePathKey } from "./EditorFileTree";
 import { FilePanel } from "./FilePanel";
 import { fileSearchLabel, nextSearchIndex, useFileSearch } from "./fileSearch";
+import { followActiveFileKey, followTooltip, resolveFollow, storedFollow } from "./followActiveFile";
 
 interface FileTreePanelProps {
   channelId: string;
@@ -36,6 +41,7 @@ export function FileTreePanel({ channelId, dirPath, branch, editorState, embedde
     showTree,
     toggleDir,
     revealDir,
+    revealRequest,
     setSelectedDir,
     addExtraDir,
     handleCreateFile,
@@ -44,7 +50,9 @@ export function FileTreePanel({ channelId, dirPath, branch, editorState, embedde
     handleDeleteDirPath,
     handleRenamePath,
     openFile,
+    openFileAtLine,
     promoteFile,
+    editorConfig,
   } = editorState;
 
   const [newFileName, setNewFileName] = useState<string | null>(null);
@@ -54,14 +62,23 @@ export function FileTreePanel({ channelId, dirPath, branch, editorState, embedde
   const [renaming, setRenaming] = useState<{ pathKey: string; value: string } | null>(null);
   const [query, setQuery] = useState("");
   const [activeResult, setActiveResult] = useState(0);
-  const results = useFileSearch(channelId, query);
+  // Content mode searches inside the files; the name search is off then.
+  const [contentMode, setContentMode] = useState(false);
+  const [regex, setRegex] = useState(false);
+  const [caseSensitive, setCaseSensitive] = useState(false);
+  const results = useFileSearch(channelId, contentMode ? "" : query);
+  const contentActive = contentMode && query.trim() !== "";
+  const content = useContentSearch(channelId, query, { regex, caseSensitive }, contentMode);
+  const hits = content.state === "done" ? contentHits(content.result.files) : [];
+  // The tree hides while search results show in its place.
+  const listing = !!results || contentActive;
   const renameInputRef = useRef<HTMLInputElement>(null);
   const treeRef = useRef<HTMLDivElement>(null);
   const [revealed, setRevealed] = useState<string | null>(null);
 
   // Scroll a directory opened from the search into view once the tree shows it.
   useEffect(() => {
-    if (!revealed || results) return;
+    if (!revealed || listing) return;
     const el = treeRef.current?.querySelector(`[data-testid="file-tree-entry"][data-path="${CSS.escape(revealed)}"]`);
     if (el) {
       el.scrollIntoView({ block: "nearest" });
@@ -69,9 +86,37 @@ export function FileTreePanel({ channelId, dirPath, branch, editorState, embedde
     }
   });
 
+  // A file revealed from its tab: the search closes and the tree scrolls to it.
+  const revealSeq = revealRequest?.seq;
+  const revealPath = revealRequest?.path;
+  useEffect(() => {
+    if (!revealPath) return;
+    setQuery("");
+    setRevealed(revealPath);
+  }, [revealSeq, revealPath]);
+
+  // With follow on, the tree follows the active tab. The config sets it;
+  // the toggle overrides it for this channel, kept in localStorage.
+  const followKey = followActiveFileKey(channelId);
+  const [followStored, setFollowStored] = useState(() => ({ key: followKey, value: storageGet(followKey) }));
+  const follow = resolveFollow(editorConfig, followStored.key === followKey ? followStored.value : storageGet(followKey));
+  const revealDirRef = useRef(revealDir);
+  revealDirRef.current = revealDir;
+  useEffect(() => {
+    if (!follow.on || !selectedPath) return;
+    revealDirRef.current(parentDirKey(selectedPath));
+    setRevealed(selectedPath);
+  }, [follow.on, selectedPath]);
+  const toggleFollow = () => {
+    const value = storedFollow(editorConfig, !follow.on);
+    if (value === null) storageRemove(followKey);
+    else storageSet(followKey, value);
+    setFollowStored({ key: followKey, value });
+  };
+
   useEffect(() => {
     setActiveResult(0);
-  }, [results]);
+  }, [results, content]);
 
   // Select the name without its extension, as IDEs do, so typing replaces it.
   const renamingKey = renaming?.pathKey;
@@ -122,6 +167,13 @@ export function FileTreePanel({ channelId, dirPath, branch, editorState, embedde
     } else if (promote) promoteFile(pathKey);
     else openFile(pathKey);
   };
+  // A match opens its file at its line; a double-click keeps the tab, as
+  // in the tree.
+  const openHit = (index: number) => {
+    const hit = hits[index];
+    if (hit) openFileAtLine(makePathKey(hit.file.root_index, hit.file.rel_path), hit.line);
+  };
+  const searchCount = contentMode ? hits.length : (results?.length ?? 0);
 
   const getContextMenuItems = (): MenuItem[] => {
     if (!contextMenu) return [];
@@ -165,6 +217,41 @@ export function FileTreePanel({ channelId, dirPath, branch, editorState, embedde
       <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
         <div style={{ display: "flex", alignItems: "center", padding: "4px 8px 2px", flexShrink: 0 }}>
           <span style={{ flex: 1, fontSize: 10, fontWeight: 700, color: colors.textDim, textTransform: "uppercase", letterSpacing: 1 }}>Workspace</span>
+          <HoverTip text={followTooltip(editorConfig, follow)}>
+            <button
+              onClick={toggleFollow}
+              aria-label="Follow active file"
+              aria-pressed={follow.on}
+              data-follow-source={follow.source}
+              data-testid="file-tree-auto-reveal"
+              style={{
+                background: "none",
+                border: "none",
+                color: follow.on ? colors.active : colors.textDim,
+                cursor: "pointer",
+                padding: 0,
+                lineHeight: 1,
+                display: "flex",
+                alignItems: "center",
+                marginRight: 4,
+              }}
+              onMouseEnter={(e) => {
+                if (!follow.on) e.currentTarget.style.color = colors.textLight;
+              }}
+              onMouseLeave={(e) => {
+                if (!follow.on) e.currentTarget.style.color = colors.textDim;
+              }}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="7" />
+                <circle cx="12" cy="12" r="2" />
+                <line x1="12" y1="1" x2="12" y2="4" />
+                <line x1="12" y1="20" x2="12" y2="23" />
+                <line x1="1" y1="12" x2="4" y2="12" />
+                <line x1="20" y1="12" x2="23" y2="12" />
+              </svg>
+            </button>
+          </HoverTip>
           <HoverTip text={"Refresh files\nList the workspace again from disk"}>
             <button
               onClick={refreshTree}
@@ -235,28 +322,30 @@ export function FileTreePanel({ channelId, dirPath, branch, editorState, embedde
             </HoverTip>
           )}
         </div>
-        <div style={{ padding: "2px 8px 4px", flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "2px 8px 4px", flexShrink: 0 }}>
           <input
             data-testid="file-tree-search"
             type="search"
             value={query}
-            placeholder="Search files and directories"
+            placeholder={contentMode ? "Search in file contents" : "Search files and directories"}
             spellCheck={false}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
-              const next = nextSearchIndex(e.key, activeResult, results?.length ?? 0);
+              const next = nextSearchIndex(e.key, activeResult, searchCount);
               if (next !== null) {
                 e.preventDefault();
                 setActiveResult(next);
               } else if (e.key === "Enter") {
-                openResult(activeResult, e.metaKey || e.ctrlKey);
+                if (contentMode) openHit(activeResult);
+                else openResult(activeResult, e.metaKey || e.ctrlKey);
               } else if (e.key === "Escape" && query) {
                 e.stopPropagation();
                 setQuery("");
               }
             }}
             style={{
-              width: "100%",
+              flex: 1,
+              minWidth: 0,
               boxSizing: "border-box",
               padding: "4px 8px",
               fontSize: 11,
@@ -268,6 +357,47 @@ export function FileTreePanel({ channelId, dirPath, branch, editorState, embedde
               outline: "none",
             }}
           />
+          {contentMode && (
+            <>
+              <SearchToggle
+                testId="file-tree-search-regex"
+                label="Regular expression"
+                tip={regex ? "Regular expression: on\nThe query is a regular expression" : "Regular expression: off\nThe query matches as typed"}
+                on={regex}
+                onClick={() => setRegex((v) => !v)}
+              >
+                .*
+              </SearchToggle>
+              <SearchToggle
+                testId="file-tree-search-case"
+                label="Match case"
+                tip={caseSensitive ? "Match case: on\nUpper and lower case must match" : "Match case: off\nCase is ignored"}
+                on={caseSensitive}
+                onClick={() => setCaseSensitive((v) => !v)}
+              >
+                Aa
+              </SearchToggle>
+            </>
+          )}
+          <SearchToggle
+            testId="file-tree-search-contents"
+            label="Search in file contents"
+            tip={
+              contentMode
+                ? "Search in file contents: on\nMatching lines in every root, grouped by file; a click opens the file at the line"
+                : "Search in file contents: off\nThe search matches file and directory names; turn on to search inside the files"
+            }
+            on={contentMode}
+            onClick={() => setContentMode((v) => !v)}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="4" y1="6" x2="20" y2="6" />
+              <line x1="4" y1="12" x2="14" y2="12" />
+              <line x1="4" y1="18" x2="11" y2="18" />
+              <circle cx="18" cy="16" r="3" />
+              <line x1="20.2" y1="18.2" x2="22" y2="20" />
+            </svg>
+          </SearchToggle>
         </div>
         {treeError && (
           <div data-testid="file-tree-error" style={{ padding: "2px 8px", color: colors.error, fontSize: 11 }}>
@@ -347,6 +477,7 @@ export function FileTreePanel({ channelId, dirPath, branch, editorState, embedde
           </div>
         )}
         <div ref={treeRef} style={{ flex: 1, overflow: "auto", padding: "2px 0" }}>
+          {contentActive && <ContentResults content={content} activeHit={activeResult} roots={roots} selectedPath={selectedPath} onHover={setActiveResult} onOpen={openHit} onPromote={promoteFile} />}
           {results && results.length === 0 && <div style={{ padding: "4px 8px", color: colors.textDim, fontSize: 11 }}>Nothing matches</div>}
           {results?.map((r, i) => {
             const pathKey = makePathKey(r.root_index, r.rel_path);
@@ -383,7 +514,7 @@ export function FileTreePanel({ channelId, dirPath, branch, editorState, embedde
               </button>
             );
           })}
-          {!results &&
+          {!listing &&
             fallbackRoot.map((root) => {
               const rootKey = makePathKey(root.index, "");
               const isRootExpanded = expandedDirs.has(rootKey);
@@ -483,6 +614,146 @@ export function FileTreePanel({ channelId, dirPath, branch, editorState, embedde
       </div>
       {contextMenu && <ContextMenu x={contextMenu.x} y={contextMenu.y} items={getContextMenuItems()} onClose={() => setContextMenu(null)} />}
     </FilePanel>
+  );
+}
+
+interface SearchToggleProps {
+  testId: string;
+  label: string;
+  tip: string;
+  on: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}
+
+/** A pressed-or-not button beside the search input. */
+function SearchToggle({ testId, label, tip, on, onClick, children }: SearchToggleProps) {
+  const { colors } = useTheme();
+  return (
+    <HoverTip text={tip}>
+      <button
+        type="button"
+        data-testid={testId}
+        aria-label={label}
+        aria-pressed={on}
+        onClick={onClick}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          minWidth: 20,
+          height: 20,
+          padding: "0 3px",
+          border: `1px solid ${on ? colors.active : "transparent"}`,
+          borderRadius: 4,
+          background: "none",
+          color: on ? colors.active : colors.textDim,
+          cursor: "pointer",
+          fontSize: 11,
+          fontFamily: fonts.mono,
+          lineHeight: 1,
+          flexShrink: 0,
+        }}
+      >
+        {children}
+      </button>
+    </HoverTip>
+  );
+}
+
+interface ContentResultsProps {
+  content: ContentSearch;
+  activeHit: number;
+  roots: RootEntry[];
+  selectedPath: string | null;
+  onHover: (index: number) => void;
+  onOpen: (index: number) => void;
+  onPromote: (pathKey: string) => void;
+}
+
+/** The content search's matches, grouped by file: the file's name and
+ * where it is, then each matching line with the match marked. */
+function ContentResults({ content, activeHit, roots, selectedPath, onHover, onOpen, onPromote }: ContentResultsProps) {
+  const { colors } = useTheme();
+  const note = (text: string, testId?: string, color = colors.textDim) => (
+    <div data-testid={testId} style={{ padding: "4px 8px", color, fontSize: 11 }}>
+      {text}
+    </div>
+  );
+  if (content.state === "idle") return note(`Type at least ${MIN_CONTENT_QUERY} characters`);
+  if (content.state === "searching") return note("Searching…", "content-search-status");
+  if (content.state === "error") return note(content.message, "content-search-error", colors.error);
+  const { result } = content;
+  if (result.files.length === 0) return note("Nothing matches", "content-search-status");
+  let index = 0;
+  return (
+    <>
+      {result.files.map((file) => {
+        const pathKey = makePathKey(file.root_index, file.rel_path);
+        const name = file.rel_path.split("/").pop() ?? file.rel_path;
+        const { where } = fileSearchLabel({ ...file, name }, roots);
+        return (
+          <div key={pathKey} data-testid="content-search-file" data-path={pathKey}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "baseline",
+                gap: 6,
+                padding: "4px 8px 1px",
+                fontSize: 12,
+                fontFamily: fonts.mono,
+                color: pathKey === selectedPath ? colors.active : colors.textLight,
+                whiteSpace: "nowrap",
+              }}
+            >
+              <span style={{ flexShrink: 0, fontWeight: 600 }}>{name}</span>
+              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", color: colors.textDim, fontSize: 11 }}>{where}</span>
+              <span style={{ flexShrink: 0, color: colors.textDim, fontSize: 10 }}>{file.matches.length}</span>
+            </div>
+            {file.matches.map((m) => {
+              const i = index++;
+              const active = i === activeHit;
+              const [before, match, after] = highlightParts(m.text, m.column, m.length);
+              return (
+                <button
+                  key={`${m.line}:${m.column}`}
+                  type="button"
+                  data-testid="content-search-match"
+                  data-line={m.line}
+                  aria-selected={active}
+                  onClick={() => onOpen(i)}
+                  onDoubleClick={() => onPromote(pathKey)}
+                  onMouseEnter={() => onHover(i)}
+                  style={{
+                    display: "flex",
+                    alignItems: "baseline",
+                    gap: 6,
+                    width: "100%",
+                    padding: "1px 8px 1px 16px",
+                    border: "none",
+                    background: active ? colors.hoverBg : "none",
+                    color: colors.text,
+                    cursor: "pointer",
+                    fontSize: 11,
+                    fontFamily: fonts.mono,
+                    textAlign: "left",
+                    whiteSpace: "pre",
+                  }}
+                >
+                  <span style={{ flexShrink: 0, minWidth: 28, textAlign: "right", color: colors.textDim }}>{m.line}</span>
+                  <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {before.trimStart()}
+                    <mark style={{ background: colors.selectedBg, color: colors.textLight, borderRadius: 2 }}>{match}</mark>
+                    {after}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        );
+      })}
+      {note(contentSummary(result), "content-search-summary")}
+    </>
   );
 }
 

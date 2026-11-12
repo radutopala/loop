@@ -92,6 +92,30 @@
   //  "enabled": true
   //},
 
+  // Editor: follow_active_file reveals the active tab's file in the file tree
+  // (on by default; the tree's toolbar button overrides it per channel).
+  // format_on_save runs the first formatter whose glob matches a file the
+  // editor saves: the command runs on the host in the file's root, reads the
+  // content on stdin and prints the formatted content; {file} is the file's
+  // path. tab_size and insert_spaces set how the editor indents;
+  // trim_trailing_whitespace and insert_final_newline clean a file up as it's
+  // saved; search_exclude globs hide paths from the file and content
+  // searches. Projects can override each. See docs/editor.md#editor-settings.
+  //"editor": {
+  //  "follow_active_file": true,
+  //  "format_on_save": true,
+  //  "formatters": [
+  //    { "glob": "*.go", "command": "gofmt" }
+  //  ],
+  //  "tab_size": 4,
+  //  "insert_spaces": true,
+  //  "trim_trailing_whitespace": false,
+  //  "insert_final_newline": false,
+  //  "search_exclude": ["*.min.js"],
+  //  "auto_save_on_blur": false, // save the open tabs when the window loses focus
+  //  "preview_tabs": true // a click opens a transient tab
+  //},
+
   // Profiling: serve the daemon's Go pprof profiles at
   // http://<addr>/debug/pprof/, on a listener of their own. Disabled by
   // default; turning it on or off takes effect without a restart. Keep addr on
@@ -261,8 +285,6 @@
   // Desktop app preferences (Electron only)
   //"desktop": {
   //  "stop_daemon_on_quit": false,
-  //  "auto_save_on_blur": false,
-  //  "preview_tabs": true,
   //  "islands": true, // floating rounded panels with gaps
   //  "theme": "dark", // "dark", "light", "claude"
   //  "font_sizes": {

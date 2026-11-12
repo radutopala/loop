@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/testutil"
 )
@@ -391,6 +392,28 @@ func (s *ServerSuite) TestSearchFiles_Dirs() {
 			}
 		})
 	}
+}
+
+func (s *ServerSuite) TestSearchFiles_SearchExclude() {
+	tmpDir := s.T().TempDir()
+	for _, rel := range []string{"app.go", "app.min.js", "gen/app_gen.go", "src/gen/x.go"} {
+		require.NoError(s.T(), os.MkdirAll(filepath.Dir(filepath.Join(tmpDir, rel)), 0o755))
+		require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, rel), []byte("x"), 0o644))
+	}
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+	s.srv.configs.load = func() (*config.Config, error) {
+		return &config.Config{Editor: config.EditorConfig{SearchExclude: []string{"*.min.js", "gen"}}}, nil
+	}
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/files/search?q=&dirs=1", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	var resp fileSearchResponse
+	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
+	var got []string
+	for _, r := range resp.Results {
+		got = append(got, r.RelPath)
+	}
+	require.ElementsMatch(s.T(), []string{"app.go", "src"}, got)
 }
 
 func (s *ServerSuite) TestSearchFiles_EmptyQReturnsAll() {

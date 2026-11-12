@@ -83,8 +83,8 @@ func (s *ConfigSuite) TestLoadDefaults() {
 	require.Equal(s.T(), CookieImportConfig{}, cfg.Browser.CookieImport)
 	require.Empty(s.T(), cfg.CopyFiles) // runner prepends ~/.claude.json per container; not defaulted here
 	require.False(s.T(), cfg.KeepMCPConfigs)
-	require.False(s.T(), cfg.Desktop.AutoSaveOnBlur)
-	require.True(s.T(), cfg.Desktop.PreviewTabs)
+	require.False(s.T(), cfg.Editor.AutoSaveOnBlur)
+	require.True(s.T(), cfg.Editor.PreviewTabs)
 	require.True(s.T(), cfg.Desktop.Islands)
 }
 
@@ -108,7 +108,8 @@ func (s *ConfigSuite) TestLoadCustomValues() {
 			"poll_interval_sec": 60,
 			"api_addr": ":9999",
 			"claude_bin_path": "/custom/claude",
-			"desktop": {"auto_save_on_blur": true}
+			"editor": {"auto_save_on_blur": true},
+			"desktop": {"theme": "light"}
 		}`), nil
 	}
 
@@ -130,7 +131,9 @@ func (s *ConfigSuite) TestLoadCustomValues() {
 	require.Equal(s.T(), 60*time.Second, cfg.PollInterval)
 	require.Equal(s.T(), ":9999", cfg.APIAddr)
 	require.Equal(s.T(), "/custom/claude", cfg.ClaudeBinPath)
-	require.True(s.T(), cfg.Desktop.AutoSaveOnBlur)
+	require.True(s.T(), cfg.Editor.AutoSaveOnBlur)
+	require.True(s.T(), cfg.Editor.PreviewTabs)
+	require.Equal(s.T(), "light", cfg.Desktop.Theme)
 }
 
 func (s *ConfigSuite) TestLoadNoProxy() {

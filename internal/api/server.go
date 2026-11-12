@@ -170,6 +170,7 @@ type Server struct {
 	memoryIndexer           MemoryIndexer
 	dictation               DictationService                  // runs voice dictation; nil disables /api/dictation/*
 	newFileWatcher          func() (filewatch.Watcher, error) // starts each /files/watch connection's watcher
+	editorCmds              editorCommands                    // runs the editor's formatters and content search
 	fileWatchDebounce       time.Duration                     // how long file changes gather before /files/watch reports them
 	termManager             TerminalManager
 	hostTermManager         TerminalManager
@@ -587,6 +588,8 @@ func (s *Server) registerFileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/channels/{id}/roots", s.handleListRoots)
 	mux.HandleFunc("GET /api/channels/{id}/files", s.handleListFiles)
 	mux.HandleFunc("GET /api/channels/{id}/files/search", s.handleSearchFiles)
+	mux.HandleFunc("GET /api/channels/{id}/files/grep", s.handleGrepFiles)
+	mux.HandleFunc("GET /api/channels/{id}/editor-config", s.handleEditorConfig)
 	mux.HandleFunc("GET /api/channels/{id}/files/watch", s.handleFileWatch)
 	mux.HandleFunc("GET /api/channels/{id}/file", s.handleReadFile)
 	mux.HandleFunc("PUT /api/channels/{id}/file", s.handleWriteFile)

@@ -91,16 +91,17 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFi
   channelIdRef.current = channelId;
   const dirtyContentRef = useRef(new Map<string, string>());
 
-  // Load desktop settings from global config.
+  // Load the editor settings from the global config: memory files belong to
+  // no project.
   useEffect(() => {
     fetchGlobalConfig()
       .then((cfg) => {
-        const d = cfg.content?.desktop;
+        const d = cfg.content?.editor;
         if (!d) return;
         if (typeof d.auto_save_on_blur === "boolean") setAutoSaveOnBlur(d.auto_save_on_blur);
         if (typeof d.preview_tabs === "boolean") setPreviewTabsEnabled(d.preview_tabs);
       })
-      .catch(logErr("loading desktop settings"));
+      .catch(logErr("loading editor settings"));
   }, []);
 
   // Persist tabs (exclude preview tab).

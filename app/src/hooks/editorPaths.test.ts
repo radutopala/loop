@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RootEntry } from "../api/files";
-import { editToolFilePath, matchAbsPathToKey, type TabPathInfo, tabDescriptions } from "./editorPaths";
+import { editToolFilePath, matchAbsPathToKey, parentDirKey, type TabPathInfo, tabDescriptions } from "./editorPaths";
 
 function root(index: number, path: string): RootEntry {
   return { index, path, name: path.split("/").pop() || path };
@@ -91,5 +91,15 @@ describe("tabDescriptions", () => {
     ["same name in different roots isn't a duplicate", [tab("a", "loop", "deep/src/x.ts"), tab("b", "other", "more/src/x.ts")], true, { a: "loop › …/src", b: "other › …/src" }],
   ])("%s", (_name, tabs, showRoot, want) => {
     expect(Object.fromEntries(tabDescriptions(tabs, showRoot))).toEqual(want);
+  });
+});
+
+describe("parentDirKey", () => {
+  it.each([
+    ["0:src/app/main.ts", "0:src/app"],
+    ["1:README.md", "1:"],
+    ["2:a/b", "2:a"],
+  ])("%s", (key, want) => {
+    expect(parentDirKey(key)).toBe(want);
   });
 });

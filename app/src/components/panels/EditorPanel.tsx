@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { buildRawFileBase } from "../../api/files";
 import { tabDescriptions } from "../../hooks/editorPaths";
+import { type BulkClose, tabsToClose } from "../../hooks/tabClose";
 import { useContentCapsEpoch } from "../../hooks/useContentCapsEpoch";
 import type { EditorStateApi } from "../../hooks/useEditorState";
 import { closeWalkthrough, getOpenWalkthrough, goToStep, pauseWalkthrough, playWalkthrough, setEditorSelection, useOpenWalkthrough } from "../../hooks/walkthroughStore";
@@ -8,7 +9,8 @@ import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import { logErr } from "../../utils/log";
 import { openChannelFile } from "../../utils/openChannelFile";
-import { ContextMenu } from "../shared/ContextMenu";
+import { HoverTip } from "../chat/HoverTip";
+import { ContextMenu, type MenuItem } from "../shared/ContextMenu";
 import { askAgent, askMessage } from "./askAgent";
 import { CodeEditor, isHtmlFile, isMarkdownFile } from "./CodeEditor";
 import { FileIcon, parsePathKey } from "./EditorFileTree";
@@ -91,12 +93,20 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
     codeEditorRef,
     switchToTab,
     closeTab,
+    closeTabs,
+    unpinFile,
+    revealFile,
+    previewTabsEnabled,
     markDirty,
     promoteFile,
     acceptPendingRefresh,
     dismissPendingRefresh,
     comparing,
     setComparing,
+    headCompare,
+    toggleHeadCompare,
+    notice,
+    dismissNotice,
   } = editorState;
 
   // The layout remounts per channel; the modes are saved so they survive it.
@@ -132,6 +142,9 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
 
   const pendingForActive = selectedPath ? pendingRefresh.get(selectedPath) : undefined;
   const compareWith = comparing === selectedPath ? pendingForActive : undefined;
+  // The diff against HEAD gives way to a comparison with the disk version.
+  const headDiff = compareWith === undefined && headCompare && headCompare.pathKey === selectedPath ? headCompare.content : undefined;
+  const canDiffHead = selectedRelPath !== null && fileContent !== null && !isBinary && compareWith === undefined;
 
   const absolutePath = (tab: string) => {
     const { rootIndex, relativePath } = parsePathKey(tab);
@@ -221,13 +234,36 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
     [channelId],
   );
 
-  const tabMenuItems = () => {
+  const tabMenuItems = (): MenuItem[] => {
     if (!tabMenu) return [];
-    const { relativePath } = parsePathKey(tabMenu.path);
-    return [
-      { label: "Copy relative path", onClick: () => void navigator.clipboard.writeText(relativePath) },
-      { label: "Copy absolute path", onClick: () => void navigator.clipboard.writeText(absolutePath(tabMenu.path)) },
+    const tab = tabMenu.path;
+    const { relativePath } = parsePathKey(tab);
+    const unsaved = (t: string) => dirtyTabs.has(t) || deletedTabs.has(t);
+    const items: MenuItem[] = [{ label: "Close", onClick: () => closeTab(tab) }];
+    const bulk: [BulkClose, string][] = [
+      ["others", "Close others"],
+      ["right", "Close to the right"],
+      ["saved", "Close saved"],
     ];
+    for (const [kind, label] of bulk) {
+      const paths = tabsToClose(kind, openTabs, tab, unsaved);
+      if (paths.length > 0) items.push({ label, title: "Tabs with unsaved changes stay open", onClick: () => closeTabs(paths) });
+    }
+    const bulkEnd = items.length;
+    if (tab === previewTab) items.push({ label: "Pin tab", separator: true, title: "Keep this tab open when another file opens", onClick: () => promoteFile(tab) });
+    else if (previewTabsEnabled && !unsaved(tab))
+      items.push({ label: "Unpin tab", separator: true, title: "Make this the preview tab: the next file opened replaces it", onClick: () => unpinFile(tab) });
+    items.push({
+      label: "Reveal in tree",
+      separator: items.length === bulkEnd,
+      onClick: () => {
+        if (tab !== selectedPath) switchToTab(tab);
+        revealFile(tab);
+      },
+    });
+    items.push({ label: "Copy relative path", separator: true, onClick: () => void navigator.clipboard.writeText(relativePath) });
+    items.push({ label: "Copy absolute path", onClick: () => void navigator.clipboard.writeText(absolutePath(tab)) });
+    return items;
   };
 
   const descriptions = tabDescriptions(
@@ -341,6 +377,96 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
                 );
               })}
             </div>
+            {canDiffHead && (
+              <HoverTip text={headDiff !== undefined ? "Hide changes since HEAD" : "Changes since HEAD\nShow everything changed in this file since the last commit; revert or keep each change"}>
+                <button
+                  data-testid="editor-diff-head"
+                  aria-pressed={headDiff !== undefined}
+                  onClick={toggleHeadCompare}
+                  style={{
+                    flexShrink: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    padding: "4px 8px",
+                    border: "none",
+                    background: headDiff !== undefined ? `${colors.active}18` : "none",
+                    color: headDiff !== undefined ? colors.active : colors.textDim,
+                    cursor: "pointer",
+                  }}
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 3v8M8 7h8M8 17h8M5 21h14" />
+                  </svg>
+                </button>
+              </HoverTip>
+            )}
+          </div>
+        )}
+        {selectedPath && notice?.pathKey === selectedPath && (
+          <div
+            data-testid="editor-notice"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "6px 10px",
+              flexShrink: 0,
+              backgroundColor: `${colors.warning}18`,
+              borderBottom: `1px solid ${colors.border}`,
+              fontSize: 11,
+              fontFamily: fonts.sans,
+              color: colors.textLight,
+            }}
+          >
+            <span title={notice.message} style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "pre", fontFamily: fonts.mono }}>
+              {notice.message}
+            </span>
+            <button
+              data-testid="editor-notice-dismiss"
+              aria-label="Dismiss"
+              onClick={dismissNotice}
+              style={{ background: "none", border: "none", color: colors.textDim, cursor: "pointer", fontSize: 14, lineHeight: 1, padding: "0 2px" }}
+            >
+              &times;
+            </button>
+          </div>
+        )}
+        {headDiff !== undefined && (
+          <div
+            data-testid="head-diff-banner"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "6px 10px",
+              flexShrink: 0,
+              backgroundColor: `${colors.active}18`,
+              borderBottom: `1px solid ${colors.border}`,
+              fontSize: 11,
+              fontFamily: fonts.sans,
+              color: colors.textLight,
+            }}
+          >
+            <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              Changes since HEAD: the committed lines show in red above yours. Revert or keep each change.
+            </span>
+            <button
+              data-testid="head-diff-hide"
+              onClick={toggleHeadCompare}
+              style={{
+                background: "none",
+                border: `1px solid ${colors.border}`,
+                color: colors.textDim,
+                cursor: "pointer",
+                padding: "2px 8px",
+                fontSize: 10,
+                fontFamily: fonts.sans,
+                borderRadius: 4,
+                lineHeight: 1.4,
+              }}
+            >
+              Hide diff
+            </button>
           </div>
         )}
         {selectedPath && deletedTabs.has(selectedPath) && (
@@ -535,7 +661,10 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
             onAskAgent={handleAskAgent}
             tabViewFor={editorState.tabViewFor}
             onTabViewChange={editorState.saveTabView}
-            compareWith={compareWith ?? null}
+            compareWith={compareWith ?? headDiff ?? null}
+            compareSource={compareWith !== undefined ? "disk" : "head"}
+            tabSize={editorState.editorConfig.tab_size}
+            insertSpaces={editorState.editorConfig.insert_spaces}
           />
         </div>
       </div>

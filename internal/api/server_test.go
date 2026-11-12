@@ -335,6 +335,8 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("GET /api/channels/{id}/roots", s.srv.handleListRoots)
 	s.mux.HandleFunc("GET /api/channels/{id}/files", s.srv.handleListFiles)
 	s.mux.HandleFunc("GET /api/channels/{id}/files/search", s.srv.handleSearchFiles)
+	s.mux.HandleFunc("GET /api/channels/{id}/files/grep", s.srv.handleGrepFiles)
+	s.mux.HandleFunc("GET /api/channels/{id}/editor-config", s.srv.handleEditorConfig)
 	s.mux.HandleFunc("GET /api/channels/{id}/file", s.srv.handleReadFile)
 	s.mux.HandleFunc("PUT /api/channels/{id}/file", s.srv.handleWriteFile)
 	s.mux.HandleFunc("DELETE /api/channels/{id}/file", s.srv.handleDeleteFile)

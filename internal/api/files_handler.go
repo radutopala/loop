@@ -444,6 +444,7 @@ func (s *Server) handleSearchFiles(w http.ResponseWriter, r *http.Request) {
 
 	results := make([]fileSearchResult, 0)
 	qLower := strings.ToLower(q)
+	ec := s.editorConfig(r.Context(), channelID)
 
 	for rootIdx, rootAbs := range allPaths {
 		if rootAbs == "" {
@@ -469,7 +470,7 @@ func (s *Server) handleSearchFiles(w http.ResponseWriter, r *http.Request) {
 				if fileSearchSkipDirs[d.Name()] {
 					return fs.SkipDir
 				}
-				if gitignoreMatch(patterns, rel) {
+				if gitignoreMatch(patterns, rel) || ec.Excluded(filepath.ToSlash(rel)) {
 					return fs.SkipDir
 				}
 				if withDirs && fuzzyMatchSeq(q, rel) {
@@ -477,7 +478,7 @@ func (s *Server) handleSearchFiles(w http.ResponseWriter, r *http.Request) {
 				}
 				return nil
 			}
-			if gitignoreMatch(patterns, rel) {
+			if gitignoreMatch(patterns, rel) || ec.Excluded(filepath.ToSlash(rel)) {
 				return nil
 			}
 			if !fuzzyMatchSeq(q, rel) {
@@ -621,12 +622,13 @@ func writeTextOrBinary(w http.ResponseWriter, data []byte) {
 	w.Write(data) //nolint:errcheck
 }
 
-// readFileAtCommit serves relPath as it was in commit ref. The path is
+// readFileAtCommit serves relPath as it was in commit ref (a hash, or HEAD). The path is
 // resolved against dirPath (the "./" prefix makes git read it relative to the
 // working directory rather than the repo root), so a channel rooted in a repo
 // subdirectory addresses the same files it does on disk.
 func (s *Server) readFileAtCommit(w http.ResponseWriter, r *http.Request, dirPath, relPath, ref string) {
-	if !validCommitHash.MatchString(ref) {
+	// HEAD is the one ref name taken: the editor diffs against it.
+	if ref != "HEAD" && !validCommitHash.MatchString(ref) {
 		http.Error(w, "invalid commit hash", http.StatusBadRequest)
 		return
 	}
@@ -781,6 +783,11 @@ func streamedMIMEByExt(path string) string {
 
 type writeFileResponse struct {
 	OK bool `json:"ok"`
+	// Content is the file as written when a formatter changed it.
+	Content *string `json:"content,omitempty"`
+	// FormatError is why the formatter didn't run over the file, which was
+	// saved as sent.
+	FormatError string `json:"format_error,omitempty"`
 }
 
 func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
@@ -827,12 +834,25 @@ func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ?format=1 is the editor's save, which gets the channel's save-time
+	// cleanups and, when format on save is on, its formatter.
+	var formatted formatResult
+	if r.URL.Query().Get("format") == "1" {
+		formatted = s.formatForSave(r.Context(), channelID, dirPath, filepath.ToSlash(relPath), absPath, body)
+		body = formatted.content
+	}
+
 	if err := s.sys.WriteFile(absPath, body, perm); err != nil {
 		http.Error(w, "failed to write file", http.StatusInternalServerError)
 		return
 	}
 
-	writeHTTPJSON(w, http.StatusOK, writeFileResponse{OK: true}, s.logger)
+	resp := writeFileResponse{OK: true, FormatError: formatted.err}
+	if formatted.changed {
+		content := string(body)
+		resp.Content = &content
+	}
+	writeHTTPJSON(w, http.StatusOK, resp, s.logger)
 }
 
 func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request) {

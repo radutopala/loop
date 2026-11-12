@@ -52,6 +52,7 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I set up a test channel via API for directory "([^"]*)"$`, tc.setupChannelViaAPI)
 	ctx.Step(`^I set up a test channel via API for git repo "([^"]*)"$`, tc.setupChannelViaAPIForGitRepo)
 	ctx.Step(`^I add an extra workspace root via API$`, tc.addExtraWorkspaceRootViaAPI)
+	ctx.Step(`^I save the project config via API with:$`, tc.saveProjectConfigViaAPI)
 	ctx.Step(`^I set up a sample project channel$`, tc.setupSampleProjectChannel)
 	ctx.Step(`^I create a thread "([^"]*)" under the current channel via API$`, tc.createThreadViaAPI)
 	ctx.Step(`^the latest thread queues "([^"]*)" for itself$`, tc.latestThreadQueuesForItself)
@@ -71,6 +72,7 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I delete the file "([^"]*)" in the repo$`, tc.deleteRepoFile)
 	ctx.Step(`^I create a file "([^"]*)" in the repo with (\d+) numbered lines$`, tc.createNumberedRepoFile)
 	ctx.Step(`^the file "([^"]*)" in the repo should contain "([^"]*)"$`, tc.repoFileShouldContain)
+	ctx.Step(`^the file "([^"]*)" in the repo should be exactly "([^"]*)"$`, tc.repoFileShouldBe)
 	ctx.Step(`^the file "([^"]*)" in the repo should (exist|not exist)$`, tc.repoFileShouldExist)
 	ctx.Step(`^I commit all changes in the repo with message "([^"]*)"$`, tc.commitAllInRepo)
 	ctx.Step(`^I remove every queued message via API$`, tc.removeQueuedViaAPI)
@@ -515,6 +517,22 @@ func (tc *TestContext) addExtraWorkspaceRootViaAPI() error {
 	return nil
 }
 
+// saveProjectConfigViaAPI saves the current channel's project config as the
+// owner does, then trusts it, so its trusted fields apply.
+func (tc *TestContext) saveProjectConfigViaAPI(cfg *godog.DocString) error {
+	body, err := json.Marshal(map[string]string{"content": cfg.Content})
+	if err != nil {
+		return err
+	}
+	if err := tc.doRequest(http.MethodPut, "/api/config/project?channel_id="+tc.ChannelID, string(body)); err != nil {
+		return err
+	}
+	if tc.LastStatus != http.StatusNoContent {
+		return fmt.Errorf("saving project config: status %d, body: %s", tc.LastStatus, tc.LastBody)
+	}
+	return tc.trustProjectConfig(tc.ChannelID)
+}
+
 // trustProjectConfig trusts the project config of channelID as it is now,
 // through the owner's review endpoints.
 func (tc *TestContext) trustProjectConfig(channelID string) error {
@@ -940,6 +958,25 @@ func (tc *TestContext) repoFileShouldContain(name, want string) error {
 		}
 	}
 	return fmt.Errorf("%s does not contain %q; got %q", name, want, got)
+}
+
+// repoFileShouldBe polls a repo file until it holds exactly want, where
+// \n stands for a newline.
+func (tc *TestContext) repoFileShouldBe(name, want string) error {
+	if tc.ChannelDir == "" {
+		return fmt.Errorf("no channel dir set; use 'I set up a test channel via API for git repo' step first")
+	}
+	want = strings.ReplaceAll(want, `\n`, "\n")
+	fpath := filepath.Join(tc.ChannelDir, name)
+	var got string
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+		data, err := os.ReadFile(fpath)
+		got = string(data)
+		if err == nil && got == want {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s is %q, want %q", name, got, want)
 }
 
 // repoFileShouldExist polls until a repo path exists, or is gone.

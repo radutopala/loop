@@ -72,6 +72,7 @@ type jsonConfig struct {
 	GitLab                     *GitLabConfig              `json:"gitlab"`
 	Review                     *jsonReviewConfig          `json:"review"`
 	PlaygroundShare            *jsonPlaygroundShareConfig `json:"playground_share"`
+	Editor                     *jsonEditorConfig          `json:"editor"`
 	PR                         *jsonPRConfig              `json:"pr"`
 	Learn                      *jsonLearnConfig           `json:"learn"`
 	Explain                    *jsonExplainConfig         `json:"explain"`
@@ -479,6 +480,8 @@ func (l *Loader) parse() (*Config, error) {
 		cfg.PlaygroundShare.Enabled = ptrDefault(jc.PlaygroundShare.Enabled, false)
 	}
 
+	cfg.Editor = editorConfigOf(jc.Editor)
+
 	cfg.PR = prConfigOf(jc.PR)
 
 	backup := cmp.Or(jc.Backup, &jsonBackupConfig{})
@@ -587,11 +590,7 @@ func (l *Loader) parse() (*Config, error) {
 	}
 
 	// Desktop config (Electron app preferences).
-	cfg.Desktop = DesktopConfig{
-		AutoSaveOnBlur: false,
-		PreviewTabs:    true,
-		Islands:        true,
-	}
+	cfg.Desktop = DesktopConfig{Islands: true}
 	if jc.Desktop != nil {
 		cfg.Desktop = *jc.Desktop
 	}

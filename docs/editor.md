@@ -95,6 +95,7 @@ The sidebar occupies the left side of the editor panel with:
 
 The tree header contains:
 - **"FILES" label** -- uppercase, dimmed
+- **Follow active file button** (target icon) -- when on, the tree opens the folders of the active tab's file and scrolls to it on every tab switch. It's on by default and set by [`editor.follow_active_file`](#editor-settings) in the global or project config. A click overrides it for this channel only (each thread and worktree thread is a channel of its own), kept in the browser's storage; clicking back to the config's value drops the override, so the config applies again. The hover tip says where the value comes from: the default, the global config, the project config, or this channel
 - **Refresh button** -- reloads the root and all expanded directories, and re-reads the currently open file from disk
 - **New file button** (`+`) -- opens an inline input for creating a new file
 - **Add directory button** (desktop app) -- adds another folder as a root of the channel's workspace
@@ -109,6 +110,18 @@ The search input under the header (`Search files and directories`) finds entries
 - **A directory** closes the search onto the tree, with that directory and the ones above it expanded, selected and scrolled into view
 - **ArrowUp / ArrowDown** move through the results; **Enter** opens the highlighted one
 - **Escape** clears the query and brings the tree back
+
+### Search in File Contents
+
+The lines button beside the search input switches it to searching inside the files (`GET /api/channels/{id}/files/grep`), across every root. Two more toggles show beside it: **`.*`** reads the query as a regular expression and **`Aa`** matches case; both are off by default (a literal, case-insensitive match). The search runs a moment after the last keystroke, from two characters on.
+
+Results replace the tree, grouped by file: the file's name, its folder (with the root's name when there is more than one) and how many lines match, then each matching line with its number and the match highlighted.
+
+- **Click** a line to open its file in a preview tab with the cursor on that line; **double-click** pins the tab
+- **ArrowUp / ArrowDown** move through the lines; **Enter** opens the highlighted one
+- **Escape** clears the query; the button again goes back to the name search
+
+The daemon searches with [ripgrep](https://github.com/BurntSushi/ripgrep) (`rg`) when it's on the host's `PATH`, and with a built-in walk otherwise. Either way it skips what the name search skips (`.git`, `node_modules`, `vendor` and the like, `.gitignore`d paths and the [`search_exclude`](#editor-settings) globs), hidden files and binary files. It returns at most 200 files, 50 lines per file and 2000 lines in all; when a cap cuts the results short, the summary under them says so.
 
 ### Directory Listing
 
@@ -173,6 +186,23 @@ A 4px-wide handle on the right edge of the tree allows horizontal resizing:
 - If auto-save is enabled, the file is saved before closing
 - Dirty content cache is cleared for the closed tab
 
+### Tab Context Menu
+
+Right-clicking a tab opens a menu for that tab:
+
+| Item | Action |
+|------|--------|
+| Close | Closes the tab, as its close button does |
+| Close others | Closes every other tab |
+| Close to the right | Closes the tabs after it in the strip |
+| Close saved | Closes every tab without unsaved changes |
+| Pin tab | On the preview tab: keeps it open when another file opens, as a double-click does |
+| Unpin tab | On a clean pinned tab, with preview tabs on: makes it the preview tab, so the next file opened replaces it; the previous preview tab closes |
+| Reveal in tree | Makes the tab active, opens its file's folders in the tree and scrolls to it |
+| Copy relative path / Copy absolute path | Copies the file's path to the clipboard |
+
+The bulk closes keep tabs with unsaved changes, and tabs whose file was deleted on disk, since closing them would lose what only the tab holds. An item that would close nothing is left out of the menu.
+
 ### Persistence
 
 Tab state (open tabs, selected tab and the preview tab) is persisted in `localStorage`:
@@ -192,7 +222,7 @@ The tab strip scrolls the active tab into view when it changes, when tabs open o
 
 ## Auto-Save on Blur
 
-Auto-save is controlled by the `autoSaveOnBlur` setting (default: `true`, configurable in [Settings](settings.md)).
+Auto-save is controlled by the `editor.auto_save_on_blur` setting (default: `false`, configurable in [Settings](settings.md) and per project; see [Editor Settings](#editor-settings)). The memory editor, which belongs to no project, reads the global value.
 
 ### Behavior
 
@@ -331,6 +361,62 @@ A 10px full-height strip to the right of the editor (`data-testid="git-overview-
 Markers are derived client-side from the channel's unified diff (`GET /api/channels/{id}/diff` — the same patch the [Git panel](git.md) renders), combining staged, unstaged, and untracked hunks. They refresh on file open, save, agent edit (`tool.use` for `Write`/`Edit`/`MultiEdit`), and window focus — so they reflect the on-disk (last-saved) state versus `HEAD`, not live per-keystroke edits.
 
 The gutter extension and its `StateField` live in `editorGitGutter.ts`; the overview ruler is `editorGitOverview.tsx`. Both share a single source of truth for the bar colours (`gitGutterColors`), which the editor theme also consumes so the colours track the active palette.
+
+### Diff Against HEAD
+
+The diff button to the right of the tab strip (`data-testid="editor-diff-head"`) shows the whole file against its committed version, in the same inline view as [Compare](#live-reload-from-disk): HEAD's text in red above the lines that differ. Unlike the markers, it covers unsaved edits too, since it compares the editor's text, not the file on disk. HEAD's version is read once, when the diff opens (`GET /api/channels/{id}/file?ref=HEAD`).
+
+- Each change has **Revert** (take HEAD's text for it) and **Keep**; a revert is an edit like any other, saved with Cmd/Ctrl+S
+- **Hide diff** in the banner, the button again, or switching tabs closes it
+- While a disk-change Compare is open, it takes the editor's diff view and the button is hidden; binary files don't have it either
+- A file HEAD doesn't have (new, or outside a git repository) shows a notice instead
+
+---
+
+## Format on Save
+
+With format on save on, saving a file in the editor (Cmd/Ctrl+S, save on blur, or a save while comparing) runs the first configured formatter whose glob matches it, and writes what the formatter prints. It's off by default, and set per project or globally under [`editor`](#editor-settings).
+
+```json
+"editor": {
+  "format_on_save": true,
+  "formatters": [
+    { "glob": "*.go", "command": "gofmt" },
+    { "glob": "*.{ts,tsx,js,json,css,md}", "command": "npx --no-install prettier --stdin-filepath {file}" }
+  ]
+}
+```
+
+- **The command** runs on the host through `sh -c`, in the file's root directory. It reads the content on stdin and prints the formatted content on stdout; `{file}` is replaced by the file's absolute path, shell-quoted, for formatters that pick their settings by file name. It has 15 seconds.
+- **A glob** matches the file's name (`*.go`), or its root-relative path when it holds a `/` (`web/*.ts`); a `*` doesn't cross a `/`. Braces list alternatives: `*.{ts,tsx}`.
+- **The order:** the project's formatters are tried before the global ones, each list in order; the first match runs, and a file nothing matches is saved as it is.
+- **The editor** gets the formatted text back in the save's response and puts it in the tab with the cursor kept where it was, as long as nothing was typed while the save ran. The tab's agent-edit dot isn't set by the save's own write.
+- **A formatter that fails**, times out or prints nothing leaves the file saved as typed, and a notice over the editor says why (`Saved without formatting: gofmt failed: …`). The next save that formats, or the notice's ×, clears it.
+
+The daemon decides whether to format: the editor always asks (`PUT /api/channels/{id}/file?format=1`), so a config change applies on the next save. The agent's own writes, and other API clients, aren't formatted.
+
+A project config's `editor.formatters` runs commands on the host, so like `mounts` it needs the owner's [trust](configuration.md#project-config-trust) before it applies; until then the trusted version's formatters (or none) are used.
+
+---
+
+## Editor Settings
+
+The `editor` section of the global config (`~/.loop/config.json`) and of a project's `.loop/config.json`:
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `follow_active_file` | `true` | The file tree reveals the active tab's file on every tab switch. The tree's [toggle](#header) overrides it per channel. |
+| `format_on_save` | `false` | Saving a file in the editor runs its [formatter](#format-on-save). |
+| `formatters` | `[]` | `{ "glob", "command" }` pairs, tried in order, the project's before the global ones. Trusted in a project config. |
+| `tab_size` | `4` | How wide a tab shows, and how many spaces an indent is (1 to 16). |
+| `insert_spaces` | `true` | **Tab** and auto-indent insert spaces; `false` inserts a tab. |
+| `trim_trailing_whitespace` | `false` | Saving strips spaces and tabs from the end of each line (a `\r` before the newline stays). |
+| `insert_final_newline` | `false` | Saving ends a non-empty file with a newline. |
+| `search_exclude` | `[]` | Globs the [name](#search) and [content](#search-in-file-contents) searches skip, on top of `.gitignore`. Each matches a file or directory name, or the root-relative path when it holds a `/`; braces list alternatives. A project's add to the global ones. |
+| `auto_save_on_blur` | `false` | The open tabs [save](#auto-save-on-blur) when the window loses focus. |
+| `preview_tabs` | `true` | A click opens a file in a preview tab, which the next file opened replaces; a double-click or an edit keeps it. Off, every file opens in its own tab. |
+
+The save cleanups run in the daemon before the formatter, on the editor's saves only; when they change the file, the editor shows the saved content. A project sets each flag and `tab_size` over the global value; a key it leaves out inherits it. The daemon reports the result, with the layer each value came from, at `GET /api/channels/{id}/editor-config`, which the editor reads on open and on window focus.
 
 ---
 
