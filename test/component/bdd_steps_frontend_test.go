@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -278,6 +279,8 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I wait for a frame message "([^"]*)"$`, tc.waitForFrameMessage)
 	ctx.Step(`^I wait for "([^"]*)" to be at least (\d+)px tall$`, tc.waitForElementHeight)
 	ctx.Step(`^I wait for "([^"]*)" to be at most (\d+)px tall$`, tc.waitForElementMaxHeight)
+	ctx.Step(`^I note the height of "([^"]*)"$`, tc.noteElementHeight)
+	ctx.Step(`^"([^"]*)" is still the height I noted$`, tc.assertElementHeightKept)
 	ctx.Step(`^I click the last "([^"]*)"$`, tc.clickLast)
 	ctx.Step(`^the element "([^"]*)" should fit inside the window$`, tc.assertElementInsideWindow)
 	ctx.Step(`^the element "([^"]*)" should be below "([^"]*)"$`, tc.assertElementBelow)
@@ -3490,7 +3493,8 @@ func (tc *TestContext) injectExitPlanEvent(planText string) error {
 }
 
 // injectAskUserEvent fires a synthetic agent.ask_user event into the chat
-// store. options is a comma-separated list of option labels (e.g. "yes,no").
+// store. options is a comma-separated list of option labels (e.g. "yes,no"),
+// each optionally with a description after "=" ("pg=Relational,kv=Cache").
 // Builds one question with those options; for tests that need multi-question
 // scenarios extend with a richer step signature.
 func (tc *TestContext) injectAskUserEvent(question, options string) error {
@@ -3510,7 +3514,11 @@ func (tc *TestContext) injectAskUserEvent(question, options string) error {
 		if label == "" {
 			continue
 		}
-		opts = append(opts, map[string]string{"label": label})
+		opt := map[string]string{"label": label}
+		if l, desc, ok := strings.Cut(label, "="); ok {
+			opt = map[string]string{"label": l, "description": desc}
+		}
+		opts = append(opts, opt)
 	}
 	payload, err := json.Marshal(map[string]any{
 		"type":       "agent.ask_user",
@@ -3885,6 +3893,34 @@ func (tc *TestContext) waitForElementMaxHeight(selector string, maxPx int) error
 		var h float64
 		_ = chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(fmt.Sprintf(`document.querySelector(%q)?.getBoundingClientRect().height ?? -1`, selector), &h))
 		return fmt.Errorf("element %q is %.0fpx tall, want at most %dpx: %w", selector, h, maxPx, err)
+	}
+	return nil
+}
+
+// noteElementHeight notes how tall the element is, for
+// assertElementHeightKept.
+func (tc *TestContext) noteElementHeight(selector string) error {
+	var ok bool
+	js := fmt.Sprintf(`(() => { const el = document.querySelector(%q); if (!el) return false; (window.__notedHeights ??= {})[%q] = el.getBoundingClientRect().height; return true; })()`, selector, selector)
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &ok)); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("element %q not found", selector)
+	}
+	return nil
+}
+
+// assertElementHeightKept checks the element is as tall as noteElementHeight
+// noted.
+func (tc *TestContext) assertElementHeightKept(selector string) error {
+	var got []float64
+	js := fmt.Sprintf(`(() => { const el = document.querySelector(%q); return [window.__notedHeights?.[%q] ?? -1, el ? el.getBoundingClientRect().height : -1]; })()`, selector, selector)
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &got)); err != nil {
+		return err
+	}
+	if len(got) != 2 || got[0] < 0 || got[1] < 0 || math.Abs(got[0]-got[1]) > 0.5 {
+		return fmt.Errorf("element %q height changed: noted vs now %v", selector, got)
 	}
 	return nil
 }

@@ -2,7 +2,7 @@ import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { resolveAsk, resolvePlan } from "../../api/channels";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
-import type { AgentActivityData, AskUserOption, AskUserQuestion, ExitPlanModeData, Message, TaskItem, TimelineItem } from "../../types";
+import type { AgentActivityData, AskUserQuestion, ExitPlanModeData, Message, TaskItem, TimelineItem } from "../../types";
 import { writeClipboard } from "../../utils/copyToClipboard";
 import { messageLink, messageOrigin } from "../../utils/messageLinks";
 import { isPRMessage } from "../../utils/prStatus";
@@ -681,9 +681,8 @@ export function AskUserQuestionCard({ questions, channelId, mode, onSent }: { qu
     });
   };
 
-  // Drop the transient hover/focus so the description+preview panel doesn't
-  // linger on the last-pointed option after the pointer leaves (which left a
-  // stale box hovering above the "Other" textarea).
+  // Close the details popover once the pointer leaves the options (or
+  // reaches "Other") or focus moves off an option.
   const clearFocusedOpt = (qi: number) => {
     setFocused((prev) => {
       if (!prev.has(qi)) return prev;
@@ -733,18 +732,14 @@ export function AskUserQuestionCard({ questions, channelId, mode, onSent }: { qu
 
   const allAnswered = questions.every((_, i) => selectedFor(i).size > 0);
 
-  // The option whose description+preview panel is shown: strictly the one under
-  // the pointer / keyboard focus (matching the tool schema's "rendered when this
-  // option is focused"). No selected-option fallback, so nothing lingers once
-  // the pointer leaves the options row.
-  const focusedOption = (qi: number): AskUserOption | undefined => {
-    const f = focused.get(qi);
-    if (!f) return undefined;
-    return questions[qi]?.options?.find((o) => o.label === f);
-  };
-
+  // The description+preview of the option under the pointer or keyboard focus
+  // (the tool schema's "rendered when this option is focused") floats above
+  // the options instead of taking space in the card. The chat is
+  // bottom-anchored, so a panel in the flow moved the card under the pointer
+  // as it opened, closed or resized: it flickered, or the card jumped.
   return (
     <div
+      data-testid="ask-user-card"
       style={{
         margin: "8px 16px",
         padding: "12px 16px",
@@ -757,14 +752,9 @@ export function AskUserQuestionCard({ questions, channelId, mode, onSent }: { qu
       {questions.map((q, qi) => {
         const multi = !!q.multiSelect;
         const sel = selectedFor(qi);
-        const focusOpt = focusedOption(qi);
+        const focusOpt = q.options?.find((o) => o.label === focused.get(qi));
         return (
-          // The hover clear lives on the whole question block (options row +
-          // panel), not on each option button: opening the panel grows the
-          // bottom-anchored chat and shifts the button out from under the
-          // cursor, so a per-button mouseLeave immediately cleared the focus
-          // and the panel flickered open/closed in a loop.
-          <div key={qi} onMouseLeave={() => clearFocusedOpt(qi)} style={{ marginBottom: qi < questions.length - 1 ? 12 : 0 }}>
+          <div key={qi} style={{ marginBottom: qi < questions.length - 1 ? 12 : 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
               {q.header && (
                 <div
@@ -789,81 +779,91 @@ export function AskUserQuestionCard({ questions, channelId, mode, onSent }: { qu
               )}
             </div>
             <div style={{ fontSize: 13, color: colors.text, marginBottom: 6 }}>{q.question}</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {q.options?.map((opt) => {
-                const isSelected = sel.has(opt.label);
-                return (
-                  <button
-                    key={opt.label}
-                    onClick={() => toggleOption(qi, opt.label, multi)}
-                    onMouseEnter={() => setFocusedOpt(qi, opt.label)}
-                    onFocus={() => setFocusedOpt(qi, opt.label)}
-                    title={opt.description}
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 6,
-                      padding: "4px 10px",
-                      fontSize: 12,
-                      fontFamily: fonts.mono,
-                      border: `1px solid ${isSelected ? colors.active : colors.border}`,
-                      borderRadius: multi ? 6 : 12,
-                      backgroundColor: isSelected ? colors.active : "transparent",
-                      color: isSelected ? "#fff" : colors.text,
-                      cursor: "pointer",
-                    }}
-                  >
-                    <span aria-hidden style={{ opacity: 0.9 }}>
-                      {multi ? (isSelected ? "☑" : "☐") : isSelected ? "◉" : "○"}
-                    </span>
-                    {opt.label}
-                  </button>
-                );
-              })}
-              <button
-                onClick={() => toggleOption(qi, OTHER, multi)}
-                style={{
-                  padding: "4px 10px",
-                  fontSize: 12,
-                  fontFamily: fonts.mono,
-                  border: `1px solid ${sel.has(OTHER) ? colors.active : colors.border}`,
-                  borderRadius: multi ? 6 : 12,
-                  backgroundColor: sel.has(OTHER) ? colors.active : "transparent",
-                  color: sel.has(OTHER) ? "#fff" : colors.textDim,
-                  cursor: "pointer",
-                }}
-              >
-                Other...
-              </button>
-            </div>
-            {/* Description + preview of the focused/selected option (Claude may
-              attach a mockup or code snippet to compare options). */}
-            {focusOpt && (focusOpt.description || focusOpt.preview) && (
-              <div style={{ marginTop: 6, padding: 8, backgroundColor: colors.bg, border: `1px solid ${colors.border}`, borderRadius: 6 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: colors.textLight, marginBottom: focusOpt.description ? 4 : 0 }}>{focusOpt.label}</div>
-                {focusOpt.description && <div style={{ fontSize: 12, color: colors.textDim }}>{focusOpt.description}</div>}
-                {focusOpt.preview && (
-                  <pre
-                    style={{
-                      marginTop: focusOpt.description ? 6 : 4,
-                      marginBottom: 0,
-                      padding: 8,
-                      maxHeight: 220,
-                      overflow: "auto",
-                      fontSize: 11,
-                      fontFamily: fonts.mono,
-                      backgroundColor: colors.codeBlockBg,
-                      borderRadius: 4,
-                      color: colors.text,
-                      whiteSpace: "pre-wrap",
-                      wordBreak: "break-word",
-                    }}
-                  >
-                    {focusOpt.preview}
-                  </pre>
-                )}
+            {/* The popover is inside this block, so the pointer can move from
+              an option onto it (to scroll a long preview) without closing it. */}
+            <div style={{ position: "relative" }} onMouseLeave={() => clearFocusedOpt(qi)}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {q.options?.map((opt) => {
+                  const isSelected = sel.has(opt.label);
+                  return (
+                    <button
+                      key={opt.label}
+                      onClick={() => toggleOption(qi, opt.label, multi)}
+                      onMouseEnter={() => setFocusedOpt(qi, opt.label)}
+                      onFocus={() => setFocusedOpt(qi, opt.label)}
+                      onBlur={() => clearFocusedOpt(qi)}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6,
+                        padding: "4px 10px",
+                        fontSize: 12,
+                        fontFamily: fonts.mono,
+                        border: `1px solid ${isSelected ? colors.active : colors.border}`,
+                        borderRadius: multi ? 6 : 12,
+                        backgroundColor: isSelected ? colors.active : "transparent",
+                        color: isSelected ? "#fff" : colors.text,
+                        cursor: "pointer",
+                      }}
+                    >
+                      <span aria-hidden style={{ opacity: 0.9 }}>
+                        {multi ? (isSelected ? "☑" : "☐") : isSelected ? "◉" : "○"}
+                      </span>
+                      {opt.label}
+                    </button>
+                  );
+                })}
+                <button
+                  onClick={() => toggleOption(qi, OTHER, multi)}
+                  onMouseEnter={() => clearFocusedOpt(qi)}
+                  style={{
+                    padding: "4px 10px",
+                    fontSize: 12,
+                    fontFamily: fonts.mono,
+                    border: `1px solid ${sel.has(OTHER) ? colors.active : colors.border}`,
+                    borderRadius: multi ? 6 : 12,
+                    backgroundColor: sel.has(OTHER) ? colors.active : "transparent",
+                    color: sel.has(OTHER) ? "#fff" : colors.textDim,
+                    cursor: "pointer",
+                  }}
+                >
+                  Other...
+                </button>
               </div>
-            )}
+              {/* Description + preview of the focused option (Claude may attach a
+              mockup or code snippet to compare options). */}
+              {focusOpt && (focusOpt.description || focusOpt.preview) && (
+                <div style={{ position: "absolute", left: 0, right: 0, bottom: "100%", paddingBottom: 6, zIndex: 20 }}>
+                  <div
+                    data-testid="ask-option-details"
+                    style={{ padding: 8, backgroundColor: colors.bg, border: `1px solid ${colors.textDim}`, borderRadius: 6, boxShadow: "0 4px 16px rgba(0,0,0,0.35)" }}
+                  >
+                    <div style={{ fontSize: 11, fontWeight: 600, color: colors.textLight, marginBottom: focusOpt.description ? 4 : 0 }}>{focusOpt.label}</div>
+                    {focusOpt.description && <div style={{ fontSize: 12, color: colors.textDim }}>{focusOpt.description}</div>}
+                    {focusOpt.preview && (
+                      <pre
+                        style={{
+                          marginTop: focusOpt.description ? 6 : 4,
+                          marginBottom: 0,
+                          padding: 8,
+                          maxHeight: 220,
+                          overflow: "auto",
+                          fontSize: 11,
+                          fontFamily: fonts.mono,
+                          backgroundColor: colors.codeBlockBg,
+                          borderRadius: 4,
+                          color: colors.text,
+                          whiteSpace: "pre-wrap",
+                          wordBreak: "break-word",
+                        }}
+                      >
+                        {focusOpt.preview}
+                      </pre>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
             {sel.has(OTHER) && (
               <textarea
                 autoFocus
