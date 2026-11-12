@@ -198,9 +198,11 @@ Right-clicking a channel opens a context menu with:
 | **Copy Channel ID** | Copies the raw channel ID |
 | **Open Ticket** | Opens the channel's [ticket URL](#ticket-url) in the browser (only when one is set; threads too) |
 | **Edit Ticket** | Sets, changes or clears the channel's [ticket URL](#ticket-url) (not shown for DM; threads too) |
-| **Delete Channel** | Deletes the channel (not shown for DM) |
+| **Delete Channel** | Deletes the channel after a Yes in the "Delete this channel?" bubble under the item (not shown for DM) |
 
-The "Delete Channel" item has `danger: true` styling (red text) and a separator above it.
+The "Delete Channel" item has `danger: true` styling (red text) and a separator above it. Clicking it opens a Yes / No bubble under the item (a menu item's `confirm`); No closes the bubble and keeps the menu.
+
+While a delete runs on the daemon, a "Deleting channel <name>…" overlay covers the workspace right of the sidebar until the channel leaves the sidebar. Deleting the selected thread or worktree thread then selects its parent channel (or the nearest ancestor that's left); deleting the selected channel leaves the empty view.
 
 ### Row Info
 
@@ -320,8 +322,10 @@ It shows in the [row info](#row-info) popup, looked up only while the popup is o
 ### Delete Thread
 
 Threads can be deleted via:
-- Context menu "Delete Channel" (same operation for threads)
+- Context menu "Delete Thread", after Yes in its "Delete this thread?" bubble
 - Batch selection mode
+
+If the deleted thread was selected, its parent gets selected.
 
 ---
 

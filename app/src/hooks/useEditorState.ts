@@ -6,30 +6,38 @@ import {
   createDir,
   deleteFile,
   type FileEntry,
+  FileNotFoundError,
   fetchFileContent,
   fetchFiles,
   fetchRoots,
   forgetContentCap,
   isMediaPath,
   type RootEntry,
+  renameFile,
   saveFileContent,
   updateExtraDirs,
 } from "../api/loopApi";
 import type { CodeEditorHandle } from "../components/panels/CodeEditor";
 import { makePathKey, parsePathKey } from "../components/panels/EditorFileTree";
 import { emptyGitLineChanges, type GitLineChanges, gitLineChangesForFile } from "../components/panels/editorGitGutter";
+import { loadTabViews, saveTabViews, type TabView } from "../components/panels/editorTabViews";
 import type { ToolResultData, ToolUseData, WSEvent } from "../types";
 import { logErr } from "../utils/log";
 import { storageGetJSON, storageSetJSON } from "../utils/storage";
 import { editToolFilePath, matchAbsPathToKey } from "./editorPaths";
+import { fileWatchMessage, parseFileWatchChange } from "./fileWatch";
+import { renamedPathKey, renameMapKeys, renameSetKeys } from "./renamePath";
 import type { ChatEventListener } from "./useChatStateStore";
 import { useContentCapsEpoch } from "./useContentCapsEpoch";
+import { useWebSocketConnection } from "./useWebSocketConnection";
 
 const EDITOR_TABS_KEY = "loop-editor-tabs";
 
 interface EditorTabsState {
   tabs: string[];
   selected: string | null;
+  // The open preview tab (single click), kept so it opens as a preview again.
+  preview?: string | null;
 }
 
 function loadEditorTabs(channelId: string, key: string): EditorTabsState {
@@ -90,6 +98,9 @@ export interface EditorStateApi {
   pendingRefresh: Map<string, string>;
   // Tabs the agent rewrote that the user hasn't looked at since.
   agentEditedTabs: Set<string>;
+  // Tabs whose file is gone from disk; they keep their last content and
+  // saving one writes the file back.
+  deletedTabs: Set<string>;
   autoSaveOnBlur: boolean;
   previewTabsEnabled: boolean;
 
@@ -102,12 +113,21 @@ export interface EditorStateApi {
   /** Called by a file tree panel as it mounts, to load the root listings. */
   showTree: () => void;
   toggleDir: (pathKey: string) => void;
+  /** Where a tab was left: its selection and scroll. */
+  tabViewFor: (pathKey: string) => TabView | undefined;
+  /** Records where a tab is, kept per channel across tab and channel switches. */
+  saveTabView: (pathKey: string, view: TabView) => void;
+  /** Expands a directory and every directory above it, and selects it. */
+  revealDir: (pathKey: string) => void;
   setSelectedDir: (pathKey: string) => void;
   addExtraDir: (dir: string) => Promise<void>;
   handleCreateFile: (name: string) => void;
   handleDeleteFilePath: (pathKey: string) => void;
   handleCreateDirPath: (name: string) => void;
   handleDeleteDirPath: (pathKey: string) => void;
+  /** Renames a file or directory to newRelPath in its root; its open tabs
+   * follow. Rejects with the reason when the rename fails. */
+  handleRenamePath: (pathKey: string, newRelPath: string) => Promise<void>;
 
   // Actions on tabs/content
   switchToTab: (pathKey: string) => void;
@@ -124,6 +144,10 @@ export interface EditorStateApi {
   // Auto-refresh resolution
   acceptPendingRefresh: (pathKey: string) => void;
   dismissPendingRefresh: (pathKey: string) => void;
+  /** The tab whose unsaved changes are shown against its pending disk version. */
+  comparing: string | null;
+  /** Show (a tab's path) or hide (null) the comparison; edits while shown keep the disk version pending. */
+  setComparing: (pathKey: string | null) => void;
   clearAgentEdited: (pathKey: string) => void;
 }
 
@@ -146,7 +170,12 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
 
   const [openTabs, setOpenTabs] = useState<string[]>(() => loadEditorTabs(channelId, tabsKey).tabs);
   const [selectedPath, setSelectedPath] = useState<string | null>(() => loadEditorTabs(channelId, tabsKey).selected);
-  const [previewTab, setPreviewTab] = useState<string | null>(null);
+  const [previewTab, setPreviewTab] = useState<string | null>(() => {
+    const saved = loadEditorTabs(channelId, tabsKey);
+    return saved.preview && saved.tabs.includes(saved.preview) ? saved.preview : null;
+  });
+  // Where each open tab was left, restored as it opens again.
+  const [tabViews] = useState(() => loadTabViews(channelId));
 
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [isBinary, setIsBinary] = useState(false);
@@ -202,7 +231,28 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
 
   const [dirtyTabs, setDirtyTabs] = useState<Set<string>>(new Set());
   const [pendingRefresh, setPendingRefresh] = useState<Map<string, string>>(new Map());
+  const [comparing, setComparing] = useState<string | null>(null);
+  const comparingRef = useRef(comparing);
+  comparingRef.current = comparing;
+  // A comparison ends with its pending disk version (Replace, Keep, a delete).
+  if (comparing !== null && !pendingRefresh.has(comparing)) setComparing(null);
   const [agentEditedTabs, setAgentEditedTabs] = useState<Set<string>>(new Set());
+  const [deletedTabs, setDeletedTabs] = useState<Set<string>>(new Set());
+  // The last content of a deleted tab that isn't on screen, shown when the
+  // user switches back to it.
+  const deletedContentRef = useRef(new Map<string, string>());
+  const deletedTabsRef = useRef(deletedTabs);
+  deletedTabsRef.current = deletedTabs;
+  const setDeleted = useCallback((pathKey: string, deleted: boolean) => {
+    if (!deleted) deletedContentRef.current.delete(pathKey);
+    setDeletedTabs((prev) => {
+      if (prev.has(pathKey) === deleted) return prev;
+      const next = new Set(prev);
+      if (deleted) next.add(pathKey);
+      else next.delete(pathKey);
+      return next;
+    });
+  }, []);
   const clearAgentEdited = useCallback((pathKey: string) => {
     setAgentEditedTabs((prev) => {
       if (!prev.has(pathKey)) return prev;
@@ -230,6 +280,9 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
   const rootsRef = useRef(roots);
   rootsRef.current = roots;
   const dirtyContentRef = useRef(new Map<string, string>());
+  // The last content known to be on disk per text tab, so a refresh that
+  // reads back the same bytes (our own save, a no-op write) changes nothing.
+  const diskContentRef = useRef(new Map<string, string>());
 
   // Load desktop settings.
   useEffect(() => {
@@ -243,11 +296,10 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
       .catch(logErr("loading desktop settings"));
   }, []);
 
-  // Persist tab list (excluding preview tab).
+  // Persist the tab list, the preview tab marked as such.
   useEffect(() => {
-    const persistedTabs = previewTab ? openTabs.filter((t) => t !== previewTab) : openTabs;
-    const persistedSelected = selectedPath === previewTab ? null : selectedPath;
-    saveEditorTabs(channelId, { tabs: persistedTabs, selected: persistedSelected }, tabsKey);
+    const preview = previewTab && openTabs.includes(previewTab) ? previewTab : null;
+    saveEditorTabs(channelId, { tabs: openTabs, selected: selectedPath, preview }, tabsKey);
   }, [channelId, openTabs, selectedPath, previewTab, tabsKey]);
 
   const loadDir = useCallback(
@@ -272,11 +324,6 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     fetchRoots(channelId)
       .then((r) => {
         setRoots(r);
-        setExpandedDirs((prev) => {
-          const next = new Set(prev);
-          for (const root of r) next.add(makePathKey(root.index, ""));
-          return next;
-        });
         setTreeRootIndexes(r.map((root) => root.index));
       })
       .catch(() => {
@@ -311,10 +358,16 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
           setBinarySize(0);
           setFileContent(null);
         } else {
+          diskContentRef.current.set(selectedPath, result.content);
           setFileContent(result.content);
         }
       })
       .catch((err) => {
+        if (err instanceof FileNotFoundError) {
+          setDeleted(selectedPath, true);
+          setFileContent("");
+          return;
+        }
         setError(err instanceof Error ? err.message : "Failed to load file");
       })
       .finally(() => setLoading(false));
@@ -363,7 +416,9 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     });
     setPreviewTab((cur) => (cur === p ? null : cur));
     clearAgentEdited(p);
-    // Editing also implicitly dismisses any pending agent refresh for this tab.
+    // Editing also implicitly dismisses any pending agent refresh for this
+    // tab, unless it is being compared: those edits merge the two.
+    if (comparingRef.current === p) return;
     setPendingRefresh((prev) => {
       if (!prev.has(p)) return prev;
       const next = new Map(prev);
@@ -382,20 +437,34 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
       const content = editor.getContent();
       if (content === null) return;
       const { rootIndex: ri, relativePath: rp } = parsePathKey(savePath);
+      // Set before the write lands, so the watcher's echo of it is a no-op.
+      diskContentRef.current.set(savePath, content);
       saveFileContent(channelId, rp, content, ri)
         .then(() => {
           dirtyContentRef.current.delete(savePath);
+          setDeleted(savePath, false);
           setDirtyTabs((prev) => {
             if (!prev.has(savePath)) return prev;
             const next = new Set(prev);
             next.delete(savePath);
             return next;
           });
+          // What was saved is on disk now, so a disk version waiting to be
+          // resolved (a comparison too) no longer applies.
+          setPendingRefresh((prev) => {
+            if (!prev.has(savePath)) return prev;
+            const next = new Map(prev);
+            next.delete(savePath);
+            return next;
+          });
           if (savePath === selectedPathRef.current) refreshGitChangesRef.current();
         })
-        .catch(logErr("saving file"));
+        .catch((err) => {
+          diskContentRef.current.delete(savePath);
+          logErr("saving file")(err);
+        });
     },
-    [channelId],
+    [channelId, setDeleted],
   );
 
   const saveAllDirty = useCallback(() => {
@@ -426,7 +495,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
         return;
       }
       clearMedia();
-      const cached = dirtyContentRef.current.get(pathKey);
+      const cached = dirtyContentRef.current.get(pathKey) ?? deletedContentRef.current.get(pathKey);
       if (cached !== undefined) {
         setFileContent(cached);
         return;
@@ -444,18 +513,24 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
             setBinarySize(0);
             setFileContent(null);
           } else {
+            diskContentRef.current.set(pathKey, result.content);
             setFileContent(result.content);
           }
         })
         .catch((err) => {
           if (load !== loadSeqRef.current) return;
+          if (err instanceof FileNotFoundError) {
+            setDeleted(pathKey, true);
+            setFileContent("");
+            return;
+          }
           setError(err instanceof Error ? err.message : "Failed to load file");
         })
         .finally(() => {
           if (load === loadSeqRef.current) setLoading(false);
         });
     },
-    [channelId, saveAllDirty, clearAgentEdited],
+    [channelId, saveAllDirty, clearAgentEdited, setDeleted],
   );
 
   // Single-click open: preview tab if enabled, else permanent.
@@ -535,6 +610,8 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
       if (e) e.stopPropagation();
       if (autoSaveOnBlurRef.current && path === selectedPathRef.current) saveAllDirty();
       dirtyContentRef.current.delete(path);
+      diskContentRef.current.delete(path);
+      setDeleted(path, false);
       setDirtyTabs((prev) => {
         if (!prev.has(path)) return prev;
         const next = new Set(prev);
@@ -592,6 +669,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
       try {
         const result = await fetchFileContent(channelId, rp, ri);
         if (selectedPathRef.current !== pathKey || result.binary) return;
+        diskContentRef.current.set(pathKey, result.content);
         const editor = codeEditorRef.current;
         if (!editor) return;
         const current = editor.getContent();
@@ -625,6 +703,25 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
         }
         return next;
       });
+    },
+    [dirContents, loadDir],
+  );
+
+  const revealDir = useCallback(
+    (pathKey: string) => {
+      const { rootIndex, relativePath } = parsePathKey(pathKey);
+      const parts = relativePath.split("/").filter(Boolean);
+      const keys = [makePathKey(rootIndex, ""), ...parts.map((_, i) => makePathKey(rootIndex, parts.slice(0, i + 1).join("/")))];
+      for (const key of keys) {
+        if (dirContents.has(key)) continue;
+        const rel = parsePathKey(key).relativePath;
+        loadDir(rel === "" ? "." : rel, rootIndex);
+      }
+      setExpandedDirs((prev) => {
+        if (keys.every((k) => prev.has(k))) return prev;
+        return new Set([...prev, ...keys]);
+      });
+      setSelectedDir(pathKey);
     },
     [dirContents, loadDir],
   );
@@ -740,6 +837,48 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     [channelId, loadDir, switchToTab],
   );
 
+  const handleRenamePath = useCallback(
+    (pathKey: string, newRelPath: string) => {
+      const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
+      const to = newRelPath.trim().replace(/^\/+|\/+$/g, "");
+      if (!to || to === rp) return Promise.resolve();
+      const toKey = makePathKey(ri, to);
+      const parentOf = (p: string) => (p.includes("/") ? p.substring(0, p.lastIndexOf("/")) : ".");
+      return renameFile(channelId, rp, to, ri).then(() => {
+        const move = (p: string) => renamedPathKey(p, pathKey, toKey);
+        // The editor remounts for the new path from fileContent, so hand
+        // it what's on screen, unsaved edits included.
+        const cur = selectedPathRef.current;
+        if (cur && move(cur) !== cur) {
+          const content = codeEditorRef.current?.getContent();
+          if (content !== null && content !== undefined) setFileContent(content);
+          setSelectedPath(move(cur));
+        }
+        setOpenTabs((prev) => prev.map(move));
+        setPreviewTab((prev) => (prev ? move(prev) : prev));
+        renameMapKeys(dirtyContentRef.current, pathKey, toKey);
+        renameMapKeys(tabViews, pathKey, toKey);
+        renameMapKeys(diskContentRef.current, pathKey, toKey);
+        setDirtyTabs((prev) => renameSetKeys(prev, pathKey, toKey));
+        setAgentEditedTabs((prev) => renameSetKeys(prev, pathKey, toKey));
+        setPendingRefresh((prev) => {
+          const next = new Map(prev);
+          renameMapKeys(next, pathKey, toKey);
+          return next;
+        });
+        setExpandedDirs((prev) => renameSetKeys(prev, pathKey, toKey));
+        setSelectedDir((prev) => move(prev));
+        // The watcher may already have marked the old path deleted.
+        for (const k of deletedTabsRef.current) {
+          if (move(k) !== k) setDeleted(k, false);
+        }
+        loadDir(parentOf(rp), ri);
+        if (parentOf(to) !== parentOf(rp)) loadDir(parentOf(to), ri);
+      });
+    },
+    [channelId, loadDir, setDeleted, tabViews],
+  );
+
   const addExtraDir = useCallback(
     async (dir: string) => {
       const currentExtras = rootsRef.current.filter((r) => r.index > 0).map((r) => r.path);
@@ -747,11 +886,6 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
       const r = await fetchRoots(channelId);
       setRoots(r);
       for (const root of r) loadDir(".", root.index);
-      setExpandedDirs((prev) => {
-        const next = new Set(prev);
-        for (const root of r) next.add(makePathKey(root.index, ""));
-        return next;
-      });
     },
     [channelId, loadDir],
   );
@@ -761,59 +895,38 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "s") {
         e.preventDefault();
-        saveAllDirty();
+        // Saving a deleted tab writes the file back; auto-save never does.
+        if (deletedTabsRef.current.has(selectedPathRef.current ?? "")) saveFile();
+        else saveAllDirty();
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [saveAllDirty]);
-
-  // Save on blur, reload from disk on focus (picks up external edits).
-  useEffect(() => {
-    const onBlur = () => {
-      if (autoSaveOnBlurRef.current) saveAllDirty();
-    };
-    const onFocus = () => {
-      const pathKey = selectedPathRef.current;
-      if (!pathKey) return;
-      const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
-      if (isMediaPath(rp)) {
-        imageVersionRef.current++;
-        showMedia(rp, ri);
-        return;
-      }
-      fetchFileContent(channelId, rp, ri)
-        .then((result) => {
-          if (selectedPathRef.current !== pathKey) return;
-          if (result.binary) return;
-          const editor = codeEditorRef.current;
-          if (!editor) return;
-          const current = editor.getContent();
-          if (current !== null && result.content !== current) {
-            editor.replaceContent(result.content);
-            setDirtyTabs((prev) => {
-              if (!prev.has(pathKey)) return prev;
-              const next = new Set(prev);
-              next.delete(pathKey);
-              return next;
-            });
-          }
-          refreshGitChangesRef.current();
-        })
-        .catch(logErr("refreshing file on blur"));
-    };
-    window.addEventListener("blur", onBlur);
-    window.addEventListener("focus", onFocus);
-    return () => {
-      window.removeEventListener("blur", onBlur);
-      window.removeEventListener("focus", onFocus);
-    };
-  }, [channelId, saveAllDirty]);
+  }, [saveAllDirty, saveFile]);
 
   const openTabsRef = useRef(openTabs);
   openTabsRef.current = openTabs;
 
-  const applyAgentRefresh = useCallback(
+  const tabViewFor = useCallback((pathKey: string) => tabViews.get(pathKey), [tabViews]);
+  const saveTabView = useCallback(
+    (pathKey: string, view: TabView) => {
+      tabViews.set(pathKey, view);
+      saveTabViews(channelId, tabViews, openTabsRef.current);
+    },
+    [channelId, tabViews],
+  );
+  // A closed tab's view goes with it.
+  useEffect(() => {
+    for (const key of tabViews.keys()) if (!openTabs.includes(key)) tabViews.delete(key);
+    saveTabViews(channelId, tabViews, openTabs);
+  }, [channelId, tabViews, openTabs]);
+
+  // Re-reads an open tab from disk after something else may have changed
+  // it: an agent's Edit/Write, the file watcher, or the window regaining
+  // focus. Unchanged bytes are left alone. A tab with unsaved edits keeps
+  // them and offers the disk version instead; a clean one is replaced and
+  // marked until the user looks at it.
+  const refreshFromDisk = useCallback(
     (pathKey: string) => {
       const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
       const markEdited = () =>
@@ -833,10 +946,12 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
       }
       fetchFileContent(channelId, rp, ri)
         .then((result) => {
-          if (result.binary) return;
-          const isDirty = dirtyTabsRef.current.has(pathKey);
-          if (isDirty) {
-            // Stash latest disk content; the user resolves via Replace / Keep mine.
+          if (result.binary || !openTabsRef.current.includes(pathKey)) return;
+          setDeleted(pathKey, false);
+          if (diskContentRef.current.get(pathKey) === result.content) return;
+          diskContentRef.current.set(pathKey, result.content);
+          if (dirtyTabsRef.current.has(pathKey)) {
+            // The user resolves it via Replace / Keep mine.
             setPendingRefresh((prev) => {
               const next = new Map(prev);
               next.set(pathKey, result.content);
@@ -862,22 +977,91 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
             dirtyContentRef.current.delete(pathKey);
           }
         })
-        .catch(logErr("auto-refreshing file"));
+        .catch((err) => {
+          if (!(err instanceof FileNotFoundError)) {
+            logErr("refreshing file from disk")(err);
+            return;
+          }
+          if (!openTabsRef.current.includes(pathKey)) return;
+          // Keep what the tab showed: the editor holds it when on screen,
+          // the disk baseline (or the unsaved edits) otherwise.
+          const last = diskContentRef.current.get(pathKey);
+          diskContentRef.current.delete(pathKey);
+          if (pathKey !== selectedPathRef.current && last !== undefined) deletedContentRef.current.set(pathKey, last);
+          setPendingRefresh((prev) => {
+            if (!prev.has(pathKey)) return prev;
+            const next = new Map(prev);
+            next.delete(pathKey);
+            return next;
+          });
+          clearAgentEdited(pathKey);
+          setDeleted(pathKey, true);
+        });
     },
-    [channelId],
+    [channelId, showMedia, setDeleted, clearAgentEdited],
   );
+  const refreshFromDiskRef = useRef(refreshFromDisk);
+  refreshFromDiskRef.current = refreshFromDisk;
+
+  // Save on blur, re-read from disk on focus (picks up external edits).
+  useEffect(() => {
+    const onBlur = () => {
+      if (autoSaveOnBlurRef.current) saveAllDirty();
+    };
+    const onFocus = () => {
+      const pathKey = selectedPathRef.current;
+      if (!pathKey) return;
+      const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
+      if (isMediaPath(rp)) {
+        imageVersionRef.current++;
+        showMedia(rp, ri);
+        return;
+      }
+      refreshFromDiskRef.current(pathKey);
+      refreshGitChangesRef.current();
+    };
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [saveAllDirty, showMedia]);
+
+  // Watch the open tabs and, with a tree on screen, its expanded dirs, so
+  // changes made outside Loop show up as they happen.
+  const watchMessage = fileWatchMessage(openTabs, treeShown ? expandedDirs : []);
+  const watchMessageRef = useRef(watchMessage);
+  watchMessageRef.current = watchMessage;
+  const { send: sendWatch } = useWebSocketConnection({
+    path: `/api/channels/${encodeURIComponent(channelId)}/files/watch`,
+    enabled: channelId !== "",
+    onOpen: (ws) => ws.send(watchMessageRef.current),
+    onMessage: (event) => {
+      const change = parseFileWatchChange(event.data);
+      if (!change) return;
+      if (change.type === "file") {
+        refreshFromDiskRef.current(change.pathKey);
+        return;
+      }
+      if (!expandedDirsRef.current.has(change.pathKey)) return;
+      const { rootIndex, relativePath } = parsePathKey(change.pathKey);
+      loadDir(relativePath === "" ? "." : relativePath, rootIndex);
+    },
+  });
+  useEffect(() => {
+    sendWatch(watchMessage);
+  }, [sendWatch, watchMessage]);
 
   // Auto-refresh on agent Edit/Write tool events. tool.use is
   // broadcast when the model announces the call, before the file is written,
   // so the paths are remembered there and re-read on the call's tool.result.
-  const applyAgentRefreshRef = useRef(applyAgentRefresh);
-  applyAgentRefreshRef.current = applyAgentRefresh;
   useEffect(() => {
     if (!subscribeChatEvents) return;
     const pendingEdits = new Map<string, string>();
     const refreshOpen = (filePath: string) => {
       const pathKey = matchAbsPathToKey(filePath, rootsRef.current);
-      if (pathKey && openTabsRef.current.includes(pathKey)) applyAgentRefreshRef.current(pathKey);
+      if (pathKey && openTabsRef.current.includes(pathKey)) refreshFromDiskRef.current(pathKey);
     };
     const handler = (event: WSEvent) => {
       if (event.type === "tool.use") {
@@ -959,6 +1143,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     dirtyTabs,
     pendingRefresh,
     agentEditedTabs,
+    deletedTabs,
     autoSaveOnBlur,
     previewTabsEnabled,
     codeEditorRef,
@@ -966,12 +1151,16 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     refreshTree,
     showTree,
     toggleDir,
+    revealDir,
+    tabViewFor,
+    saveTabView,
     setSelectedDir,
     addExtraDir,
     handleCreateFile,
     handleDeleteFilePath,
     handleCreateDirPath,
     handleDeleteDirPath,
+    handleRenamePath,
     switchToTab,
     openFile,
     openFileAtLine,
@@ -983,6 +1172,8 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     clearError,
     acceptPendingRefresh,
     dismissPendingRefresh,
+    comparing,
+    setComparing,
     clearAgentEdited,
   };
 }

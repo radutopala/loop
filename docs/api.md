@@ -1974,6 +1974,29 @@ Delete a file or directory.
 
 ---
 
+### `POST /api/channels/{id}/file/rename`
+
+Rename or move a file or directory within one root.
+
+**Query Parameters:**
+
+| Param  | Type   | Required | Description |
+|--------|--------|----------|-------------|
+| `path` | string | yes      | Relative path to the file or directory |
+| `to`   | string | yes      | Relative path to rename it to; its parent directory must exist |
+| `root` | int    | no       | Root directory index (0 = primary, 1+ = extra directories) |
+
+**Response (200):**
+```json
+{"ok": true}
+```
+
+**Behavior notes:** A symlink is renamed itself, not its target. Neither path may be the root or leave it.
+
+**Errors:** `400` if a path is invalid or `to`'s parent doesn't exist. `404` if `path` is not found. `409` if `to` already exists.
+
+---
+
 ### `GET /api/channels/{id}/raw/{root}/{path...}`
 
 Serve a file's raw bytes by path. The editor's HTML preview uses this as the `<base href>` of the rendered page, so relative stylesheets, scripts and images resolve against the file's directory. The root index is a path segment rather than a query parameter because relative URL resolution drops the query string.
@@ -2048,9 +2071,36 @@ Batched existence check for path candidates discovered in chat text or tool inpu
 
 ---
 
+### `GET /api/channels/{id}/files/watch`
+
+WebSocket that reports changes on disk to the files and directories the client asks for, whoever makes them. Owner only. Used by the editor to reload open tabs and refresh expanded tree directories.
+
+**Client → server:** each `watch` message replaces the watched set. Paths are relative to the root at index `root` (as in the other file endpoints); `""` is the root itself.
+```json
+{"type": "watch", "files": [{"root": 0, "path": "src/main.go"}], "dirs": [{"root": 0, "path": ""}, {"root": 1, "path": "docs"}]}
+```
+
+**Server → client:**
+```json
+{"type": "file", "root": 0, "path": "src/main.go"}
+{"type": "dir", "root": 0}
+{"type": "error", "message": "too many open files"}
+```
+
+**Behavior notes:**
+- A file is reported when it's written, replaced (including atomic temp-file + rename saves) or removed; a directory when an entry in it appears, goes or is renamed. Changes are coalesced: each batch is sent 150 ms after its first change.
+- Paths that don't resolve inside the channel's roots (traversal, symlinks escaping the root, unknown root index) are left out silently.
+- At most 256 paths are watched per connection. Files are watched through their parent directories, so those count towards the cap. Open files come first, then directories in the order sent.
+- Each connection also has a budget of 4096. On macOS a watched directory costs one file descriptor, plus one for each entry in it; on Linux it costs 1 whatever its size. A directory that doesn't fit isn't watched, and its tree just doesn't refresh live. A file whose directory doesn't fit is watched on its own, for one descriptor.
+- `error` is sent, and the socket closed, when the watcher can't start.
+
+**Errors:** `501` if the channel store isn't configured, `400` if the request isn't a WebSocket upgrade.
+
+---
+
 ### `GET /api/channels/{id}/files/search`
 
-Fuzzy search for files across the channel's primary `dir_path` and any `extra_dirs`. Used by the chat composer's `@` file picker.
+Fuzzy search for files (and, with `dirs=1`, directories) across the channel's primary `dir_path` and any `extra_dirs`. Used by the chat composer's `@` file picker and the editor's file tree search.
 
 **Query Parameters:**
 
@@ -2058,11 +2108,13 @@ Fuzzy search for files across the channel's primary `dir_path` and any `extra_di
 |---------|--------|-------------|
 | `q`     | string | Fuzzy query — every rune must appear in the relative path in order, case-insensitively. Empty `q` returns the first N entries. |
 | `limit` | int    | Max results to return. Default `30`, max `100`. |
+| `dirs`  | string | `1` also returns matching directories, marked `"is_dir": true`. |
 
 **Response (200):**
 ```json
 {
   "results": [
+    {"root_index": 0, "rel_path": "app/src",             "name": "src", "is_dir": true},
     {"root_index": 0, "rel_path": "app/src/main.tsx",    "name": "main.tsx"},
     {"root_index": 0, "rel_path": "internal/api/server.go", "name": "server.go"}
   ]
@@ -2073,7 +2125,7 @@ Fuzzy search for files across the channel's primary `dir_path` and any `extra_di
 - Walks all configured roots (primary `dir_path` first, then `extra_dirs`). `root_index` indicates which root the match came from (compatible with the `root` query parameter on file read/write endpoints).
 - Always skips `.git`, `node_modules`, `vendor`, `.next`, `dist`, `build`, `__pycache__` subtrees.
 - Honors the top-level `.gitignore` in each root (basename and full-relpath patterns; negation patterns and nested `.gitignore` files are ignored).
-- Walk stops once `limit` matches have accumulated across all roots.
+- Every root is walked in full; results are ranked (name starts with `q`, then path contains `q`, then fuzzy-only) and the first `limit` are returned.
 
 **Errors:** `400` if the channel's directory cannot be resolved.
 

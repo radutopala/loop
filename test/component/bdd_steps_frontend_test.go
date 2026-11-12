@@ -262,6 +262,13 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I open the file "([^"]*)" in the editor tree$`, tc.openFileInEditorTree)
 	ctx.Step(`^I append "([^"]*)" to the code editor$`, tc.appendToCodeEditor)
 	ctx.Step(`^I save the editor$`, tc.saveEditor)
+	ctx.Step(`^I click the code editor line "([^"]*)"$`, tc.clickCodeEditorLine)
+	ctx.Step(`^I scroll the code editor until "([^"]*)" is the top line$`, tc.scrollCodeEditorTo)
+	ctx.Step(`^the code editor's top line should be "([^"]*)"$`, tc.assertCodeEditorTopLine)
+	ctx.Step(`^the code editor cursor should be on the line "([^"]*)"$`, tc.assertCodeEditorCursorLine)
+	ctx.Step(`^the editor tabs overflow their strip$`, tc.assertEditorTabsOverflow)
+	ctx.Step(`^the editor tab "([^"]*)" should be in the strip's view$`, tc.assertEditorTabInView)
+	ctx.Step(`^I scroll the editor tab strip to its start$`, tc.scrollEditorTabsToStart)
 	ctx.Step(`^I record messages posted by frames$`, tc.recordFrameMessages)
 	ctx.Step(`^I delay requests matching "([^"]*)" by "([^"]*)"$`, tc.delayRequests)
 	ctx.Step(`^I record requests matching "([^"]*)"$`, tc.recordRequests)
@@ -1825,6 +1832,127 @@ func (tc *TestContext) appendToCodeEditor(text string) error {
 		chromedp.Evaluate(focusJS, &ok),
 		chromedp.KeyEvent(text),
 	)
+}
+
+// codeEditorScrollerJS finds the element the code editor scrolls in: the
+// one holding CodeMirror's view.
+const codeEditorScrollerJS = `document.querySelector('.cm-editor')?.parentElement`
+
+// tabViewSettle outlasts the editor's wait before it records where a tab is.
+const tabViewSettle = 500 * time.Millisecond
+
+// clickCodeEditorLine clicks a visible line of the code editor by its text,
+// putting the cursor there.
+func (tc *TestContext) clickCodeEditorLine(text string) error {
+	js := fmt.Sprintf(`(() => {
+		const line = [...document.querySelectorAll('.cm-line')].find((l) => l.textContent === %q);
+		if (!line) return null;
+		const r = line.getBoundingClientRect();
+		return { x: r.left + Math.min(20, r.width / 2), y: r.top + r.height / 2, ok: true };
+	})()`, text)
+	var box struct {
+		X, Y float64
+		OK   bool
+	}
+	if err := chromedp.Run(tc.chromeTab.ctx,
+		chromedp.Poll(fmt.Sprintf(`[...document.querySelectorAll('.cm-line')].some((l) => l.textContent === %q)`, text), nil, chromedp.WithPollingTimeout(10*time.Second)),
+		chromedp.Evaluate(js, &box),
+	); err != nil {
+		return err
+	}
+	if !box.OK {
+		return fmt.Errorf("code editor line %q not found", text)
+	}
+	return chromedp.Run(tc.chromeTab.ctx, chromedp.MouseClickXY(box.X, box.Y), chromedp.Sleep(tabViewSettle))
+}
+
+// codeEditorTopLineJS returns the text of the first line in view.
+const codeEditorTopLineJS = `(() => {
+	const s = ` + codeEditorScrollerJS + `;
+	if (!s) return "";
+	const top = s.getBoundingClientRect().top;
+	const line = [...document.querySelectorAll('.cm-line')].find((l) => l.getBoundingClientRect().bottom > top + 1);
+	return line?.textContent ?? "";
+})()`
+
+// scrollCodeEditorTo scrolls the code editor down until the line reading
+// text is the first in view, then waits for the tab to record it. Lines are
+// drawn as they come into view, so it scrolls a screen at a time until the
+// line is drawn, then lines it up.
+func (tc *TestContext) scrollCodeEditorTo(text string) error {
+	js := fmt.Sprintf(`(() => {
+		const s = %s;
+		if (!s) return false;
+		const line = [...document.querySelectorAll('.cm-line')].find((l) => l.textContent === %q);
+		if (!line) { s.scrollTop += s.clientHeight; return false; }
+		const delta = line.getBoundingClientRect().top - s.getBoundingClientRect().top;
+		s.scrollTop += delta;
+		return Math.abs(delta) < 1;
+	})()`, codeEditorScrollerJS, text)
+	for range 100 {
+		var done bool
+		if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &done), chromedp.Sleep(50*time.Millisecond)); err != nil {
+			return err
+		}
+		if done {
+			return chromedp.Run(tc.chromeTab.ctx, chromedp.Sleep(tabViewSettle))
+		}
+	}
+	return fmt.Errorf("couldn't scroll the code editor to %q", text)
+}
+
+// assertCodeEditorTopLine polls until the first line in view reads text.
+func (tc *TestContext) assertCodeEditorTopLine(text string) error {
+	poll := fmt.Sprintf(`%s === %q`, codeEditorTopLineJS, text)
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Poll(poll, nil, chromedp.WithPollingTimeout(10*time.Second))); err != nil {
+		var got string
+		_ = chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(codeEditorTopLineJS, &got))
+		return fmt.Errorf("top line %q, want %q: %w", got, text, err)
+	}
+	return nil
+}
+
+// assertEditorTabsOverflow checks the tabs don't all fit, so whether the
+// active one is in view means something.
+func (tc *TestContext) assertEditorTabsOverflow() error {
+	var ok bool
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(`(() => { const s = document.querySelector('[data-testid="editor-tabs"]'); return !!s && s.scrollWidth > s.clientWidth + 20; })()`, &ok)); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("the editor tabs fit their strip")
+	}
+	return nil
+}
+
+// assertEditorTabInView polls until the tab for path lies fully inside the
+// tab strip's visible part.
+func (tc *TestContext) assertEditorTabInView(path string) error {
+	poll := fmt.Sprintf(`(() => {
+		const s = document.querySelector('[data-testid="editor-tabs"]');
+		const t = s?.querySelector('[data-testid="editor-tab"][data-path=%q]');
+		if (!s || !t) return false;
+		const sr = s.getBoundingClientRect(), tr = t.getBoundingClientRect();
+		return tr.left >= sr.left - 1 && tr.right <= sr.left + s.clientWidth + 1;
+	})()`, path)
+	return chromedp.Run(tc.chromeTab.ctx, chromedp.Poll(poll, nil, chromedp.WithPollingTimeout(10*time.Second)))
+}
+
+// scrollEditorTabsToStart scrolls the tab strip back to its first tab.
+func (tc *TestContext) scrollEditorTabsToStart() error {
+	var ok bool
+	return chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(`(() => { const s = document.querySelector('[data-testid="editor-tabs"]'); if (s) s.scrollLeft = 0; return true; })()`, &ok))
+}
+
+// assertCodeEditorCursorLine polls until the line holding the cursor reads text.
+func (tc *TestContext) assertCodeEditorCursorLine(text string) error {
+	poll := fmt.Sprintf(`document.querySelector('.cm-activeLine')?.textContent === %q`, text)
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Poll(poll, nil, chromedp.WithPollingTimeout(10*time.Second))); err != nil {
+		var got string
+		_ = chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(`document.querySelector('.cm-activeLine')?.textContent ?? ''`, &got))
+		return fmt.Errorf("cursor on %q, want %q: %w", got, text, err)
+	}
+	return nil
 }
 
 // saveEditor triggers the editor's Cmd/Ctrl+S save handler (registered on

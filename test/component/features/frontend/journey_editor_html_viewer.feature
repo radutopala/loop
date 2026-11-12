@@ -127,3 +127,29 @@ Feature: Editor HTML Viewer Journey
     Then I wait for "[data-testid='html-preview']" to be visible
     And I wait for a frame message "loaded:First open"
     And the element "[data-testid='html-preview']" should not be marked
+
+  @editor-preview-modes
+  Scenario: The preview mode survives switching channels
+    Given I set up a test channel via API for git repo "bdd-editor-preview-mode"
+    And I create a file "notes.md" in the repo with:
+      """
+      # Notes
+      """
+    And I create a thread "elsewhere" under the current channel via API
+    And I open the app in a browser
+    And I wait for text "bdd-editor-preview-mode" to appear
+
+    When I click on "bdd-editor-preview-mode" in the sidebar
+    And I wait for "textarea" to be visible
+    And I click on "[data-testid='layout-tab-Editor']"
+    And I open the file "notes.md" in the editor tree
+    # A preview tab isn't kept across a remount; make it a permanent one
+    And I double-click on "[data-testid='editor-tab'][data-path='notes.md']"
+    And I click on "[data-testid='preview-mode-preview']"
+    Then I wait for "[data-testid='preview-mode-preview'][aria-pressed='true']" to be visible
+
+    When I click on "elsewhere" in the sidebar
+    And I wait for "textarea" to be visible
+    And I click on "bdd-editor-preview-mode" in the sidebar
+    And I click on "[data-testid='layout-tab-Editor']"
+    Then I wait for "[data-testid='preview-mode-preview'][aria-pressed='true']" to be visible

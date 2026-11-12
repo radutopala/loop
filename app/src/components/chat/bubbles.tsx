@@ -16,6 +16,7 @@ import { ExplainButton } from "./ExplainButton";
 import { ForkMessageButton } from "./ForkMessageButton";
 import { canForkMessage } from "./forkMessage";
 import { LearnTurnButton } from "./LearnTurnButton";
+import { MessageOrigin } from "./MessageOrigin";
 import { MarkdownContent } from "./markdown";
 import { formatMessageTimestamp } from "./timestamps";
 
@@ -244,27 +245,11 @@ export function MessageBubble({
           <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 6, marginTop: 4 }}>
             {message.not_before ? <DelayCountdown notBefore={message.not_before} /> : null}
             {origin && (
-              <a
-                data-testid="message-origin"
-                href={origin.href}
-                title={`Sent by the agent in ${origin.name}: go to the message it was working on`}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  height: 20,
-                  padding: "0 8px",
-                  border: `1px solid ${colors.active}`,
-                  borderRadius: 8,
-                  color: colors.active,
-                  fontFamily: fonts.mono,
-                  fontSize: 11,
-                  lineHeight: 1,
-                  textDecoration: "none",
-                  marginRight: "auto",
-                }}
-              >
-                from #{origin.name}
-              </a>
+              <>
+                <MessageOrigin name={origin.name} href={origin.href} />
+                {/* Keeps the pill left and the badges right. */}
+                <span style={{ flex: 1 }} />
+              </>
             )}
             {isPRMessage(message) && (
               <span

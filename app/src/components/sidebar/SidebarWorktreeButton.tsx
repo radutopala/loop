@@ -4,7 +4,7 @@ import { type BranchInfo, fetchBranches } from "../../api/git";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import { logErr } from "../../utils/log";
-import { type OpenPRHandler, OpenPRRows, SectionHeader, showsPRs, useOpenPRs } from "../shared/OpenPRs";
+import { type OpenPRHandler, OpenPRRows, PickerSection, showsPRs, useOpenPRs } from "../shared/OpenPRs";
 import { WorktreeRows } from "../shared/WorktreeRows";
 
 /**
@@ -149,8 +149,7 @@ export function SidebarWorktreeButton({
                 />
               </div>
             </div>
-            <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: sectioned ? "0 0 4px" : "4px 0" }}>
-              {sectioned && <SectionHeader>Branches</SectionHeader>}
+            <PickerSection title={sectioned ? "Branches" : undefined}>
               {filtered.map((b) => (
                 <button
                   key={b}
@@ -202,34 +201,30 @@ export function SidebarWorktreeButton({
               ))}
               {branchInfo && filtered.length === 0 && <div style={{ padding: "8px 12px", color: colors.textDim, fontSize: 12 }}>No branches found</div>}
               {!branchInfo && <div style={{ padding: "8px 12px", color: colors.textDim, fontSize: 12 }}>Loading branches…</div>}
-            </div>
+            </PickerSection>
             {hasPRs && onOpenPR && (
-              <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "0 0 4px", borderTop: `1px solid ${colors.border}` }}>
-                <OpenPRRows
-                  testId="sidebar-worktree-prs"
-                  prs={prs}
-                  error={prsError}
-                  forge={forge}
-                  search={search}
-                  worktrees={branchInfo?.worktrees}
-                  onPick={(pr, existing) => {
-                    setOpen(false);
-                    onOpenPR(channelId, pr, existing);
-                  }}
-                />
-              </div>
+              <OpenPRRows
+                testId="sidebar-worktree-prs"
+                prs={prs}
+                error={prsError}
+                forge={forge}
+                search={search}
+                worktrees={branchInfo?.worktrees}
+                onPick={(pr, existing) => {
+                  setOpen(false);
+                  onOpenPR(channelId, pr, existing);
+                }}
+              />
             )}
             {hasWorktrees && (
-              <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "0 0 4px", borderTop: `1px solid ${colors.border}` }}>
-                <WorktreeRows
-                  testId="sidebar-worktree-worktrees"
-                  worktrees={branchInfo?.worktrees ?? []}
-                  search={search}
-                  onSelectThread={onSelectThread}
-                  onImport={onImportWorktree && ((path) => onImportWorktree(channelId, path))}
-                  onDone={() => setOpen(false)}
-                />
-              </div>
+              <WorktreeRows
+                testId="sidebar-worktree-worktrees"
+                worktrees={branchInfo?.worktrees ?? []}
+                search={search}
+                onSelectThread={onSelectThread}
+                onImport={onImportWorktree && ((path) => onImportWorktree(channelId, path))}
+                onDone={() => setOpen(false)}
+              />
             )}
           </div>,
           document.body,

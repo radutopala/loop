@@ -416,6 +416,7 @@ export function Sidebar({
         items.push({
           label: isThread ? "Delete Thread" : "Delete Channel",
           danger: true,
+          confirm: isThread ? "Delete this thread?" : "Delete this channel?",
           separator: !onSetLocked,
           onClick: () => onDeleteThread(channel.id),
         });

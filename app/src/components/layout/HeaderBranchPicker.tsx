@@ -3,7 +3,7 @@ import { type BranchInfo, fetchBranches, switchBranch } from "../../api/loopApi"
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import { logErr } from "../../utils/log";
-import { type OpenPRHandler, OpenPRRows, SectionHeader, showsPRs, useOpenPRs } from "../shared/OpenPRs";
+import { type OpenPRHandler, OpenPRRows, PickerSection, showsPRs, useOpenPRs } from "../shared/OpenPRs";
 import { WorktreeRows } from "../shared/WorktreeRows";
 
 export function HeaderBranchPicker({
@@ -154,8 +154,7 @@ export function HeaderBranchPicker({
             </div>
           </div>
           {/* Branches section */}
-          <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "0 0 4px" }}>
-            <SectionHeader>Branches</SectionHeader>
+          <PickerSection title="Branches">
             {filtered.map((b) => {
               const isCurrent = b === (branchInfo?.current ?? branch);
               return (
@@ -269,36 +268,32 @@ export function HeaderBranchPicker({
               );
             })}
             {filtered.length === 0 && <div style={{ padding: "8px 12px", color: colors.textDim, fontSize: 12 }}>No branches found</div>}
-          </div>
+          </PickerSection>
           {/* Open PRs section */}
           {hasPRs && onOpenPR && (
-            <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "0 0 4px", borderTop: `1px solid ${colors.border}` }}>
-              <OpenPRRows
-                testId="branch-picker-prs"
-                prs={prs}
-                error={prsError}
-                forge={forge}
-                search={search}
-                worktrees={branchInfo?.worktrees}
-                onPick={(pr, existing) => {
-                  setOpen(false);
-                  onOpenPR(channelId, pr, existing);
-                }}
-              />
-            </div>
+            <OpenPRRows
+              testId="branch-picker-prs"
+              prs={prs}
+              error={prsError}
+              forge={forge}
+              search={search}
+              worktrees={branchInfo?.worktrees}
+              onPick={(pr, existing) => {
+                setOpen(false);
+                onOpenPR(channelId, pr, existing);
+              }}
+            />
           )}
           {/* Worktrees section */}
           {hasWorktrees && (
-            <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "0 0 4px", borderTop: `1px solid ${colors.border}` }}>
-              <WorktreeRows
-                testId="branch-picker-worktrees"
-                worktrees={branchInfo?.worktrees ?? []}
-                search={search}
-                onSelectThread={onSelectThread}
-                onImport={onImportWorktree && ((path) => onImportWorktree(channelId, path))}
-                onDone={() => setOpen(false)}
-              />
-            </div>
+            <WorktreeRows
+              testId="branch-picker-worktrees"
+              worktrees={branchInfo?.worktrees ?? []}
+              search={search}
+              onSelectThread={onSelectThread}
+              onImport={onImportWorktree && ((path) => onImportWorktree(channelId, path))}
+              onDone={() => setOpen(false)}
+            />
           )}
         </div>
       )}

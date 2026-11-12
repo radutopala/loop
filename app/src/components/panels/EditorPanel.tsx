@@ -12,8 +12,10 @@ import { ContextMenu } from "../shared/ContextMenu";
 import { askAgent, askMessage } from "./askAgent";
 import { CodeEditor, isHtmlFile, isMarkdownFile } from "./CodeEditor";
 import { FileIcon, parsePathKey } from "./EditorFileTree";
+import { loadPreviewModes, type PreviewMode, savePreviewModes } from "./editorPreviewModes";
 import type { WalkthroughCard, WalkthroughHandlers, WalkthroughRange } from "./editorWalkthrough";
 import { FilePanel } from "./FilePanel";
+import { scrollLeftToShow } from "./tabStripScroll";
 import { WalkthroughsBadge } from "./WalkthroughsMenu";
 
 // useHtmlBaseURL resolves the <base href> of an HTML preview: a content link
@@ -63,8 +65,6 @@ interface EditorPanelProps {
   onClose: () => void;
 }
 
-type PreviewMode = "editor" | "both" | "preview";
-
 /** Opens a walkthrough step's file in the channel's editor. */
 const openStepFile = (channelId: string, path: string) => openChannelFile(channelId, path);
 
@@ -84,7 +84,9 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
     gitChanges,
     dirtyTabs,
     agentEditedTabs,
+    deletedTabs,
     clearAgentEdited,
+    saveFile,
     pendingRefresh,
     codeEditorRef,
     switchToTab,
@@ -93,10 +95,12 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
     promoteFile,
     acceptPendingRefresh,
     dismissPendingRefresh,
+    comparing,
+    setComparing,
   } = editorState;
 
-  const [mdMode, setMdMode] = useState<PreviewMode>("both");
-  const [htmlMode, setHtmlMode] = useState<PreviewMode>("preview");
+  // The layout remounts per channel; the modes are saved so they survive it.
+  const [previewModes, setPreviewModes] = useState(() => loadPreviewModes(panelProps.channelId));
   const [previewHtml, setPreviewHtml] = useState("");
   const [editorMenu, setEditorMenu] = useState<{ x: number; y: number } | null>(null);
   const [tabMenu, setTabMenu] = useState<{ x: number; y: number; path: string } | null>(null);
@@ -106,8 +110,12 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
   const isMd = selectedRelPath ? isMarkdownFile(selectedRelPath) : false;
   const isHtml = selectedRelPath ? isHtmlFile(selectedRelPath) : false;
   // Markdown opens split, HTML opens rendered; each type remembers its own mode.
-  const previewMode = isHtml ? htmlMode : mdMode;
-  const setPreviewMode = isHtml ? setHtmlMode : setMdMode;
+  const previewMode = isHtml ? previewModes.html : previewModes.md;
+  const setPreviewMode = (mode: PreviewMode) => {
+    const next = isHtml ? { ...previewModes, html: mode } : { ...previewModes, md: mode };
+    setPreviewModes(next);
+    savePreviewModes(panelProps.channelId, next);
+  };
   const htmlBaseURL = useHtmlBaseURL(isHtml && selected ? { channelId: panelProps.channelId, path: selected.relativePath, root: selected.rootIndex } : null, previewHtml);
   const hasMultipleRoots = roots.length > 1;
 
@@ -123,6 +131,7 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
   }, []);
 
   const pendingForActive = selectedPath ? pendingRefresh.get(selectedPath) : undefined;
+  const compareWith = comparing === selectedPath ? pendingForActive : undefined;
 
   const absolutePath = (tab: string) => {
     const { rootIndex, relativePath } = parsePathKey(tab);
@@ -131,6 +140,28 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
   const { channelId } = panelProps;
   const absolutePathRef = useRef(absolutePath);
   absolutePathRef.current = absolutePath;
+  // Keep the active tab in the strip's view: on switching tabs, opening
+  // one past the edge, and coming back to the channel.
+  const tabStripRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const strip = tabStripRef.current;
+    if (!strip || !selectedPath) return;
+    const show = () => {
+      const tab = strip.querySelector<HTMLElement>('[data-testid="editor-tab"][data-active]');
+      if (!tab || strip.clientWidth === 0) return;
+      const s = strip.getBoundingClientRect();
+      const t = tab.getBoundingClientRect();
+      const left = scrollLeftToShow({ left: s.left, width: strip.clientWidth, scrollLeft: strip.scrollLeft }, { left: t.left, width: t.width });
+      if (left !== null) strip.scrollLeft = left;
+    };
+    show();
+    // The panel and the tabs settle their sizes after mount (layout panes,
+    // hidden-then-shown panels), so show the tab again whenever they resize.
+    const ro = new ResizeObserver(show);
+    ro.observe(strip);
+    for (const tab of strip.querySelectorAll('[data-testid="editor-tab"]')) ro.observe(tab);
+    return () => ro.disconnect();
+  }, [selectedPath, openTabs]);
   const selectedPathRef = useRef(selectedPath);
   selectedPathRef.current = selectedPath;
 
@@ -220,13 +251,14 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
               overflow: "hidden",
             }}
           >
-            <div data-testid="editor-tabs" style={{ display: "flex", alignItems: "center", flex: 1, minWidth: 0, overflowX: "auto" }}>
+            <div ref={tabStripRef} data-testid="editor-tabs" style={{ display: "flex", alignItems: "center", flex: 1, minWidth: 0, overflowX: "auto" }}>
               {openTabs.map((tab) => {
                 const isActive = tab === selectedPath;
                 const isDirty = dirtyTabs.has(tab);
                 const isPreview = tab === previewTab;
                 const hasPending = pendingRefresh.has(tab);
                 const agentEdited = agentEditedTabs.has(tab);
+                const isDeleted = deletedTabs.has(tab);
                 const tabRelPath = parsePathKey(tab).relativePath;
                 const fileName = tabRelPath.split("/").pop() || tabRelPath;
                 const description = descriptions.get(tab);
@@ -236,6 +268,9 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
                     key={tab}
                     data-testid="editor-tab"
                     data-path={tabRelPath}
+                    data-deleted={isDeleted || undefined}
+                    data-active={isActive || undefined}
+                    data-preview={isPreview || undefined}
                     onClick={() => {
                       if (isActive) clearAgentEdited(tab);
                       else switchToTab(tab);
@@ -247,7 +282,7 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
                       e.preventDefault();
                       setTabMenu({ x: e.clientX, y: e.clientY, path: tab });
                     }}
-                    title={hasPending ? `${tabAbsPath} — agent edited externally` : agentEdited ? `${tabAbsPath} — edited by the agent` : tabAbsPath}
+                    title={isDeleted ? `${tabAbsPath} — deleted on disk` : hasPending || agentEdited ? `${tabAbsPath} — changed on disk` : tabAbsPath}
                     style={{
                       display: "flex",
                       alignItems: "center",
@@ -272,14 +307,18 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
                     }}
                   >
                     <FileIcon name={fileName} />
-                    <span style={{ fontStyle: isPreview || isDirty ? "italic" : undefined }}>{fileName}</span>
+                    <span
+                      style={{
+                        fontStyle: isPreview || isDirty ? "italic" : undefined,
+                        textDecoration: isDeleted ? "line-through" : undefined,
+                        color: isDeleted ? colors.error : undefined,
+                      }}
+                    >
+                      {fileName}
+                    </span>
                     {description && <span style={{ color: colors.textDim, opacity: 0.7, fontSize: 10 }}>{description}</span>}
                     {(hasPending || agentEdited) && (
-                      <span
-                        title="Agent modified this file"
-                        data-testid="editor-tab-agent-edited"
-                        style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: colors.active, display: "block" }}
-                      />
+                      <span title="Changed on disk" data-testid="editor-tab-agent-edited" style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: colors.active, display: "block" }} />
                     )}
                     <span onClick={(e) => closeTab(tab, e)} style={{ marginLeft: 2, width: 8, height: 8, display: "flex", alignItems: "center", justifyContent: "center" }}>
                       {isDirty ? (
@@ -304,6 +343,57 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
             </div>
           </div>
         )}
+        {selectedPath && deletedTabs.has(selectedPath) && (
+          <div
+            data-testid="editor-deleted-banner"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "6px 10px",
+              flexShrink: 0,
+              backgroundColor: `${colors.error}18`,
+              borderBottom: `1px solid ${colors.border}`,
+              fontSize: 11,
+              fontFamily: fonts.sans,
+              color: colors.textLight,
+            }}
+          >
+            <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>This file was deleted on disk.</span>
+            <button
+              onClick={() => saveFile(selectedPath)}
+              style={{
+                background: colors.active,
+                border: "none",
+                color: colors.textLight,
+                cursor: "pointer",
+                padding: "2px 8px",
+                fontSize: 10,
+                fontFamily: fonts.sans,
+                borderRadius: 4,
+                lineHeight: 1.4,
+              }}
+            >
+              Restore
+            </button>
+            <button
+              onClick={() => closeTab(selectedPath)}
+              style={{
+                background: "none",
+                border: `1px solid ${colors.border}`,
+                color: colors.textDim,
+                cursor: "pointer",
+                padding: "2px 8px",
+                fontSize: 10,
+                fontFamily: fonts.sans,
+                borderRadius: 4,
+                lineHeight: 1.4,
+              }}
+            >
+              Close
+            </button>
+          </div>
+        )}
         {pendingForActive !== undefined && selectedPath && (
           <div
             style={{
@@ -319,8 +409,30 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
               color: colors.textLight,
             }}
           >
-            <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>The agent modified this file. Replace your unsaved changes?</span>
+            <span data-testid="disk-change-banner" style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {compareWith !== undefined
+                ? "The disk version shows in red above your lines. Use disk or keep mine per change, then Keep this."
+                : "This file changed on disk. Replace your unsaved changes?"}
+            </span>
             <button
+              data-testid="disk-change-compare"
+              onClick={() => setComparing(compareWith !== undefined ? null : selectedPath)}
+              style={{
+                background: "none",
+                border: `1px solid ${colors.border}`,
+                color: colors.textDim,
+                cursor: "pointer",
+                padding: "2px 8px",
+                fontSize: 10,
+                fontFamily: fonts.sans,
+                borderRadius: 4,
+                lineHeight: 1.4,
+              }}
+            >
+              {compareWith !== undefined ? "Hide diff" : "Compare"}
+            </button>
+            <button
+              data-testid="disk-change-replace"
               onClick={() => acceptPendingRefresh(selectedPath)}
               style={{
                 background: colors.active,
@@ -337,6 +449,7 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
               Replace
             </button>
             <button
+              data-testid="disk-change-keep"
               onClick={() => dismissPendingRefresh(selectedPath)}
               style={{
                 background: "none",
@@ -350,7 +463,7 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
                 lineHeight: 1.4,
               }}
             >
-              Keep mine
+              {compareWith !== undefined ? "Keep this" : "Keep mine"}
             </button>
           </div>
         )}
@@ -377,6 +490,7 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
                 <button
                   key={mode}
                   data-testid={`preview-mode-${mode}`}
+                  aria-pressed={previewMode === mode}
                   onClick={() => setPreviewMode(mode)}
                   title={mode === "editor" ? (isHtml ? "Source only" : "Editor only") : mode === "both" ? (isHtml ? "Source + Preview" : "Editor + Preview") : "Preview only"}
                   style={{
@@ -419,6 +533,9 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
             walkthroughHandlers={walkthroughHandlers}
             onSelectionChange={handleSelectionChange}
             onAskAgent={handleAskAgent}
+            tabViewFor={editorState.tabViewFor}
+            onTabViewChange={editorState.saveTabView}
+            compareWith={compareWith ?? null}
           />
         </div>
       </div>

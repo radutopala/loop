@@ -90,6 +90,7 @@ import { SessionsPanel } from "../panels/SessionsPanel";
 import { TasksPanel } from "../panels/TasksPanel";
 import { getCloseForInstance, Terminal } from "../panels/Terminal";
 import { WorkflowsLayoutPanel } from "../panels/WorkflowsLayoutPanel";
+import { ConfirmPopover } from "../shared/ConfirmPopover";
 import { ErrorBar } from "../shared/ErrorBar";
 import type { OpenPRHandler } from "../shared/OpenPRs";
 import { ChannelHeaderInfo } from "./ChannelHeaderInfo";
@@ -2459,93 +2460,13 @@ function LayoutTab({
         </span>
       )}
       {confirming && (
-        <div
-          data-confirm-popover
-          onMouseDown={(e) => e.stopPropagation()}
-          style={{
-            position: "absolute",
-            top: "100%",
-            left: "50%",
-            transform: "translateX(-50%)",
-            marginTop: 10,
-            backgroundColor: colors.surface,
-            border: `1px solid ${colors.textLight}`,
-            borderRadius: 6,
-            padding: "0 8px",
-            height: 22,
-            boxSizing: "border-box",
-            zIndex: 1000,
-            boxShadow: `0 4px 12px ${colors.shadow}`,
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            whiteSpace: "nowrap",
-            fontFamily: fonts.sans,
-            fontSize: 9,
+        <ConfirmPopover
+          onYes={() => {
+            setConfirming(false);
+            onDelete();
           }}
-        >
-          {/* Arrow pointing up */}
-          <svg width="16" height="9" viewBox="0 0 16 9" style={{ position: "absolute", top: -8, left: "50%", transform: "translateX(-50%)", filter: "drop-shadow(0 -2px 4px rgba(0,0,0,0.3))" }}>
-            <path d="M1 9 L7 2.5 Q8 1.5 9 2.5 L15 9 Z" fill={colors.surface} stroke={colors.textLight} strokeWidth="0.75" />
-            <rect x="0" y="8" width="16" height="2" fill={colors.surface} />
-          </svg>
-          <span style={{ color: colors.textLight }}>Delete?</span>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setConfirming(false);
-              onDelete();
-            }}
-            style={{
-              background: colors.dangerBg,
-              border: `1px solid ${colors.dangerText}`,
-              color: colors.dangerText,
-              cursor: "pointer",
-              padding: "1px 6px",
-              fontSize: 9,
-              fontFamily: fonts.sans,
-              borderRadius: 4,
-              lineHeight: 1.4,
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = colors.dangerHoverBg;
-              e.currentTarget.style.color = colors.white;
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = colors.dangerBg;
-              e.currentTarget.style.color = colors.dangerText;
-            }}
-          >
-            Yes
-          </button>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setConfirming(false);
-            }}
-            style={{
-              background: "none",
-              border: `1px solid ${colors.border}`,
-              color: colors.textDim,
-              cursor: "pointer",
-              padding: "1px 6px",
-              fontSize: 9,
-              fontFamily: fonts.sans,
-              borderRadius: 4,
-              lineHeight: 1.4,
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.color = colors.textLight;
-              e.currentTarget.style.borderColor = colors.textDim;
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.color = colors.textDim;
-              e.currentTarget.style.borderColor = colors.border;
-            }}
-          >
-            No
-          </button>
-        </div>
+          onNo={() => setConfirming(false)}
+        />
       )}
     </div>
   );

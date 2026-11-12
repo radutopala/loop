@@ -97,6 +97,18 @@ The tree header contains:
 - **"FILES" label** -- uppercase, dimmed
 - **Refresh button** -- reloads the root and all expanded directories, and re-reads the currently open file from disk
 - **New file button** (`+`) -- opens an inline input for creating a new file
+- **Add directory button** (desktop app) -- adds another folder as a root of the channel's workspace
+
+The toolbar buttons explain themselves in a hover tip; they have no native tooltip, which shows late or not at all.
+
+### Search
+
+The search input under the header (`Search files and directories`) finds entries by name across every root of the tree, the same fuzzy match as the chat's `@` picker (`GET /api/channels/{id}/files/search?dirs=1`). While it holds a query, results replace the tree: each shows its name and its folder, with the root's name when there is more than one root.
+
+- **Click** opens a file in a preview tab; **double-click** (or Cmd/Ctrl+Enter) pins it
+- **A directory** closes the search onto the tree, with that directory and the ones above it expanded, selected and scrolled into view
+- **ArrowUp / ArrowDown** move through the results; **Enter** opens the highlighted one
+- **Escape** clears the query and brings the tree back
 
 ### Directory Listing
 
@@ -117,11 +129,14 @@ Right-clicking a file or directory opens a context menu with:
 | Copy absolute path | File, Directory | Copies `dirPath + "/" + relativePath` to clipboard |
 | New file here | Directory only | Opens inline input prefilled with directory path |
 | New directory here | Directory only | Opens inline input prefilled with directory path; creates via `POST /api/channels/{id}/dir` which supports nested creation (`MkdirAll`) |
-| Delete | File, Directory | Deletes the file or directory via API. For directories, uses recursive removal (`RemoveAll`). Closes any open tabs whose paths fall within a deleted directory. |
+| Rename | File, Directory (not a root) | Opens an inline input holding the relative path, with the name (without its extension) selected. Enter renames or moves it within its root (`POST /api/channels/{id}/file/rename`); a path into another folder moves it. Open tabs, unsaved edits, expanded folders and the selection follow the new path. A name that's taken fails inline (`<name> already exists`). Escape cancels. |
+| Delete | File, Directory (not a root) | Asks first in a Yes / No bubble under the menu item (`Delete <name>?`, or `Delete <name> and everything in it?` for a directory); Yes deletes via API, No keeps it, Escape closes the menu. For directories, uses recursive removal (`RemoveAll`). Closes any open tabs whose paths fall within a deleted directory. |
 
 ### Multi-Root File Tree
 
 When a project has extra directories configured (via Settings or `.loop/config.json` → `extra_dirs`), the file tree displays multiple roots. Each root appears as a top-level entry labeled with its directory name. File operations within each root use the corresponding `root` query parameter index (0 for the primary directory, 1+ for extras).
+
+Only the primary root starts expanded; extra roots start collapsed and list their entries when expanded.
 
 This is useful for multi-root projects where related code lives in separate directories — for example, a backend service and a shared library, or a monorepo with multiple packages.
 
@@ -160,10 +175,18 @@ A 4px-wide handle on the right edge of the tree allows horizontal resizing:
 
 ### Persistence
 
-Tab state (open tabs and selected tab) is persisted in `localStorage`:
+Tab state (open tabs, selected tab and the preview tab) is persisted in `localStorage`:
 - Key: `loop-editor-tabs` (standalone) or `loop-layout-editor-tabs` (embedded in layout)
-- Format: `Record<channelId, { tabs: string[]; selected: string | null }>`
+- Format: `Record<channelId, { tabs: string[]; selected: string | null; preview?: string | null }>`
+- The preview tab comes back as a preview tab, so the next file opened with a click still replaces it
 - Saved on every tab open, close, or switch
+
+Each open tab also keeps its view, so it opens where it was left after a tab switch, a channel switch, or a reload from disk:
+- Key: `loop-editor-tab-views`
+- Format: `Record<channelId, Record<pathKey, { anchor; head; top }>>` (the cursor and the first visible line, as document offsets)
+- Entries for closed tabs are dropped
+
+The tab strip scrolls the active tab into view when it changes, when tabs open or close, and when the strip or its tabs resize, so coming back to a channel shows the selected tab.
 
 ---
 
@@ -184,9 +207,16 @@ Auto-save is controlled by the `autoSaveOnBlur` setting (default: `true`, config
 
 The auto-save setting can change at any time. To avoid stale closures in cleanup functions and callbacks, the setting is stored in a `useRef` (`autoSaveOnBlurRef`) that is updated on every render. Cleanup functions and event handlers read from the ref instead of the state value.
 
-### Window Focus Reload
+### Live Reload From Disk
 
-When the window regains focus, the editor reloads the currently open file from disk. If the content differs from the editor state (indicating an external edit), the editor is updated and the dirty flag is cleared.
+Open tabs follow changes made outside the editor, whoever makes them: an agent's `Edit`/`Write`, a shell command, another channel's agent or another program. The editor keeps a WebSocket to [`GET /api/channels/{id}/files/watch`](api.md#get-apichannelsidfileswatch) that watches the open tabs and, while a file tree is on screen, its expanded directories.
+
+- **A changed file** is read again. If its bytes match what the editor last read or saved, nothing happens (so a save's own echo is a no-op). A tab without unsaved edits is replaced and marked with a dot until it's viewed; a tab with unsaved edits keeps them and shows a "This file changed on disk" banner to Replace or Keep mine.
+- **Compare** in that banner shows the unsaved edits against the disk version, inline: the disk text in red above the lines that differ. Each change has **Use disk** (take the disk text for it) and **Keep mine**; edits made while comparing keep the disk version pending. **Keep this** keeps the result, **Replace** takes the whole disk version, and saving writes the result and ends the comparison. **Hide diff** closes it with the banner still up.
+- **A deleted file** stays open with its last content. Its tab name is struck through and a "This file was deleted on disk" banner offers Restore, which writes the content back (as does Cmd/Ctrl+S), or Close. Save on blur never recreates a deleted file.
+- **A changed directory** (an entry added, removed or renamed) is listed again, if it's still expanded.
+- **Window focus** re-reads the active tab the same way, as a fallback for changes the watcher missed.
+- **Very large directories** aren't watched once a connection reaches its [watch budget](api.md#get-apichannelsidfileswatch). On macOS every entry of a watched directory holds a file descriptor, so an expanded directory with tens of thousands of files would otherwise hold that many. Open tabs in such a directory are watched one by one; the tree there doesn't refresh live.
 
 ---
 
@@ -214,6 +244,7 @@ All operations go through the Go backend API for security.
 | Read file | `GET /api/channels/{id}/file?path=<path>` | Returns text content; images, videos and PDFs as raw bytes with their MIME type; `X-File-Binary: true` header for other binary files |
 | Save file | `PUT /api/channels/{id}/file?path=<path>` | Body is raw file content. Appends trailing newline if missing. |
 | Delete file | `DELETE /api/channels/{id}/file?path=<path>` | Removes file from disk |
+| Rename / move | `POST /api/channels/{id}/file/rename?path=<from>&to=<to>` | Within one root; `409` when `to` exists |
 | Create file | `PUT` with empty body | Same as save with empty content |
 
 ### Binary File Detection
@@ -262,7 +293,7 @@ For `.md` and `.mdx` files, the editor shows a split view with:
 - CodeMirror editor on the left
 - Rendered HTML preview on the right (using the `marked` library)
 
-The preview updates with a 300ms debounce after each edit. An **Edit / Split / Preview** switch in the tab bar picks the editor only, both side by side (the default), or the preview only.
+The preview updates with a 300ms debounce after each edit. An **Edit / Split / Preview** switch in the tab bar picks the editor only, both side by side (the default), or the preview only. The Markdown and HTML modes are each remembered per channel, so they survive switching channels.
 
 ---
 

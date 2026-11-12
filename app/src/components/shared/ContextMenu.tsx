@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
+import { ConfirmPopover } from "./ConfirmPopover";
 
 export interface MenuItem {
   label: string;
@@ -13,6 +14,9 @@ export interface MenuItem {
   /** Dim text after the label, such as a path. */
   hint?: string;
   title?: string;
+  /** Asks this question in a Yes/No bubble under the item before onClick runs,
+   *  for a destructive item such as Delete. */
+  confirm?: string;
 }
 
 interface ContextMenuProps {
@@ -37,6 +41,8 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
   // anchored to right-edge or bottom-edge buttons without forcing callers to
   // compute clamping themselves.
   const [pos, setPos] = useState({ x, y });
+  // Index of the item whose confirm bubble is open, -1 for none.
+  const [confirmIdx, setConfirmIdx] = useState(-1);
 
   // Arrow nav walks every item: a separator only draws a line above its
   // own item, which stays actionable.
@@ -182,7 +188,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
         }}
       >
         {items.map((item, i) => (
-          <div key={item.label + i}>
+          <div key={item.label + i} style={{ position: "relative" }}>
             {item.separator && (
               <div
                 style={{
@@ -201,6 +207,10 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
                 itemRefs.current[i] = el;
               }}
               onClick={() => {
+                if (item.confirm) {
+                  setConfirmIdx(confirmIdx === i ? -1 : i);
+                  return;
+                }
                 item.onClick();
                 onClose();
               }}
@@ -231,6 +241,18 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
               {item.label}
               {item.hint && <span style={{ color: colors.textDim, fontFamily: fonts.mono, fontSize: 10, marginLeft: "auto", paddingLeft: 12 }}>{item.hint}</span>}
             </button>
+            {confirmIdx === i && item.confirm && (
+              <ConfirmPopover
+                testId="context-menu-confirm"
+                align="start"
+                label={item.confirm}
+                onYes={() => {
+                  item.onClick();
+                  onClose();
+                }}
+                onNo={() => setConfirmIdx(-1)}
+              />
+            )}
           </div>
         ))}
       </div>

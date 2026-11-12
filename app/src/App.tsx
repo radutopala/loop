@@ -30,12 +30,14 @@ import { GlobalTasksPanel } from "./components/panels/GlobalTasksPanel";
 import { WorkflowsGlobalPanel, type WorkflowsGlobalPanelHandle } from "./components/panels/WorkflowsGlobalPanel";
 import { CommandPalette } from "./components/shared/CommandPalette";
 import { DaemonUnavailable } from "./components/shared/DaemonUnavailable";
+import { DeletingOverlay } from "./components/shared/DeletingOverlay";
 import { ErrorBar } from "./components/shared/ErrorBar";
 import { LoopLogo } from "./components/shared/LoopLogo";
 import type { OpenPRHandler } from "./components/shared/OpenPRs";
 import { Settings } from "./components/shared/Settings";
 import { ciPillIds, commentPillIds, conflictPillIds, trustPillIds } from "./components/sidebar/pills";
 import { Sidebar } from "./components/sidebar/Sidebar";
+import { selectAfterDelete } from "./hooks/selectAfterDelete";
 import { useAppPanelState } from "./hooks/useAppPanelState";
 import { type ActiveChatState, useChatStateStore } from "./hooks/useChatStateStore";
 import { NotificationsContext, useUnreadNotifications } from "./notifications/useNotifications";
@@ -121,6 +123,9 @@ function AppInner() {
   const [channelsFetchedAt, setChannelsFetchedAt] = useState<number | undefined>(undefined);
   const channelsFetchedAtRef = useRef(0);
   const [selectedId, setSelectedId] = useState<string | null>(getHashChannelId);
+  // The selection now, for a delete to read once the daemon is done with it.
+  const selectedIdRef = useRef(selectedId);
+  selectedIdRef.current = selectedId;
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -674,27 +679,32 @@ function AppInner() {
     [loadChannels, handleSelect],
   );
 
+  // The message over the workspace while a delete runs, null when none does.
+  const [deleting, setDeleting] = useState<string | null>(null);
+
   const handleDelete = useCallback(
     async (id: string) => {
       setError(null);
+      const ch = channels.find((c) => c.id === id);
+      setDeleting(`Deleting ${ch?.parent_id ? "thread" : "channel"} ${ch?.name ?? ""}…`);
       try {
-        const ch = channels.find((c) => c.id === id);
         if (ch && ch.parent_id) {
           await deleteThread(id);
         } else {
           await deleteChannel(id);
         }
         await loadChannels();
-        if (selectedId === id) {
-          setSelectedId(null);
-        }
+        const next = selectAfterDelete(selectedIdRef.current, [id], channels);
+        if (next !== undefined) handleSelect(next);
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to delete";
         setError(message);
         console.error("delete failed:", err);
+      } finally {
+        setDeleting(null);
       }
     },
-    [channels, loadChannels, selectedId],
+    [channels, loadChannels, handleSelect],
   );
 
   const handleRename = useCallback(
@@ -754,6 +764,8 @@ function AppInner() {
   const handleDeleteBatch = useCallback(
     async (ids: string[]) => {
       setError(null);
+      setDeleting(`Deleting ${ids.length} ${ids.length === 1 ? "channel" : "channels"}…`);
+      const deleted: string[] = [];
       try {
         for (const id of ids) {
           const ch = channels.find((c) => c.id === id);
@@ -762,18 +774,20 @@ function AppInner() {
           } else {
             await deleteChannel(id);
           }
-          if (selectedId === id) {
-            setSelectedId(null);
-          }
+          deleted.push(id);
         }
         await loadChannels();
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to delete";
         setError(message);
         console.error("batch delete failed:", err);
+      } finally {
+        setDeleting(null);
       }
+      const next = selectAfterDelete(selectedIdRef.current, deleted, channels);
+      if (next !== undefined) handleSelect(next);
     },
-    [channels, loadChannels, selectedId],
+    [channels, loadChannels, handleSelect],
   );
 
   useEffect(() => {
@@ -994,6 +1008,7 @@ function AppInner() {
             )}
           </>
         )}
+        {deleting && <DeletingOverlay message={deleting} />}
         {/* Outside the branches above so a channel arriving after load doesn't remount it and drop unsaved edits */}
         {settingsOpen && (
           <Settings

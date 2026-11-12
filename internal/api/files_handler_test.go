@@ -361,6 +361,38 @@ func (s *ServerSuite) TestSearchFiles_Success() {
 	require.Contains(s.T(), body, `"root_index":0`)
 }
 
+func (s *ServerSuite) TestSearchFiles_Dirs() {
+	tests := []struct {
+		name    string
+		query   string
+		wantDir bool
+	}{
+		{name: "files only by default", query: "q=src", wantDir: false},
+		{name: "dirs=1 includes directories", query: "q=src&dirs=1", wantDir: true},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			tmpDir := s.T().TempDir()
+			require.NoError(s.T(), os.MkdirAll(filepath.Join(tmpDir, "src", "lib"), 0755))
+			require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "src", "app.go"), []byte("package src"), 0644))
+			s.store.On("GetChannel", mock.Anything, "ch-1").
+				Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+			rec := s.testRequest("GET", "/api/channels/ch-1/files/search?"+tt.query, "")
+			require.Equal(s.T(), http.StatusOK, rec.Code)
+			body := rec.Body.String()
+			require.Contains(s.T(), body, `"rel_path":"src/app.go","name":"app.go"}`)
+			if tt.wantDir {
+				require.Contains(s.T(), body, `"rel_path":"src","name":"src","is_dir":true`)
+				require.Contains(s.T(), body, `"rel_path":"src/lib","name":"lib","is_dir":true`)
+			} else {
+				require.NotContains(s.T(), body, `is_dir`)
+			}
+		})
+	}
+}
+
 func (s *ServerSuite) TestSearchFiles_EmptyQReturnsAll() {
 	tmpDir := s.T().TempDir()
 	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "a.txt"), []byte("a"), 0644))
@@ -1986,3 +2018,85 @@ func (s *ServerSuite) TestRawFile_NotConfigured() {
 
 	require.Equal(s.T(), http.StatusNotImplemented, w.Code)
 }
+
+// ── handleRenameFile ──
+
+func (s *ServerSuite) TestRenameFile() {
+	tests := []struct {
+		name     string
+		query    string
+		setup    func(dir string)
+		wantCode int
+		wantBody string
+		check    func(dir string)
+	}{
+		{name: "renames a file", query: "path=a.txt&to=b.txt", wantCode: http.StatusOK, check: func(dir string) {
+			_, err := os.Stat(filepath.Join(dir, "a.txt"))
+			require.True(s.T(), os.IsNotExist(err))
+			data, err := os.ReadFile(filepath.Join(dir, "b.txt"))
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), "a", string(data))
+		}},
+		{name: "moves a directory", query: "path=sub&to=moved", wantCode: http.StatusOK, check: func(dir string) {
+			_, err := os.Stat(filepath.Join(dir, "moved", "c.txt"))
+			require.NoError(s.T(), err)
+		}},
+		{name: "missing source", query: "path=nope.txt&to=b.txt", wantCode: http.StatusNotFound},
+		{name: "target exists", query: "path=a.txt&to=sub/c.txt", wantCode: http.StatusConflict, wantBody: "already exists"},
+		{name: "root refused", query: "path=.&to=x", wantCode: http.StatusBadRequest},
+		{name: "empty target", query: "path=a.txt&to=", wantCode: http.StatusBadRequest},
+		{name: "target outside the root", query: "path=a.txt&to=../x.txt", wantCode: http.StatusBadRequest},
+		{name: "rename fails", query: "path=a.txt&to=b.txt", setup: func(string) {
+			s.sys.Override("Lstat", mock.MatchedBy(func(p string) bool { return filepath.Base(p) == "a.txt" })).Return(&fakeFileInfo{name: "a.txt"}, nil)
+			s.sys.On("Lstat", mock.Anything).Return(nil, os.ErrNotExist)
+			s.sys.On("Rename", mock.Anything, mock.Anything).Return(fmt.Errorf("injected rename error"))
+			s.srv.sys = &realOpenSys{s.sys}
+		}, wantCode: http.StatusInternalServerError, wantBody: "failed to rename"},
+		{name: "root can't be resolved", query: "path=a.txt&to=b.txt", setup: func(string) {
+			s.srv.sys = &failEvalSys{realOpenSys{s.sys}}
+		}, wantCode: http.StatusBadRequest, wantBody: "invalid root directory"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			dir := s.T().TempDir()
+			require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a"), 0o644))
+			require.NoError(s.T(), os.MkdirAll(filepath.Join(dir, "sub"), 0o755))
+			require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "sub", "c.txt"), []byte("c"), 0o644))
+			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: dir}, nil)
+			if tt.setup != nil {
+				tt.setup(dir)
+			}
+
+			rec := s.testRequest("POST", "/api/channels/ch-1/file/rename?"+tt.query, "")
+			require.Equal(s.T(), tt.wantCode, rec.Code, rec.Body.String())
+			require.Contains(s.T(), rec.Body.String(), tt.wantBody)
+			if tt.check != nil {
+				tt.check(dir)
+			}
+		})
+	}
+}
+
+func (s *ServerSuite) TestRenameFile_NotConfigured() {
+	srv := nilServer()
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/channels/{id}/file/rename", srv.handleRenameFile)
+
+	req, _ := http.NewRequest("POST", "/api/channels/ch-1/file/rename?path=a&to=b", nil)
+	rec := newRecorder()
+	mux.ServeHTTP(rec, req)
+	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
+}
+
+func (s *ServerSuite) TestRenameFile_ChannelNotFound() {
+	s.store.On("GetChannel", mock.Anything, "missing").Return((*db.Channel)(nil), nil)
+
+	rec := s.testRequest("POST", "/api/channels/missing/file/rename?path=a&to=b", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+// failEvalSys fails every EvalSymlinks.
+type failEvalSys struct{ realOpenSys }
+
+func (failEvalSys) EvalSymlinks(string) (string, error) { return "", fmt.Errorf("injected eval error") }

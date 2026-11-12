@@ -68,6 +68,10 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I modify "([^"]*)" without staging$`, tc.modifyWithoutStaging)
 	ctx.Step(`^I create a (\d+)-page PDF "([^"]*)" reading "([^"]*)" in the repo$`, tc.createPDF)
 	ctx.Step(`^I create a file "([^"]*)" in the repo with:$`, tc.createRepoFile)
+	ctx.Step(`^I delete the file "([^"]*)" in the repo$`, tc.deleteRepoFile)
+	ctx.Step(`^I create a file "([^"]*)" in the repo with (\d+) numbered lines$`, tc.createNumberedRepoFile)
+	ctx.Step(`^the file "([^"]*)" in the repo should contain "([^"]*)"$`, tc.repoFileShouldContain)
+	ctx.Step(`^the file "([^"]*)" in the repo should (exist|not exist)$`, tc.repoFileShouldExist)
 	ctx.Step(`^I commit all changes in the repo with message "([^"]*)"$`, tc.commitAllInRepo)
 	ctx.Step(`^I remove every queued message via API$`, tc.removeQueuedViaAPI)
 	ctx.Step(`^the current channel has a learn thread$`, tc.seedLearnThread)
@@ -901,6 +905,57 @@ func (tc *TestContext) createRepoFile(name string, body *godog.DocString) error 
 		return fmt.Errorf("creating dirs for %s: %w", name, err)
 	}
 	return os.WriteFile(fpath, []byte(body.Content), 0o644)
+}
+
+// createNumberedRepoFile writes a file of lines "line 1" … "line n".
+func (tc *TestContext) createNumberedRepoFile(name string, n int) error {
+	var b strings.Builder
+	for i := 1; i <= n; i++ {
+		fmt.Fprintf(&b, "line %d\n", i)
+	}
+	return tc.createRepoFile(name, &godog.DocString{Content: b.String()})
+}
+
+// deleteRepoFile removes a file from the channel's repo, outside Loop.
+func (tc *TestContext) deleteRepoFile(name string) error {
+	if tc.ChannelDir == "" {
+		return fmt.Errorf("no channel dir set; use 'I set up a test channel via API for git repo' step first")
+	}
+	return os.Remove(filepath.Join(tc.ChannelDir, name))
+}
+
+// repoFileShouldContain polls a repo file until it holds want: saves from
+// the browser land on disk asynchronously.
+func (tc *TestContext) repoFileShouldContain(name, want string) error {
+	if tc.ChannelDir == "" {
+		return fmt.Errorf("no channel dir set; use 'I set up a test channel via API for git repo' step first")
+	}
+	fpath := filepath.Join(tc.ChannelDir, name)
+	var got string
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+		data, err := os.ReadFile(fpath)
+		got = string(data)
+		if err == nil && strings.Contains(got, want) {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s does not contain %q; got %q", name, want, got)
+}
+
+// repoFileShouldExist polls until a repo path exists, or is gone.
+func (tc *TestContext) repoFileShouldExist(name, state string) error {
+	if tc.ChannelDir == "" {
+		return fmt.Errorf("no channel dir set; use 'I set up a test channel via API for git repo' step first")
+	}
+	want := state == "exist"
+	fpath := filepath.Join(tc.ChannelDir, name)
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+		_, err := os.Stat(fpath)
+		if (err == nil) == want {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s: want %s", name, state)
 }
 
 // commitAllInRepo stages everything in the channel's repo and commits it.

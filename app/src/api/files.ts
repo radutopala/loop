@@ -58,12 +58,16 @@ export async function fetchFiles(channelId: string, path: string, root?: number)
   return data.entries;
 }
 
+/** fetchFileContent's error when the file isn't there (404). */
+export class FileNotFoundError extends Error {}
+
 /** `ref` reads the file as it was in that commit instead of from disk. */
 export async function fetchFileContent(channelId: string, path: string, root?: number, ref?: string): Promise<{ content: string; binary: boolean }> {
   const params = new URLSearchParams({ path });
   if (root !== undefined && root > 0) params.set("root", String(root));
   if (ref) params.set("ref", ref);
   const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/file?${params}`);
+  if (res.status === 404) throw new FileNotFoundError(`Failed to fetch file: ${res.statusText}`);
   if (!res.ok) throw new Error(`Failed to fetch file: ${res.statusText}`);
   if (res.headers.get("X-File-Binary") === "true") {
     return { content: "", binary: true };
@@ -131,6 +135,15 @@ export async function deleteFile(channelId: string, path: string, root?: number)
   if (!res.ok) throw new Error(`Failed to delete: ${res.statusText}`);
 }
 
+/** Renames or moves path to to, both relative to root. */
+export async function renameFile(channelId: string, path: string, to: string, root?: number): Promise<void> {
+  const params = new URLSearchParams({ path, to });
+  if (root !== undefined && root > 0) params.set("root", String(root));
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/file/rename?${params}`, { method: "POST" });
+  if (res.status === 409) throw new Error(`${to} already exists`);
+  if (!res.ok) throw new Error(`Failed to rename: ${res.statusText}`);
+}
+
 export async function createDir(channelId: string, path: string, root?: number): Promise<void> {
   const params = new URLSearchParams({ path });
   if (root !== undefined && root > 0) params.set("root", String(root));
@@ -167,10 +180,13 @@ export interface FileSearchResult {
   root_index: number;
   rel_path: string;
   name: string;
+  /** Set on directory results, which come only with `dirs`. */
+  is_dir?: boolean;
 }
 
-export async function searchFiles(channelId: string, q: string, limit = 30): Promise<FileSearchResult[]> {
+export async function searchFiles(channelId: string, q: string, limit = 30, dirs = false): Promise<FileSearchResult[]> {
   const params = new URLSearchParams({ q, limit: String(limit) });
+  if (dirs) params.set("dirs", "1");
   const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/files/search?${params}`);
   if (!res.ok) return [];
   const data: { results: FileSearchResult[] } = await res.json();
