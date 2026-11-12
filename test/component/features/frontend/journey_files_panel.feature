@@ -139,3 +139,42 @@ Feature: Files Panel Journey
     And I click on "[data-testid='context-menu-confirm'] [data-testid='confirm-yes']"
     Then the file "doomed.txt" in the repo should not exist
     And I wait up to "5s" for "[data-testid='file-tree-entry'][data-path='0:doomed.txt']" to disappear
+
+  @files-tree-actions
+  Scenario: Files opened one after another through UI commands stay open
+    Given I set up a test channel via API for git repo "bdd-ui-open-files"
+    And I create a file "notes.md" in the repo with:
+      """
+      # Notes
+      """
+    And I open the app in a browser
+    And I wait for text "bdd-ui-open-files" to appear
+    When I click on "bdd-ui-open-files" in the sidebar
+    And I wait for "textarea" to be visible
+    And I send a POST request to "/api/ui/commands" with body:
+      """
+      {"steps": [{"op": "open_file", "path": "README.md"}, {"op": "open_file", "path": "notes.md"}]}
+      """
+    Then the response status should be 200
+    And I wait for "[data-testid='editor-tab'][data-path='notes.md']" to be visible
+    And the element "[data-testid='editor-tab'][data-path='README.md']" should be visible
+    And the element "[data-testid='editor-tab'][data-preview]" should not exist
+
+    # Asked for, a file opens in the preview tab, and the next one replaces it
+    When I create a file "draft.md" in the repo with:
+      """
+      # Draft
+      """
+    And I create a file "scratch.md" in the repo with:
+      """
+      # Scratch
+      """
+    And I send a POST request to "/api/ui/commands" with body:
+      """
+      {"steps": [{"op": "open_file", "path": "draft.md", "preview": true}, {"op": "open_file", "path": "scratch.md", "preview": true}]}
+      """
+    Then the response status should be 200
+    And I wait for "[data-testid='editor-tab'][data-path='scratch.md'][data-preview]" to be visible
+    And the element "[data-testid='editor-tab'][data-path='draft.md']" should not exist
+    And the element "[data-testid='editor-tab'][data-path='README.md']" should be visible
+    And the element "[data-testid='editor-tab'][data-path='notes.md']" should be visible

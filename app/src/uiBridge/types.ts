@@ -32,6 +32,9 @@ export interface UiStep {
   /** open_file: a path in one of the channel's roots. */
   path?: string;
   line?: number;
+  /** open_file: open in the preview tab, which the next file opened
+   *  replaces, rather than a tab that stays open. */
+  preview?: boolean;
   /** show_message: a message of the open channel's chat. */
   message_id?: number;
   /** replace_pane, add_pane: the playground a playground pane shows, or
@@ -187,7 +190,7 @@ export interface UiHost {
   side(channelId: string): SideReader | undefined;
   /** Opens a file of the channel's roots in its editor; rejects if there's
    *  no such file. */
-  openFile(channelId: string, path: string, line?: number): Promise<void>;
+  openFile(channelId: string, path: string, line?: number, preview?: boolean): Promise<void>;
   /** Scrolls channelId's chat to a message and highlights it; false when
    *  the chat has no such message. */
   showMessage(channelId: string, messageId: number): Promise<boolean>;

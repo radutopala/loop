@@ -3368,7 +3368,7 @@ Runs steps in a window, in order, until one fails.
 | `restore_pane` | | Puts a maximized pane back |
 | `open_side` | `view` | Opens the side view beside the chat: `learn`, `explain` or `shell`. The result's `pane` is `side`. `shell` fails while the chat's container isn't running |
 | `close_side` | | Closes the side view |
-| `open_file` | `path`, `line?` | Opens a file of the channel's roots in the editor |
+| `open_file` | `path`, `line?`, `preview?` | Opens a file of the channel's roots in the editor, in a tab that stays open; with `preview: true`, in the preview tab, which the next file opened replaces |
 | `open_walkthrough` | `walkthrough_id`, `walkthrough_step?`, `autoplay_sec?` | Shows step `walkthrough_step` (from 1, default 1) of one of the channel's [walkthroughs](#walkthroughs) in the editor, opening its file. With `autoplay_sec` (1 to 600) it moves to the next step every that many seconds until the last; without, it shows the step paused. Fails when the step's file can't be opened |
 | `close_walkthrough` | | Closes the walkthrough the editor shows |
 | `show_message` | `message_id` | Scrolls the channel's chat to the message (its `#id`) and highlights it, paging back through older messages and switching to a tab with a chat pane when needed. Fails when the chat has no such message. A message link, `loop://channel/<channel-id>/<message-id>`, is `select_channel` to the channel, then `show_message` |

@@ -1143,7 +1143,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       if (!ce.detail || (ce.detail.channelId !== channelId && (!learnChannelId || ce.detail.channelId !== learnChannelId))) return;
       // The editor is in the layout: the Learn view closes to show it.
       setLearnOpen(false);
-      const { target, line } = ce.detail;
+      const { target, line, pin } = ce.detail;
       const pathKey = makePathKey(target.rootIndex, target.relPath);
 
       const current = treeRef.current;
@@ -1168,7 +1168,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         handleEmptyAdd("editor");
       }
 
-      editorState.openFileAtLine(pathKey, line);
+      editorState.openFileAtLine(pathKey, line, pin);
     };
     window.addEventListener("loop:open-file", handler);
     return () => window.removeEventListener("loop:open-file", handler);
