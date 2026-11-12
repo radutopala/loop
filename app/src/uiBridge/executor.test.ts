@@ -225,9 +225,9 @@ class FakeHost implements UiHost {
   side(channelId: string) {
     return this.sides.get(channelId);
   }
-  async openFile(channelId: string, path: string, line?: number) {
+  async openFile(channelId: string, path: string, line?: number, preview?: boolean) {
     if (!this.files.has(path)) throw new Error(`no file "${path}" in the channel's roots`);
-    this.opened.push(`${channelId} ${path}${line ? `:${line}` : ""}`);
+    this.opened.push(`${channelId} ${path}${line ? `:${line}` : ""}${preview ? " (preview)" : ""}`);
   }
   async walkthrough(_channelId: string, id: number) {
     if (this.walkthroughFails) throw new Error(this.walkthroughFails);
@@ -669,12 +669,14 @@ describe("more steps", () => {
       await run([
         { op: "open_file", path: "main.go", line: 12 },
         { op: "open_file", path: "main.go" },
+        { op: "open_file", path: "main.go", preview: true },
       ]),
     ).toEqual([
       { op: "open_file", ok: true },
       { op: "open_file", ok: true },
+      { op: "open_file", ok: true },
     ]);
-    expect(host.opened).toEqual(["c1 main.go:12", "c1 main.go"]);
+    expect(host.opened).toEqual(["c1 main.go:12", "c1 main.go", "c1 main.go (preview)"]);
   });
 
   it("opens a walkthrough of the open channel at a step", async () => {

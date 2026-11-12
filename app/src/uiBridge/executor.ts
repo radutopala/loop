@@ -340,7 +340,7 @@ async function runStep(step: UiStep, run: Run): Promise<StepOutput> {
       const { channelId } = workspaceOf(run);
       if (!step.path) throw new StepError("path is required");
       if (step.line !== undefined && (!Number.isInteger(step.line) || step.line < 1)) throw new StepError("line must be a whole number from 1");
-      await host.openFile(channelId, step.path, step.line).catch((err) => {
+      await host.openFile(channelId, step.path, step.line, step.preview === true).catch((err) => {
         throw new StepError(err instanceof Error ? err.message : String(err));
       });
       return {};

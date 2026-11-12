@@ -48,7 +48,7 @@ func shiftPaneRefs(steps []uiRunStep) []uiRunStep {
 // uiRunStep is a step of ui_run, as the app's window runs it. Pointers keep
 // a false or 0 the agent gives.
 type uiRunStep struct {
-	Op        uiOp        `json:"op" jsonschema:"select_channel {channel_id}, set_tab {tab}, create_tab {tab?, canvas?}, rename_tab {tab, name}, remove_tab {tab}, replace_pane {pane, panel, open_mode?, item?, scope?}, add_pane {panel, next_to?, direction?, side?, open_mode?, item?, scope?}, remove_pane {pane}, maximize_pane {pane}, restore_pane, open_file {path, line?}, show_message {message_id}, open_side {view}, close_side, send_input {pane, text, submit?}, read_output {pane, lines?}, wait_for {pane, match?, quiet_ms?, lines?}, open_walkthrough {walkthrough_id, walkthrough_step?, autoplay_sec?}, close_walkthrough"`
+	Op        uiOp        `json:"op" jsonschema:"select_channel {channel_id}, set_tab {tab}, create_tab {tab?, canvas?}, rename_tab {tab, name}, remove_tab {tab}, replace_pane {pane, panel, open_mode?, item?, scope?}, add_pane {panel, next_to?, direction?, side?, open_mode?, item?, scope?}, remove_pane {pane}, maximize_pane {pane}, restore_pane, open_file {path, line?, preview?}, show_message {message_id}, open_side {view}, close_side, send_input {pane, text, submit?}, read_output {pane, lines?}, wait_for {pane, match?, quiet_ms?, lines?}, open_walkthrough {walkthrough_id, walkthrough_step?, autoplay_sec?}, close_walkthrough"`
 	ChannelID string      `json:"channel_id,omitempty" jsonschema:"select_channel: a channel, thread or worktree thread of this project"`
 	Tab       string      `json:"tab,omitempty" jsonschema:"set_tab, rename_tab, remove_tab: a layout tab (from ui_state); create_tab: the new tab's name (default the next Layout N)"`
 	Name      string      `json:"name,omitempty" jsonschema:"rename_tab: the tab's new name"`
@@ -63,6 +63,7 @@ type uiRunStep struct {
 	Scope     uiScope     `json:"scope,omitempty" jsonschema:"With item: the playground's scope, when both have one by that name"`
 	Path      string      `json:"path,omitempty" jsonschema:"open_file: a path in one of the channel's roots"`
 	Line      *int        `json:"line,omitempty" jsonschema:"open_file: the line to show, from 1"`
+	Preview   *bool       `json:"preview,omitempty" jsonschema:"open_file: open it in the editor's preview tab, which the next file opened replaces (default false: a tab that stays open, so files opened one after another are all shown)"`
 	MessageID *int64      `json:"message_id,omitempty" jsonschema:"show_message: a message of the open channel's chat (its #id), to scroll the chat to and highlight. A message link loop://channel/<channel-id>/<message-id> is select_channel {channel_id} then show_message {message_id}"`
 	View      uiSideView  `json:"view,omitempty" jsonschema:"open_side: the side view to open beside the chat, or swap the open one for: learn (the learn pass's proposals and thread), explain (the turns' write-ups) or shell (a shell in the chat's own container, while it runs)"`
 	Text      string      `json:"text,omitempty" jsonschema:"send_input: what to type, or, on a chat or chat-side pane, the message to queue"`

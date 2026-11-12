@@ -6,6 +6,8 @@ export interface FileLinkOpenDetail {
   channelId: string;
   target: FileLinkTarget;
   line: number | null;
+  /** Open as a kept tab rather than the preview tab. */
+  pin?: boolean;
 }
 
 export interface FileLinkProps {

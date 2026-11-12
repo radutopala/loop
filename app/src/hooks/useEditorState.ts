@@ -149,8 +149,8 @@ export interface EditorStateApi {
   saveFile: (filePath?: string) => void;
   saveAllDirty: () => void;
   clearError: () => void;
-  /** Open a file (preview tab) and scroll to the given 1-based line once loaded. */
-  openFileAtLine: (path: string, line: number | null) => void;
+  /** Open a file (a preview tab, or a kept one when pin) and scroll to the given 1-based line once loaded. */
+  openFileAtLine: (path: string, line: number | null, pin?: boolean) => void;
 
   // Auto-refresh resolution
   acceptPendingRefresh: (pathKey: string) => void;
@@ -648,23 +648,6 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
   const fileContentRef = useRef(fileContent);
   fileContentRef.current = fileContent;
 
-  const openFileAtLine = useCallback(
-    (path: string, line: number | null) => {
-      if (line !== null) {
-        pendingScrollRef.current = { pathKey: path, line };
-      } else {
-        pendingScrollRef.current = null;
-      }
-      openFile(path);
-      // If it's already the active tab with content loaded, openFile is a no-op
-      // and no fileContent effect will fire — scroll synchronously.
-      if (line !== null && selectedPathRef.current === path && fileContentRef.current !== null) {
-        tryFlushPendingScroll();
-      }
-    },
-    [openFile, tryFlushPendingScroll],
-  );
-
   // Double-click promote: ensure permanent and active.
   const promoteFile = useCallback(
     (path: string) => {
@@ -673,6 +656,24 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
       if (selectedPathRef.current !== path) switchToTab(path);
     },
     [previewTab, switchToTab],
+  );
+
+  const openFileAtLine = useCallback(
+    (path: string, line: number | null, pin = false) => {
+      if (line !== null) {
+        pendingScrollRef.current = { pathKey: path, line };
+      } else {
+        pendingScrollRef.current = null;
+      }
+      if (pin) promoteFile(path);
+      else openFile(path);
+      // If it's already the active tab with content loaded, openFile is a no-op
+      // and no fileContent effect will fire — scroll synchronously.
+      if (line !== null && selectedPathRef.current === path && fileContentRef.current !== null) {
+        tryFlushPendingScroll();
+      }
+    },
+    [openFile, promoteFile, tryFlushPendingScroll],
   );
 
   // Closes tabs, dropping what they hold; the selection moves as closing a

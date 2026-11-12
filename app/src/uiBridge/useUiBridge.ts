@@ -58,8 +58,10 @@ export function useUiBridge(selectedId: string | null, selectChannel: (id: strin
       terminal: getTerminalInput,
       chat: getChatInput,
       side: getSideReader,
-      openFile: async (channelId, path, line) => {
-        await openChannelFile(channelId, path, line);
+      // A kept tab unless asked for the preview tab, so files opened one
+      // after another all stay open.
+      openFile: async (channelId, path, line, preview) => {
+        await openChannelFile(channelId, path, line, !preview);
       },
       walkthrough: fetchWalkthrough,
       showWalkthrough: async (channelId, w, index, autoplaySec) => {
