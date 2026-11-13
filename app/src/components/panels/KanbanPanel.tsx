@@ -116,9 +116,14 @@ function TicketDrawer({ open, onClose, testId, header, footer, children }: Ticke
       // Paint once off-screen, then slide in on the next frame.
       const frame = requestAnimationFrame(() => {
         setShown(true);
+        // Leave focus alone when something in the drawer already has it: a
+        // click or typing that got there first mustn't jump to the title.
         // preventScroll: a plain focus would scroll the panel sideways to
         // reveal the still off-screen input.
-        panelRef.current?.querySelector<HTMLElement>("[data-autofocus]")?.focus({ preventScroll: true });
+        const panel = panelRef.current;
+        if (panel && !panel.contains(document.activeElement)) {
+          panel.querySelector<HTMLElement>("[data-autofocus]")?.focus({ preventScroll: true });
+        }
       });
       return () => cancelAnimationFrame(frame);
     }
