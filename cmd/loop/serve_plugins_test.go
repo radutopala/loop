@@ -42,12 +42,14 @@ func (s *MainSuite) TestServeWithPlugins() {
 	tests := []struct {
 		name   string
 		docker func() (pluginDockerClient, error)
+		// devPlugin installs a dev plugin, whose image startup tags.
+		devPlugin bool
 	}{
 		{"no leftovers", func() (pluginDockerClient, error) {
 			c, err := noDocker()
 			return listingDocker{c}, err
-		}},
-		{"docker unreachable", func() (pluginDockerClient, error) { return noDocker() }},
+		}, false},
+		{"docker unreachable", func() (pluginDockerClient, error) { return noDocker() }, true},
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
@@ -56,6 +58,11 @@ func (s *MainSuite) TestServeWithPlugins() {
 			m.setupHappyBot()
 			store := s.useRealStore(m)
 			defer store.Close()
+			if tc.devPlugin {
+				require.NoError(s.T(), store.UpsertPluginState(context.Background(), &db.PluginState{
+					PluginID: "echo", Image: "sha256:dev", Version: "1.0.0", API: "1", Dev: true, Status: db.PluginStatusInstalled,
+				}))
+			}
 			m.cfg.Plugins.Enabled = true
 			m.cfg.LoopDir = s.T().TempDir()
 			s.app.newPluginDocker = tc.docker

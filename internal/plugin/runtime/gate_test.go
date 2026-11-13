@@ -171,6 +171,10 @@ func (s *ManagerSuite) TestEnsureGateFailures() {
 			inspect(image.InspectResponse{}, errImageGone)()
 			s.docker.On("ImagePull", s.ctx, s.plugin.Image, image.PullOptions{}).Return(nil, boom).Once()
 		}, wantErr: "pulling the missing plugin image: pulling example.com/cogtest@sha256:aa: boom"},
+		{name: "dev image missing", setup: func() {
+			s.plugin.Image = "sha256:local"
+			s.docker.On("ImageInspect", s.ctx, "sha256:local").Return(image.InspectResponse{}, errImageGone).Once()
+		}, wantErr: "the dev image of plugin cogtest (sha256:local) is no longer in Docker"},
 		{name: "no config", setup: inspect(image.InspectResponse{}, nil), wantErr: "the plugin image has no USER to run as"},
 		{name: "no user", setup: func() {
 			// Without a daemon uid, as on Windows, the image's USER is used.

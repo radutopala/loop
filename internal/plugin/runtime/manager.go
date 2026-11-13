@@ -401,10 +401,14 @@ func (m *Manager) start(ctx context.Context, p Plugin, ch Channel) (*instance, e
 // pullMissing pulls p's image again when err says Docker no longer has it,
 // as after a prune: the image is pinned to its digest, so it's still the one
 // the owner approved. A dev install's image, a local build pinned to its ID,
-// can't be pulled. It reports whether it pulled.
+// can't be pulled, so its error says to build and install it again. It
+// reports whether it pulled.
 func (m *Manager) pullMissing(ctx context.Context, p Plugin, err error) (bool, error) {
-	if !cerrdefs.IsNotFound(err) || !strings.Contains(p.Image, "@") {
+	if !cerrdefs.IsNotFound(err) {
 		return false, nil
+	}
+	if !strings.Contains(p.Image, "@") {
+		return false, fmt.Errorf("the dev image of plugin %s (%s) is no longer in Docker: build the plugin's image again and install it with loop plugin:install --dev", p.Manifest.ID, p.Image)
 	}
 	m.logger.Info("pulling the missing plugin image again", "plugin_id", p.Manifest.ID, "image", p.Image)
 	if err := plugin.PullImage(ctx, m.api, p.Image); err != nil {

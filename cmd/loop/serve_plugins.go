@@ -72,7 +72,8 @@ func (p *plugins) stop(ctx context.Context) {
 
 // newPlugins builds the plugin system, or returns nil when plugins are
 // disabled. It removes the plugin containers an earlier daemon left behind,
-// and those of channels deleted since.
+// and those of channels deleted since, and tags the images of dev plugins
+// installed before Loop tagged them.
 func (a *app) newPlugins(ctx context.Context, cfg *config.Config, reload func() (*config.Config, error), store db.Store, tokens *apiauth.Registry, gate container.ImageGate, registry runtime.Registry, logger *slog.Logger) (*plugins, error) {
 	if !cfg.Plugins.Enabled {
 		return nil, nil
@@ -100,6 +101,13 @@ func (a *app) newPlugins(ctx context.Context, cfg *config.Config, reload func() 
 	svc := install.NewService(installer, mgr, ps, proxy.NewClient(&http.Client{}), pluginProject(cfg, reload, store))
 	if err := errors.Join(mgr.RemoveLeftovers(ctx), svc.PruneChannels(ctx)); err != nil {
 		logger.Warn("removing leftover plugin containers", "error", err)
+	}
+	states, err := ps.ListPluginStates(ctx)
+	if err == nil {
+		err = installer.TagDevImages(ctx, states)
+	}
+	if err != nil {
+		logger.Warn("tagging the dev plugin images", "error", err)
 	}
 	return &plugins{docker: cli, store: ps, runtime: mgr, service: svc}, nil
 }

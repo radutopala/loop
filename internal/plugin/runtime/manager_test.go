@@ -396,11 +396,11 @@ func (s *ManagerSuite) TestEnsureFailures() {
 			s.docker.On("ContainerCreate", s.ctx, mock.Anything, mock.Anything, mock.Anything, mock.Anything, name).Return(containertypes.CreateResponse{}, errImageGone).Twice()
 			s.expectPull()
 		}, wantErr: "creating the plugin container: no such image"},
-		{name: "dev image missing isn't pulled", setup: func() {
+		{name: "dev image missing says to reinstall", setup: func() {
 			s.plugin.Image = "sha256:local"
 			s.expectNoLeftover()
 			s.docker.On("ContainerCreate", s.ctx, mock.Anything, mock.Anything, mock.Anything, mock.Anything, name).Return(containertypes.CreateResponse{}, errImageGone).Once()
-		}, wantErr: "creating the plugin container: no such image"},
+		}, wantErr: "the dev image of plugin cogtest (sha256:local) is no longer in Docker: build the plugin's image again and install it with loop plugin:install --dev"},
 		{name: "token", discard: true, setup: func() {
 			created()
 			s.tokens.On("IssuePlugin", "c1", "ch1", "/work", "cogtest").Return("", boom).Once()
