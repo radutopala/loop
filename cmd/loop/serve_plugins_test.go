@@ -57,8 +57,15 @@ func (s *MainSuite) TestServeWithPlugins() {
 			m := s.setupServeMocks()
 			m.setupHappyBot()
 			store := s.useRealStore(m)
-			defer store.Close()
+			defer func() { _ = store.Close() }()
 			if tc.devPlugin {
+				// A file store, so the reader sees what the writer stored;
+				// two :memory: connections are two separate databases.
+				require.NoError(s.T(), store.Close())
+				var err error
+				store, err = db.NewSQLiteStore(filepath.Join(s.T().TempDir(), "loop.db"))
+				require.NoError(s.T(), err)
+				s.app.newSQLiteStore = func(string) (db.Store, error) { return store, nil }
 				require.NoError(s.T(), store.UpsertPluginState(context.Background(), &db.PluginState{
 					PluginID: "echo", Image: "sha256:dev", Version: "1.0.0", API: "1", Dev: true, Status: db.PluginStatusInstalled,
 				}))
