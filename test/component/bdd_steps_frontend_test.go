@@ -1095,10 +1095,15 @@ func (tc *TestContext) clickInSidebar(text string) error {
 // hits.
 func (tc *TestContext) openSettingsPanelSection(section string) error {
 	navTestID := "settings-nav-" + strings.ReplaceAll(strings.ToLower(section), " ", "-")
+	// The button toggles the panel, so a click that lands before the panel
+	// from the previous click has rendered closes it again. Click once and
+	// retry only if the panel is still missing a few seconds later.
 	openJS := `(() => {
 		if (document.querySelector('[data-testid="settings-panel"]')) return true;
+		const now = Date.now();
+		if (now - (window.__bddSettingsClickAt || 0) < 3000) return false;
 		const btn = document.querySelector('[data-testid="sidebar-settings-btn"]');
-		if (btn) { btn.click(); }
+		if (btn) { window.__bddSettingsClickAt = now; btn.click(); }
 		return false;
 	})()`
 	navJS := fmt.Sprintf(`(() => {
