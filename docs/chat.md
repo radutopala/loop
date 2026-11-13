@@ -184,12 +184,16 @@ A regex (`app/src/utils/fileLinks.ts`) extracts candidates from rendered text:
 
 Tool-use blocks dispatch on tool name. Tools whose `tool_input` summary is itself a bare path — `Read`, `Edit`, `Write`, `MultiEdit`, `NotebookEdit`, `NotebookRead` — render the entire input as a single link. All other tools (`Bash`, `Grep`, `Glob`, …) fall back to the same regex pass over their input string, so paths embedded in commands or queries still link.
 
+In a `Bash` command, a relative path is looked up from where the command's last `cd` before it went (`cd /repo/.worktrees/x && cat memory/notes.md` checks `/repo/.worktrees/x/memory/notes.md`). The `cd` may be to an absolute directory, or to a relative one after an absolute `cd`. The link still shows the path as written.
+
 ### Validation
 
 Candidates are batched per channel and POSTed to [`/api/channels/{id}/files/exists`](api.md#post-apichannelsidfilesexists), with the result cached. While a candidate is pending or unknown, the link renders as plain text — layout stays stable, no flicker. Once validated:
 
 - **Exists** → renders as an underlined link in `colors.active`
 - **Does not exist** → continues to render as plain text
+
+A path that wasn't found is checked again each time a tool call finishes, while a link on screen shows it, so a file the command itself writes links once it exists.
 
 ### Click Behavior
 

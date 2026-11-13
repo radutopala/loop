@@ -21,6 +21,7 @@ import type {
   ToolUseData,
   WSEvent,
 } from "../types";
+import { revalidateMissing } from "../utils/fileLinks";
 import { latestGuard } from "./latestGuard";
 import type { ActiveChatState, ChatEventListener } from "./useChatStateStore";
 import { useTimeline } from "./useTimeline";
@@ -327,6 +328,8 @@ export function useChatState(channelId: string | null, initialRunningBot?: boole
       if (event.type === "tool.result") {
         const data = event.data as ToolResultData;
         appendLiveToolResult(data.tool_use_id, data.output, data.is_error ?? false, processingMsgIdRef.current ?? undefined);
+        // The tool may have made files its own call, or earlier ones, name.
+        revalidateMissing(event.channel_id);
         return;
       }
       if (event.type === "agent.activity") {

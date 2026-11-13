@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTheme } from "../../ThemeContext";
-import { type FileLinkTarget, getValidationStatus, requestValidation, subscribe } from "../../utils/fileLinks";
+import { type FileLinkTarget, getValidationStatus, requestValidation, retain, subscribe } from "../../utils/fileLinks";
 
 export interface FileLinkOpenDetail {
   channelId: string;
@@ -14,20 +14,28 @@ export interface FileLinkProps {
   channelId: string;
   raw: string;
   line: number | null;
+  /** The path to look up, when it differs from raw: raw joined to the dir
+   * a shell command moved to. */
+  checkPath?: string;
 }
 
-export function FileLink({ channelId, raw, line }: FileLinkProps) {
+export function FileLink({ channelId, raw, line, checkPath }: FileLinkProps) {
   const { colors } = useTheme();
-  const [status, setStatus] = useState(() => getValidationStatus(channelId, raw));
+  const path = checkPath ?? raw;
+  const [status, setStatus] = useState(() => getValidationStatus(channelId, path));
 
   useEffect(() => {
-    requestValidation(channelId, raw);
+    const release = retain(channelId, path);
+    requestValidation(channelId, path);
     const unsub = subscribe(channelId, () => {
-      setStatus(getValidationStatus(channelId, raw));
+      setStatus(getValidationStatus(channelId, path));
     });
-    setStatus(getValidationStatus(channelId, raw));
-    return unsub;
-  }, [channelId, raw]);
+    setStatus(getValidationStatus(channelId, path));
+    return () => {
+      unsub();
+      release();
+    };
+  }, [channelId, path]);
 
   const display = line ? `${raw}:${line}` : raw;
 

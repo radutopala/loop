@@ -1,5 +1,8 @@
-import { describe, expect, it } from "vitest";
-import { findCandidatePaths } from "./fileLinks";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { checkFilesExist } from "../api/files";
+import { commandDirs, findCandidatePaths, getValidationStatus, pathInDir, requestValidation, resetFileLinkCache, retain, revalidateMissing } from "./fileLinks";
+
+vi.mock("../api/files", () => ({ checkFilesExist: vi.fn() }));
 
 const raws = (text: string) => findCandidatePaths(text).map((c) => c.raw);
 
@@ -64,5 +67,92 @@ describe("findCandidatePaths", () => {
     const found = findCandidatePaths("src/foo.ts:abc");
     // Either no match (boundary) — assert it does not report a bogus line.
     for (const c of found) expect(c.line).toBeNull();
+  });
+});
+
+describe("commandDirs", () => {
+  it.each([
+    ["cd /w/tree && cat a/b.txt", ["/w/tree"]],
+    ["cd /w && cd sub/dir; ls", ["/w", "/w/sub/dir"]],
+    ["cd /w/a/ && cd ../b", ["/w/a", "/w/b"]],
+    ['cd "/w/with space" && ls', ["/w/with space"]],
+    ["echo hi\ncd '/w/q'", ["/w/q"]],
+    ["cd sub && ls", []],
+    ["cd ~/x; cd $HOME/y", []],
+    ["abcd /nope; echo cd /nope", []],
+  ])("%s", (cmd, want) => {
+    expect(commandDirs(cmd).map((d) => d.dir)).toEqual(want);
+  });
+});
+
+describe("pathInDir", () => {
+  const cmd = "cat x/a.md; cd /w/tree && cat memory/b.yaml ./c/d.json /abs/e.txt";
+  const dirs = commandDirs(cmd);
+  it.each([
+    ["x/a.md", "x/a.md"],
+    ["memory/b.yaml", "/w/tree/memory/b.yaml"],
+    ["./c/d.json", "/w/tree/c/d.json"],
+    ["/abs/e.txt", "/abs/e.txt"],
+  ])("%s", (raw, want) => {
+    expect(pathInDir(raw, cmd.indexOf(raw), dirs)).toBe(want);
+  });
+  it("climbs no higher than the root", () => {
+    expect(pathInDir("../../../a/b.txt", 20, [{ end: 0, dir: "/w" }])).toBe("/a/b.txt");
+  });
+});
+
+describe("revalidateMissing", () => {
+  const exists = vi.mocked(checkFilesExist);
+  const settle = async () => {
+    await vi.advanceTimersByTimeAsync(100);
+  };
+  beforeEach(() => {
+    vi.useFakeTimers();
+    resetFileLinkCache();
+    exists.mockReset();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("checks again a shown path that wasn't found, and only that one", async () => {
+    exists.mockResolvedValueOnce([
+      { path: "a/new.txt", exists: false },
+      { path: "a/hidden.txt", exists: false },
+      { path: "a/old.txt", exists: true, root_index: 0, rel_path: "a/old.txt" },
+    ]);
+    const release = retain("ch", "a/new.txt");
+    retain("ch", "a/old.txt");
+    retain("ch", "a/hidden.txt")();
+    for (const p of ["a/new.txt", "a/hidden.txt", "a/old.txt"]) requestValidation("ch", p);
+    await settle();
+    expect(getValidationStatus("ch", "a/new.txt").kind).toBe("invalid");
+
+    exists.mockResolvedValueOnce([{ path: "a/new.txt", exists: true, root_index: 0, rel_path: "a/new.txt" }]);
+    revalidateMissing("ch");
+    await settle();
+    expect(exists).toHaveBeenLastCalledWith("ch", ["a/new.txt"]);
+    expect(getValidationStatus("ch", "a/new.txt")).toEqual({ kind: "valid", target: { rootIndex: 0, relPath: "a/new.txt" } });
+    expect(getValidationStatus("ch", "a/hidden.txt").kind).toBe("invalid");
+
+    // Released, it isn't checked again.
+    release();
+    exists.mockClear();
+    revalidateMissing("ch");
+    revalidateMissing("other");
+    await settle();
+    expect(exists).not.toHaveBeenCalled();
+  });
+
+  it("keeps a path shown while any link still shows it", async () => {
+    exists.mockResolvedValue([{ path: "a/x.txt", exists: false }]);
+    const first = retain("ch", "a/x.txt");
+    retain("ch", "a/x.txt");
+    requestValidation("ch", "a/x.txt");
+    await settle();
+    first();
+    revalidateMissing("ch");
+    await settle();
+    expect(exists).toHaveBeenCalledTimes(2);
   });
 });

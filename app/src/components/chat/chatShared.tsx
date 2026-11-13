@@ -1,7 +1,7 @@
 import { createContext } from "react";
 import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
-import { findCandidatePaths } from "../../utils/fileLinks";
+import { commandDirs, findCandidatePaths, pathInDir } from "../../utils/fileLinks";
 import { FileLink } from "./FileLink";
 
 // ChannelContext lets nested renderers (MarkdownContent, ToolActivityIndicator)
@@ -150,11 +150,13 @@ export function renderInputWithLinks(input: string, toolName: string, channelId:
   }
   const candidates = findCandidatePaths(input);
   if (candidates.length === 0) return input;
+  // A relative path in a shell command is relative to where its `cd` went.
+  const dirs = toolName === "Bash" ? commandDirs(input) : [];
   const parts: React.ReactNode[] = [];
   let last = 0;
   candidates.forEach((c, i) => {
     if (c.start > last) parts.push(input.slice(last, c.start));
-    parts.push(<FileLink key={`tool-link-${i}`} channelId={channelId} raw={c.raw} line={c.line} />);
+    parts.push(<FileLink key={`tool-link-${i}`} channelId={channelId} raw={c.raw} line={c.line} checkPath={pathInDir(c.raw, c.start, dirs)} />);
     last = c.start + c.length;
   });
   if (last < input.length) parts.push(input.slice(last));
