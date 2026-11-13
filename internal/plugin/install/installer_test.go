@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	cerrdefs "github.com/containerd/errdefs"
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
@@ -53,6 +54,14 @@ func (m *mockDocker) CopyFromContainer(ctx context.Context, containerID, srcPath
 
 func (m *mockDocker) ContainerRemove(ctx context.Context, id string, options containertypes.RemoveOptions) error {
 	return m.Called(ctx, id, options).Error(0)
+}
+
+func (m *mockDocker) ImageTag(ctx context.Context, source, target string) error {
+	return m.Called(ctx, source, target).Error(0)
+}
+
+func (m *mockDocker) ImageRemove(ctx context.Context, imageID string, options image.RemoveOptions) ([]image.DeleteResponse, error) {
+	return nil, m.Called(ctx, imageID, options).Error(0)
 }
 
 type mockStore struct {
@@ -412,12 +421,55 @@ func (s *InstallerSuite) TestInstall() {
 	require.NoDirExists(s.T(), old.Dir, "an upgrade drops the old extraction")
 }
 
+// expectUntag expects the echo plugin's dev tag to be removed, answering
+// err.
+func (s *base) expectUntag(err error) {
+	s.docker.On("ImageRemove", s.ctx, "loop-plugin-dev/echo:installed", image.RemoveOptions{}).Return(err).Once()
+}
+
+func (s *InstallerSuite) TestInstallDev() {
+	c := s.candidate("dev")
+	c.Image, c.Digest, c.Dev = "sha256:dev", "", true
+	s.docker.On("ImageTag", s.ctx, "sha256:dev", "loop-plugin-dev/echo:installed").Return(nil).Once()
+	s.store.On("UpsertPluginState", s.ctx, mock.MatchedBy(func(st *db.PluginState) bool { return st.Dev && st.Image == "sha256:dev" })).Return(nil).Once()
+	require.NoError(s.T(), s.in.Install(s.ctx, c, plugin.Capabilities))
+
+	// A pushed image replacing a dev install drops the dev tag, which may
+	// be gone already.
+	c = s.candidate("new")
+	c.Previous = &db.PluginState{PluginID: "echo", Image: "sha256:dev", Dev: true}
+	s.expectUntag(cerrdefs.ErrNotFound)
+	s.store.On("UpsertPluginState", s.ctx, mock.MatchedBy(func(st *db.PluginState) bool { return !st.Dev })).Return(nil).Once()
+	require.NoError(s.T(), s.in.Install(s.ctx, c, plugin.Capabilities))
+}
+
 func (s *InstallerSuite) TestInstallFailures() {
 	c := s.candidate("new")
 	require.EqualError(s.T(), s.in.Install(s.ctx, c, []plugin.Capability{plugin.CapUIPanel}), "capability not approved: files.read")
 
 	s.store.On("UpsertPluginState", s.ctx, mock.Anything).Return(errors.New("boom")).Once()
 	require.EqualError(s.T(), s.in.Install(s.ctx, c, plugin.Capabilities), "recording the plugin: boom")
+
+	c.Previous = &db.PluginState{PluginID: "echo", Dev: true}
+	s.expectUntag(errors.New("in use"))
+	require.EqualError(s.T(), s.in.Install(s.ctx, c, plugin.Capabilities), "untagging the plugin image: in use")
+
+	c.Previous, c.Dev = nil, true
+	s.docker.On("ImageTag", s.ctx, c.Image, "loop-plugin-dev/echo:installed").Return(errors.New("boom")).Once()
+	require.EqualError(s.T(), s.in.Install(s.ctx, c, plugin.Capabilities), "tagging the plugin image: boom")
+}
+
+func (s *InstallerSuite) TestTagDevImages() {
+	s.docker.On("ImageTag", s.ctx, "sha256:a", "loop-plugin-dev/a:installed").Return(nil).Once()
+	s.docker.On("ImageTag", s.ctx, "sha256:gone", "loop-plugin-dev/gone:installed").Return(cerrdefs.ErrNotFound).Once()
+	s.docker.On("ImageTag", s.ctx, "sha256:b", "loop-plugin-dev/b:installed").Return(errors.New("boom")).Once()
+	err := s.in.TagDevImages(s.ctx, []*db.PluginState{
+		{PluginID: "pushed", Image: "ghcr.io/acme/pushed@" + digest},
+		{PluginID: "a", Image: "sha256:a", Dev: true},
+		{PluginID: "gone", Image: "sha256:gone", Dev: true},
+		{PluginID: "b", Image: "sha256:b", Dev: true},
+	})
+	require.EqualError(s.T(), err, "tagging the image of plugin b: boom")
 }
 
 func (s *InstallerSuite) TestDiscard() {
@@ -442,8 +494,9 @@ func (s *InstallerSuite) TestRemove() {
 		require.NoError(s.T(), os.MkdirAll(filepath.Join(dir, d), 0o755))
 	}
 
-	// Without purge, the plugin's data and audit log stay.
+	// Without purge, the plugin's data and audit log stay; its dev tag goes.
 	s.store.On("DeletePluginState", s.ctx, "echo").Return(nil).Once()
+	s.expectUntag(nil)
 	require.NoError(s.T(), s.in.Remove(s.ctx, "echo", false))
 	require.NoDirExists(s.T(), c.Dir)
 	require.NoDirExists(s.T(), filepath.Join(dir, "run"))
@@ -452,12 +505,18 @@ func (s *InstallerSuite) TestRemove() {
 
 	// With purge, they go too.
 	s.store.On("DeletePluginState", s.ctx, "echo").Return(nil).Once()
+	s.expectUntag(cerrdefs.ErrNotFound)
 	require.NoError(s.T(), s.in.Remove(s.ctx, "echo", true))
 	require.NoDirExists(s.T(), dir)
 
 	// A plugin that never extracted anything has nothing to delete.
 	s.store.On("DeletePluginState", s.ctx, "echo").Return(nil).Once()
+	s.expectUntag(cerrdefs.ErrNotFound)
 	require.NoError(s.T(), s.in.Remove(s.ctx, "echo", false))
+
+	s.store.On("DeletePluginState", s.ctx, "echo").Return(nil).Once()
+	s.expectUntag(errors.New("in use"))
+	require.EqualError(s.T(), s.in.Remove(s.ctx, "echo", false), "untagging the plugin image: in use")
 
 	s.store.On("DeletePluginState", s.ctx, "echo").Return(errors.New("boom")).Once()
 	require.EqualError(s.T(), s.in.Remove(s.ctx, "echo", false), "deleting the plugin: boom")
@@ -468,6 +527,7 @@ func (s *InstallerSuite) TestRemoveFails() {
 	require.NoError(s.T(), os.MkdirAll(filepath.Join(s.root, "echo", "images"), 0o755))
 	s.in.removeAll = func(string) error { return errors.New("busy") }
 	s.store.On("DeletePluginState", s.ctx, "echo").Return(nil)
+	s.docker.On("ImageRemove", s.ctx, "loop-plugin-dev/echo:installed", image.RemoveOptions{}).Return(cerrdefs.ErrNotFound)
 	require.EqualError(s.T(), s.in.Remove(s.ctx, "echo", false), "deleting the extracted plugin: busy")
 	require.EqualError(s.T(), s.in.Remove(s.ctx, "echo", true), "deleting the plugin dir: busy")
 

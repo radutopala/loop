@@ -1443,9 +1443,12 @@ func (tc *TestContext) restPointer(find, what string) error {
 		); err != nil {
 			return fmt.Errorf("%s: %w", what, err)
 		}
-		// Long enough for a hover tip's show delay to run out.
+		// Long enough for a hover tip's show delay to run out. The pointer
+		// leaves first: one already resting there, as after a click, would
+		// enter nothing.
 		var still bool
 		if err := chromedp.Run(tc.chromeTab.ctx,
+			chromedp.MouseEvent(input.MouseMoved, 0, 0),
 			chromedp.MouseEvent(input.MouseMoved, at[0], at[1]),
 			chromedp.Sleep(400*time.Millisecond),
 			chromedp.Evaluate(hovered, &still),

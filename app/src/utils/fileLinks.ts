@@ -56,6 +56,47 @@ export function findCandidatePaths(text: string): ParsedCandidate[] {
   return out;
 }
 
+// A `cd <dir>` starting a shell command: at the start, after a newline, or
+// after `&&`, `||`, `;` or `|`. The dir may be quoted.
+const CD_REGEX = /(?:^|[\n;&|(])\s*cd\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|)]+))/g;
+
+/** Where each `cd` to an absolute directory in a shell command takes it,
+ * by the offset the `cd` ends at; a `cd` to a relative directory moves on
+ * from the one before it, when there is one. */
+export function commandDirs(command: string): { end: number; dir: string }[] {
+  const out: { end: number; dir: string }[] = [];
+  CD_REGEX.lastIndex = 0;
+  for (;;) {
+    const m = CD_REGEX.exec(command);
+    if (!m) break;
+    const arg = (m[1] ?? m[2] ?? m[3] ?? "").replace(/\/+$/, "");
+    const prev = out[out.length - 1]?.dir;
+    const dir = arg.startsWith("/") ? arg : prev && arg && !arg.startsWith("~") && !arg.startsWith("$") ? joinPath(prev, arg) : null;
+    if (dir) out.push({ end: m.index + m[0].length, dir });
+  }
+  return out;
+}
+
+/** The path to check for raw: as written when absolute or no `cd` comes
+ * before it, else joined to the dir the last `cd` before it moved to. */
+export function pathInDir(raw: string, start: number, dirs: { end: number; dir: string }[]): string {
+  if (raw.startsWith("/")) return raw;
+  let dir: string | null = null;
+  for (const d of dirs) if (d.end <= start) dir = d.dir;
+  return dir ? joinPath(dir, raw) : raw;
+}
+
+function joinPath(dir: string, rel: string): string {
+  const parts = dir.split("/");
+  for (const seg of rel.split("/")) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") {
+      if (parts.length > 1) parts.pop();
+    } else parts.push(seg);
+  }
+  return parts.join("/") || "/";
+}
+
 // Skip http(s)://example.com/file.ext and similar URL patterns.
 function looksLikeUrl(text: string, idx: number): boolean {
   if (idx < 3) return false;
@@ -69,6 +110,8 @@ type Status = { kind: "unknown" } | { kind: "pending" } | { kind: "valid"; targe
 
 interface ChannelCache {
   statuses: Map<string, Status>;
+  // How many links on screen show each path.
+  shown: Map<string, number>;
   pending: Set<string>;
   flushTimer: ReturnType<typeof setTimeout> | null;
   listeners: Set<() => void>;
@@ -81,7 +124,7 @@ const BATCH_LIMIT = 100;
 function getCache(channelId: string): ChannelCache {
   let c = channelCaches.get(channelId);
   if (!c) {
-    c = { statuses: new Map(), pending: new Set(), flushTimer: null, listeners: new Set() };
+    c = { statuses: new Map(), shown: new Map(), pending: new Set(), flushTimer: null, listeners: new Set() };
     channelCaches.set(channelId, c);
   }
   return c;
@@ -109,6 +152,30 @@ export function requestValidation(channelId: string, raw: string): void {
   c.pending.add(raw);
   if (c.flushTimer) return;
   c.flushTimer = setTimeout(() => flush(channelId), FLUSH_DELAY_MS);
+}
+
+/** Marks raw as shown by a link on screen, until the returned release
+ * runs; revalidateMissing checks only paths that are shown. */
+export function retain(channelId: string, raw: string): () => void {
+  const c = getCache(channelId);
+  c.shown.set(raw, (c.shown.get(raw) ?? 0) + 1);
+  return () => {
+    const n = (c.shown.get(raw) ?? 1) - 1;
+    if (n > 0) c.shown.set(raw, n);
+    else c.shown.delete(raw);
+  };
+}
+
+/** Checks again the shown paths that weren't found: a tool that just ran
+ * may have made them. */
+export function revalidateMissing(channelId: string): void {
+  const c = channelCaches.get(channelId);
+  if (!c) return;
+  for (const raw of c.shown.keys()) {
+    if (c.statuses.get(raw)?.kind !== "invalid") continue;
+    c.statuses.delete(raw);
+    requestValidation(channelId, raw);
+  }
 }
 
 async function flush(channelId: string) {

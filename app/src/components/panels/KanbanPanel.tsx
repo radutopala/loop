@@ -287,11 +287,16 @@ export function KanbanPanel({ channelId, dirPath, rootDirPath, allowWorktree, on
   const [noteError, setNoteError] = useState<string | null>(null);
   const [addingNote, setAddingNote] = useState(false);
 
+  // Each load and local change bumps this; a load applies its list only if
+  // nothing came after it, so a fetch that started before a note was added
+  // can't put back the list without it.
+  const loadSeq = useRef(0);
   const loadTickets = useCallback(async () => {
     if (!boardDir) return;
+    const seq = ++loadSeq.current;
     try {
       const data = await fetchTickets(boardDir, { sort: "priority" });
-      setTickets(data);
+      if (seq === loadSeq.current) setTickets(data);
     } catch {
       /* ignore */
     }
@@ -425,6 +430,7 @@ export function KanbanPanel({ channelId, dirPath, rootDirPath, allowWorktree, on
     setNoteError(null);
     try {
       const updated = await addTicketNote(editing.id, { dir: boardDir, content });
+      loadSeq.current++;
       setTickets((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
       setNoteDraft("");
     } catch (err) {

@@ -329,6 +329,7 @@ func (s *ServiceSuite) TestRemove() {
 	s.runtime.On("Remove", s.ctx, "echo", "ch1", true).Return(nil).Once()
 	s.runtime.On("Remove", s.ctx, "echo", "ch2", true).Return(errors.New("busy")).Once()
 	s.store.On("DeletePluginState", s.ctx, "echo").Return(nil).Once()
+	s.expectUntag(nil)
 	require.EqualError(s.T(), s.svc.Remove(s.ctx, "echo", true), "busy")
 }
 

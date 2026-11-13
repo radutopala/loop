@@ -121,6 +121,11 @@ Feature: Editor Tabs Journey
     Then the element "[data-testid='editor-tab'][data-path='web/src/index.ts']" should contain text "web/src"
     And the element "[data-testid='editor-tab'][data-path='server/src/index.ts']" should contain text "server/src"
 
+    # Hovering a tab shows its full path
+    When I rest the pointer on the element "[data-testid='editor-tab'][data-path='server/src/index.ts']"
+    Then I wait for "[data-testid='hover-tip']" to be visible
+    And the element "[data-testid='hover-tip']" should contain text "{repo_path}/server/src/index.ts"
+
     When I record clipboard writes
     And I right-click on "[data-testid='editor-tab'][data-path='server/src/index.ts']"
     And I click on "Copy relative path" in the context menu

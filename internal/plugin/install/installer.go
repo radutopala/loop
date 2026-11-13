@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/distribution/reference"
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
@@ -36,6 +37,17 @@ type DockerClient interface {
 	ContainerCreate(ctx context.Context, config *containertypes.Config, hostConfig *containertypes.HostConfig, networkingConfig *network.NetworkingConfig, platform *ocispec.Platform, containerName string) (containertypes.CreateResponse, error)
 	CopyFromContainer(ctx context.Context, containerID, srcPath string) (io.ReadCloser, containertypes.PathStat, error)
 	ContainerRemove(ctx context.Context, container string, options containertypes.RemoveOptions) error
+	ImageTag(ctx context.Context, source, target string) error
+	ImageRemove(ctx context.Context, imageID string, options image.RemoveOptions) ([]image.DeleteResponse, error)
+}
+
+// DevTag is the tag Loop gives the image of a plugin installed with dev.
+// A dev install runs a local build pinned to its image ID, which nothing
+// can pull back once Docker drops it; the tag keeps it from becoming a
+// dangling image when its build tag moves to a newer build, so a prune of
+// dangling images leaves it.
+func DevTag(pluginID string) string {
+	return "loop-plugin-dev/" + pluginID + ":installed"
 }
 
 // Store records installed plugins.
@@ -371,6 +383,15 @@ func (in *Installer) Install(ctx context.Context, c *Candidate, approved []plugi
 		}
 		caps = append(caps, string(cap))
 	}
+	if c.Dev {
+		if err := in.docker.ImageTag(ctx, c.Image, DevTag(c.Manifest.ID)); err != nil {
+			return fmt.Errorf("tagging the plugin image: %w", err)
+		}
+	} else if c.Previous != nil && c.Previous.Dev {
+		if err := in.untagDev(ctx, c.Manifest.ID); err != nil {
+			return err
+		}
+	}
 	if err := in.store.UpsertPluginState(ctx, &db.PluginState{
 		PluginID: c.Manifest.ID, Image: c.Image, Digest: c.Digest, Version: c.Manifest.Version,
 		API: c.Manifest.API, ApprovedCaps: caps, Dev: c.Dev, Status: db.PluginStatusInstalled,
@@ -387,6 +408,30 @@ func (in *Installer) Install(ctx context.Context, c *Candidate, approved []plugi
 	return nil
 }
 
+// TagDevImages gives the images of the dev plugins in states, installed
+// before Loop tagged them, their DevTag. An image Docker no longer has is
+// left for the runtime to report.
+func (in *Installer) TagDevImages(ctx context.Context, states []*db.PluginState) error {
+	var errs []error
+	for _, st := range states {
+		if !st.Dev {
+			continue
+		}
+		if err := in.docker.ImageTag(ctx, st.Image, DevTag(st.PluginID)); err != nil && !cerrdefs.IsNotFound(err) {
+			errs = append(errs, fmt.Errorf("tagging the image of plugin %s: %w", st.PluginID, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// untagDev removes a plugin's DevTag, which it may not have.
+func (in *Installer) untagDev(ctx context.Context, pluginID string) error {
+	if _, err := in.docker.ImageRemove(ctx, DevTag(pluginID), image.RemoveOptions{}); err != nil && !cerrdefs.IsNotFound(err) {
+		return fmt.Errorf("untagging the plugin image: %w", err)
+	}
+	return nil
+}
+
 // Discard drops the extraction of a candidate the owner didn't approve,
 // unless it is the image the plugin already runs.
 func (in *Installer) Discard(c *Candidate) {
@@ -395,12 +440,15 @@ func (in *Installer) Discard(c *Candidate) {
 	}
 }
 
-// Remove forgets an installed plugin and deletes its dir, keeping its data
-// and gate audit dirs unless purge is set. Its containers are the runtime's
-// to remove, first.
+// Remove forgets an installed plugin, removes its DevTag and deletes its
+// dir, keeping its data and gate audit dirs unless purge is set. Its
+// containers are the runtime's to remove, first.
 func (in *Installer) Remove(ctx context.Context, pluginID string, purge bool) error {
 	if err := in.store.DeletePluginState(ctx, pluginID); err != nil {
 		return fmt.Errorf("deleting the plugin: %w", err)
+	}
+	if err := in.untagDev(ctx, pluginID); err != nil {
+		return err
 	}
 	dir := filepath.Join(in.root, pluginID)
 	if purge {

@@ -70,6 +70,9 @@ interface EditorPanelProps {
 /** Opens a walkthrough step's file in the channel's editor. */
 const openStepFile = (channelId: string, path: string) => openChannelFile(channelId, path);
 
+// Wide enough for most absolute paths on one line; longer ones wrap.
+const TAB_TIP_WIDTH = 420;
+
 export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ...panelProps }: EditorPanelProps) {
   const { colors } = useTheme();
   const {
@@ -149,6 +152,12 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
   const absolutePath = (tab: string) => {
     const { rootIndex, relativePath } = parsePathKey(tab);
     return (roots.find((r) => r.index === rootIndex)?.path ?? dirPath) + "/" + relativePath;
+  };
+  // The same path with the home directory shown as ~, for reading.
+  const displayPath = (tab: string) => {
+    const { rootIndex, relativePath } = parsePathKey(tab);
+    const root = roots.find((r) => r.index === rootIndex);
+    return (root?.display_path ?? root?.path ?? dirPath) + "/" + relativePath;
   };
   const { channelId } = panelProps;
   const absolutePathRef = useRef(absolutePath);
@@ -298,82 +307,82 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
                 const tabRelPath = parsePathKey(tab).relativePath;
                 const fileName = tabRelPath.split("/").pop() || tabRelPath;
                 const description = descriptions.get(tab);
-                const tabAbsPath = absolutePath(tab);
+                const tabState = isDeleted ? " — deleted on disk" : hasPending || agentEdited ? " — changed on disk" : "";
                 return (
-                  <button
-                    key={tab}
-                    data-testid="editor-tab"
-                    data-path={tabRelPath}
-                    data-deleted={isDeleted || undefined}
-                    data-active={isActive || undefined}
-                    data-preview={isPreview || undefined}
-                    onClick={() => {
-                      if (isActive) clearAgentEdited(tab);
-                      else switchToTab(tab);
-                    }}
-                    onDoubleClick={() => {
-                      if (isPreview) promoteFile(tab);
-                    }}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      setTabMenu({ x: e.clientX, y: e.clientY, path: tab });
-                    }}
-                    title={isDeleted ? `${tabAbsPath} — deleted on disk` : hasPending || agentEdited ? `${tabAbsPath} — changed on disk` : tabAbsPath}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 4,
-                      padding: "5px 8px",
-                      border: "none",
-                      borderRight: `1px solid ${colors.border}`,
-                      borderBottom: isActive ? `2px solid ${colors.active}` : "2px solid transparent",
-                      background: isActive ? colors.sidebar : "transparent",
-                      color: isActive ? colors.textLight : colors.textDim,
-                      cursor: "pointer",
-                      fontSize: 11,
-                      fontFamily: fonts.mono,
-                      whiteSpace: "nowrap",
-                      flexShrink: 0,
-                    }}
-                    onMouseEnter={(e) => {
-                      if (!isActive) e.currentTarget.style.backgroundColor = colors.hoverBg;
-                    }}
-                    onMouseLeave={(e) => {
-                      if (!isActive) e.currentTarget.style.backgroundColor = "transparent";
-                    }}
-                  >
-                    <FileIcon name={fileName} />
-                    <span
+                  <HoverTip key={tab} text={`${fileName}${tabState}\n${displayPath(tab)}`} mono width={TAB_TIP_WIDTH}>
+                    <button
+                      data-testid="editor-tab"
+                      data-path={tabRelPath}
+                      data-deleted={isDeleted || undefined}
+                      data-active={isActive || undefined}
+                      data-preview={isPreview || undefined}
+                      onClick={() => {
+                        if (isActive) clearAgentEdited(tab);
+                        else switchToTab(tab);
+                      }}
+                      onDoubleClick={() => {
+                        if (isPreview) promoteFile(tab);
+                      }}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        setTabMenu({ x: e.clientX, y: e.clientY, path: tab });
+                      }}
                       style={{
-                        fontStyle: isPreview || isDirty ? "italic" : undefined,
-                        textDecoration: isDeleted ? "line-through" : undefined,
-                        color: isDeleted ? colors.error : undefined,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 4,
+                        padding: "5px 8px",
+                        border: "none",
+                        borderRight: `1px solid ${colors.border}`,
+                        borderBottom: isActive ? `2px solid ${colors.active}` : "2px solid transparent",
+                        background: isActive ? colors.sidebar : "transparent",
+                        color: isActive ? colors.textLight : colors.textDim,
+                        cursor: "pointer",
+                        fontSize: 11,
+                        fontFamily: fonts.mono,
+                        whiteSpace: "nowrap",
+                        flexShrink: 0,
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!isActive) e.currentTarget.style.backgroundColor = colors.hoverBg;
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!isActive) e.currentTarget.style.backgroundColor = "transparent";
                       }}
                     >
-                      {fileName}
-                    </span>
-                    {description && <span style={{ color: colors.textDim, opacity: 0.7, fontSize: 10 }}>{description}</span>}
-                    {(hasPending || agentEdited) && (
-                      <span title="Changed on disk" data-testid="editor-tab-agent-edited" style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: colors.active, display: "block" }} />
-                    )}
-                    <span onClick={(e) => closeTab(tab, e)} style={{ marginLeft: 2, width: 8, height: 8, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      {isDirty ? (
-                        <span style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: colors.warning, display: "block" }} />
-                      ) : (
-                        <span
-                          style={{ opacity: 0.5, fontSize: 14, lineHeight: 1 }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.opacity = "1";
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.opacity = "0.5";
-                          }}
-                        >
-                          &times;
-                        </span>
+                      <FileIcon name={fileName} />
+                      <span
+                        style={{
+                          fontStyle: isPreview || isDirty ? "italic" : undefined,
+                          textDecoration: isDeleted ? "line-through" : undefined,
+                          color: isDeleted ? colors.error : undefined,
+                        }}
+                      >
+                        {fileName}
+                      </span>
+                      {description && <span style={{ color: colors.textDim, opacity: 0.7, fontSize: 10 }}>{description}</span>}
+                      {(hasPending || agentEdited) && (
+                        <span title="Changed on disk" data-testid="editor-tab-agent-edited" style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: colors.active, display: "block" }} />
                       )}
-                    </span>
-                  </button>
+                      <span onClick={(e) => closeTab(tab, e)} style={{ marginLeft: 2, width: 8, height: 8, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        {isDirty ? (
+                          <span style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: colors.warning, display: "block" }} />
+                        ) : (
+                          <span
+                            style={{ opacity: 0.5, fontSize: 14, lineHeight: 1 }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.opacity = "1";
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.opacity = "0.5";
+                            }}
+                          >
+                            &times;
+                          </span>
+                        )}
+                      </span>
+                    </button>
+                  </HoverTip>
                 );
               })}
             </div>
