@@ -112,6 +112,45 @@ Feature: Files Panel Journey
     And the file "new-name.txt" in the repo should exist
 
   @files-tree-actions
+  Scenario: Copying and pasting files and directories in the tree
+    Given I set up a test channel via API for git repo "bdd-files-copy"
+    And I create a file "src/main.txt" in the repo with:
+      """
+      hello
+      """
+    And I open the app in a browser
+    And I wait for text "bdd-files-copy" to appear
+    When I click on "bdd-files-copy" in the sidebar
+    And I wait for "textarea" to be visible
+    And I click on "[data-testid='layout-tab-Editor']"
+    Then I wait for "[data-testid='file-tree-entry'][data-path='0:src']" to be visible
+    When I click on "[data-testid='file-tree-entry'][data-path='0:src']"
+    Then I wait for "[data-testid='file-tree-entry'][data-path='0:src/main.txt']" to be visible
+
+    # A file pasted beside itself gets " copy" before its extension
+    When I right-click on "[data-testid='file-tree-entry'][data-path='0:src/main.txt']"
+    And I click on "[data-testid='context-menu'] [data-label='Copy']"
+    And I right-click on "[data-testid='file-tree-entry'][data-path='0:src/main.txt']"
+    And I click on "Paste" in the context menu
+    Then I wait for "[data-testid='file-tree-entry'][data-path='0:src/main copy.txt']" to be visible
+    And the file "src/main copy.txt" in the repo should contain "hello"
+
+    # The keyboard copies the focused row and pastes it again
+    When I click on "[data-testid='file-tree-entry'][data-path='0:src/main.txt']"
+    And I press Ctrl+C
+    And I press Ctrl+V
+    Then I wait for "[data-testid='file-tree-entry'][data-path='0:src/main copy 2.txt']" to be visible
+
+    # A directory is copied with everything in it
+    When I right-click on "[data-testid='file-tree-entry'][data-path='0:src']"
+    And I click on "[data-testid='context-menu'] [data-label='Copy']"
+    And I right-click on "[data-testid='file-tree-root'][data-root='0']"
+    And I click on "Paste" in the context menu
+    Then I wait for "[data-testid='file-tree-entry'][data-path='0:src copy']" to be visible
+    And the file "src copy/main.txt" in the repo should contain "hello"
+    And the file "src copy/main copy 2.txt" in the repo should exist
+
+  @files-tree-actions
   Scenario: Deleting from the context menu asks first
     Given I set up a test channel via API for git repo "bdd-files-delete"
     And I create a file "doomed.txt" in the repo with:

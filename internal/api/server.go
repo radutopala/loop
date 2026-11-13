@@ -110,6 +110,7 @@ type serverSystem interface {
 	WriteFileIn(root, name string, data []byte, perm os.FileMode) error
 	MkdirAllIn(root, name string, perm os.FileMode) error
 	RenameIn(root, oldpath, newpath string) error
+	CopyIn(srcRoot, src, dstRoot, dst string) error
 	RemoveIn(root, name string) error
 	ReadDir(name string) ([]fs.DirEntry, error)
 	Remove(name string) error
@@ -595,6 +596,7 @@ func (s *Server) registerFileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/channels/{id}/file", s.handleWriteFile)
 	mux.HandleFunc("DELETE /api/channels/{id}/file", s.handleDeleteFile)
 	mux.HandleFunc("POST /api/channels/{id}/file/rename", s.handleRenameFile)
+	mux.HandleFunc("POST /api/channels/{id}/file/copy", s.handleCopyFile)
 	mux.HandleFunc("GET /api/channels/{id}/raw/{root}/{path...}", s.handleRawFile)
 	mux.HandleFunc("POST /api/channels/{id}/files/exists", s.handleFilesExists)
 	mux.HandleFunc("POST /api/channels/{id}/dir", s.handleCreateDir)

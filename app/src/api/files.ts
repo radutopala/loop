@@ -196,6 +196,21 @@ export async function renameFile(channelId: string, path: string, to: string, ro
   if (!res.ok) throw new Error(`Failed to rename: ${res.statusText}`);
 }
 
+/** A copy refused because its target already exists. */
+export class CopyTargetExistsError extends Error {}
+
+/** Copies path, in root, to to, in toRoot (root when left out); a directory
+ * is copied with everything in it. Rejects with CopyTargetExistsError when
+ * to already exists. */
+export async function copyFile(channelId: string, path: string, to: string, root?: number, toRoot?: number): Promise<void> {
+  const params = new URLSearchParams({ path, to });
+  if (root !== undefined && root > 0) params.set("root", String(root));
+  if (toRoot !== undefined && toRoot !== (root ?? 0)) params.set("to_root", String(toRoot));
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/file/copy?${params}`, { method: "POST" });
+  if (res.status === 409) throw new CopyTargetExistsError(`${to} already exists`);
+  if (!res.ok) throw new Error((await res.text()).trim() || `Failed to copy: ${res.statusText}`);
+}
+
 export async function createDir(channelId: string, path: string, root?: number): Promise<void> {
   const params = new URLSearchParams({ path });
   if (root !== undefined && root > 0) params.set("root", String(root));

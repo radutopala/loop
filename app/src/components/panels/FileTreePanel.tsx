@@ -49,6 +49,7 @@ export function FileTreePanel({ channelId, dirPath, branch, editorState, embedde
     handleCreateDirPath,
     handleDeleteDirPath,
     handleRenamePath,
+    handleCopyPath,
     openFile,
     openFileAtLine,
     promoteFile,
@@ -60,6 +61,9 @@ export function FileTreePanel({ channelId, dirPath, branch, editorState, embedde
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; path: string; isDir: boolean } | null>(null);
   const [treeError, setTreeError] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<{ pathKey: string; value: string } | null>(null);
+  // What Copy picked, for Paste to copy; it stays after a paste, so it can
+  // be pasted again.
+  const [copied, setCopied] = useState<{ pathKey: string; isDir: boolean } | null>(null);
   const [query, setQuery] = useState("");
   const [activeResult, setActiveResult] = useState(0);
   // Content mode searches inside the files; the name search is off then.
@@ -155,6 +159,35 @@ export function FileTreePanel({ channelId, dirPath, branch, editorState, embedde
       .then(() => setRenaming(null))
       .catch((err) => setTreeError(err instanceof Error ? err.message : "Failed to rename"));
   };
+  // Pastes what was copied into a directory, or beside a file.
+  const pasteInto = (pathKey: string, isDir: boolean) => {
+    if (!copied) return;
+    setTreeError(null);
+    handleCopyPath(copied.pathKey, copied.isDir, isDir ? pathKey : parentDirKey(pathKey))
+      .then((key) => setRevealed(key))
+      .catch((err) => setTreeError(err instanceof Error ? err.message : "Failed to paste"));
+  };
+  // Cmd/Ctrl+C and Cmd/Ctrl+V on the focused tree row; text selected in
+  // the tree copies as text.
+  const onTreeKeyDown = (e: React.KeyboardEvent) => {
+    if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return;
+    const key = e.key.toLowerCase();
+    if (key !== "c" && key !== "v") return;
+    const row = (e.target as HTMLElement).closest<HTMLElement>('[data-testid="file-tree-entry"], [data-testid="file-tree-root"]');
+    if (!row) return;
+    const isRoot = row.dataset.testid === "file-tree-root";
+    const pathKey = isRoot ? makePathKey(Number(row.dataset.root), "") : row.dataset.path;
+    if (!pathKey) return;
+    const isDir = isRoot || row.dataset.dir !== undefined;
+    if (key === "c") {
+      if (isRoot || window.getSelection()?.toString()) return;
+      e.preventDefault();
+      setCopied({ pathKey, isDir });
+    } else if (copied) {
+      e.preventDefault();
+      pasteInto(pathKey, isDir);
+    }
+  };
   const openResult = (index: number, promote: boolean) => {
     const r = results?.[index];
     if (!r) return;
@@ -188,9 +221,15 @@ export function FileTreePanel({ channelId, dirPath, branch, editorState, embedde
       items.push({ label: "New file here", separator: true, onClick: () => setNewFileName(prefix) });
       items.push({ label: "New directory here", onClick: () => setNewDirName(prefix) });
     }
-    // A root can't be renamed or deleted from here.
-    if (ctxRelPath && ctxRelPath !== ".") {
-      const { path, isDir } = contextMenu;
+    const { path, isDir } = contextMenu;
+    const isRoot = !ctxRelPath || ctxRelPath === ".";
+    // A root can't be copied, renamed or deleted from here.
+    if (!isRoot) items.push({ label: "Copy", separator: true, onClick: () => setCopied({ pathKey: path, isDir }) });
+    if (copied) {
+      const name = parsePathKey(copied.pathKey).relativePath.split("/").pop();
+      items.push({ label: "Paste", hint: name, separator: isRoot, onClick: () => pasteInto(path, isDir) });
+    }
+    if (!isRoot) {
       items.push({
         label: "Rename",
         separator: true,
@@ -476,7 +515,7 @@ export function FileTreePanel({ channelId, dirPath, branch, editorState, embedde
             />
           </div>
         )}
-        <div ref={treeRef} style={{ flex: 1, overflow: "auto", padding: "2px 0" }}>
+        <div ref={treeRef} onKeyDown={onTreeKeyDown} style={{ flex: 1, overflow: "auto", padding: "2px 0" }}>
           {contentActive && <ContentResults content={content} activeHit={activeResult} roots={roots} selectedPath={selectedPath} onHover={setActiveResult} onOpen={openHit} onPromote={promoteFile} />}
           {results && results.length === 0 && <div style={{ padding: "4px 8px", color: colors.textDim, fontSize: 11 }}>Nothing matches</div>}
           {results?.map((r, i) => {

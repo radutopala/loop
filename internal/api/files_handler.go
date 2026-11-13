@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/gitutil"
+	"github.com/radutopala/loop/internal/osutil"
 )
 
 // cleanRelPath applies the lexical checks shared by every workspace path: it
@@ -904,6 +906,66 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request) {
 // handleRenameFile renames or moves the file or directory at path to to,
 // both relative to the same root. The entry itself is renamed, not a
 // symlink's target; to's parent must exist and to must not.
+// handleCopyFile copies the file or dir at path, under root, to to, under
+// to_root (default root), which must not exist yet.
+func (s *Server) handleCopyFile(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.store, "channel listing not configured") {
+		return
+	}
+
+	channelID := r.PathValue("id")
+	q := r.URL.Query()
+	srcDir, err := s.resolveRootDir(r.Context(), channelID, r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	dstDir := srcDir
+	if toRoot := q.Get("to_root"); toRoot != "" {
+		idx, err := strconv.Atoi(toRoot)
+		if err == nil {
+			dstDir, err = s.rootDirByIndex(r.Context(), channelID, idx)
+		}
+		if err != nil {
+			http.Error(w, "invalid to_root", http.StatusBadRequest)
+			return
+		}
+	}
+
+	from, err := s.validateEntryPath(srcDir, q.Get("path"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	to, err := s.validateEntryPath(dstDir, q.Get("to"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	// validateEntryPath resolved both roots, so these can't fail.
+	realSrc, _ := s.sys.EvalSymlinks(srcDir)
+	realDst, _ := s.sys.EvalSymlinks(dstDir)
+
+	if _, err := s.sys.Lstat(from); err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	if err := s.sys.CopyIn(realSrc, from, realDst, to); err != nil {
+		switch {
+		case errors.Is(err, osutil.ErrCopyIntoItself):
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		case errors.Is(err, fs.ErrExist):
+			http.Error(w, "already exists", http.StatusConflict)
+		default:
+			http.Error(w, "failed to copy", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	writeHTTPJSON(w, http.StatusOK, writeFileResponse{OK: true}, s.logger)
+}
+
 func (s *Server) handleRenameFile(w http.ResponseWriter, r *http.Request) {
 	if !requireConfigured(w, s.store, "channel listing not configured") {
 		return
