@@ -54,6 +54,10 @@ func (m *MockSystem) MkdirAllIn(_, name string, perm os.FileMode) error {
 
 func (m *MockSystem) RenameIn(_, oldpath, newpath string) error { return m.Rename(oldpath, newpath) }
 
+func (m *MockSystem) CopyIn(srcRoot, src, dstRoot, dst string) error {
+	return m.Called(srcRoot, src, dstRoot, dst).Error(0)
+}
+
 func (m *MockSystem) RemoveIn(_, name string) error { return m.Remove(name) }
 
 func (m *MockSystem) ReadDir(name string) ([]fs.DirEntry, error) {

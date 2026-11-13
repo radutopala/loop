@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchDiff } from "../api/git";
 import {
   buildFileUrl,
+  CopyTargetExistsError,
+  copyFile,
   createDir,
   DEFAULT_EDITOR_CONFIG,
   deleteFile,
@@ -26,7 +28,7 @@ import { loadTabViews, saveTabViews, type TabView } from "../components/panels/e
 import type { ToolResultData, ToolUseData, WSEvent } from "../types";
 import { logErr } from "../utils/log";
 import { storageGetJSON, storageSetJSON } from "../utils/storage";
-import { editToolFilePath, matchAbsPathToKey, parentDirKey } from "./editorPaths";
+import { copyName, editToolFilePath, matchAbsPathToKey, parentDirKey } from "./editorPaths";
 import { fileWatchMessage, parseFileWatchChange } from "./fileWatch";
 import { renamedPathKey, renameMapKeys, renameSetKeys } from "./renamePath";
 import { selectionAfterClose } from "./tabClose";
@@ -35,6 +37,8 @@ import { useContentCapsEpoch } from "./useContentCapsEpoch";
 import { useWebSocketConnection } from "./useWebSocketConnection";
 
 const EDITOR_TABS_KEY = "loop-editor-tabs";
+// How far " copy N" counts before a paste gives up on finding a free name.
+const MAX_COPY_SUFFIX = 100;
 
 interface EditorTabsState {
   tabs: string[];
@@ -135,6 +139,10 @@ export interface EditorStateApi {
   /** Renames a file or directory to newRelPath in its root; its open tabs
    * follow. Rejects with the reason when the rename fails. */
   handleRenamePath: (pathKey: string, newRelPath: string) => Promise<void>;
+  /** Copies a file or directory into the directory destDirKey, in any root.
+   * A name already taken there gets " copy", then " copy 2" and so on.
+   * Resolves with the copy's key; rejects with the reason when it fails. */
+  handleCopyPath: (pathKey: string, isDir: boolean, destDirKey: string) => Promise<string>;
 
   // Actions on tabs/content
   switchToTab: (pathKey: string) => void;
@@ -974,6 +982,33 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     [channelId, loadDir, setDeleted, tabViews],
   );
 
+  const handleCopyPath = useCallback(
+    async (pathKey: string, isDir: boolean, destDirKey: string) => {
+      const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
+      const { rootIndex: di, relativePath: dp } = parsePathKey(destDirKey);
+      const name = rp.split("/").pop() ?? rp;
+      const at = (n: string) => (dp ? `${dp}/${n}` : n);
+      // Beside itself it starts at " copy"; elsewhere it keeps its name first.
+      let n = parentDirKey(pathKey) === destDirKey ? 1 : 0;
+      for (;;) {
+        const to = at(n === 0 ? name : copyName(name, n, isDir));
+        try {
+          await copyFile(channelId, rp, to, ri, di);
+        } catch (err) {
+          if (err instanceof CopyTargetExistsError && n < MAX_COPY_SUFFIX) {
+            n++;
+            continue;
+          }
+          throw err;
+        }
+        await loadDir(dp || ".", di);
+        revealDir(destDirKey);
+        return makePathKey(di, to);
+      }
+    },
+    [channelId, loadDir, revealDir],
+  );
+
   const addExtraDir = useCallback(
     async (dir: string) => {
       const currentExtras = rootsRef.current.filter((r) => r.index > 0).map((r) => r.path);
@@ -1255,6 +1290,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     handleCreateDirPath,
     handleDeleteDirPath,
     handleRenamePath,
+    handleCopyPath,
     switchToTab,
     openFile,
     openFileAtLine,

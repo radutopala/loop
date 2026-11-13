@@ -82,3 +82,12 @@ export function parentDirKey(pathKey: string): string {
   const slash = relativePath.lastIndexOf("/");
   return makePathKey(rootIndex, slash < 0 ? "" : relativePath.slice(0, slash));
 }
+
+/** The name the nth copy of name gets when pasted beside it: "a copy.txt",
+ * then "a copy 2.txt", as in the Finder. A leading dot (".env") is part of
+ * the name, not an extension; a directory has no extension. */
+export function copyName(name: string, n: number, isDir: boolean): string {
+  const dot = isDir ? -1 : name.lastIndexOf(".");
+  const [stem, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
+  return `${stem} copy${n > 1 ? ` ${n}` : ""}${ext}`;
+}

@@ -2119,6 +2119,95 @@ func (s *ServerSuite) TestRenameFile_ChannelNotFound() {
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 }
 
+// ── handleCopyFile ──
+
+func (s *ServerSuite) TestCopyFile() {
+	read := func(path string) string {
+		data, err := os.ReadFile(path)
+		require.NoError(s.T(), err)
+		return string(data)
+	}
+	failCopy := func(err error) func(string, string) {
+		return func(string, string) {
+			s.sys.Override("Lstat", mock.MatchedBy(func(p string) bool { return filepath.Base(p) == "a.txt" })).Return(&fakeFileInfo{name: "a.txt"}, nil)
+			s.sys.On("CopyIn", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(err)
+			s.srv.sys = &realOpenSys{s.sys}
+		}
+	}
+	tests := []struct {
+		name     string
+		query    string
+		setup    func(dir, extra string)
+		wantCode int
+		wantBody string
+		check    func(dir, extra string)
+	}{
+		{name: "copies a file", query: "path=a.txt&to=b.txt", wantCode: http.StatusOK, check: func(dir, _ string) {
+			require.Equal(s.T(), "a", read(filepath.Join(dir, "a.txt")))
+			require.Equal(s.T(), "a", read(filepath.Join(dir, "b.txt")))
+		}},
+		{name: "copies a directory", query: "path=sub&to=sub%20copy", wantCode: http.StatusOK, check: func(dir, _ string) {
+			require.Equal(s.T(), "c", read(filepath.Join(dir, "sub", "c.txt")))
+			require.Equal(s.T(), "c", read(filepath.Join(dir, "sub copy", "c.txt")))
+		}},
+		{name: "copies to another root", query: "path=a.txt&to=a.txt&to_root=1", wantCode: http.StatusOK, check: func(_, extra string) {
+			require.Equal(s.T(), "a", read(filepath.Join(extra, "a.txt")))
+		}},
+		{name: "copies from another root", query: "root=1&path=e.txt&to=e.txt&to_root=0", wantCode: http.StatusOK, check: func(dir, _ string) {
+			require.Equal(s.T(), "e", read(filepath.Join(dir, "e.txt")))
+		}},
+		{name: "missing source", query: "path=nope.txt&to=b.txt", wantCode: http.StatusNotFound},
+		{name: "target exists", query: "path=a.txt&to=sub/c.txt", wantCode: http.StatusConflict, wantBody: "already exists", check: func(dir, _ string) {
+			require.Equal(s.T(), "c", read(filepath.Join(dir, "sub", "c.txt")))
+		}},
+		{name: "into itself", query: "path=sub&to=sub/inner", wantCode: http.StatusBadRequest, wantBody: "into itself"},
+		{name: "empty source", query: "path=&to=b.txt", wantCode: http.StatusBadRequest},
+		{name: "target outside the root", query: "path=a.txt&to=../x.txt", wantCode: http.StatusBadRequest},
+		{name: "to_root not a number", query: "path=a.txt&to=b.txt&to_root=x", wantCode: http.StatusBadRequest, wantBody: "invalid to_root"},
+		{name: "to_root out of range", query: "path=a.txt&to=b.txt&to_root=5", wantCode: http.StatusBadRequest, wantBody: "invalid to_root"},
+		{name: "root out of range", query: "root=5&path=a.txt&to=b.txt", wantCode: http.StatusBadRequest},
+		{name: "copy fails", query: "path=a.txt&to=b.txt", setup: failCopy(fmt.Errorf("injected copy error")), wantCode: http.StatusInternalServerError, wantBody: "failed to copy"},
+		{name: "target made meanwhile", query: "path=a.txt&to=b.txt", setup: failCopy(fs.ErrExist), wantCode: http.StatusConflict, wantBody: "already exists"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			dir := s.T().TempDir()
+			extra := s.T().TempDir()
+			require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a"), 0o644))
+			require.NoError(s.T(), os.MkdirAll(filepath.Join(dir, "sub"), 0o755))
+			require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "sub", "c.txt"), []byte("c"), 0o644))
+			require.NoError(s.T(), os.WriteFile(filepath.Join(extra, "e.txt"), []byte("e"), 0o644))
+			require.NoError(s.T(), os.MkdirAll(filepath.Join(dir, ".loop"), 0o755))
+			cfgJSON := `{"extra_dirs":[` + strconv.Quote(extra) + `]}`
+			require.NoError(s.T(), os.WriteFile(filepath.Join(dir, ".loop", "config.json"), []byte(cfgJSON), 0o644))
+			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: dir}, nil)
+			s.store.On("ListChannels", mock.Anything).Return(([]*db.Channel)(nil), nil)
+			if tt.setup != nil {
+				tt.setup(dir, extra)
+			}
+
+			rec := s.testRequest("POST", "/api/channels/ch-1/file/copy?"+tt.query, "")
+			require.Equal(s.T(), tt.wantCode, rec.Code, rec.Body.String())
+			require.Contains(s.T(), rec.Body.String(), tt.wantBody)
+			if tt.check != nil {
+				tt.check(dir, extra)
+			}
+		})
+	}
+}
+
+func (s *ServerSuite) TestCopyFile_NotConfigured() {
+	srv := nilServer()
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/channels/{id}/file/copy", srv.handleCopyFile)
+
+	req, _ := http.NewRequest("POST", "/api/channels/ch-1/file/copy?path=a&to=b", nil)
+	rec := newRecorder()
+	mux.ServeHTTP(rec, req)
+	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
+}
+
 // failEvalSys fails every EvalSymlinks.
 type failEvalSys struct{ realOpenSys }
 

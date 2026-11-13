@@ -1997,6 +1997,30 @@ Rename or move a file or directory within one root.
 
 ---
 
+### `POST /api/channels/{id}/file/copy`
+
+Copy a file or directory, within one root or into another.
+
+**Query Parameters:**
+
+| Param     | Type   | Required | Description |
+|-----------|--------|----------|-------------|
+| `path`    | string | yes      | Relative path to the file or directory, in `root` |
+| `to`      | string | yes      | Relative path of the copy, in `to_root`; its parent directory must exist |
+| `root`    | int    | no       | Root directory index of `path` (0 = primary, 1+ = extra directories) |
+| `to_root` | int    | no       | Root directory index of `to`; defaults to `root` |
+
+**Response (200):**
+```json
+{"ok": true}
+```
+
+**Behavior notes:** A directory is copied with everything in it. Symlinks are copied as symlinks to the same target, never followed, so nothing outside the root is read; sockets, devices and pipes are left out. Files and directories keep their permission bits. When the copy fails partway, what it made at `to` is removed. Neither path may be the root or leave it.
+
+**Errors:** `400` if a path or `to_root` is invalid, or a directory would be copied into itself. `404` if `path` is not found. `409` if `to` already exists. `500` if the copy fails, such as when `to`'s parent doesn't exist.
+
+---
+
 ### `GET /api/channels/{id}/raw/{root}/{path...}`
 
 Serve a file's raw bytes by path. The editor's HTML preview uses this as the `<base href>` of the rendered page, so relative stylesheets, scripts and images resolve against the file's directory. The root index is a path segment rather than a query parameter because relative URL resolution drops the query string.

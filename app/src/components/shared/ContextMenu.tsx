@@ -200,6 +200,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
             )}
             <button
               role={hasChecks ? "menuitemradio" : "menuitem"}
+              data-label={item.label}
               aria-checked={hasChecks ? !!item.checked : undefined}
               title={item.title}
               tabIndex={focusIdx === i ? 0 : -1}

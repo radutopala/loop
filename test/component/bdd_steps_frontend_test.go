@@ -341,6 +341,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I press Escape$`, tc.pressEscape)
 	ctx.Step(`^the focus is in "([^"]*)"$`, tc.assertFocusIn)
 	ctx.Step(`^I press Shift\+Enter$`, tc.pressShiftEnter)
+	ctx.Step(`^I press Ctrl\+([A-Z])$`, tc.pressCtrlKey)
 	ctx.Step(`^I tap the send mode cycle key$`, tc.tapSendModeCycleKey)
 	ctx.Step(`^I clear the "([^"]*)" field$`, tc.clearField)
 
@@ -1771,6 +1772,12 @@ func (tc *TestContext) tapSendModeCycleKey() error {
 		}
 		return input.DispatchKeyEvent(input.KeyUp).WithKey(key).WithCode(code).WithWindowsVirtualKeyCode(vk).Do(ctx)
 	}))
+}
+
+// pressCtrlKey presses Ctrl and a letter on the focused element: the
+// shortcut modifier off macOS, the headless browser's case.
+func (tc *TestContext) pressCtrlKey(letter string) error {
+	return chromedp.Run(tc.chromeTab.ctx, chromedp.KeyEvent(strings.ToLower(letter), chromedp.KeyModifiers(input.ModifierCtrl)))
 }
 
 func (tc *TestContext) pressEscape() error {

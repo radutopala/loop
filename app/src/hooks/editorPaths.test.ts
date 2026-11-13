@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RootEntry } from "../api/files";
-import { editToolFilePath, matchAbsPathToKey, parentDirKey, type TabPathInfo, tabDescriptions } from "./editorPaths";
+import { copyName, editToolFilePath, matchAbsPathToKey, parentDirKey, type TabPathInfo, tabDescriptions } from "./editorPaths";
 
 function root(index: number, path: string): RootEntry {
   return { index, path, name: path.split("/").pop() || path };
@@ -101,5 +101,18 @@ describe("parentDirKey", () => {
     ["2:a/b", "2:a"],
   ])("%s", (key, want) => {
     expect(parentDirKey(key)).toBe(want);
+  });
+});
+
+describe("copyName", () => {
+  it.each([
+    ["notes.md", 1, false, "notes copy.md"],
+    ["notes.md", 2, false, "notes copy 2.md"],
+    ["archive.tar.gz", 1, false, "archive.tar copy.gz"],
+    [".env", 1, false, ".env copy"],
+    ["Makefile", 3, false, "Makefile copy 3"],
+    ["v1.2", 1, true, "v1.2 copy"],
+  ])("%s #%i (dir %s)", (name, n, isDir, want) => {
+    expect(copyName(name, n, isDir)).toBe(want);
   });
 });

@@ -142,6 +142,8 @@ Right-clicking a file or directory opens a context menu with:
 | Copy absolute path | File, Directory | Copies `dirPath + "/" + relativePath` to clipboard |
 | New file here | Directory only | Opens inline input prefilled with directory path |
 | New directory here | Directory only | Opens inline input prefilled with directory path; creates via `POST /api/channels/{id}/dir` which supports nested creation (`MkdirAll`) |
+| Copy | File, Directory (not a root) | Remembers the entry for Paste. Cmd/Ctrl+C on the focused tree row does the same (text selected in the tree still copies as text). |
+| Paste | Anything, once something is copied | Copies what Copy picked into the directory or root (beside the file, for a file) via `POST /api/channels/{id}/file/copy`, across roots too. A directory is copied with everything in it. A name already taken there gets ` copy`, then ` copy 2` and so on, before the extension (`main copy.txt`). The tree opens onto the copy. Cmd/Ctrl+V on the focused tree row does the same. What was copied stays picked, so it can be pasted again. |
 | Rename | File, Directory (not a root) | Opens an inline input holding the relative path, with the name (without its extension) selected. Enter renames or moves it within its root (`POST /api/channels/{id}/file/rename`); a path into another folder moves it. Open tabs, unsaved edits, expanded folders and the selection follow the new path. A name that's taken fails inline (`<name> already exists`). Escape cancels. |
 | Delete | File, Directory (not a root) | Asks first in a Yes / No bubble under the menu item (`Delete <name>?`, or `Delete <name> and everything in it?` for a directory); Yes deletes via API, No keeps it, Escape closes the menu. For directories, uses recursive removal (`RemoveAll`). Closes any open tabs whose paths fall within a deleted directory. |
 
@@ -275,6 +277,7 @@ All operations go through the Go backend API for security.
 | Save file | `PUT /api/channels/{id}/file?path=<path>` | Body is raw file content. Appends trailing newline if missing. |
 | Delete file | `DELETE /api/channels/{id}/file?path=<path>` | Removes file from disk |
 | Rename / move | `POST /api/channels/{id}/file/rename?path=<from>&to=<to>` | Within one root; `409` when `to` exists |
+| Copy | `POST /api/channels/{id}/file/copy?path=<from>&to=<to>&to_root=<n>` | Recursive for directories; across roots with `to_root`; `409` when `to` exists |
 | Create file | `PUT` with empty body | Same as save with empty content |
 
 ### Binary File Detection
