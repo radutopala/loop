@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
@@ -14,12 +14,14 @@ const MARGIN = 8;
  * renders on the body, kept inside the window, so a pane's edge can't cut it.
  * With `shrink` the anchor gives up width like its child would, for a pill
  * whose label ellipsises. With `mono` the lines below the heading are code,
- * such as a command, in the monospace font and `width` pixels wide.
+ * such as a command, in the monospace font and `width` pixels wide. With
+ * no room above its child, near the window's top, it shows below instead.
  */
 export function HoverTip({ text, shrink, mono, width = WIDTH, children }: { text: string; shrink?: boolean; mono?: boolean; width?: number; children: ReactNode }) {
   const { colors } = useTheme();
-  const [at, setAt] = useState<{ left: number; bottom: number } | null>(null);
+  const [at, setAt] = useState<{ left: number; bottom?: number; top?: number } | null>(null);
   const anchor = useRef<HTMLSpanElement>(null);
+  const tip = useRef<HTMLSpanElement>(null);
   const timer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(timer.current), []);
 
@@ -36,6 +38,12 @@ export function HoverTip({ text, shrink, mono, width = WIDTH, children }: { text
       });
     }, SHOW_DELAY_MS);
   };
+  // Placed above first; moved below before it paints when that cuts it off.
+  useLayoutEffect(() => {
+    if (at?.bottom === undefined || (tip.current?.getBoundingClientRect().top ?? MARGIN) >= MARGIN) return;
+    const r = anchor.current?.getBoundingClientRect();
+    if (r) setAt({ left: at.left, top: r.bottom + 6 });
+  }, [at]);
   const hide = () => {
     window.clearTimeout(timer.current);
     setAt(null);
@@ -48,12 +56,14 @@ export function HoverTip({ text, shrink, mono, width = WIDTH, children }: { text
       {at &&
         createPortal(
           <span
+            ref={tip}
             role="tooltip"
             data-testid="hover-tip"
             style={{
               position: "fixed",
               left: at.left,
               bottom: at.bottom,
+              top: at.top,
               zIndex: 1000,
               width,
               padding: "6px 8px",
