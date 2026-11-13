@@ -97,10 +97,10 @@ func TestSleepCtx(t *testing.T) {
 	require.ErrorIs(t, sleepCtx(cancelled, 0), context.Canceled)
 	require.ErrorIs(t, sleepCtx(cancelled, time.Hour), context.Canceled)
 
-	// Cancellation mid-wait returns promptly with the ctx error.
-	ctx, cancel2 := context.WithCancel(context.Background())
-	go cancel2()
-	require.ErrorIs(t, sleepCtx(ctx, time.Hour), context.Canceled)
+	// Cancellation mid-wait returns promptly with the ctx error. The context
+	// reports no error on the up-front check and is done by the time the
+	// wait starts, so the wait's cancel branch runs every time.
+	require.ErrorIs(t, sleepCtx(&cancelledAfterFirstCheck{Context: cancelled}, time.Hour), context.Canceled)
 
 	// Normal completion.
 	require.NoError(t, sleepCtx(context.Background(), time.Millisecond))
@@ -111,4 +111,20 @@ func TestSleepCtx(t *testing.T) {
 func TestBackoffDelayOverflowReturnsMax(t *testing.T) {
 	got := backoffDelay(1, time.Duration(math.MaxInt64), time.Second)
 	require.Equal(t, time.Second, got)
+}
+
+// cancelledAfterFirstCheck wraps an already-cancelled context but reports no
+// error on the first Err call, standing in for a cancel that lands between
+// sleepCtx's up-front check and its wait.
+type cancelledAfterFirstCheck struct {
+	context.Context
+	checked bool
+}
+
+func (c *cancelledAfterFirstCheck) Err() error {
+	if !c.checked {
+		c.checked = true
+		return nil
+	}
+	return c.Context.Err()
 }
