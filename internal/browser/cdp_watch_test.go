@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	cdpbrowser "github.com/chromedp/cdproto/browser"
 	cdppage "github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
@@ -91,4 +92,31 @@ func (s *CDPSuite) TestHandleDialog() {
 func (s *CDPSuite) TestHandleDialogError() {
 	s.setRunFn(func(context.Context, ...chromedp.Action) error { return errors.New("no dialog is showing") })
 	require.ErrorContains(s.T(), s.client.HandleDialog(context.Background(), false, ""), "no dialog is showing")
+}
+
+func (s *CDPSuite) TestWatchDownloads() {
+	var listener func(any)
+	s.client.listenBrowserFunc = func(_ context.Context, fn func(any)) { listener = fn }
+
+	var got []Download
+	s.client.WatchDownloads(func(d Download) { got = append(got, d) })
+	require.NotNil(s.T(), listener)
+
+	for _, ev := range []any{
+		&cdpbrowser.EventDownloadWillBegin{GUID: "g1", URL: "https://a.com/r.pdf", SuggestedFilename: "r.pdf"},
+		&cdpbrowser.EventDownloadProgress{GUID: "g1", State: cdpbrowser.DownloadProgressStateInProgress},
+		&cdpbrowser.EventDownloadProgress{GUID: "g1", State: cdpbrowser.DownloadProgressStateCompleted, FilePath: "/downloads/r (1).pdf"},
+		&cdpbrowser.EventDownloadProgress{GUID: "g2", State: cdpbrowser.DownloadProgressStateCompleted},
+		&cdpbrowser.EventDownloadProgress{GUID: "g3", State: cdpbrowser.DownloadProgressStateCanceled},
+		&target.EventTargetDestroyed{TargetID: "t1"},
+	} {
+		listener(ev)
+	}
+
+	require.Equal(s.T(), []Download{
+		{GUID: "g1", URL: "https://a.com/r.pdf", Filename: "r.pdf", State: DownloadStarted},
+		{GUID: "g1", Filename: "r (1).pdf", State: DownloadCompleted},
+		{GUID: "g2", State: DownloadCompleted},
+		{GUID: "g3", State: DownloadCanceled},
+	}, got)
 }

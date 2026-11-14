@@ -3,7 +3,10 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -176,4 +179,33 @@ func (s *BrowserHandlerSuite) TestWSStartShowsADialogAlreadyOpen() {
 func (s *BrowserHandlerSuite) TestAnswerDialogWithoutABrowserIsANoop() {
 	bc := &browserWSConn{}
 	require.NotPanics(s.T(), func() { bc.answerDialog(browserWSMessage{Type: bwsMsgDialog, TargetID: "t1", Accept: true}) })
+}
+
+func (s *BrowserHandlerSuite) TestWSForwardsDownloads() {
+	connReady := make(chan *websocket.Conn, 1)
+	tsSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		connReady <- conn
+	}))
+	defer tsSrv.Close()
+	client, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(tsSrv.URL, "http")+"/", nil)
+	require.NoError(s.T(), err)
+	defer client.Close()
+	server := <-connReady
+	defer server.Close()
+
+	bc := &browserWSConn{conn: server, logger: slog.Default(), stopCh: make(chan struct{})}
+	events := make(chan browser.TabEvent, 1)
+	stop := make(chan struct{})
+	defer close(stop)
+	go bc.watchTabEvents(events, stop)
+
+	d := browser.Download{GUID: "g1", URL: "https://a.com/r.pdf", Filename: "r.pdf", State: browser.DownloadStarted}
+	events <- browser.TabEvent{Kind: browser.DownloadChanged, Download: d}
+	resp := s.readResp(client)
+	require.Equal(s.T(), bwsRespDownload, resp.Type)
+	require.Equal(s.T(), &d, resp.Download)
 }

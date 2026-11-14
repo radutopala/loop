@@ -126,6 +126,9 @@ type CDPSession interface {
 	SetCookies(ctx context.Context, cookies []Cookie) error
 	// SetDownloadDir has Chrome save downloads into dir.
 	SetDownloadDir(ctx context.Context, dir string) error
+	// WatchDownloads reports downloads, from any tab, starting and finishing.
+	// The callback runs on CDP's event loop and must not block.
+	WatchDownloads(onChange func(Download))
 }
 
 // NewCDPManager creates a new CDPManager for the given WebSocket endpoint.
@@ -206,6 +209,10 @@ func (m *CDPManager) Connect(ctx context.Context) error {
 		// is logged rather than failing the connection.
 		if err := client.SetDownloadDir(ctx, m.cfg.DownloadDir); err != nil {
 			m.logger.Warn("setting the download dir failed", "dir", m.cfg.DownloadDir, "error", err)
+		} else {
+			// On a goroutine for the reason watch gives; the pane copes with
+			// the events arriving out of order.
+			client.WatchDownloads(func(d Download) { go m.publish(TabEvent{Kind: DownloadChanged, Download: d}) })
 		}
 	}
 
@@ -661,6 +668,8 @@ const (
 	DialogOpened
 	// DialogClosed means the dialog on Tab.TargetID was answered.
 	DialogClosed
+	// DownloadChanged means Download started, completed or was canceled.
+	DownloadChanged
 )
 
 // dialogTypeAlert is the dialog type Chrome reports for window.alert.
@@ -668,9 +677,10 @@ const dialogTypeAlert = "alert"
 
 // TabEvent is one change to the tabs, as Subscribe delivers it.
 type TabEvent struct {
-	Kind   TabEventKind
-	Tab    TabInfo
-	Dialog Dialog // set for DialogOpened
+	Kind     TabEventKind
+	Tab      TabInfo
+	Dialog   Dialog   // set for DialogOpened
+	Download Download // set for DownloadChanged
 }
 
 // tabEventBuffer is how many changes a subscriber can fall behind by. A pane
