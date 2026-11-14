@@ -447,7 +447,14 @@ Pages that build their content with script after loading can be read too early. 
 The Docker sidecar starts Chrome with `--disable-background-timer-throttling`, `--disable-renderer-backgrounding` and `--disable-backgrounding-occluded-windows`, so pages keep running their timers and rendering when nobody looks at them.
 
 ### Daemon restarts
-The container's tools reach Chrome through the Loop daemon. While the daemon is down they fail with a message saying so; the daemon stops the sidecar when it exits, so after a restart the browser starts afresh on `about:blank` and the agent has to navigate again.
+The container's tools reach Chrome through the Loop daemon. While the daemon is down they fail with a message saying so.
+
+The daemon stops the Docker sidecars when it exits, and Chrome comes back on `about:blank`, so it first writes down each channel's tabs in `~/.loop/browser-tabs/<channel>.json`: their URLs, titles and which one was active, leaving out blank tabs. The next time that channel's browser connects, whether from the pane or an agent's tool, the tabs open again in the same order and the one that was active comes back to the front. The list is used once and then deleted.
+
+- A browser that already shows a page is left as it is: the daemon died without stopping its sidecar, so the tabs are still there.
+- The first tab loads into the tab Chrome came up with; past 3 seconds it goes on loading in the background.
+- A signed-in Loop UI link is never reopened.
+- Host mode is the user's own Chrome, so nothing is saved for it. Neither is a browser stopped for being idle.
 
 ## Idle Monitoring
 
