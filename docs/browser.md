@@ -378,6 +378,22 @@ Host mode is left alone: your own Chrome saves downloads wherever it is set to,
 which the agent can't see, and `list_downloads` says so. `loop mcp-host-browser`
 has no `list_downloads` tool.
 
+## Uploads
+
+`upload_file` takes paths on the agent's machine and either a ref or a CSS
+`selector`. The ref is the file input, or the button or label that opens it.
+`selector` is for an input `read_page` doesn't list, since pages often hide it
+behind a styled button. From the element at the ref's center point, or the one
+the selector matches, the tool takes the input itself, the one a label points
+at, or the nearest one inside an ancestor. It reads the files (20 MB in all at most), sends them
+base64-encoded in one `evaluate_js` script, sets them on the input through a
+`DataTransfer` and fires `input` and `change`, as a real pick would. It refuses
+several files for an input without `multiple`.
+
+The files travel inside the script because in Docker mode Chrome runs in its
+own container and can't read the agent's paths, which CDP
+`DOM.setFileInputFiles` would need.
+
 ## MCP Browser Tools
 
 ### Proxy Mode (agent containers)
@@ -400,7 +416,7 @@ Agent containers run `loop mcp-browser` which proxies all tool calls via `POST /
 Requires `chrome://inspect/#remote-debugging` enabled in Chrome.
 
 ### Available Tools
-`navigate`, `read_page`, `computer`, `form_input`, `screenshot`, `save_screenshot`, `go_back`, `go_forward`, `reload`, `evaluate`, `list_tabs`, `new_tab`, `switch_tab`, `close_tab`, `page_info`, `get_page_text`, `find`, `read_console_messages`, `read_network_requests`, `resize_window`, `list_downloads` (proxy mode only)
+`navigate`, `read_page`, `computer`, `form_input`, `upload_file`, `screenshot`, `save_screenshot`, `go_back`, `go_forward`, `reload`, `evaluate`, `list_tabs`, `new_tab`, `switch_tab`, `close_tab`, `page_info`, `get_page_text`, `find`, `read_console_messages`, `read_network_requests`, `resize_window`, `list_downloads` (proxy mode only)
 
 ### Waiting for a page
 Pages that build their content with script after loading can be read too early. `navigate`, `screenshot`, `save_screenshot` and `computer` take `wait_for_selector` and/or `wait_for_text`, with `wait_timeout_ms` (default 10000, max 60000). The tool polls the page every 250 ms through `evaluate_js` until it matches, and fails with a timeout error if it never does. `computer` waits after acting, except for `wait` and `screenshot`, which wait first; `computer` `wait` without either pauses for `duration` ms.

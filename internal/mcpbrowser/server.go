@@ -43,6 +43,8 @@ type Server struct {
 	dispatch   actionDispatcher // pluggable action handler
 	// sleep pauses for d or until ctx ends; tests swap it to skip real waits.
 	sleep func(ctx context.Context, d time.Duration) error
+	// uploadMaxBytes caps the files one upload_file call reads.
+	uploadMaxBytes int64
 }
 
 // sleepCtx pauses for d, returning early with ctx's error if it ends first.
@@ -67,6 +69,8 @@ func New(apiURL, channelID string, logger *slog.Logger) *Server {
 		channelID: channelID,
 		logger:    logger,
 		sleep:     sleepCtx,
+
+		uploadMaxBytes: defaultUploadMaxBytes,
 	}
 
 	s.httpClient = &http.Client{
@@ -81,6 +85,7 @@ func New(apiURL, channelID string, logger *slog.Logger) *Server {
 	}, &mcp.ServerOptions{Logger: logger})
 
 	s.registerTools()
+	s.registerUploadTools()
 	s.registerDownloadTools()
 	s.registerDialogTools()
 	return s
@@ -95,6 +100,8 @@ func NewDirect(cdpEndpoint string, logger *slog.Logger) *Server {
 	s := &Server{
 		logger: logger,
 		sleep:  sleepCtx,
+
+		uploadMaxBytes: defaultUploadMaxBytes,
 	}
 
 	s.dispatch = newCDPDispatcher(cdpEndpoint, logger)
@@ -105,6 +112,7 @@ func NewDirect(cdpEndpoint string, logger *slog.Logger) *Server {
 	}, &mcp.ServerOptions{Logger: logger})
 
 	s.registerTools()
+	s.registerUploadTools()
 	return s
 }
 

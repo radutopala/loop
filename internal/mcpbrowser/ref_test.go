@@ -48,8 +48,9 @@ func (s *ServerSuite) TestRefToolsTakeTheRefAsFindPrintsIt() {
 		writeJSON(w, actionResponse{})
 	})
 	for tool, args := range map[string]map[string]any{
-		"computer":   {"ref": "ref_9", "action": "click"},
-		"form_input": {"ref": "ref_9", "value": "x"},
+		"computer":    {"ref": "ref_9", "action": "click"},
+		"form_input":  {"ref": "ref_9", "value": "x"},
+		"upload_file": {"ref": "ref_9", "paths": []string{"x"}},
 	} {
 		res := callTool(s.T(), session, tool, args)
 		require.True(s.T(), res.IsError, tool)
