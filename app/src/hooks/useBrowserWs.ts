@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { browserAction, getWsUrl, wsProtocols } from "../api/loopApi";
 import type { PageContextMenu } from "../components/panels/browserContextMenu";
 import { type PageDialog, type PageDialogs, withDialog, withoutDialog } from "../components/panels/browserDialog";
+import type { PageSelectMenu } from "../components/panels/browserSelectMenu";
 
 interface BrowserWSMessage {
   type: string;
@@ -20,6 +21,7 @@ interface BrowserWSMessage {
   key?: string;
   text?: string;
   modifiers?: number;
+  index?: number;
   target_id?: string;
   accept?: boolean;
 }
@@ -43,6 +45,7 @@ interface BrowserWSResponse {
   text?: string;
   menu?: PageContextMenu;
   dialog?: PageDialog;
+  select?: PageSelectMenu;
 }
 
 interface UseBrowserWsOptions {
@@ -54,9 +57,11 @@ interface UseBrowserWsOptions {
   onStopped?: () => void;
   /** A right-click in the page that wants the pane's menu. */
   onContextMenu?: (menu: PageContextMenu) => void;
+  /** A click on a <select>, whose options the pane shows instead of Chrome. */
+  onSelectMenu?: (menu: PageSelectMenu) => void;
 }
 
-export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarted, onStopped, onContextMenu }: UseBrowserWsOptions) {
+export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarted, onStopped, onContextMenu, onSelectMenu }: UseBrowserWsOptions) {
   const wsRef = useRef<WebSocket | null>(null);
   const onFrameRef = useRef(onFrame);
   const onPageInfoRef = useRef(onPageInfo);
@@ -64,6 +69,7 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
   const onStartedRef = useRef(onStarted);
   const onStoppedRef = useRef(onStopped);
   const onContextMenuRef = useRef(onContextMenu);
+  const onSelectMenuRef = useRef(onSelectMenu);
   const [connected, setConnected] = useState(false);
   const [started, setStarted] = useState(false);
   const [tabs, setTabs] = useState<TabInfo[]>([]);
@@ -79,6 +85,7 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
   onStartedRef.current = onStarted;
   onStoppedRef.current = onStopped;
   onContextMenuRef.current = onContextMenu;
+  onSelectMenuRef.current = onSelectMenu;
 
   // Connect WebSocket with auto-reconnect.
   useEffect(() => {
@@ -146,6 +153,9 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
               break;
             case "context_menu":
               if (msg.menu) onContextMenuRef.current?.(msg.menu);
+              break;
+            case "select_menu":
+              if (msg.select) onSelectMenuRef.current?.(msg.select);
               break;
             case "dialog":
               if (msg.dialog) setDialogs((prev) => withDialog(prev, msg.dialog!));
@@ -299,6 +309,14 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
     [send],
   );
 
+  /** Picks option index of the <select> the last select_menu came from. */
+  const chooseSelectOption = useCallback(
+    (index: number) => {
+      send({ type: "input", input_type: "select_choose", index });
+    },
+    [send],
+  );
+
   /** Answers the dialog blocking targetId: OK or Cancel, with a prompt's text. */
   const answerDialog = useCallback(
     (targetId: string, accept: boolean, text?: string) => {
@@ -369,6 +387,7 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
     // The dialog blocking the tab on screen, if any.
     dialog: dialogs[activeTargetId] as PageDialog | undefined,
     answerDialog,
+    chooseSelectOption,
     listTabs,
     switchTab,
     newTab,

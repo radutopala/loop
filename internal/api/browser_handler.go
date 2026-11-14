@@ -67,6 +67,8 @@ type browserWSMessage struct {
 	Key        string  `json:"key,omitempty"`
 	Text       string  `json:"text,omitempty"`
 	Modifiers  int     `json:"modifiers,omitempty"`
+	// Index is the option a "select_choose" input picks.
+	Index int `json:"index,omitempty"`
 	// Dialog answer fields
 	TargetID string `json:"target_id,omitempty"`
 	Accept   bool   `json:"accept,omitempty"`
@@ -92,6 +94,21 @@ type browserWSResponse struct {
 	Text           string              `json:"text,omitempty"`
 	Menu           *browserContextMenu `json:"menu,omitempty"`
 	Dialog         *browser.Dialog     `json:"dialog,omitempty"`
+	Select         *browserSelectMenu  `json:"select,omitempty"`
+}
+
+// browserSelectMenu lists the options of the <select> a click landed on.
+// Headless Chrome opens its dropdown in a popup the screencast never shows, so
+// the pane draws the options and sends back the one picked.
+type browserSelectMenu struct {
+	Selected int                   `json:"selected"`
+	Options  []browserSelectOption `json:"options"`
+}
+
+type browserSelectOption struct {
+	Label    string `json:"label"`
+	Disabled bool   `json:"disabled,omitempty"`
+	Group    string `json:"group,omitempty"`
 }
 
 // browserContextMenu describes what a right-click landed on, so the pane can
@@ -113,9 +130,11 @@ const (
 	bwsInputPaste       = "paste"
 	bwsInputCopy        = "copy"
 	bwsInputContextMenu = "contextmenu"
+	bwsInputSelect      = "select_choose"
 
 	bwsRespClipboard   = "clipboard"
 	bwsRespContextMenu = "context_menu"
+	bwsRespSelectMenu  = "select_menu"
 	bwsRespStarted     = "started"
 	bwsRespStopped     = "stopped"
 	bwsRespError       = "error"
@@ -397,6 +416,7 @@ func (bc *browserWSConn) handleInput(msg browserWSMessage) {
 		Key:        msg.Key,
 		Text:       msg.Text,
 		Modifiers:  msg.Modifiers,
+		Index:      msg.Index,
 	}
 	// Queued rather than dispatched here: a wheel or move event costs about a
 	// compositor frame, and blocking the read loop on that is what made a
@@ -431,7 +451,13 @@ func (bc *browserWSConn) dispatchInput(ev browser.InputEvent) {
 		if btn == "" {
 			btn = "left"
 		}
-		err = cdp.MouseClick(ctx, ev.X, ev.Y, btn, count)
+		if btn == "left" && count == 1 {
+			err = bc.clickOrOpenSelect(ctx, cdp, ev.X, ev.Y)
+		} else {
+			err = cdp.MouseClick(ctx, ev.X, ev.Y, btn, count)
+		}
+	case bwsInputSelect:
+		err = bc.chooseSelectOption(ctx, cdp, ev.Index)
 	case "mousemove":
 		err = cdp.MouseMove(ctx, ev.X, ev.Y, 0)
 	case "scroll":
@@ -518,6 +544,74 @@ func (bc *browserWSConn) openContextMenu(ctx context.Context, cdp browser.CDPSes
 		return fmt.Errorf("reading the context menu: %w", err)
 	}
 	bc.sendJSON(browserWSResponse{Type: bwsRespContextMenu, Menu: &menu})
+	return nil
+}
+
+// selectAtJS finds the single-choice <select> at (x, y), through open shadow
+// roots, focuses it and lists its options; it returns "" for anything else.
+// The select is kept on window so the pick that follows finds it again.
+const selectAtJS = `((x, y) => {
+  let el = document.elementFromPoint(x, y);
+  while (el && el.shadowRoot) {
+    const inner = el.shadowRoot.elementFromPoint(x, y);
+    if (!inner || inner === el) break;
+    el = inner;
+  }
+  const s = el && el.closest("select");
+  if (!s || s.multiple || s.size > 1 || s.disabled) return "";
+  window.__loopSelect = s;
+  s.focus();
+  return JSON.stringify({
+    selected: s.selectedIndex,
+    options: Array.from(s.options, (o) => {
+      const g = o.parentElement instanceof HTMLOptGroupElement ? o.parentElement : null;
+      return { label: o.label || o.text, disabled: o.disabled || !!(g && g.disabled), group: g ? g.label : "" };
+    }),
+  });
+})(%g, %g)`
+
+// chooseSelectJS picks option %d of the select selectAtJS found, firing input
+// and change as a real pick does when the choice differs. It returns "gone"
+// when the select left the page meanwhile.
+const chooseSelectJS = `((i) => {
+  const s = window.__loopSelect;
+  if (!s || !s.isConnected || i < 0 || i >= s.options.length) return "gone";
+  if (s.selectedIndex !== i) {
+    s.selectedIndex = i;
+    s.dispatchEvent(new Event("input", { bubbles: true }));
+    s.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  return "";
+})(%d)`
+
+// clickOrOpenSelect left-clicks at (x, y), unless that lands on a <select>:
+// then the pane gets its options instead, since Chrome's own dropdown would
+// open where nobody can see it.
+func (bc *browserWSConn) clickOrOpenSelect(ctx context.Context, cdp browser.CDPSession, x, y float64) error {
+	raw, err := cdp.EvaluateJS(ctx, fmt.Sprintf(selectAtJS, x, y))
+	if err != nil || raw == "" {
+		if err != nil {
+			bc.logger.Warn("browser ws: looking for a select failed", "error", err)
+		}
+		return cdp.MouseClick(ctx, x, y, "left", 1)
+	}
+	var menu browserSelectMenu
+	if err := json.Unmarshal([]byte(raw), &menu); err != nil {
+		return fmt.Errorf("reading the select: %w", err)
+	}
+	bc.sendJSON(browserWSResponse{Type: bwsRespSelectMenu, Select: &menu})
+	return nil
+}
+
+// chooseSelectOption applies the option picked in the pane's select menu.
+func (bc *browserWSConn) chooseSelectOption(ctx context.Context, cdp browser.CDPSession, index int) error {
+	res, err := cdp.EvaluateJS(ctx, fmt.Sprintf(chooseSelectJS, index))
+	if err != nil {
+		return err
+	}
+	if res != "" {
+		bc.sendError("The dropdown is no longer on the page")
+	}
 	return nil
 }
 

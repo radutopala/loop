@@ -13,4 +13,6 @@ type InputEvent struct {
 	Text       string  `json:"text,omitempty"`
 	// Modifiers is the CDP modifier bitmask: Alt=1, Ctrl=2, Meta=4, Shift=8.
 	Modifiers int `json:"modifiers,omitempty"`
+	// Index is the option a "select_choose" event picks.
+	Index int `json:"index,omitempty"`
 }
