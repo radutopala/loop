@@ -570,6 +570,8 @@ type mockCDPSession struct {
 	// play a page opening a dialog.
 	dialogMu sync.Mutex
 	onDialog func(browser.Dialog)
+	// screencastStops are the stop channels StartScreencast was given, in order.
+	screencastStops []<-chan struct{}
 }
 
 func (m *mockCDPSession) Alive() bool { return !m.dead }
@@ -589,7 +591,10 @@ func (m *mockCDPSession) GetPageInfo(ctx context.Context) (*browser.PageInfo, er
 	pi, _ := args.Get(0).(*browser.PageInfo)
 	return pi, args.Error(1)
 }
-func (m *mockCDPSession) StartScreencast(quality, maxWidth, maxHeight int) <-chan []byte {
+func (m *mockCDPSession) StartScreencast(quality, maxWidth, maxHeight int, stop <-chan struct{}) <-chan []byte {
+	m.dialogMu.Lock()
+	m.screencastStops = append(m.screencastStops, stop)
+	m.dialogMu.Unlock()
 	args := m.Called(quality, maxWidth, maxHeight)
 	ch, _ := args.Get(0).(<-chan []byte)
 	return ch

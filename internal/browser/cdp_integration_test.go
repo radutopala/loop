@@ -555,7 +555,7 @@ func (s *CDPIntegrationSuite) TestScreencast() {
 	s.client.StopScreencast()
 	s.nav()
 
-	ch := s.client.StartScreencast(30, 1280, 900)
+	ch := s.client.StartScreencast(30, 1280, 900, nil)
 	require.NotNil(s.T(), ch)
 
 	// Try to receive a frame — may not arrive if prior tests changed tab state.
@@ -678,12 +678,12 @@ collected:
 func (s *CDPIntegrationSuite) TestResetScreencast() {
 	s.nav()
 	// Start screencast, then reset, then start again — should not panic.
-	ch1 := s.client.StartScreencast(30, 1280, 900)
+	ch1 := s.client.StartScreencast(30, 1280, 900, nil)
 	require.NotNil(s.T(), ch1)
 
 	s.client.ResetScreencast()
 
-	ch2 := s.client.StartScreencast(30, 1280, 900)
+	ch2 := s.client.StartScreencast(30, 1280, 900, nil)
 	require.NotNil(s.T(), ch2)
 
 	s.client.StopScreencast()
@@ -726,16 +726,15 @@ func (s *CDPIntegrationSuite) TestScreencastFrameChannelIsolation() {
 	s.nav()
 
 	// Start screencast — get channel 1.
-	ch1 := s.client.StartScreencast(30, 1280, 900)
+	ch1 := s.client.StartScreencast(30, 1280, 900, nil)
 	require.NotNil(s.T(), ch1)
 
 	// Stop and start again — get channel 2 (should be different).
 	s.client.StopScreencast()
-	ch2 := s.client.StartScreencast(30, 1280, 900)
+	ch2 := s.client.StartScreencast(30, 1280, 900, nil)
 	require.NotNil(s.T(), ch2)
 
-	// Channels should be different objects (new frameCh each call).
-	// Can't compare channels directly, but we can verify both work.
+	// Each call gets its own channel.
 	s.client.StopScreencast()
 }
 

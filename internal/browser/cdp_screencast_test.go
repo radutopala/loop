@@ -18,9 +18,69 @@ import (
 
 func (s *CDPSuite) TestStartScreencastAlreadyScreencasting() {
 	s.client.screencasting = true
-	ch := s.client.StartScreencast(60, 1920, 1080)
+	ch := s.client.StartScreencast(60, 1920, 1080, nil)
 	require.NotNil(s.T(), ch)
-	require.Equal(s.T(), (<-chan []byte)(s.client.frameCh), ch)
+	require.Empty(s.T(), ch, "no frame yet to hand the joining pane")
+	require.Len(s.T(), s.client.frameSubs, 1)
+}
+
+// Two panes on one tab each get every frame, and one leaving doesn't take
+// the stream from the other — a single shared channel used to hand the stream
+// to whichever pane started last, and leave the other on a dead channel.
+func (s *CDPSuite) TestStartScreencastFeedsEveryPane() {
+	var listenerFn func(any)
+	s.client.listenFunc = func(_ context.Context, fn func(any)) { listenerFn = fn }
+	stopFirst, stopSecond := make(chan struct{}), make(chan struct{})
+	first := s.client.StartScreencast(60, 1920, 1080, stopFirst)
+	second := s.client.StartScreencast(60, 1920, 1080, stopSecond)
+	frame := func(body string) {
+		listenerFn(&cdppage.EventScreencastFrame{Data: base64.StdEncoding.EncodeToString([]byte(body)), SessionID: 1})
+	}
+
+	frame("f1")
+	require.Equal(s.T(), "f1", string(<-first))
+	require.Equal(s.T(), "f1", string(<-second))
+
+	close(stopSecond)
+	require.Eventually(s.T(), func() bool {
+		s.client.mu.Lock()
+		defer s.client.mu.Unlock()
+		return len(s.client.frameSubs) == 1
+	}, time.Second, 5*time.Millisecond)
+	frame("f2")
+	require.Equal(s.T(), "f2", string(<-first))
+	require.Empty(s.T(), second)
+	close(stopFirst)
+}
+
+// A pane joining a running screencast starts from the newest frame: Chrome
+// sends the next one only when the page repaints.
+func (s *CDPSuite) TestStartScreencastHandsAJoiningPaneTheNewestFrame() {
+	var listenerFn func(any)
+	s.client.listenFunc = func(_ context.Context, fn func(any)) { listenerFn = fn }
+	_ = s.client.StartScreencast(60, 1920, 1080, nil)
+	listenerFn(&cdppage.EventScreencastFrame{Data: base64.StdEncoding.EncodeToString([]byte("now")), SessionID: 1})
+
+	joined := s.client.StartScreencast(60, 1920, 1080, nil)
+	require.Equal(s.T(), "now", string(<-joined))
+
+	// Another tab's last frame is not this one's.
+	require.NoError(s.T(), s.client.SwitchTarget("t2"))
+	s.client.screencasting = true
+	require.Empty(s.T(), s.client.StartScreencast(60, 1920, 1080, nil))
+}
+
+// A pane that never leaves stops getting frames when the client closes.
+func (s *CDPSuite) TestStartScreencastDropsPanesWhenTheClientCloses() {
+	ctx, cancel := context.WithCancel(context.Background())
+	s.client.ctx = ctx
+	_ = s.client.StartScreencast(60, 1920, 1080, nil)
+	cancel()
+	require.Eventually(s.T(), func() bool {
+		s.client.mu.Lock()
+		defer s.client.mu.Unlock()
+		return len(s.client.frameSubs) == 0
+	}, time.Second, 5*time.Millisecond)
 }
 
 func (s *CDPSuite) TestStartScreencastNew() {
@@ -29,7 +89,7 @@ func (s *CDPSuite) TestStartScreencastNew() {
 		listenerFn = fn
 	}
 
-	ch := s.client.StartScreencast(60, 1920, 1080)
+	ch := s.client.StartScreencast(60, 1920, 1080, nil)
 	require.NotNil(s.T(), ch)
 	require.True(s.T(), s.client.screencasting)
 	require.NotNil(s.T(), listenerFn)
@@ -44,7 +104,7 @@ func (s *CDPSuite) TestStartScreencastFrameDecodeSuccess() {
 		listenerFn = fn
 	}
 
-	ch := s.client.StartScreencast(60, 1920, 1080)
+	ch := s.client.StartScreencast(60, 1920, 1080, nil)
 	require.NotNil(s.T(), listenerFn)
 
 	// Simulate a screencast frame event with valid base64 data.
@@ -70,7 +130,7 @@ func (s *CDPSuite) TestStartScreencastFrameDecodeError() {
 		listenerFn = fn
 	}
 
-	_ = s.client.StartScreencast(60, 1920, 1080)
+	ch := s.client.StartScreencast(60, 1920, 1080, nil)
 
 	// Simulate an event with invalid base64.
 	listenerFn(&cdppage.EventScreencastFrame{
@@ -80,7 +140,7 @@ func (s *CDPSuite) TestStartScreencastFrameDecodeError() {
 
 	// No frame should be sent (decode error logged).
 	select {
-	case <-s.client.frameCh:
+	case <-ch:
 		s.T().Fatal("should not receive frame on decode error")
 	case <-time.After(50 * time.Millisecond):
 		// OK
@@ -93,7 +153,7 @@ func (s *CDPSuite) TestStartScreencastDropsOldestFrameWhenBehind() {
 		listenerFn = fn
 	}
 
-	_ = s.client.StartScreencast(60, 1920, 1080)
+	ch := s.client.StartScreencast(60, 1920, 1080, nil)
 
 	send := func(body string, session int64) {
 		listenerFn(&cdppage.EventScreencastFrame{
@@ -110,9 +170,9 @@ func (s *CDPSuite) TestStartScreencastDropsOldestFrameWhenBehind() {
 
 	// A pane that is behind must get the newest frames, not the oldest ones:
 	// handing it stale frames is what keeps the lag open.
-	require.Len(s.T(), s.client.frameCh, 2)
-	require.Equal(s.T(), "frame3", string(<-s.client.frameCh))
-	require.Equal(s.T(), "frame4", string(<-s.client.frameCh))
+	require.Len(s.T(), ch, 2)
+	require.Equal(s.T(), "frame3", string(<-ch))
+	require.Equal(s.T(), "frame4", string(<-ch))
 }
 
 func (s *CDPSuite) TestStartScreencastNonFrameEvent() {
@@ -121,13 +181,13 @@ func (s *CDPSuite) TestStartScreencastNonFrameEvent() {
 		listenerFn = fn
 	}
 
-	_ = s.client.StartScreencast(60, 1920, 1080)
+	ch := s.client.StartScreencast(60, 1920, 1080, nil)
 
 	// Send a non-frame event — should be ignored.
 	listenerFn("not a frame event")
 
 	select {
-	case <-s.client.frameCh:
+	case <-ch:
 		s.T().Fatal("should not receive anything for non-frame events")
 	case <-time.After(50 * time.Millisecond):
 		// OK
@@ -140,7 +200,7 @@ func (s *CDPSuite) TestStartScreencastRunError() {
 		return errors.New("screencast start error")
 	})
 
-	_ = s.client.StartScreencast(60, 1920, 1080)
+	_ = s.client.StartScreencast(60, 1920, 1080, nil)
 	// Error is logged, not returned. Wait for goroutine.
 	time.Sleep(50 * time.Millisecond)
 }
@@ -164,7 +224,7 @@ func (s *CDPSuite) TestStartScreencastAckError() {
 		return nil
 	})
 
-	_ = s.client.StartScreencast(60, 1920, 1080)
+	_ = s.client.StartScreencast(60, 1920, 1080, nil)
 	time.Sleep(10 * time.Millisecond)
 	require.NotNil(s.T(), listenerFn)
 
@@ -218,7 +278,7 @@ func (s *CDPSuite) TestStartScreencastClearsFlagWhenCommandFails() {
 	})
 
 	client := s.client
-	client.StartScreencast(60, 1920, 1080)
+	client.StartScreencast(60, 1920, 1080, nil)
 
 	require.Eventually(s.T(), func() bool { return !screencastingNow(client) },
 		time.Second, 5*time.Millisecond,
@@ -239,7 +299,7 @@ func (s *CDPSuite) TestStartScreencastClearsFlagWhenCommandHangs() {
 	})
 
 	client := s.client
-	client.StartScreencast(60, 1920, 1080)
+	client.StartScreencast(60, 1920, 1080, nil)
 
 	require.Eventually(s.T(), func() bool { return !screencastingNow(client) },
 		time.Second, 5*time.Millisecond,
@@ -250,7 +310,7 @@ func (s *CDPSuite) TestStartScreencastClearsFlagWhenCommandHangs() {
 // duplicate command.
 func (s *CDPSuite) TestStartScreencastKeepsFlagWhenCommandSucceeds() {
 	client := s.client
-	client.StartScreencast(60, 1920, 1080)
+	client.StartScreencast(60, 1920, 1080, nil)
 
 	require.Never(s.T(), func() bool { return !screencastingNow(client) },
 		100*time.Millisecond, 10*time.Millisecond)
@@ -315,7 +375,7 @@ func (s *CDPSuite) TestStartScreencastReloadsACrashedTarget() {
 	})
 
 	client := s.client
-	client.StartScreencast(60, 1920, 1080)
+	client.StartScreencast(60, 1920, 1080, nil)
 
 	require.Eventually(s.T(), func() bool {
 		return slices.Equal(calls(), []string{"start", "reload", "start"})
@@ -351,7 +411,7 @@ func (s *CDPSuite) TestStartScreencastClearsFlagWhenRecoveryFails() {
 			s.screencastCalls(tc.fail)
 
 			client := s.client
-			client.StartScreencast(60, 1920, 1080)
+			client.StartScreencast(60, 1920, 1080, nil)
 
 			require.Eventually(s.T(), func() bool { return !screencastingNow(client) },
 				time.Second, 5*time.Millisecond,
@@ -373,7 +433,7 @@ func (s *CDPSuite) TestStartScreencastRestartsAnActiveScreencast() {
 	})
 
 	client := s.client
-	client.StartScreencast(60, 1920, 1080)
+	client.StartScreencast(60, 1920, 1080, nil)
 
 	require.Eventually(s.T(), func() bool {
 		return slices.Equal(calls(), []string{"start", "stop", "start"})
@@ -390,7 +450,7 @@ func (s *CDPSuite) TestStartScreencastClearsFlagWhenTheRestartStopFails() {
 	})
 
 	client := s.client
-	client.StartScreencast(60, 1920, 1080)
+	client.StartScreencast(60, 1920, 1080, nil)
 
 	require.Eventually(s.T(), func() bool { return !screencastingNow(client) },
 		time.Second, 5*time.Millisecond)

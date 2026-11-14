@@ -61,7 +61,7 @@ func (m *mockCDPSession) CloseTab(ctx context.Context, targetID string) error {
 }
 func (m *mockCDPSession) Close()           { m.Called() }
 func (m *mockCDPSession) ResetScreencast() { m.Called() }
-func (m *mockCDPSession) StartScreencast(quality, maxWidth, maxHeight int) <-chan []byte {
+func (m *mockCDPSession) StartScreencast(quality, maxWidth, maxHeight int, _ <-chan struct{}) <-chan []byte {
 	a := m.Called(quality, maxWidth, maxHeight)
 	ch, _ := a.Get(0).(<-chan []byte)
 	return ch
@@ -670,8 +670,14 @@ func (s *CDPManagerSuite) TestTabClosedByChromeReachesSubscribers() {
 	_, onClosed := mockClient.watchers()
 	onClosed("t1")
 
-	require.Eventually(s.T(), func() bool { return !mgr.IsTrackedTab("t1") }, time.Second, 5*time.Millisecond)
-	require.Equal(s.T(), []TabEvent{{Kind: TabRemoved, Tab: TabInfo{TargetID: "t1"}}}, drain(events))
+	// The tab leaves the strip before the event goes out, so wait on the event.
+	var got []TabEvent
+	require.Eventually(s.T(), func() bool {
+		got = append(got, drain(events)...)
+		return len(got) == 1
+	}, time.Second, 5*time.Millisecond)
+	require.Equal(s.T(), []TabEvent{{Kind: TabRemoved, Tab: TabInfo{TargetID: "t1"}}}, got)
+	require.False(s.T(), mgr.IsTrackedTab("t1"))
 }
 
 func (s *CDPManagerSuite) TestTabChanged() {

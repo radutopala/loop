@@ -99,7 +99,7 @@ type CDPSession interface {
 	// CloseBrowser shuts Chrome down cleanly so it commits its profile to disk.
 	CloseBrowser(ctx context.Context) error
 	ResetScreencast()
-	StartScreencast(quality, maxWidth, maxHeight int) <-chan []byte
+	StartScreencast(quality, maxWidth, maxHeight int, stop <-chan struct{}) <-chan []byte
 	StopScreencast()
 	Navigate(ctx context.Context, url string) error
 	Reload(ctx context.Context) error
