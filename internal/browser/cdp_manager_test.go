@@ -18,13 +18,18 @@ import (
 // mockCDPSession implements CDPSession for testing.
 type mockCDPSession struct {
 	mock.Mock
-	watchMu           sync.Mutex
-	onOpened          func(TabInfo, string)
-	onChanged         func(TabInfo)
-	onClosed          func(string)
-	onDialog          func(Dialog)
-	onDialogClosed    func(string)
-	onDownload        func(Download)
+	watchMu        sync.Mutex
+	onOpened       func(TabInfo, string)
+	onChanged      func(TabInfo)
+	onClosed       func(string)
+	onDialog       func(Dialog)
+	onDialogClosed func(string)
+	onDownload     func(Download)
+	onFileChooser  func(FileChooser)
+	// interceptErr is what InterceptFileChoosers returns; intercepts counts
+	// the calls. Every watched client makes one, so it isn't an expectation.
+	interceptErr      error
+	intercepts        int
 	closeBrowserErr   error
 	closeBrowserCalls int
 	// dead makes Alive report a session whose context died with its container.
@@ -169,6 +174,37 @@ func (m *mockCDPSession) WatchDialogs(onOpened func(Dialog), onClosed func(strin
 	m.watchMu.Lock()
 	defer m.watchMu.Unlock()
 	m.onDialog, m.onDialogClosed = onOpened, onClosed
+}
+
+// WatchFileChoosers keeps the handler so a test can play a page opening a
+// file chooser.
+func (m *mockCDPSession) WatchFileChoosers(onOpened func(FileChooser)) {
+	m.watchMu.Lock()
+	defer m.watchMu.Unlock()
+	m.onFileChooser = onOpened
+}
+
+func (m *mockCDPSession) fileChooserWatcher() func(FileChooser) {
+	m.watchMu.Lock()
+	defer m.watchMu.Unlock()
+	return m.onFileChooser
+}
+
+func (m *mockCDPSession) InterceptFileChoosers(context.Context) error {
+	m.watchMu.Lock()
+	defer m.watchMu.Unlock()
+	m.intercepts++
+	return m.interceptErr
+}
+
+func (m *mockCDPSession) interceptCount() int {
+	m.watchMu.Lock()
+	defer m.watchMu.Unlock()
+	return m.intercepts
+}
+
+func (m *mockCDPSession) SetChosenFiles(ctx context.Context, nodeID cdp.BackendNodeID, files []ChosenFile) error {
+	return m.Called(ctx, nodeID, files).Error(0)
 }
 
 // WatchDownloads keeps the handler so a test can play Chrome saving a file.

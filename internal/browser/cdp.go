@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -1784,6 +1785,116 @@ func (c *CDPClient) HandleDialog(ctx context.Context, accept bool, promptText st
 	return runBoundedFor(ctx, c.commandDeadline(), func() error {
 		return c.runFn(c.ctx, chromedp.ActionFunc(func(ctx context.Context) error {
 			return c.exec(ctx, cdppage.CommandHandleJavaScriptDialog, cdppage.HandleJavaScriptDialog(accept).WithPromptText(promptText), nil)
+		}))
+	})
+}
+
+// FileChooser is a file picker a page's <input type=file> asked for. Chrome
+// in a container has no screen to show one on, so it is intercepted and the
+// pane offers its own.
+type FileChooser struct {
+	TargetID string `json:"target_id"`
+	Multiple bool   `json:"multiple,omitempty"`
+	// NodeID is the input that opened the chooser, which the picked files go
+	// to. The pane never sees it.
+	NodeID cdp.BackendNodeID `json:"-"`
+}
+
+// ChosenFile is one file picked for a FileChooser, its bytes base64-encoded.
+type ChosenFile struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+	Data string `json:"data"`
+}
+
+// InterceptFileChoosers has Chrome report file choosers on this client's tab
+// to WatchFileChoosers rather than open them: headless, an unintercepted one
+// is cancelled the moment it opens.
+func (c *CDPClient) InterceptFileChoosers(ctx context.Context) error {
+	return runBoundedFor(ctx, c.commandDeadline(), func() error {
+		return c.runFn(c.ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+			return c.exec(ctx, cdppage.CommandSetInterceptFileChooserDialog, cdppage.SetInterceptFileChooserDialog(true), nil)
+		}))
+	})
+}
+
+// WatchFileChoosers reports the file choosers an <input type=file> on this
+// client's tab opens, once InterceptFileChoosers is on. One opened from
+// script, with no input behind it, has nowhere to put the files and is left
+// out. The callback runs on CDP's event loop and must not block.
+func (c *CDPClient) WatchFileChoosers(onOpened func(FileChooser)) {
+	tid := c.TargetID()
+	c.listenFunc(c.ctx, func(ev any) {
+		if e, ok := ev.(*cdppage.EventFileChooserOpened); ok && e.BackendNodeID != 0 {
+			onOpened(FileChooser{TargetID: tid, Multiple: e.Mode == cdppage.FileChooserOpenedModeSelectMultiple, NodeID: e.BackendNodeID})
+		}
+	})
+}
+
+// setChosenFilesJS runs on the file input with the picked files, or with no
+// argument when the pick was cancelled, and fires the events a real chooser
+// fires. It answers "ok" or why not.
+const setChosenFilesJS = `function (files) {
+  if (!(this instanceof HTMLInputElement) || this.type !== "file") return "the file input is gone";
+  if (files == null) {
+    this.dispatchEvent(new Event("cancel", { bubbles: true }));
+    return "ok";
+  }
+  const dt = new DataTransfer();
+  for (const f of files) {
+    const bin = atob(f.data);
+    const buf = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+    dt.items.add(new File([buf], f.name, { type: f.type }));
+  }
+  this.files = dt.files;
+  this.dispatchEvent(new Event("input", { bubbles: true }));
+  this.dispatchEvent(new Event("change", { bubbles: true }));
+  return "ok";
+}`
+
+// SetChosenFiles answers the file chooser nodeID opened with files, or with a
+// cancel when files is nil.
+//
+// The files travel in the call rather than as paths for DOM.setFileInputFiles:
+// Chrome may run in a container that cannot see the daemon's disk. Decoding a
+// large file takes the page a while, so this runs under the page-read
+// deadline.
+func (c *CDPClient) SetChosenFiles(ctx context.Context, nodeID cdp.BackendNodeID, files []ChosenFile) error {
+	// A cancel passes no argument: a JSON null would not reach the page
+	// anyway, as CallArgument drops a null value when it is sent.
+	var args []*cdpruntime.CallArgument
+	if files != nil {
+		arg, _ := json.Marshal(files) // plain strings: never fails
+		args = []*cdpruntime.CallArgument{{Value: jsontext.Value(arg)}}
+	}
+	return runBoundedFor(ctx, c.pageReadDeadline(), func() error {
+		return c.runFn(c.ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+			var node cdpdom.ResolveNodeReturns
+			if err := c.exec(ctx, cdpdom.CommandResolveNode, cdpdom.ResolveNode().WithBackendNodeID(nodeID), &node); err != nil {
+				return fmt.Errorf("finding the file input: %w", err)
+			}
+			if node.Object == nil {
+				return errors.New("the file input is gone")
+			}
+			var res cdpruntime.CallFunctionOnReturns
+			if err := c.exec(ctx, cdpruntime.CommandCallFunctionOn, cdpruntime.CallFunctionOn(setChosenFilesJS).
+				WithObjectID(node.Object.ObjectID).
+				WithArguments(args).
+				WithReturnByValue(true), &res); err != nil {
+				return fmt.Errorf("setting the files: %w", err)
+			}
+			if res.ExceptionDetails != nil {
+				return fmt.Errorf("setting the files: %s", res.ExceptionDetails.Error())
+			}
+			if res.Result == nil || string(res.Result.Value) != `"ok"` {
+				var msg string
+				if res.Result != nil {
+					_ = json.Unmarshal(res.Result.Value, &msg)
+				}
+				return fmt.Errorf("setting the files: %s", msg)
+			}
+			return nil
 		}))
 	})
 }

@@ -3,6 +3,7 @@ import { browserAction, getWsUrl, wsProtocols } from "../api/loopApi";
 import type { PageContextMenu } from "../components/panels/browserContextMenu";
 import { type PageDialog, type PageDialogs, withDialog, withoutDialog } from "../components/panels/browserDialog";
 import type { DownloadedFile, DownloadList, PageDownload } from "../components/panels/browserDownloads";
+import { type ChosenFile, type PageFileChooser, type PageFileChoosers, withFileChooser, withoutFileChooser } from "../components/panels/browserFileChooser";
 import type { PageSelectMenu } from "../components/panels/browserSelectMenu";
 
 interface BrowserWSMessage {
@@ -25,6 +26,7 @@ interface BrowserWSMessage {
   index?: number;
   target_id?: string;
   accept?: boolean;
+  files?: ChosenFile[];
 }
 
 export interface TabInfo {
@@ -46,6 +48,7 @@ interface BrowserWSResponse {
   text?: string;
   menu?: PageContextMenu;
   dialog?: PageDialog;
+  file_chooser?: PageFileChooser;
   select?: PageSelectMenu;
   download?: PageDownload;
   downloads_dir?: string;
@@ -85,6 +88,7 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
   const [tabs, setTabs] = useState<TabInfo[]>([]);
   const [activeTargetId, setActiveTargetId] = useState("");
   const [dialogs, setDialogs] = useState<PageDialogs>({});
+  const [fileChoosers, setFileChoosers] = useState<PageFileChoosers>({});
 
   const activeTargetIdRef = useRef(activeTargetId);
   activeTargetIdRef.current = activeTargetId;
@@ -181,6 +185,12 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
             case "dialog_closed":
               if (msg.target_id) setDialogs((prev) => withoutDialog(prev, msg.target_id!));
               break;
+            case "file_chooser":
+              if (msg.file_chooser) setFileChoosers((prev) => withFileChooser(prev, msg.file_chooser!));
+              break;
+            case "file_chooser_closed":
+              if (msg.target_id) setFileChoosers((prev) => withoutFileChooser(prev, msg.target_id!));
+              break;
             case "error":
               onErrorRef.current?.(msg.message || "Unknown error");
               break;
@@ -227,6 +237,7 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
               if (msg.target_id) {
                 setTabs((prev) => prev.filter((t) => t.target_id !== msg.target_id));
                 setDialogs((prev) => withoutDialog(prev, msg.target_id!));
+                setFileChoosers((prev) => withoutFileChooser(prev, msg.target_id!));
               }
               break;
           }
@@ -243,6 +254,7 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
         setStarted(false);
         // The next start announces whatever is still open.
         setDialogs({});
+        setFileChoosers({});
         reconnectTimer = setTimeout(() => {
           reconnectDelay = Math.min(reconnectDelay * 2, 10000);
           connect();
@@ -359,6 +371,14 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
     [send],
   );
 
+  /** Gives the file chooser open on targetId the picked files; null cancels it. */
+  const answerFileChooser = useCallback(
+    (targetId: string, files: ChosenFile[] | null) => {
+      send({ type: "file_chooser_answer", target_id: targetId, files: files ?? [] });
+    },
+    [send],
+  );
+
   const listTabs = useCallback(() => {
     if (!channelId) return;
     browserAction(channelId, "list_tabs").then((resp) => {
@@ -423,6 +443,9 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
     // Every tab's open dialog, so the strip can flag tabs that wait on one.
     dialogs,
     answerDialog,
+    // The file chooser the tab on screen opened, if any.
+    fileChooser: fileChoosers[activeTargetId] as PageFileChooser | undefined,
+    answerFileChooser,
     chooseSelectOption,
     listDownloads,
     listTabs,

@@ -34,7 +34,7 @@ func (s *Server) registerUploadTools() {
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "upload_file",
 		InputSchema: inputSchemaFor[uploadFileInput](),
-		Description: "Upload local files to a file input on the page, as if picked in its file chooser. Give ref (the input or the button or label that opens the chooser) or selector (for a hidden input); the page gets the usual input and change events. Clicking such a button instead would open a chooser nobody can answer.",
+		Description: "Upload local files to a file input on the page, as if picked in its file chooser. Give ref (the input or the button or label that opens the chooser) or selector (for a hidden input); the page gets the usual input and change events. Clicking such a button instead opens a chooser that waits for a person at the browser pane.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input uploadFileInput) (*mcp.CallToolResult, any, error) {
 		return s.handleUploadFile(ctx, input)
 	})

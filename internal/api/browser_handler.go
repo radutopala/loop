@@ -74,6 +74,8 @@ type browserWSMessage struct {
 	// Dialog answer fields
 	TargetID string `json:"target_id,omitempty"`
 	Accept   bool   `json:"accept,omitempty"`
+	// Files answer a file chooser; none cancels it.
+	Files []browser.ChosenFile `json:"files,omitempty"`
 }
 
 // browserTabInfo mirrors browser.TabInfo for WS responses.
@@ -86,18 +88,19 @@ type browserTabInfo struct {
 
 // browserWSResponse is a status message sent to the client.
 type browserWSResponse struct {
-	Type           string              `json:"type"` // "started", "stopped", "page_info", "error", "tabs", "tab_switched", "tab_created", "tab_closed", "clipboard", "context_menu", "dialog", "dialog_closed", "select_menu", "download", "tab_updated"
-	URL            string              `json:"url,omitempty"`
-	Title          string              `json:"title,omitempty"`
-	Message        string              `json:"message,omitempty"`
-	Tabs           []browserTabInfo    `json:"tabs,omitempty"`
-	ActiveTargetID string              `json:"active_target_id,omitempty"`
-	TargetID       string              `json:"target_id,omitempty"`
-	Text           string              `json:"text,omitempty"`
-	Menu           *browserContextMenu `json:"menu,omitempty"`
-	Dialog         *browser.Dialog     `json:"dialog,omitempty"`
-	Select         *browserSelectMenu  `json:"select,omitempty"`
-	Download       *browser.Download   `json:"download,omitempty"`
+	Type           string               `json:"type"` // "started", "stopped", "page_info", "error", "tabs", "tab_switched", "tab_created", "tab_closed", "clipboard", "context_menu", "dialog", "dialog_closed", "select_menu", "download", "tab_updated", "file_chooser", "file_chooser_closed"
+	URL            string               `json:"url,omitempty"`
+	Title          string               `json:"title,omitempty"`
+	Message        string               `json:"message,omitempty"`
+	Tabs           []browserTabInfo     `json:"tabs,omitempty"`
+	ActiveTargetID string               `json:"active_target_id,omitempty"`
+	TargetID       string               `json:"target_id,omitempty"`
+	Text           string               `json:"text,omitempty"`
+	Menu           *browserContextMenu  `json:"menu,omitempty"`
+	Dialog         *browser.Dialog      `json:"dialog,omitempty"`
+	Select         *browserSelectMenu   `json:"select,omitempty"`
+	Download       *browser.Download    `json:"download,omitempty"`
+	FileChooser    *browser.FileChooser `json:"file_chooser,omitempty"`
 	// DownloadsDir and Files answer list_downloads.
 	DownloadsDir string                `json:"downloads_dir,omitempty"`
 	Files        []browserDownloadFile `json:"files,omitempty"`
@@ -133,6 +136,7 @@ const (
 	bwsMsgInput      = "input"
 	bwsMsgDialog     = "dialog_answer"
 	bwsMsgDownloads  = "list_downloads"
+	bwsMsgFiles      = "file_chooser_answer"
 
 	bwsInputPaste       = "paste"
 	bwsInputCopy        = "copy"
@@ -154,6 +158,12 @@ const (
 	bwsRespDownload    = "download"
 	bwsRespDownloads   = "downloads"
 	bwsRespTabUpdated  = "tab_updated"
+	bwsRespFileChooser = "file_chooser"
+	bwsRespFilesDone   = "file_chooser_closed"
+
+	// fileChooserMaxBytes caps the files one pick sends the page, which get
+	// there base64-encoded in a single CDP call.
+	fileChooserMaxBytes = 20 << 20
 
 	cdpMaxRetries = 20
 	cdpRetryDelay = 500 * time.Millisecond
@@ -225,6 +235,8 @@ func (s *browserService) handleBrowserWS(w http.ResponseWriter, r *http.Request)
 			go bc.answerDialog(msg)
 		case bwsMsgDownloads:
 			bc.sendDownloads(msg.ChannelID)
+		case bwsMsgFiles:
+			go bc.answerFileChooser(msg)
 		default:
 			bc.sendError("unknown message type: " + msg.Type)
 		}
@@ -375,11 +387,44 @@ func (bc *browserWSConn) handleStart(ctx context.Context, msg browserWSMessage) 
 	bc.sendPendingDialog(cdpMgr)
 }
 
-// sendPendingDialog shows the pane a dialog the active tab was already blocked
-// on when it started, which no event will announce again.
+// sendPendingDialog shows the pane a dialog — or file chooser — the active
+// tab already had open when the pane started, which no event will announce
+// again.
 func (bc *browserWSConn) sendPendingDialog(cdpMgr *browser.CDPManager) {
-	if d, ok := cdpMgr.PendingDialog(cdpMgr.ActiveTargetID()); ok {
+	tid := cdpMgr.ActiveTargetID()
+	if d, ok := cdpMgr.PendingDialog(tid); ok {
 		bc.sendJSON(browserWSResponse{Type: bwsRespDialog, TargetID: d.TargetID, Dialog: &d})
+	}
+	if fc, ok := cdpMgr.PendingFileChooser(tid); ok {
+		bc.sendJSON(browserWSResponse{Type: bwsRespFileChooser, TargetID: fc.TargetID, FileChooser: &fc})
+	}
+}
+
+// answerFileChooser hands the page the files the user picked in the pane,
+// or cancels its chooser when they picked none.
+func (bc *browserWSConn) answerFileChooser(msg browserWSMessage) {
+	bc.mu.Lock()
+	cdpMgr := bc.cdpMgr
+	bc.mu.Unlock()
+	if cdpMgr == nil {
+		return
+	}
+	files := msg.Files
+	if len(files) == 0 {
+		files = nil
+	}
+	// Base64 grows the bytes by a third; the pane checks the real sizes, so
+	// this only stops a pick that slipped past it.
+	var encoded int
+	for _, f := range files {
+		encoded += len(f.Data)
+	}
+	if encoded > fileChooserMaxBytes/3*4+4 {
+		bc.sendError(fmt.Sprintf("the files are over the %d MB limit", fileChooserMaxBytes>>20))
+		return
+	}
+	if err := cdpMgr.AnswerFileChooser(context.Background(), msg.TargetID, files); err != nil {
+		bc.sendError("sending the files failed: " + err.Error())
 	}
 }
 
@@ -902,6 +947,11 @@ func (bc *browserWSConn) watchTabEvents(events <-chan browser.TabEvent, stop <-c
 			case browser.DownloadChanged:
 				d := ev.Download
 				bc.sendJSON(browserWSResponse{Type: bwsRespDownload, Download: &d})
+			case browser.FileChooserOpened:
+				fc := ev.FileChooser
+				bc.sendJSON(browserWSResponse{Type: bwsRespFileChooser, TargetID: fc.TargetID, FileChooser: &fc})
+			case browser.FileChooserClosed:
+				bc.sendJSON(browserWSResponse{Type: bwsRespFilesDone, TargetID: ev.Tab.TargetID})
 			case browser.TabUpdated:
 				bc.sendJSON(browserWSResponse{
 					Type:     bwsRespTabUpdated,

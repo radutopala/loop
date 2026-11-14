@@ -570,6 +570,8 @@ type mockCDPSession struct {
 	// play a page opening a dialog.
 	dialogMu sync.Mutex
 	onDialog func(browser.Dialog)
+	// onFileChooser is the file chooser handler the manager registered.
+	onFileChooser func(browser.FileChooser)
 	// screencastStops are the stop channels StartScreencast was given, in order.
 	screencastStops []<-chan struct{}
 }
@@ -708,6 +710,29 @@ func (m *mockCDPSession) WatchDialogs(onOpened func(browser.Dialog), _ func(targ
 	m.dialogMu.Lock()
 	defer m.dialogMu.Unlock()
 	m.onDialog = onOpened
+}
+
+// WatchFileChoosers keeps the handler for openFileChooser; every Connect
+// calls it, so it isn't an expectation.
+func (m *mockCDPSession) WatchFileChoosers(onOpened func(browser.FileChooser)) {
+	m.dialogMu.Lock()
+	defer m.dialogMu.Unlock()
+	m.onFileChooser = onOpened
+}
+
+// InterceptFileChoosers is a no-op that every Connect calls.
+func (m *mockCDPSession) InterceptFileChoosers(context.Context) error { return nil }
+
+// openFileChooser plays the page opening fc.
+func (m *mockCDPSession) openFileChooser(fc browser.FileChooser) {
+	m.dialogMu.Lock()
+	fn := m.onFileChooser
+	m.dialogMu.Unlock()
+	fn(fc)
+}
+
+func (m *mockCDPSession) SetChosenFiles(ctx context.Context, nodeID cdp.BackendNodeID, files []browser.ChosenFile) error {
+	return m.Called(ctx, nodeID, files).Error(0)
 }
 
 // WatchDownloads is a no-op: the handler tests send download events to
