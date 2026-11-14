@@ -386,6 +386,8 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
     sendInput,
     // The dialog blocking the tab on screen, if any.
     dialog: dialogs[activeTargetId] as PageDialog | undefined,
+    // Every tab's open dialog, so the strip can flag tabs that wait on one.
+    dialogs,
     answerDialog,
     chooseSelectOption,
     listTabs,
