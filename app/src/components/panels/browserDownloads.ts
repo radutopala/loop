@@ -45,3 +45,37 @@ export function downloadLabel(d: PageDownload): string {
       return `Downloading ${name}…`;
   }
 }
+
+/** A file in the channel's downloads dir, as list_downloads reports it. */
+export interface DownloadedFile {
+  name: string;
+  path: string;
+  size: number;
+  mod_time: string;
+  // Chrome is still writing it.
+  partial?: boolean;
+}
+
+/** The channel's downloads dir and what is in it, newest first. */
+export interface DownloadList {
+  dir: string;
+  files: readonly DownloadedFile[];
+}
+
+/** formatBytes renders n as B, KB, MB or GB with one decimal past bytes. */
+export function formatBytes(n: number): string {
+  const units = ["KB", "MB", "GB"];
+  if (n < 1024) return `${n} B`;
+  let v = n / 1024;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v.toFixed(1)} ${units[i]}`;
+}
+
+/** What a row of the downloads list says after the name. */
+export function downloadedFileDetail(f: DownloadedFile): string {
+  return f.partial ? `downloading… ${formatBytes(f.size)} so far` : formatBytes(f.size);
+}

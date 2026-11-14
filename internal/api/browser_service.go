@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -773,27 +774,38 @@ func paramBool(params map[string]any, key string) bool {
 	return false
 }
 
-// listDownloads lists what the channel's browser has downloaded. The dir is
-// mounted into the agent container at the same path, so the paths it names
-// are ones the agent can open.
-func (s *browserService) listDownloads(channelID string) browserActionResponse {
+// browserDownloadFile is one file in a channel's downloads dir.
+type browserDownloadFile struct {
+	Name    string    `json:"name"`
+	Path    string    `json:"path"`
+	Size    int64     `json:"size"`
+	ModTime time.Time `json:"mod_time"`
+	// Partial is set while Chrome is still writing the file.
+	Partial bool `json:"partial,omitempty"`
+}
+
+// downloadFiles lists what the channel's browser has downloaded, newest
+// first, along with the dir it saves to. The dir is mounted into the agent
+// container at the same path, so the paths it names are ones the agent can
+// open.
+func (s *browserService) downloadFiles(channelID string) (string, []browserDownloadFile, error) {
 	if s.modeFor(channelID) == "host" {
-		return browserActionResponse{Error: "in host mode downloads go wherever your own Chrome saves them, which the agent can't see"}
+		return "", nil, errors.New("in host mode downloads go wherever your own Chrome saves them, which the agent can't see")
 	}
 	if s.loopDir == "" {
-		return browserActionResponse{Error: "downloads are off for this browser"}
+		return "", nil, errors.New("downloads are off for this browser")
 	}
 	// A channel id with nothing to keep has no dir of its own: it would name
 	// the dir that holds every channel's.
 	if container.SanitizeName(channelID) == "" {
-		return browserActionResponse{Error: fmt.Sprintf("channel %q has no downloads dir", channelID)}
+		return "", nil, fmt.Errorf("channel %q has no downloads dir", channelID)
 	}
 	dir := container.DownloadsDir(s.loopDir, channelID)
 	entries, err := readDownloads(filepath.Join(s.loopDir, "downloads"), dir)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return browserActionResponse{Error: fmt.Sprintf("reading downloads: %v", err)}
+		return "", nil, fmt.Errorf("reading downloads: %w", err)
 	}
-	var b strings.Builder
+	var files []browserDownloadFile
 	for _, e := range entries {
 		info, err := e.Info()
 		if err != nil || !info.Mode().IsRegular() {
@@ -801,11 +813,26 @@ func (s *browserService) listDownloads(channelID string) browserActionResponse {
 		}
 		// Chrome writes a download to <name>.crdownload and renames it when
 		// it completes.
-		if name, ok := strings.CutSuffix(e.Name(), ".crdownload"); ok {
-			fmt.Fprintf(&b, "- %s (still downloading, %d bytes so far)\n", filepath.Join(dir, name), info.Size())
+		name, partial := strings.CutSuffix(e.Name(), ".crdownload")
+		files = append(files, browserDownloadFile{Name: name, Path: filepath.Join(dir, name), Size: info.Size(), ModTime: info.ModTime(), Partial: partial})
+	}
+	slices.SortStableFunc(files, func(a, b browserDownloadFile) int { return b.ModTime.Compare(a.ModTime) })
+	return dir, files, nil
+}
+
+// listDownloads is downloadFiles as the list_downloads tool prints it.
+func (s *browserService) listDownloads(channelID string) browserActionResponse {
+	dir, files, err := s.downloadFiles(channelID)
+	if err != nil {
+		return browserActionResponse{Error: err.Error()}
+	}
+	var b strings.Builder
+	for _, f := range files {
+		if f.Partial {
+			fmt.Fprintf(&b, "- %s (still downloading, %d bytes so far)\n", f.Path, f.Size)
 			continue
 		}
-		fmt.Fprintf(&b, "- %s (%d bytes)\n", filepath.Join(dir, e.Name()), info.Size())
+		fmt.Fprintf(&b, "- %s (%d bytes)\n", f.Path, f.Size)
 	}
 	if b.Len() == 0 {
 		return browserActionResponse{Result: "No downloads yet. The browser saves them to " + dir}

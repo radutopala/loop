@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { browserAction, getWsUrl, wsProtocols } from "../api/loopApi";
 import type { PageContextMenu } from "../components/panels/browserContextMenu";
 import { type PageDialog, type PageDialogs, withDialog, withoutDialog } from "../components/panels/browserDialog";
-import type { PageDownload } from "../components/panels/browserDownloads";
+import type { DownloadedFile, DownloadList, PageDownload } from "../components/panels/browserDownloads";
 import type { PageSelectMenu } from "../components/panels/browserSelectMenu";
 
 interface BrowserWSMessage {
@@ -48,6 +48,8 @@ interface BrowserWSResponse {
   dialog?: PageDialog;
   select?: PageSelectMenu;
   download?: PageDownload;
+  downloads_dir?: string;
+  files?: DownloadedFile[];
 }
 
 interface UseBrowserWsOptions {
@@ -63,9 +65,11 @@ interface UseBrowserWsOptions {
   onSelectMenu?: (menu: PageSelectMenu) => void;
   /** A download, from any tab, starting or finishing. */
   onDownload?: (download: PageDownload) => void;
+  /** The channel's downloads dir, answering listDownloads. */
+  onDownloadList?: (list: DownloadList) => void;
 }
 
-export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarted, onStopped, onContextMenu, onSelectMenu, onDownload }: UseBrowserWsOptions) {
+export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarted, onStopped, onContextMenu, onSelectMenu, onDownload, onDownloadList }: UseBrowserWsOptions) {
   const wsRef = useRef<WebSocket | null>(null);
   const onFrameRef = useRef(onFrame);
   const onPageInfoRef = useRef(onPageInfo);
@@ -75,6 +79,7 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
   const onContextMenuRef = useRef(onContextMenu);
   const onSelectMenuRef = useRef(onSelectMenu);
   const onDownloadRef = useRef(onDownload);
+  const onDownloadListRef = useRef(onDownloadList);
   const [connected, setConnected] = useState(false);
   const [started, setStarted] = useState(false);
   const [tabs, setTabs] = useState<TabInfo[]>([]);
@@ -92,6 +97,7 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
   onContextMenuRef.current = onContextMenu;
   onSelectMenuRef.current = onSelectMenu;
   onDownloadRef.current = onDownload;
+  onDownloadListRef.current = onDownloadList;
 
   // Connect WebSocket with auto-reconnect.
   useEffect(() => {
@@ -165,6 +171,9 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
               break;
             case "download":
               if (msg.download) onDownloadRef.current?.(msg.download);
+              break;
+            case "downloads":
+              onDownloadListRef.current?.({ dir: msg.downloads_dir ?? "", files: msg.files ?? [] });
               break;
             case "dialog":
               if (msg.dialog) setDialogs((prev) => withDialog(prev, msg.dialog!));
@@ -326,6 +335,11 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
     [send],
   );
 
+  /** Asks for the channel's downloads dir; the answer comes to onDownloadList. */
+  const listDownloads = useCallback(() => {
+    if (channelId) send({ type: "list_downloads", channel_id: channelId });
+  }, [send, channelId]);
+
   /** Answers the dialog blocking targetId: OK or Cancel, with a prompt's text. */
   const answerDialog = useCallback(
     (targetId: string, accept: boolean, text?: string) => {
@@ -399,6 +413,7 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
     dialogs,
     answerDialog,
     chooseSelectOption,
+    listDownloads,
     listTabs,
     switchTab,
     newTab,
