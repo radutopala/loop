@@ -84,13 +84,19 @@ func (s *Server) readUploadFiles(paths []string) ([]uploadFile, error) {
 	files := make([]uploadFile, 0, len(paths))
 	var total int64
 	for _, p := range paths {
-		data, err := os.ReadFile(p)
+		// Sized before it is read, so a huge file is refused without being
+		// loaded.
+		info, err := os.Stat(p)
 		if err != nil {
 			return nil, fmt.Errorf("reading %s: %w", p, err)
 		}
-		total += int64(len(data))
+		total += info.Size()
 		if total > s.uploadMaxBytes {
 			return nil, fmt.Errorf("files are over the %d MB upload limit", s.uploadMaxBytes>>20)
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return nil, fmt.Errorf("reading %s: %w", p, err)
 		}
 		// A browser's File.type is the bare media type, without "; charset=".
 		typ, _, _ := strings.Cut(mime.TypeByExtension(filepath.Ext(p)), ";")

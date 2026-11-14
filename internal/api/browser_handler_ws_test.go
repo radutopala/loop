@@ -528,7 +528,12 @@ func (s *BrowserHandlerSuite) TestInputClickOnSelect() {
 			defer ts.Close()
 			defer ws.Close()
 
-			mockCDP.On("EvaluateJS", mock.Anything, fmt.Sprintf(selectAtJS, at, at)).Return(tt.read, tt.readErr)
+			// The lookup must give up soon, so a slow page doesn't hold the click.
+			probeBounded := mock.MatchedBy(func(ctx context.Context) bool {
+				deadline, ok := ctx.Deadline()
+				return ok && time.Until(deadline) <= selectProbeWait
+			})
+			mockCDP.On("EvaluateJS", probeBounded, fmt.Sprintf(selectAtJS, at, at)).Return(tt.read, tt.readErr)
 			mockCDP.On("MouseClick", mock.Anything, at, at, "left", 1).Return(nil)
 
 			require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgInput, InputType: "click", X: at, Y: at}))
