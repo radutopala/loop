@@ -52,6 +52,8 @@ import { parseChannelTarget } from "./utils/messageLinks";
 import { storageGet, storageRemove, storageSet } from "./utils/storage";
 
 const LAST_CHANNEL_KEY = "loop-last-channel";
+// Whether the channel sidebar is open; it reopens the way it was left.
+const SIDEBAR_OPEN_KEY = "loop-sidebar-open";
 
 function getHashChannelId(): string | null {
   const target = parseChannelTarget(window.location.hash);
@@ -128,7 +130,8 @@ function AppInner() {
   selectedIdRef.current = selectedId;
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() => storageGet(SIDEBAR_OPEN_KEY) !== "false");
+  useEffect(() => storageSet(SIDEBAR_OPEN_KEY, String(sidebarOpen)), [sidebarOpen]);
   const [mountKey, setMountKey] = useState(0);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const {

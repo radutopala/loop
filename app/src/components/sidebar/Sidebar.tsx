@@ -19,11 +19,11 @@ import { type SectionKey, SectionTabs, SessionSections } from "./SessionSections
 import { SidebarFooter } from "./SidebarFooter";
 import { SidebarHeader } from "./SidebarHeader";
 import { activeSessions, isTaskThread, recentSessions, sessionContext, sessionName } from "./sessions";
+import { SIDEBAR_MIN_WIDTH, savedSidebarWidth } from "./sidebarWidth";
 import { TicketDialog } from "./TicketDialog";
 
-const MIN_WIDTH = 180;
+const MIN_WIDTH = SIDEBAR_MIN_WIDTH;
 const MAX_WIDTH_PERCENT = 0.25;
-const DEFAULT_WIDTH = 280;
 const ORDER_STORAGE_KEY = "loop-channel-order";
 // Per-parent thread/worktree order, keyed by parent channel id. Client-side
 // only (localStorage), mirroring the channel-order approach — the backend
@@ -34,6 +34,13 @@ const TAB_STORAGE_KEY = "loop-sidebar-tab";
 
 // Whether task threads are hidden, per tab.
 const HIDE_TASKS_STORAGE_KEY = "loop-sidebar-hide-tasks";
+
+// Width the sidebar was last dragged to.
+const WIDTH_STORAGE_KEY = "loop-sidebar-width";
+
+function loadWidth(): number {
+  return savedSidebarWidth(storageGetJSON<unknown>(WIDTH_STORAGE_KEY));
+}
 
 // Whether the sidebar shows only the rows that need you (a lit pill).
 const NEEDS_YOU_STORAGE_KEY = "loop-sidebar-needs-you";
@@ -168,7 +175,7 @@ export function Sidebar({
 }: SidebarProps) {
   // hiddenPills are the pill kinds turned off, the global config's desktop.hidden_pills.
   const { colors, fontSizes, hiddenPills, setHiddenPills } = useTheme();
-  const [width, setWidth] = useState(DEFAULT_WIDTH);
+  const [width, setWidth] = useState(loadWidth);
   const [resizing, setResizing] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [renaming, setRenaming] = useState<Channel | null>(null);
@@ -433,15 +440,17 @@ export function Sidebar({
 
       const startX = e.clientX;
       const startWidth = width;
+      let lastWidth = width;
 
       const onMouseMove = (ev: MouseEvent) => {
         const maxWidth = window.innerWidth * MAX_WIDTH_PERCENT;
-        const newWidth = Math.min(maxWidth, Math.max(MIN_WIDTH, startWidth + ev.clientX - startX));
-        setWidth(newWidth);
+        lastWidth = Math.min(maxWidth, Math.max(MIN_WIDTH, startWidth + ev.clientX - startX));
+        setWidth(lastWidth);
       };
 
       const onMouseUp = () => {
         setResizing(false);
+        storageSetJSON(WIDTH_STORAGE_KEY, Math.round(lastWidth));
         document.removeEventListener("mousemove", onMouseMove);
         document.removeEventListener("mouseup", onMouseUp);
       };
