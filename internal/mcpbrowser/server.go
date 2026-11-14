@@ -262,7 +262,7 @@ func describeWait(w waitSpec) string {
 
 type computerInput struct {
 	Action   string  `json:"action" jsonschema:"The action to perform: click,right_click,double_click,triple_click,type,key,scroll,move,hover,screenshot,wait,left_click_drag"`
-	Ref      int     `json:"ref,omitempty" jsonschema:"Element ref number to interact with (from read_page)"`
+	Ref      refArg  `json:"ref,omitempty" jsonschema:"Element ref to interact with, from read_page or find"`
 	X        float64 `json:"x,omitempty" jsonschema:"X coordinate (or end X for left_click_drag)"`
 	Y        float64 `json:"y,omitempty" jsonschema:"Y coordinate (or end Y for left_click_drag)"`
 	Text     string  `json:"text,omitempty" jsonschema:"Text to type or key name"`
@@ -342,23 +342,26 @@ func (s *Server) registerTools() {
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "computer",
+		InputSchema: inputSchemaFor[computerInput](),
 		Description: "Perform computer actions: click, type, key, scroll, move, screenshot, wait, triple_click, double_click. Use ref from read_page for precise element targeting. With wait_for_selector or wait_for_text, wait and screenshot first wait for the page to match, and the other actions wait after acting — e.g. for what a click loads.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input computerInput) (*mcp.CallToolResult, any, error) {
 		return s.handleComputer(ctx, input)
 	})
 
 	type formInputInput struct {
-		Ref   int    `json:"ref" jsonschema:"Element ref number from read_page"`
+		Ref   refArg `json:"ref" jsonschema:"Element ref from read_page or find"`
 		Value string `json:"value" jsonschema:"Value to enter in the form field"`
 	}
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "form_input",
+		InputSchema: inputSchemaFor[formInputInput](),
 		Description: "Fill in a form field by clicking it, clearing existing content, and typing the new value.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input formInputInput) (*mcp.CallToolResult, any, error) {
-		if input.Ref < 1 || input.Ref > len(s.refs) {
-			return errorResult(fmt.Sprintf("ref %d out of range (1-%d)", input.Ref, len(s.refs))), nil, nil
+		ref := int(input.Ref)
+		if ref < 1 || ref > len(s.refs) {
+			return errorResult(fmt.Sprintf("ref %d out of range (1-%d)", ref, len(s.refs))), nil, nil
 		}
-		if _, err := s.callAction(ctx, "click_ref", map[string]any{"refs": s.refs, "ref_index": input.Ref}); err != nil {
+		if _, err := s.callAction(ctx, "click_ref", map[string]any{"refs": s.refs, "ref_index": ref}); err != nil {
 			return errorResult(fmt.Sprintf("click failed: %v", err)), nil, nil
 		}
 		if _, err := s.callAction(ctx, "key_press", map[string]any{"key": "Control+a"}); err != nil {
@@ -698,7 +701,7 @@ func (s *Server) runComputer(ctx context.Context, input computerInput) (*mcp.Cal
 	// Resolve coordinates from ref if provided.
 	x, y := input.X, input.Y
 	if input.Ref > 0 {
-		if input.Ref > len(s.refs) {
+		if int(input.Ref) > len(s.refs) {
 			return errorResult(fmt.Sprintf("ref %d out of range (1-%d), call read_page first", input.Ref, len(s.refs))), nil, nil
 		}
 		ref := s.refs[input.Ref-1]
@@ -794,7 +797,7 @@ func (s *Server) runComputer(ctx context.Context, input computerInput) (*mcp.Cal
 		return textResult(fmt.Sprintf("Dragged from (%.0f, %.0f) to (%.0f, %.0f)", input.StartX, input.StartY, x, y)), nil, nil
 
 	case "scroll_to":
-		if input.Ref < 1 || input.Ref > len(s.refs) {
+		if input.Ref < 1 || int(input.Ref) > len(s.refs) {
 			return errorResult(fmt.Sprintf("ref %d out of range (1-%d)", input.Ref, len(s.refs))), nil, nil
 		}
 		ref := s.refs[input.Ref-1]
