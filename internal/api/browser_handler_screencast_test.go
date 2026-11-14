@@ -356,9 +356,9 @@ func (s *BrowserHandlerSuite) TestSendTabsResponseNilCDPMgr() {
 	require.Equal(s.T(), bwsRespTabs, resp.Type)
 }
 
-// --- watchMCPTabChanges: switch to different target (calls restartScreencastForTarget) ---
+// --- watchTabEvents: switch to different target (calls restartScreencastForTarget) ---
 
-func (s *BrowserHandlerSuite) TestWatchMCPTabChangesSwitchDifferentTarget() {
+func (s *BrowserHandlerSuite) TestWatchTabEventsSwitchDifferentTarget() {
 	mockCDP := new(mockCDPSession)
 	mockCDP.On("TargetID").Return("t-old")
 	mockCDP.On("SwitchTarget", "t-new").Return(nil)
@@ -403,11 +403,7 @@ func (s *BrowserHandlerSuite) TestWatchMCPTabChangesSwitchDifferentTarget() {
 		stopCh:          make(chan struct{}),
 	}
 
-	done := make(chan struct{})
-	go func() {
-		bc.watchMCPTabChanges()
-		close(done)
-	}()
+	bc.startTabWatch()
 
 	// Notify switch to a DIFFERENT target.
 	cdpMgr.NotifyTargetSwitch("t-new")
@@ -421,63 +417,29 @@ func (s *BrowserHandlerSuite) TestWatchMCPTabChangesSwitchDifferentTarget() {
 	require.Equal(s.T(), "t-new", resp.TargetID)
 
 	close(bc.stopCh)
-	<-done
 	close(frameCh)
 }
 
-// --- watchMCPTabChanges: switch to same target (skip) ---
+// --- watchTabEvents: switch to same target (skip) ---
 
-func (s *BrowserHandlerSuite) TestWatchMCPTabChangesSwitchSameTarget() {
+func (s *BrowserHandlerSuite) TestWatchTabEventsSkipsSwitchToTheShownTab() {
 	mockCDP := new(mockCDPSession)
 	mockCDP.On("TargetID").Return("t-current")
 
-	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{}, slog.Default())
-
-	bc := &browserWSConn{
-		logger: slog.Default(),
-		cdpMgr: cdpMgr,
-		cdp:    mockCDP,
-		stopCh: make(chan struct{}),
-	}
+	bc := &browserWSConn{logger: slog.Default(), cdp: mockCDP, stopCh: make(chan struct{})}
+	events := make(chan browser.TabEvent, 2)
+	events <- browser.TabEvent{Kind: browser.TabSwitched, Tab: browser.TabInfo{TargetID: "t-current"}}
+	stop := make(chan struct{})
 
 	done := make(chan struct{})
 	go func() {
-		bc.watchMCPTabChanges()
+		bc.watchTabEvents(events, stop)
 		close(done)
 	}()
-
-	// Notify switch to same target — should be skipped, then stop.
-	cdpMgr.NotifyTargetSwitch("t-current")
-	time.Sleep(50 * time.Millisecond)
-	close(bc.stopCh)
-
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		s.T().Fatal("watchMCPTabChanges did not exit")
-	}
-}
-
-// --- watchMCPTabChanges: nil cdpMgr ---
-
-func (s *BrowserHandlerSuite) TestWatchMCPTabChangesNilCDPMgr() {
-	bc := &browserWSConn{
-		logger: slog.Default(),
-		stopCh: make(chan struct{}),
-	}
-
-	done := make(chan struct{})
-	go func() {
-		bc.watchMCPTabChanges()
-		close(done)
-	}()
-
-	close(bc.stopCh)
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		s.T().Fatal("watchMCPTabChanges did not exit")
-	}
+	require.Eventually(s.T(), func() bool { return len(events) == 0 }, time.Second, 5*time.Millisecond)
+	close(stop)
+	<-done
+	mockCDP.AssertNotCalled(s.T(), "SwitchTarget", mock.Anything)
 }
 
 // --- handleStart: reuse cached CDP ---

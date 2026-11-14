@@ -82,6 +82,7 @@ func New(apiURL, channelID string, logger *slog.Logger) *Server {
 
 	s.registerTools()
 	s.registerDownloadTools()
+	s.registerDialogTools()
 	return s
 }
 
@@ -928,4 +929,25 @@ func imageResult(data []byte) *mcp.CallToolResult {
 			},
 		},
 	}
+}
+
+// registerDialogTools adds handle_dialog. Only a session that was watching a
+// tab when its dialog opened can answer it, and the daemon keeps that session;
+// the standalone server attaches anew for every call, so it never can.
+func (s *Server) registerDialogTools() {
+	type handleDialogInput struct {
+		Accept     bool   `json:"accept" jsonschema:"true presses OK, false presses Cancel"`
+		PromptText string `json:"prompt_text,omitempty" jsonschema:"The answer to type into a prompt dialog before accepting it"`
+	}
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name: "handle_dialog",
+		Description: "Answer the JavaScript dialog (confirm, prompt or beforeunload) blocking the active tab. " +
+			"While one is open the page is frozen and other page tools fail with its message. Alerts are accepted on their own.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input handleDialogInput) (*mcp.CallToolResult, any, error) {
+		resp, err := s.callAction(ctx, "handle_dialog", map[string]any{"accept": input.Accept, "prompt_text": input.PromptText})
+		if err != nil {
+			return errorResult(fmt.Sprintf("handle dialog failed: %v", err)), nil, nil
+		}
+		return textResult(resp.Result), nil, nil
+	})
 }

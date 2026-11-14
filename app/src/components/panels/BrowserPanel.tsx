@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { resetBrowserProfile, switchBrowserMode } from "../../api/loopApi";
 import { type TabInfo, useBrowserWs } from "../../hooks/useBrowserWs";
 import { useTheme } from "../../ThemeContext";
 import { storageGet, storageSet } from "../../utils/storage";
+import { ContextMenu } from "../shared/ContextMenu";
+import { type PageContextMenu, pageMenuItems } from "./browserContextMenu";
+import { dialogButtons, dialogHeading, type PageDialog } from "./browserDialog";
 import { type BrowserInput, createFrameRenderer, createInputCoalescer } from "./browserStream";
 import { normalizeNavigateUrl, safeFaviconUrl } from "./browserUrl";
 import { CookieImportDialog } from "./CookieImportDialog";
@@ -28,6 +31,10 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   const urlInputRef = useRef<HTMLInputElement>(null);
   const [url, setUrl] = useState("");
+  // Headless Chrome draws no context menu, so the pane draws one where the
+  // user right-clicked once the backend says what was under the pointer.
+  const [pageMenu, setPageMenu] = useState<{ x: number; y: number; menu: PageContextMenu } | null>(null);
+  const menuAnchorRef = useRef({ x: 0, y: 0 });
   const [error, setError] = useState<string | null>(null);
   const [hoveredTab, setHoveredTab] = useState<string | null>(null);
   const [showCookieImport, setShowCookieImport] = useState(false);
@@ -46,22 +53,26 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
   const sendInputRef = useRef<(ev: BrowserInput) => void>(() => {});
   const inputQueueRef = useRef(createInputCoalescer((ev) => sendInputRef.current(ev)));
 
-  const { connected, started, tabs, activeTargetId, startBrowser, stopBrowser, startStreaming, navigate, reload, goBack, goForward, sendInput, switchTab, newTab, closeTab } = useBrowserWs({
-    channelId,
-    onFrame: useCallback((data: ArrayBuffer) => {
-      drawFrameRef.current(data);
-    }, []),
-    onPageInfo: useCallback((pageUrl: string, _pageTitle: string) => {
-      setUrl(pageUrl);
-    }, []),
-    onError: useCallback((msg: string) => {
-      setError(msg);
-    }, []),
-    onStarted: useCallback(() => {
-      setError(null);
-      setUrl("");
-    }, []),
-  });
+  const { connected, started, tabs, activeTargetId, startBrowser, stopBrowser, startStreaming, navigate, reload, goBack, goForward, sendInput, switchTab, newTab, closeTab, dialog, answerDialog } =
+    useBrowserWs({
+      channelId,
+      onFrame: useCallback((data: ArrayBuffer) => {
+        drawFrameRef.current(data);
+      }, []),
+      onPageInfo: useCallback((pageUrl: string, _pageTitle: string) => {
+        setUrl(pageUrl);
+      }, []),
+      onError: useCallback((msg: string) => {
+        setError(msg);
+      }, []),
+      onStarted: useCallback(() => {
+        setError(null);
+        setUrl("");
+      }, []),
+      onContextMenu: useCallback((menu: PageContextMenu) => {
+        setPageMenu({ ...menuAnchorRef.current, menu });
+      }, []),
+    });
   sendInputRef.current = sendInput;
 
   // Every canvas gesture goes through the coalescer, so a burst of moves or
@@ -162,7 +173,8 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
           break;
         case "contextmenu":
           e.preventDefault();
-          pushInput({ type: "click", x, y, button: "right", clickCount: 1 });
+          menuAnchorRef.current = { x: e.clientX, y: e.clientY };
+          pushInput({ type: "contextmenu", x, y });
           break;
         case "mousemove":
           pushInput({ type: "mousemove", x, y });
@@ -186,6 +198,15 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
     [pushInput],
   );
 
+  const pasteClipboard = useCallback(() => {
+    void navigator.clipboard
+      ?.readText()
+      .then((text) => {
+        if (text) pushInput({ type: "paste", text });
+      })
+      .catch(() => setError("Clipboard read was blocked, so paste is unavailable."));
+  }, [pushInput]);
+
   const handleCanvasKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLCanvasElement>) => {
       e.preventDefault();
@@ -201,12 +222,7 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
           return;
         }
         if (k === "v") {
-          void navigator.clipboard
-            ?.readText()
-            .then((text) => {
-              if (text) pushInput({ type: "paste", text });
-            })
-            .catch(() => setError("Clipboard read was blocked, so paste is unavailable."));
+          pasteClipboard();
           return;
         }
       }
@@ -216,7 +232,21 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
         pushInput({ type: "keypress", key: e.key, modifiers: cdpModifiers(e) });
       }
     },
-    [pushInput],
+    [pushInput, pasteClipboard],
+  );
+
+  const pageMenuActions = useMemo(
+    () => ({
+      openInNewTab: (u: string) => newTab(u),
+      copy: (text: string) => {
+        void navigator.clipboard?.writeText(text).catch(() => setError("Clipboard write was blocked, so copy is unavailable."));
+      },
+      paste: pasteClipboard,
+      back: goBack,
+      forward: goForward,
+      reload,
+    }),
+    [newTab, pasteClipboard, goBack, goForward, reload],
   );
 
   return (
@@ -317,6 +347,8 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
         </div>
       )}
 
+      {dialog && <DialogBar key={`${dialog.target_id}:${dialog.type}:${dialog.message}`} dialog={dialog} colors={colors} onAnswer={(accept, text) => answerDialog(dialog.target_id, accept, text)} />}
+
       {/* Screencast canvas */}
       <div
         ref={canvasContainerRef}
@@ -353,11 +385,94 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
           <div style={{ color: colors.textDim, fontSize: 13 }}>{connected ? "Starting browser..." : "Connecting..."}</div>
         )}
       </div>
+      {pageMenu && <ContextMenu x={pageMenu.x} y={pageMenu.y} items={pageMenuItems(pageMenu.menu, pageMenuActions)} onClose={() => setPageMenu(null)} />}
     </div>
   );
 }
 
 /* ---------- sub-components ---------- */
+
+/**
+ * The JavaScript dialog the tab is blocked on, which headless Chrome never
+ * draws: the page stays frozen until it is answered here or by the agent.
+ */
+function DialogBar({
+  dialog,
+  colors,
+  onAnswer,
+}: {
+  dialog: PageDialog;
+  colors: { surface: string; border: string; textLight: string; textDim: string; active: string; white: string; isDark: boolean };
+  onAnswer: (accept: boolean, text?: string) => void;
+}) {
+  const [text, setText] = useState(dialog.default_prompt ?? "");
+  const isPrompt = dialog.type === "prompt";
+  const buttons = dialogButtons(dialog);
+  const accept = () => onAnswer(true, isPrompt ? text : undefined);
+  const button = (primary: boolean): CSSProperties => ({
+    padding: "3px 12px",
+    fontSize: 12,
+    borderRadius: 4,
+    cursor: "pointer",
+    border: `1px solid ${primary ? colors.active : colors.border}`,
+    backgroundColor: primary ? colors.active : "transparent",
+    color: primary ? colors.white : colors.textLight,
+    fontFamily: "inherit",
+  });
+  return (
+    <div
+      role="alertdialog"
+      aria-label="Page dialog"
+      data-testid="browser-dialog"
+      onKeyDown={(e) => {
+        if (e.key === "Escape") onAnswer(false);
+      }}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        flexWrap: "wrap",
+        padding: "6px 12px",
+        fontSize: 12,
+        color: colors.textLight,
+        backgroundColor: colors.surface,
+        borderBottom: `1px solid ${colors.border}`,
+        flexShrink: 0,
+      }}
+    >
+      <span style={{ color: colors.textDim }}>{dialogHeading(dialog)}</span>
+      {dialog.message && <span style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", minWidth: 0 }}>{dialog.message}</span>}
+      {isPrompt && (
+        <input
+          autoFocus
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") accept();
+          }}
+          style={{
+            flex: "1 1 160px",
+            padding: "3px 8px",
+            fontSize: 12,
+            border: `1px solid ${colors.border}`,
+            borderRadius: 4,
+            backgroundColor: colors.isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.04)",
+            color: colors.textLight,
+            outline: "none",
+          }}
+        />
+      )}
+      <span style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
+        <button type="button" onClick={() => onAnswer(false)} style={button(false)}>
+          {buttons.dismiss}
+        </button>
+        <button type="button" onClick={accept} style={button(true)} autoFocus={!isPrompt}>
+          {buttons.accept}
+        </button>
+      </span>
+    </div>
+  );
+}
 
 function ToolbarButton({ onClick, title, label, colors }: { onClick: () => void; title: string; label: string; colors: { textDim: string } }) {
   return (

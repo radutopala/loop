@@ -388,6 +388,43 @@ Feature: Editor Tabs Journey
     Then I wait for "[data-testid='editor-tab'][data-path='next.txt'][data-preview]" to be visible
     And the element "[data-testid='editor-tab'][data-path='peek.txt']" should not exist
 
+  @editor-tab-reorder
+  Scenario: Dragging a tab moves it in the strip, and the order is kept across channel switches
+    Given I set up a test channel via API for git repo "bdd-editor-reorder-other"
+    And I set up a test channel via API for git repo "bdd-editor-reorder"
+    And I create a file "a.txt" in the repo with 3 numbered lines
+    And I create a file "b.txt" in the repo with 3 numbered lines
+    And I create a file "c.txt" in the repo with 3 numbered lines
+    And I open the app in a browser
+    And I wait for text "bdd-editor-reorder" to appear
+    When I click on "bdd-editor-reorder" in the sidebar
+    And I wait for "textarea" to be visible
+    And I click on "[data-testid='layout-tab-Editor']"
+    And I open the file "a.txt" in the editor tree
+    And I double-click on "[data-testid='editor-tab'][data-path='a.txt']"
+    And I open the file "b.txt" in the editor tree
+    And I double-click on "[data-testid='editor-tab'][data-path='b.txt']"
+    And I open the file "c.txt" in the editor tree
+    And I double-click on "[data-testid='editor-tab'][data-path='c.txt']"
+    Then the editor tabs should soon be in the order "a.txt, b.txt, c.txt"
+
+    # The drop lands on the side of the target the pointer is over
+    When I drag editor tab "c.txt" onto the left side of editor tab "a.txt"
+    Then the editor tabs should soon be in the order "c.txt, a.txt, b.txt"
+    When I drag editor tab "c.txt" onto the right side of editor tab "a.txt"
+    Then the editor tabs should soon be in the order "a.txt, c.txt, b.txt"
+    When I drag editor tab "a.txt" past the last editor tab
+    Then the editor tabs should soon be in the order "c.txt, b.txt, a.txt"
+    # Moving a tab doesn't change which one is active
+    And I wait for "[data-testid='editor-tab'][data-path='c.txt'][data-active]" to be visible
+
+    When I click on "bdd-editor-reorder-other" in the sidebar
+    And I wait for "textarea" to be visible
+    And I click on "bdd-editor-reorder" in the sidebar
+    And I wait for "textarea" to be visible
+    And I click on "[data-testid='layout-tab-Editor']"
+    Then the editor tabs should soon be in the order "c.txt, b.txt, a.txt"
+
   @editor-tab-menu
   Scenario: A tab's menu closes tabs, keeping the ones with unsaved changes
     Given I set up a test channel via API for git repo "bdd-editor-tab-close"

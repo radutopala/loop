@@ -16,55 +16,73 @@ import (
 	"github.com/radutopala/loop/internal/browser"
 )
 
-// --- watchMCPTabChanges ---
+// --- tab watcher ---
 
-func (s *BrowserHandlerSuite) TestWatchMCPTabChangesStopCh() {
-	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{}, slog.Default())
-
-	bc := &browserWSConn{
-		logger: slog.Default(),
-		cdpMgr: cdpMgr,
-		stopCh: make(chan struct{}),
+func (s *BrowserHandlerSuite) TestWatchTabEventsExits() {
+	tests := []struct {
+		name string
+		end  func(bc *browserWSConn, stop chan struct{}, events chan browser.TabEvent)
+	}{
+		{"on its own stop", func(_ *browserWSConn, stop chan struct{}, _ chan browser.TabEvent) { close(stop) }},
+		{"when the socket closes", func(bc *browserWSConn, _ chan struct{}, _ chan browser.TabEvent) { close(bc.stopCh) }},
+		{"on a switch once the pane let go of its tab", func(_ *browserWSConn, _ chan struct{}, events chan browser.TabEvent) {
+			events <- browser.TabEvent{Kind: browser.TabSwitched, Tab: browser.TabInfo{TargetID: "t-new"}}
+		}},
 	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			bc := &browserWSConn{logger: slog.Default(), stopCh: make(chan struct{})}
+			stop := make(chan struct{})
+			events := make(chan browser.TabEvent, 1)
 
-	done := make(chan struct{})
-	go func() {
-		bc.watchMCPTabChanges()
-		close(done)
-	}()
+			done := make(chan struct{})
+			go func() {
+				bc.watchTabEvents(events, stop)
+				close(done)
+			}()
+			tt.end(bc, stop, events)
 
-	close(bc.stopCh)
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		s.T().Fatal("watchMCPTabChanges did not exit on stopCh")
-	}
-}
-
-func (s *BrowserHandlerSuite) TestWatchMCPTabChangesSwitchNoCDP() {
-	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{}, slog.Default())
-
-	bc := &browserWSConn{
-		logger: slog.Default(),
-		cdpMgr: cdpMgr,
-		stopCh: make(chan struct{}),
-	}
-
-	done := make(chan struct{})
-	go func() {
-		bc.watchMCPTabChanges()
-		close(done)
-	}()
-
-	cdpMgr.NotifyTargetSwitch("t-new")
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		s.T().Fatal("watchMCPTabChanges did not exit when cdp is nil")
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				s.T().Fatal("watchTabEvents did not exit")
+			}
+		})
 	}
 }
 
-func (s *BrowserHandlerSuite) TestWatchMCPTabChangesTabAddedSendsWS() {
+func (s *BrowserHandlerSuite) TestStartTabWatchReplacesThePreviousWatcher() {
+	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{}, slog.Default())
+	bc := &browserWSConn{logger: slog.Default(), cdpMgr: cdpMgr, stopCh: make(chan struct{})}
+
+	bc.startTabWatch()
+	first := bc.watchStopCh
+	require.NotNil(s.T(), first)
+
+	bc.startTabWatch()
+	select {
+	case <-first:
+	default:
+		s.T().Fatal("a second start must end the first watcher, or both restart the screencast")
+	}
+
+	second := bc.watchStopCh
+	bc.cleanup()
+	require.Nil(s.T(), bc.watchStopCh)
+	select {
+	case <-second:
+	default:
+		s.T().Fatal("stopping the pane must end its watcher")
+	}
+}
+
+func (s *BrowserHandlerSuite) TestStartTabWatchWithoutManager() {
+	bc := &browserWSConn{logger: slog.Default(), stopCh: make(chan struct{})}
+	bc.startTabWatch()
+	require.Nil(s.T(), bc.watchStopCh)
+}
+
+func (s *BrowserHandlerSuite) TestTabWatchTabAddedSendsWS() {
 	ws, ts, _ := s.startBrowserWS()
 	defer ts.Close()
 	defer ws.Close()
@@ -84,7 +102,7 @@ func (s *BrowserHandlerSuite) TestWatchMCPTabChangesTabAddedSendsWS() {
 	require.Equal(s.T(), "New", resp.Title)
 }
 
-func (s *BrowserHandlerSuite) TestWatchMCPTabChangesTabRemovedSendsWS() {
+func (s *BrowserHandlerSuite) TestTabWatchTabRemovedSendsWS() {
 	ws, ts, _ := s.startBrowserWS()
 	defer ts.Close()
 	defer ws.Close()

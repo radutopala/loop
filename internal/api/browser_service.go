@@ -689,6 +689,10 @@ func (s *browserService) dispatchBrowserAction(req browserActionRequest, cdpCl b
 		// closing — the active CDP client's context dies with the closed tab,
 		// so NewTab would fail after CloseTab.
 		isLastTab := cdpMgr != nil && nextTab == ""
+		// Closing a tab in the background leaves the active one where it is.
+		if !isLastTab && cdpMgr != nil && cdpMgr.ActiveTargetID() != targetID {
+			nextTab = ""
+		}
 		if isLastTab {
 			if newID, err := cdpCl.NewTab(bg, "about:blank"); err == nil {
 				cdpMgr.TrackTab(newID)

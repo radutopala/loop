@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -41,7 +42,11 @@ type browserWSConn struct {
 	cdp              browser.CDPSession  // active tab's CDP client
 	stopCh           chan struct{}
 	screencastStopCh chan struct{} // per-screencast stop, separate from WS-level stopCh
-	channelID        string        // set by handleStart, used by cleanup for PaneDisconnected
+	// watchStopCh ends the tab watcher of the current start. A pane can stop
+	// and start again on one socket; without it each start left another
+	// watcher running, and two of them restarted the screencast at once.
+	watchStopCh chan struct{}
+	channelID   string // set by handleStart, used by cleanup for PaneDisconnected
 }
 
 // browserWSMessage is a control message from the client.
@@ -52,7 +57,7 @@ type browserWSMessage struct {
 	Width     int    `json:"width,omitempty"`
 	Height    int    `json:"height,omitempty"`
 	// Input fields
-	InputType  string  `json:"input_type,omitempty"` // "click", "mousemove", "scroll", "keypress", "typetext", "paste", "copy"
+	InputType  string  `json:"input_type,omitempty"` // "click", "contextmenu", "mousemove", "scroll", "keypress", "typetext", "paste", "copy"
 	X          float64 `json:"x,omitempty"`
 	Y          float64 `json:"y,omitempty"`
 	Button     string  `json:"button,omitempty"`
@@ -62,6 +67,9 @@ type browserWSMessage struct {
 	Key        string  `json:"key,omitempty"`
 	Text       string  `json:"text,omitempty"`
 	Modifiers  int     `json:"modifiers,omitempty"`
+	// Dialog answer fields
+	TargetID string `json:"target_id,omitempty"`
+	Accept   bool   `json:"accept,omitempty"`
 }
 
 // browserTabInfo mirrors browser.TabInfo for WS responses.
@@ -74,14 +82,25 @@ type browserTabInfo struct {
 
 // browserWSResponse is a status message sent to the client.
 type browserWSResponse struct {
-	Type           string           `json:"type"` // "started", "stopped", "page_info", "error", "tabs", "tab_switched", "tab_created", "tab_closed", "tabs_updated"
-	URL            string           `json:"url,omitempty"`
-	Title          string           `json:"title,omitempty"`
-	Message        string           `json:"message,omitempty"`
-	Tabs           []browserTabInfo `json:"tabs,omitempty"`
-	ActiveTargetID string           `json:"active_target_id,omitempty"`
-	TargetID       string           `json:"target_id,omitempty"`
-	Text           string           `json:"text,omitempty"`
+	Type           string              `json:"type"` // "started", "stopped", "page_info", "error", "tabs", "tab_switched", "tab_created", "tab_closed", "clipboard", "context_menu", "dialog", "dialog_closed"
+	URL            string              `json:"url,omitempty"`
+	Title          string              `json:"title,omitempty"`
+	Message        string              `json:"message,omitempty"`
+	Tabs           []browserTabInfo    `json:"tabs,omitempty"`
+	ActiveTargetID string              `json:"active_target_id,omitempty"`
+	TargetID       string              `json:"target_id,omitempty"`
+	Text           string              `json:"text,omitempty"`
+	Menu           *browserContextMenu `json:"menu,omitempty"`
+	Dialog         *browser.Dialog     `json:"dialog,omitempty"`
+}
+
+// browserContextMenu describes what a right-click landed on, so the pane can
+// draw the menu headless Chrome never shows.
+type browserContextMenu struct {
+	Link      string `json:"link,omitempty"`
+	Image     string `json:"image,omitempty"`
+	Selection string `json:"selection,omitempty"`
+	Editable  bool   `json:"editable,omitempty"`
 }
 
 const (
@@ -89,11 +108,14 @@ const (
 	bwsMsgStop       = "stop"
 	bwsMsgScreencast = "screencast"
 	bwsMsgInput      = "input"
+	bwsMsgDialog     = "dialog_answer"
 
-	bwsInputPaste = "paste"
-	bwsInputCopy  = "copy"
+	bwsInputPaste       = "paste"
+	bwsInputCopy        = "copy"
+	bwsInputContextMenu = "contextmenu"
 
 	bwsRespClipboard   = "clipboard"
+	bwsRespContextMenu = "context_menu"
 	bwsRespStarted     = "started"
 	bwsRespStopped     = "stopped"
 	bwsRespError       = "error"
@@ -101,6 +123,8 @@ const (
 	bwsRespTabSwitched = "tab_switched"
 	bwsRespTabCreated  = "tab_created"
 	bwsRespTabClosed   = "tab_closed"
+	bwsRespDialog      = "dialog"
+	bwsRespDialogDone  = "dialog_closed"
 
 	cdpMaxRetries = 20
 	cdpRetryDelay = 500 * time.Millisecond
@@ -167,6 +191,8 @@ func (s *browserService) handleBrowserWS(w http.ResponseWriter, r *http.Request)
 			go bc.handleScreencast(msg)
 		case bwsMsgInput:
 			bc.handleInput(msg)
+		case bwsMsgDialog:
+			go bc.answerDialog(msg)
 		default:
 			bc.sendError("unknown message type: " + msg.Type)
 		}
@@ -239,6 +265,17 @@ func (bc *browserWSConn) handleStart(ctx context.Context, msg browserWSMessage) 
 				} else if live != nil {
 					activeClient = live
 				}
+				// The agent may have opened or switched a tab while the pane
+				// was away. That records the new tab as active before anything
+				// attaches to it, so streaming the attached client would show
+				// the old tab under a strip that marks the new one.
+				if want := cdpMgr.ActiveTargetID(); want != "" && activeClient.TargetID() != want {
+					if moved, err := cdpMgr.GetOrCreate(ctx, want); err == nil {
+						activeClient = moved
+					} else {
+						bc.logger.Warn("browser ws: attaching to the active tab failed", "target_id", want, "error", err)
+					}
+				}
 				bc.logger.Info("browser ws: reusing cached CDP")
 				activeClient.ResetScreencast()
 				// Chrome does not composite a backgrounded tab, so a screencast
@@ -259,8 +296,9 @@ func (bc *browserWSConn) handleStart(ctx context.Context, msg browserWSMessage) 
 				bc.cdpMgr = cdpMgr
 				bc.cdp = activeClient
 				bc.mu.Unlock()
+				bc.startTabWatch()
 				bc.sendJSON(browserWSResponse{Type: bwsRespStarted})
-				go bc.watchMCPTabChanges()
+				bc.sendPendingDialog(cdpMgr)
 				return
 			}
 		}
@@ -298,10 +336,32 @@ func (bc *browserWSConn) handleStart(ctx context.Context, msg browserWSMessage) 
 		_ = cdpClient.SwitchTarget(tid)
 	}
 
+	// Watch before saying started: the pane fetches the tab list on started,
+	// and a tab opened between that fetch and a later subscription was lost.
+	bc.startTabWatch()
 	bc.sendJSON(browserWSResponse{Type: bwsRespStarted})
+	bc.sendPendingDialog(cdpMgr)
+}
 
-	// Watch for MCP-initiated target switches and tab changes.
-	go bc.watchMCPTabChanges()
+// sendPendingDialog shows the pane a dialog the active tab was already blocked
+// on when it started, which no event will announce again.
+func (bc *browserWSConn) sendPendingDialog(cdpMgr *browser.CDPManager) {
+	if d, ok := cdpMgr.PendingDialog(cdpMgr.ActiveTargetID()); ok {
+		bc.sendJSON(browserWSResponse{Type: bwsRespDialog, TargetID: d.TargetID, Dialog: &d})
+	}
+}
+
+// answerDialog accepts or dismisses the dialog the user answered in the pane.
+func (bc *browserWSConn) answerDialog(msg browserWSMessage) {
+	bc.mu.Lock()
+	cdpMgr := bc.cdpMgr
+	bc.mu.Unlock()
+	if cdpMgr == nil {
+		return
+	}
+	if err := cdpMgr.HandleDialog(context.Background(), msg.TargetID, msg.Accept, msg.Text); err != nil {
+		bc.sendError("answering the dialog failed: " + err.Error())
+	}
 }
 
 func (bc *browserWSConn) handleStop(ctx context.Context, msg browserWSMessage) {
@@ -386,6 +446,8 @@ func (bc *browserWSConn) dispatchInput(ev browser.InputEvent) {
 		err = cdp.InsertText(ctx, ev.Text)
 	case bwsInputCopy:
 		err = bc.sendSelection(ctx, cdp)
+	case bwsInputContextMenu:
+		err = bc.openContextMenu(ctx, cdp, ev.X, ev.Y)
 	}
 
 	if err != nil {
@@ -402,6 +464,60 @@ func (bc *browserWSConn) sendSelection(ctx context.Context, cdp browser.CDPSessi
 		return err
 	}
 	bc.sendJSON(browserWSResponse{Type: bwsRespClipboard, Text: text})
+	return nil
+}
+
+// armContextMenuJS clears the last right-click and, once per document, starts
+// recording every contextmenu event. The listener is on window in the capture
+// phase, so it sees the event before the page can stop it.
+const armContextMenuJS = `(() => {
+  if (!window.__loopContextMenuArmed) {
+    window.__loopContextMenuArmed = true;
+    addEventListener("contextmenu", (e) => { window.__loopContextMenu = e; }, true);
+  }
+  window.__loopContextMenu = null;
+  return "";
+})()`
+
+// contextMenuJS describes the element the right-click landed on, or returns ""
+// when no contextmenu event arrived or the page prevented it to draw its own.
+const contextMenuJS = `(() => {
+  const e = window.__loopContextMenu;
+  window.__loopContextMenu = null;
+  if (!e || e.defaultPrevented) return "";
+  const t = e.target instanceof Element ? e.target : null;
+  const link = t && t.closest("a[href]");
+  const img = t && t.closest("img");
+  const editable = !!t && (t.isContentEditable || t.matches("textarea, input:not([type]), input[type=text], input[type=search], input[type=email], input[type=url], input[type=tel], input[type=password], input[type=number]"));
+  return JSON.stringify({
+    link: link ? link.href : "",
+    image: img ? img.currentSrc || img.src : "",
+    selection: String(getSelection()),
+    editable,
+  });
+})()`
+
+// openContextMenu right-clicks at (x, y) and tells the client what was under
+// the pointer. Headless Chrome draws no menu of its own, so the pane draws one;
+// it doesn't when the page drew its own.
+func (bc *browserWSConn) openContextMenu(ctx context.Context, cdp browser.CDPSession, x, y float64) error {
+	if _, err := cdp.EvaluateJS(ctx, armContextMenuJS); err != nil {
+		// The page still gets its right-click; only the pane's menu is lost.
+		bc.logger.Warn("browser ws: arming the context menu failed", "error", err)
+		return cdp.MouseClick(ctx, x, y, "right", 1)
+	}
+	if err := cdp.MouseClick(ctx, x, y, "right", 1); err != nil {
+		return err
+	}
+	raw, err := cdp.EvaluateJS(ctx, contextMenuJS)
+	if err != nil || raw == "" {
+		return err
+	}
+	var menu browserContextMenu
+	if err := json.Unmarshal([]byte(raw), &menu); err != nil {
+		return fmt.Errorf("reading the context menu: %w", err)
+	}
+	bc.sendJSON(browserWSResponse{Type: bwsRespContextMenu, Menu: &menu})
 	return nil
 }
 
@@ -596,53 +712,71 @@ func (bc *browserWSConn) sendTabsResponse(tabs []browser.TabInfo, activeTargetID
 	})
 }
 
-// watchMCPTabChanges watches for MCP-initiated target switches, tab additions,
-// and tab removals, forwarding them to the frontend via WebSocket.
-func (bc *browserWSConn) watchMCPTabChanges() {
+// startTabWatch subscribes to the manager's tab changes and forwards them to
+// the pane until the next start, a stop, or the socket closing. Subscribing
+// happens here rather than on the goroutine, so no change made after this
+// returns can slip past it.
+func (bc *browserWSConn) startTabWatch() {
 	bc.mu.Lock()
-	cdpMgr := bc.cdpMgr
-	bc.mu.Unlock()
-
-	var switchCh <-chan string
-	var tabAddedCh <-chan browser.TabInfo
-	var tabRemovedCh <-chan string
-
-	if cdpMgr != nil {
-		switchCh = cdpMgr.TargetSwitchCh()
-		tabAddedCh = cdpMgr.TabAddedCh()
-		tabRemovedCh = cdpMgr.TabRemovedCh()
+	defer bc.mu.Unlock()
+	if bc.watchStopCh != nil {
+		close(bc.watchStopCh)
+		bc.watchStopCh = nil
 	}
+	if bc.cdpMgr == nil {
+		return
+	}
+	events, unsubscribe := bc.cdpMgr.Subscribe()
+	stop := make(chan struct{})
+	bc.watchStopCh = stop
+	go func() {
+		defer unsubscribe()
+		bc.watchTabEvents(events, stop)
+	}()
+}
 
+// watchTabEvents forwards tab changes — the agent's and the ones Chrome makes
+// on its own — to the pane until stop or the socket closes.
+func (bc *browserWSConn) watchTabEvents(events <-chan browser.TabEvent, stop <-chan struct{}) {
 	for {
 		select {
-		case targetID := <-switchCh:
-			bc.mu.Lock()
-			cdp := bc.cdp
-			bc.mu.Unlock()
-			if cdp == nil {
-				return
+		case ev := <-events:
+			switch ev.Kind {
+			case browser.TabSwitched:
+				bc.mu.Lock()
+				cdp := bc.cdp
+				bc.mu.Unlock()
+				if cdp == nil {
+					return
+				}
+				if cdp.TargetID() == ev.Tab.TargetID {
+					bc.logger.Debug("watchTabEvents: skipping switch to same target", "target_id", ev.Tab.TargetID)
+					continue
+				}
+				// Detached on purpose: the switch must outlive whatever
+				// prompted it, and the CDP calls it makes carry their own
+				// deadlines.
+				bc.restartScreencastForTarget(context.Background(), cdp, ev.Tab.TargetID)
+			case browser.TabAdded:
+				bc.sendJSON(browserWSResponse{
+					Type:     bwsRespTabCreated,
+					TargetID: ev.Tab.TargetID,
+					URL:      ev.Tab.URL,
+					Title:    ev.Tab.Title,
+				})
+			case browser.TabRemoved:
+				bc.sendJSON(browserWSResponse{
+					Type:     bwsRespTabClosed,
+					TargetID: ev.Tab.TargetID,
+				})
+			case browser.DialogOpened:
+				d := ev.Dialog
+				bc.sendJSON(browserWSResponse{Type: bwsRespDialog, TargetID: d.TargetID, Dialog: &d})
+			case browser.DialogClosed:
+				bc.sendJSON(browserWSResponse{Type: bwsRespDialogDone, TargetID: ev.Tab.TargetID})
 			}
-			// Skip if already on this target.
-			if cdp.TargetID() == targetID {
-				bc.logger.Debug("watchMCPTabChanges: skipping switch to same target", "target_id", targetID)
-				continue
-			}
-			// Detached on purpose: the switch must outlive whatever
-			// prompted it, and the CDP calls it makes carry their own
-			// deadlines.
-			bc.restartScreencastForTarget(context.Background(), cdp, targetID)
-		case tab := <-tabAddedCh:
-			bc.sendJSON(browserWSResponse{
-				Type:     bwsRespTabCreated,
-				TargetID: tab.TargetID,
-				URL:      tab.URL,
-				Title:    tab.Title,
-			})
-		case targetID := <-tabRemovedCh:
-			bc.sendJSON(browserWSResponse{
-				Type:     bwsRespTabClosed,
-				TargetID: targetID,
-			})
+		case <-stop:
+			return
 		case <-bc.stopCh:
 			return
 		}
@@ -663,6 +797,10 @@ func (bc *browserWSConn) cleanup() {
 
 	if bc.cdpMgr != nil {
 		bc.cdpMgr.PaneDisconnected()
+	}
+	if bc.watchStopCh != nil {
+		close(bc.watchStopCh)
+		bc.watchStopCh = nil
 	}
 
 	if bc.cdp != nil {
@@ -854,6 +992,11 @@ func (s *browserService) handleBrowserAction(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	if resp, done := s.dialogAction(r.Context(), req); done {
+		writeJSON(w, resp)
+		return
+	}
+
 	cdpCl, err := s.getBrowserCDP(r.Context(), req.ChannelID)
 	if err != nil {
 		writeJSON(w, browserActionResponse{Error: err.Error()})
@@ -867,4 +1010,48 @@ func (s *browserService) handleBrowserAction(w http.ResponseWriter, r *http.Requ
 
 	resp := s.dispatchBrowserAction(req, cdpCl)
 	writeJSON(w, resp)
+}
+
+// worksUnderDialog reports whether action still works while the active tab is
+// blocked on a JavaScript dialog: tab actions go through the browser, not the
+// page.
+func worksUnderDialog(action string) bool {
+	switch action {
+	case "list_tabs", "new_tab", "switch_tab", "close_tab":
+		return true
+	}
+	return false
+}
+
+// dialogAction answers the active tab's JavaScript dialog for handle_dialog,
+// and refuses page actions while one is open. A blocked page takes no input
+// and runs no script, so without this an agent's click waited out the whole
+// command deadline and came back with a timeout that said nothing of why.
+// done is false when the action should run as usual.
+func (s *browserService) dialogAction(ctx context.Context, req browserActionRequest) (resp browserActionResponse, done bool) {
+	var d browser.Dialog
+	open := false
+	mgr := s.getActiveCDPManager(req.ChannelID)
+	if mgr != nil {
+		d, open = mgr.PendingDialog(mgr.ActiveTargetID())
+	}
+	if req.Action == "handle_dialog" {
+		if !open {
+			return browserActionResponse{Error: browser.ErrNoDialog.Error()}, true
+		}
+		accept := paramBool(req.Params, "accept")
+		if err := mgr.HandleDialog(ctx, d.TargetID, accept, paramStr(req.Params, "prompt_text")); err != nil {
+			return browserActionResponse{Error: fmt.Sprintf("handling the dialog failed: %v", err)}, true
+		}
+		verb := "Dismissed"
+		if accept {
+			verb = "Accepted"
+		}
+		return browserActionResponse{Result: fmt.Sprintf("%s the %s %q", verb, d.Type, d.Message)}, true
+	}
+	if !open || worksUnderDialog(req.Action) {
+		return browserActionResponse{}, false
+	}
+	return browserActionResponse{Error: fmt.Sprintf(
+		"a JavaScript %s is open on this tab and blocks it: %q. Answer it with handle_dialog (accept, and prompt_text for a prompt) first", d.Type, d.Message)}, true
 }

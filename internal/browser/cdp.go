@@ -301,16 +301,10 @@ func (c *CDPClient) NewContextForTarget(targetID string) (CDPSession, error) {
 		scanRefsFunc:      makeScanRefsFuncWith(c.runFn, c.exec),
 		createTabFunc:     c.createTabFunc,
 		activateFunc:      c.activateFunc,
-		closeTabFunc: func(_ context.Context, closeTID string) error {
-			tabCtx, tabCancel := chromedp.NewContext(cdpCtx, chromedp.WithTargetID(target.ID(closeTID)))
-			defer tabCancel()
-			return c.runFn(tabCtx, chromedp.ActionFunc(func(ctx context.Context) error {
-				return c.exec(ctx, "Page.close", nil, nil)
-			}))
-		},
-		boxModelFunc: c.boxModelFunc,
-		frameCh:      make(chan []byte, 2),
-		stopCh:       make(chan struct{}),
+		closeTabFunc:      closeTargetFunc(cdpCtx, c.runFn, c.exec),
+		boxModelFunc:      c.boxModelFunc,
+		frameCh:           make(chan []byte, 2),
+		stopCh:            make(chan struct{}),
 	}, nil
 }
 
@@ -583,17 +577,9 @@ func NewCDPClient(ctx context.Context, wsURL string, logger *slog.Logger, opts .
 					target.ActivateTarget(id), nil)
 			}))
 		},
-		closeTabFunc: func(cdpCtx context.Context) func(context.Context, string) error {
-			return func(_ context.Context, tid string) error {
-				tabCtx, tabCancel := chromedp.NewContext(cdpCtx, chromedp.WithTargetID(target.ID(tid)))
-				defer tabCancel()
-				return cfg.runFunc(tabCtx, chromedp.ActionFunc(func(ctx context.Context) error {
-					return cfg.exec(ctx, "Page.close", nil, nil)
-				}))
-			}
-		}(cdpCtx),
-		frameCh: make(chan []byte, 2),
-		stopCh:  make(chan struct{}),
+		closeTabFunc: closeTargetFunc(cdpCtx, cfg.runFunc, cfg.exec),
+		frameCh:      make(chan []byte, 2),
+		stopCh:       make(chan struct{}),
 	}, nil
 }
 
@@ -620,9 +606,17 @@ func (c *CDPClient) CloseBrowser(ctx context.Context) error {
 
 // SetDownloadDir has Chrome save downloads into dir, under the name the site
 // suggests, instead of refusing them as headless Chrome does by default.
+//
+// Chrome drops the setting along with the session that made it. Sent on the
+// page session, it would be gone once that tab closed and downloads would
+// quietly stop, so it goes on the browser session, which lasts as long as the
+// connection.
 func (c *CDPClient) SetDownloadDir(ctx context.Context, dir string) error {
 	return runBoundedFor(ctx, c.commandDeadline(), func() error {
-		return c.runFn(c.ctx, cdpbrowser.SetDownloadBehavior(cdpbrowser.SetDownloadBehaviorBehaviorAllow).WithDownloadPath(dir))
+		return c.runFn(c.ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+			return c.exec(cdp.WithExecutor(ctx, chromedp.FromContext(ctx).Browser), cdpbrowser.CommandSetDownloadBehavior,
+				cdpbrowser.SetDownloadBehavior(cdpbrowser.SetDownloadBehaviorBehaviorAllow).WithDownloadPath(dir), nil)
+		}))
 	})
 }
 
@@ -1636,9 +1630,75 @@ func (c *CDPClient) SwitchTab(ctx context.Context, targetID string) error {
 	})
 }
 
-// CloseTab closes a tab by its target ID via CDP Page.close.
+// WatchTargets reports page tabs being opened and targets closing. Chrome
+// sends these to every session that asked to discover targets, which chromedp
+// does when it attaches.
+func (c *CDPClient) WatchTargets(onOpened func(tab TabInfo, openerID string), onClosed func(targetID string)) {
+	c.listenFunc(c.ctx, func(ev any) {
+		switch e := ev.(type) {
+		case *target.EventTargetCreated:
+			if i := e.TargetInfo; i != nil && i.Type == "page" {
+				onOpened(TabInfo{TargetID: string(i.TargetID), URL: i.URL, Title: i.Title}, string(i.OpenerID))
+			}
+		case *target.EventTargetDestroyed:
+			onClosed(string(e.TargetID))
+		}
+	})
+}
+
+// Dialog is a JavaScript dialog — alert, confirm, prompt or beforeunload —
+// open on a tab.
+type Dialog struct {
+	TargetID      string `json:"target_id"`
+	Type          string `json:"type"`
+	Message       string `json:"message"`
+	DefaultPrompt string `json:"default_prompt,omitempty"`
+	URL           string `json:"url,omitempty"`
+}
+
+// WatchDialogs reports JavaScript dialogs opening and closing on this
+// client's tab. Headless Chrome shows none of them: the page just stops until
+// one is answered, and only a session that was watching the page when the
+// dialog opened can answer it — a session attached afterwards never finishes
+// attaching. The callbacks run on CDP's event loop and must not block.
+func (c *CDPClient) WatchDialogs(onOpened func(Dialog), onClosed func(targetID string)) {
+	tid := c.TargetID()
+	c.listenFunc(c.ctx, func(ev any) {
+		switch e := ev.(type) {
+		case *cdppage.EventJavascriptDialogOpening:
+			onOpened(Dialog{TargetID: tid, Type: string(e.Type), Message: e.Message, DefaultPrompt: e.DefaultPrompt, URL: e.URL})
+		case *cdppage.EventJavascriptDialogClosed:
+			onClosed(tid)
+		}
+	})
+}
+
+// HandleDialog accepts or dismisses the dialog open on this client's tab,
+// answering a prompt with promptText.
+func (c *CDPClient) HandleDialog(ctx context.Context, accept bool, promptText string) error {
+	return runBoundedFor(ctx, c.commandDeadline(), func() error {
+		return c.runFn(c.ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+			return c.exec(ctx, cdppage.CommandHandleJavaScriptDialog, cdppage.HandleJavaScriptDialog(accept).WithPromptText(promptText), nil)
+		}))
+	})
+}
+
+// CloseTab closes a tab by its target ID, under the command deadline.
 func (c *CDPClient) CloseTab(ctx context.Context, targetID string) error {
-	return c.closeTabFunc(ctx, targetID)
+	return runBoundedFor(ctx, c.commandDeadline(), func() error { return c.closeTabFunc(ctx, targetID) })
+}
+
+// closeTargetFunc closes tabs with Target.closeTarget on the browser session.
+//
+// Page.close would have to attach to the tab first, and a tab blocked on a
+// JavaScript dialog never finishes an attach, so the one tab the user most
+// wants gone could not be closed. Closing the target needs no attach.
+func closeTargetFunc(cdpCtx context.Context, runFn func(context.Context, ...chromedp.Action) error, exec cdpExecutor) func(context.Context, string) error {
+	return func(_ context.Context, tid string) error {
+		return runFn(cdpCtx, chromedp.ActionFunc(func(ctx context.Context) error {
+			return exec(cdp.WithExecutor(ctx, chromedp.FromContext(ctx).Browser), target.CommandCloseTarget, target.CloseTarget(target.ID(tid)), nil)
+		}))
+	}
 }
 
 // EvaluateJS evaluates a JavaScript expression and returns the result as a string.
