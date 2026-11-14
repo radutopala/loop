@@ -533,9 +533,13 @@ function DownloadsList({ list, colors, onClose }: { list: DownloadList | null; c
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px 6px 10px", borderBottom: `1px solid ${colors.border}` }}>
         <span style={{ fontWeight: 600 }}>Downloads</span>
-        <span title={list?.dir} style={{ flex: 1, minWidth: 0, color: colors.textDim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", direction: "rtl", textAlign: "left" }}>
-          {/* rtl keeps the dir's tail in view; the marks keep its slashes in place */}
-          {list && `\u200E${list.dir}\u200E`}
+        {/* The tooltip sits on an ltr wrapper: inside the rtl span it would
+            move the path's leading slash to the end. */}
+        <span title={list?.dir} style={{ flex: 1, minWidth: 0, display: "flex" }}>
+          <span style={{ flex: 1, minWidth: 0, color: colors.textDim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", direction: "rtl", textAlign: "left" }}>
+            {/* rtl keeps the dir's tail in view; the marks keep its slashes in place */}
+            {list && `\u200E${list.dir}\u200E`}
+          </span>
         </span>
         <button
           type="button"
