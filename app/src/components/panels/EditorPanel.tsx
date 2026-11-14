@@ -310,14 +310,16 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
               data-testid="editor-tabs"
               // A drop past the last tab moves the dragged tab to the end.
               onDragOver={(e) => {
-                if (!e.dataTransfer.types.includes(EDITOR_TAB_DRAG_MIME)) return;
+                // Only a tab dragged from this panel; another panel's tab
+                // carries the same type.
+                if (draggingTab === null) return;
                 e.preventDefault();
                 e.dataTransfer.dropEffect = "move";
                 const last = openTabs[openTabs.length - 1];
                 if (last && (dropAt?.path !== last || !dropAt.after)) setDropAt({ path: last, after: true });
               }}
               onDrop={(e) => {
-                const from = e.dataTransfer.getData(EDITOR_TAB_DRAG_MIME);
+                const from = draggingTab;
                 const last = openTabs[openTabs.length - 1];
                 if (!from || !last) return;
                 e.preventDefault();
@@ -358,7 +360,7 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
                         setDropAt(null);
                       }}
                       onDragOver={(e) => {
-                        if (!e.dataTransfer.types.includes(EDITOR_TAB_DRAG_MIME)) return;
+                        if (draggingTab === null) return;
                         e.preventDefault();
                         e.stopPropagation();
                         e.dataTransfer.dropEffect = "move";
@@ -371,7 +373,7 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
                         setDropAt((at) => (at?.path === tab ? null : at));
                       }}
                       onDrop={(e) => {
-                        const from = e.dataTransfer.getData(EDITOR_TAB_DRAG_MIME);
+                        const from = draggingTab;
                         if (!from) return;
                         e.preventDefault();
                         e.stopPropagation();

@@ -37,6 +37,7 @@ func (s *ServerSuite) TestUploadFile() {
 		{name: "ref out of range", args: map[string]any{"ref": 2, "paths": []string{report}}, isError: true, text: "ref 2 out of range (1-1)"},
 		{name: "no paths", args: map[string]any{"ref": 1, "paths": []string{}}, isError: true, text: "paths is required"},
 		{name: "missing file", args: map[string]any{"ref": 1, "paths": []string{filepath.Join(dir, "gone.png")}}, isError: true, text: "reading " + filepath.Join(dir, "gone.png")},
+		{name: "a directory", args: map[string]any{"ref": 1, "paths": []string{dir}}, isError: true, text: "reading " + dir},
 		{name: "over the limit", args: map[string]any{"ref": 1, "paths": []string{report, notes}}, maxBytes: 8, isError: true, text: "files are over the 0 MB upload limit"},
 		{name: "page refuses", args: map[string]any{"ref": 1, "paths": []string{report, notes}}, resp: actionResponse{Result: "that input takes one file"}, called: true, isError: true, text: "upload failed: that input takes one file", start: "document.elementFromPoint("},
 		{name: "action error", args: map[string]any{"ref": 1, "paths": []string{report}}, resp: actionResponse{Error: "tab crashed"}, called: true, isError: true, text: "upload failed: tab crashed", start: "document.elementFromPoint("},

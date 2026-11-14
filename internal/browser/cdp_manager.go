@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -74,12 +75,24 @@ type CDPManager struct {
 	// hearing it once per client.
 	tabInfo map[string]TabInfo
 
+	// watched are the tabs a client already watches. One client per tab is
+	// enough to hear its events, and every client attached to the same tab
+	// would hear each of them again, accepting an alert once per client.
+	watched map[string]bool
+
+	// events runs the watched clients' events one at a time, in the order
+	// they arrived; see enqueue.
+	events eventQueue
+
 	// titleRechecks are the waits, one after another, before looking up a
 	// tab's title again after it navigates: Chrome reports the navigation
 	// with the URL standing in for the title and stays quiet when the page
 	// sets its real one.
 	titleRechecks []time.Duration
 	sleep         func(time.Duration)
+	// background runs the title rechecks, off the event queue; tests run them
+	// in place.
+	background func(func())
 
 	timeNow func() time.Time // injectable clock
 }
@@ -168,6 +181,7 @@ func NewCDPManager(wsEndpoint string, cfg CDPManagerConfig, logger *slog.Logger)
 		tabInfo:       map[string]TabInfo{},
 		titleRechecks: []time.Duration{500 * time.Millisecond, time.Second, 2500 * time.Millisecond},
 		sleep:         time.Sleep,
+		background:    func(fn func()) { go fn() },
 		timeNow:       time.Now,
 	}
 }
@@ -215,6 +229,7 @@ func (m *CDPManager) Connect(ctx context.Context) error {
 	tid := client.TargetID()
 	m.client = client
 	m.activeClient = client
+	m.watched = map[string]bool{tid: true}
 	m.watch(client)
 	if tid != "" {
 		m.activeTargetID = tid
@@ -319,32 +334,40 @@ func (m *CDPManager) attach(initial CDPSession, targetID string) (CDPSession, er
 		return nil, fmt.Errorf("attaching to target %s: %w", targetID, err)
 	}
 
-	m.watch(newClient)
 	m.mu.Lock()
 	m.activeClient = newClient
+	fresh := !m.watched[targetID]
+	if m.watched == nil {
+		m.watched = map[string]bool{}
+	}
+	m.watched[targetID] = true
 	m.mu.Unlock()
+	if fresh {
+		m.watch(newClient)
+	}
 	return newClient, nil
 }
 
 // watch follows, through client, the tabs Chrome opens and closes on its own
-// and the dialogs its tab opens. Every attached client watches, since the
+// and the dialogs its tab opens. One client per tab watches, since the
 // events arrive on a tab's session and stop when that tab closes; the
-// handlers ignore repeats.
+// handlers ignore the repeats several tabs' sessions still bring.
 //
-// The handlers run on goroutines: chromedp calls listeners from its event
-// loop, and taking m.mu there would deadlock against Connect, which holds the
-// lock across CDP calls whose replies come through that same loop.
+// The handlers run off chromedp's event loop, since taking m.mu there would
+// deadlock against Connect, which holds the lock across CDP calls whose
+// replies come through that same loop. They run in order, though: a dialog
+// closed before it was seen opening would otherwise stay open for good.
 func (m *CDPManager) watch(client CDPSession) {
 	client.WatchTargets(
-		func(tab TabInfo, openerID string) { go m.tabOpened(tab, openerID) },
-		func(tab TabInfo) { go m.tabChanged(client, tab) },
-		func(targetID string) { go m.tabDestroyed(targetID) },
+		func(tab TabInfo, openerID string) { m.events.enqueue(func() { m.tabOpened(tab, openerID) }) },
+		func(tab TabInfo) { m.events.enqueue(func() { m.tabChanged(client, tab) }) },
+		func(targetID string) { m.events.enqueue(func() { m.tabDestroyed(targetID) }) },
 	)
 	client.WatchDialogs(
-		func(d Dialog) { go m.dialogOpened(client, d) },
-		func(targetID string) { go m.dialogClosed(targetID) },
+		func(d Dialog) { m.events.enqueue(func() { m.dialogOpened(client, d) }) },
+		func(targetID string) { m.events.enqueue(func() { m.dialogClosed(targetID) }) },
 	)
-	client.WatchFileChoosers(func(fc FileChooser) { go m.fileChooserOpened(client, fc) })
+	client.WatchFileChoosers(func(fc FileChooser) { m.events.enqueue(func() { m.fileChooserOpened(client, fc) }) })
 	// Off the caller's path: a tab blocked on a dialog answers nothing until
 	// the dialog goes, and attaching must not wait on it.
 	go func() {
@@ -387,6 +410,18 @@ func (m *CDPManager) PendingFileChooser(targetID string) (FileChooser, bool) {
 	defer m.mu.Unlock()
 	p, ok := m.fileChoosers[targetID]
 	return p.chooser, ok
+}
+
+// PendingFileChoosers returns every open file chooser, ordered by tab.
+func (m *CDPManager) PendingFileChoosers() []FileChooser {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]FileChooser, 0, len(m.fileChoosers))
+	for _, p := range m.fileChoosers {
+		out = append(out, p.chooser)
+	}
+	slices.SortFunc(out, func(a, b FileChooser) int { return strings.Compare(a.TargetID, b.TargetID) })
+	return out
 }
 
 // AnswerFileChooser gives the file chooser open on targetID the picked
@@ -460,6 +495,18 @@ func (m *CDPManager) PendingDialog(targetID string) (Dialog, bool) {
 	return p.dialog, ok
 }
 
+// PendingDialogs returns every dialog a tab is blocked on, ordered by tab.
+func (m *CDPManager) PendingDialogs() []Dialog {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]Dialog, 0, len(m.dialogs))
+	for _, p := range m.dialogs {
+		out = append(out, p.dialog)
+	}
+	slices.SortFunc(out, func(a, b Dialog) int { return strings.Compare(a.TargetID, b.TargetID) })
+	return out
+}
+
 // HandleDialog answers the dialog targetID is blocked on: accept or dismiss
 // it, with promptText as a prompt's answer.
 func (m *CDPManager) HandleDialog(ctx context.Context, targetID string, accept bool, promptText string) error {
@@ -502,9 +549,25 @@ func (m *CDPManager) tabOpened(tab TabInfo, openerID string) {
 // navigations and the page's own, which the pane has no other way to hear
 // about — and, since Chrome won't say when the new page sets its title, looks
 // the title up again through client while the page loads.
+//
+// A file chooser does not outlive its page, and Chrome says nothing when it
+// goes, so a navigation drops the tab's chooser.
 func (m *CDPManager) tabChanged(client CDPSession, tab TabInfo) {
 	if m.updateTab(tab) {
-		m.recheckTitle(client, tab)
+		m.dropFileChooser(tab.TargetID)
+		// Off the event queue: the rechecks wait seconds between lookups.
+		m.background(func() { m.recheckTitle(client, tab) })
+	}
+}
+
+// dropFileChooser forgets targetID's file chooser, telling subscribers.
+func (m *CDPManager) dropFileChooser(targetID string) {
+	m.mu.Lock()
+	_, ok := m.fileChoosers[targetID]
+	delete(m.fileChoosers, targetID)
+	m.mu.Unlock()
+	if ok {
+		m.publish(TabEvent{Kind: FileChooserClosed, Tab: TabInfo{TargetID: targetID}})
 	}
 }
 
@@ -719,6 +782,7 @@ func (m *CDPManager) untrackTabLocked(targetID string) {
 	delete(m.dialogs, targetID)
 	delete(m.fileChoosers, targetID)
 	delete(m.tabInfo, targetID)
+	delete(m.watched, targetID)
 }
 
 // IsTrackedTab returns true if the target is in the tab order.
@@ -904,6 +968,9 @@ func (m *CDPManager) Close() {
 	m.activeTargetID = ""
 	m.tabOrder = nil
 	m.dialogs = nil
+	m.fileChoosers = nil
+	m.tabInfo = map[string]TabInfo{}
+	m.watched = nil
 }
 
 // WSEndpoint returns the WebSocket endpoint this manager is configured for.
@@ -929,4 +996,39 @@ func SetCDPFactoryForTest(m *CDPManager, factory func(ctx context.Context, wsURL
 // SetTimeNowForTest overrides the time function for testing.
 func SetTimeNowForTest(m *CDPManager, fn func() time.Time) {
 	m.timeNow = fn
+}
+
+// eventQueue runs functions one at a time, in the order they were queued, on
+// a goroutine of its own that lives while there is work. Queueing never
+// blocks, so chromedp's event loop, which queues, is never held up.
+type eventQueue struct {
+	mu      sync.Mutex
+	pending []func()
+	running bool
+}
+
+func (q *eventQueue) enqueue(fn func()) {
+	q.mu.Lock()
+	q.pending = append(q.pending, fn)
+	start := !q.running
+	q.running = true
+	q.mu.Unlock()
+	if start {
+		go q.drain()
+	}
+}
+
+func (q *eventQueue) drain() {
+	for {
+		q.mu.Lock()
+		if len(q.pending) == 0 {
+			q.running = false
+			q.mu.Unlock()
+			return
+		}
+		fn := q.pending[0]
+		q.pending = q.pending[1:]
+		q.mu.Unlock()
+		fn()
+	}
 }

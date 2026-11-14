@@ -346,7 +346,7 @@ func (bc *browserWSConn) handleStart(ctx context.Context, msg browserWSMessage) 
 				bc.mu.Unlock()
 				bc.startTabWatch()
 				bc.sendJSON(browserWSResponse{Type: bwsRespStarted})
-				bc.sendPendingDialog(cdpMgr)
+				bc.sendPendingDialogs(cdpMgr)
 				return
 			}
 		}
@@ -391,18 +391,16 @@ func (bc *browserWSConn) handleStart(ctx context.Context, msg browserWSMessage) 
 	// and a tab opened between that fetch and a later subscription was lost.
 	bc.startTabWatch()
 	bc.sendJSON(browserWSResponse{Type: bwsRespStarted})
-	bc.sendPendingDialog(cdpMgr)
+	bc.sendPendingDialogs(cdpMgr)
 }
 
-// sendPendingDialog shows the pane a dialog — or file chooser — the active
-// tab already had open when the pane started, which no event will announce
-// again.
-func (bc *browserWSConn) sendPendingDialog(cdpMgr *browser.CDPManager) {
-	tid := cdpMgr.ActiveTargetID()
-	if d, ok := cdpMgr.PendingDialog(tid); ok {
+// sendPendingDialogs shows the pane every dialog and file chooser its tabs
+// are waiting on, so switching to one of them finds it asked.
+func (bc *browserWSConn) sendPendingDialogs(cdpMgr *browser.CDPManager) {
+	for _, d := range cdpMgr.PendingDialogs() {
 		bc.sendJSON(browserWSResponse{Type: bwsRespDialog, TargetID: d.TargetID, Dialog: &d})
 	}
-	if fc, ok := cdpMgr.PendingFileChooser(tid); ok {
+	for _, fc := range cdpMgr.PendingFileChoosers() {
 		bc.sendJSON(browserWSResponse{Type: bwsRespFileChooser, TargetID: fc.TargetID, FileChooser: &fc})
 	}
 }
@@ -664,11 +662,19 @@ const chooseSelectJS = `((i) => {
   return "";
 })(%d)`
 
+// selectProbeWait is how long a click waits to learn whether it landed on a
+// select before clicking anyway.
+const selectProbeWait = 500 * time.Millisecond
+
 // clickOrOpenSelect left-clicks at (x, y), unless that lands on a <select>:
 // then the pane gets its options instead, since Chrome's own dropdown would
 // open where nobody can see it.
 func (bc *browserWSConn) clickOrOpenSelect(ctx context.Context, cdp browser.CDPSession, x, y float64) error {
-	raw, err := cdp.EvaluateJS(ctx, fmt.Sprintf(selectAtJS, x, y))
+	// Every click asks first, so a page slow to answer (busy, or blocked on a
+	// dialog) must not hold the click up for long.
+	probeCtx, cancel := context.WithTimeout(ctx, selectProbeWait)
+	raw, err := cdp.EvaluateJS(probeCtx, fmt.Sprintf(selectAtJS, x, y))
+	cancel()
 	if err != nil || raw == "" {
 		if err != nil {
 			bc.logger.Warn("browser ws: looking for a select failed", "error", err)

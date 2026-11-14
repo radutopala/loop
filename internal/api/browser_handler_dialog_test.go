@@ -157,7 +157,9 @@ func (s *BrowserHandlerSuite) TestWSShowsAndAnswersDialogs() {
 	mockCDP.AssertExpectations(s.T())
 }
 
-func (s *BrowserHandlerSuite) TestWSStartShowsADialogAlreadyOpen() {
+// The pane learns of every tab's dialog and chooser, not just the active
+// tab's: switching to another tab must find it asked.
+func (s *BrowserHandlerSuite) TestWSStartShowsEveryDialogAlreadyOpen() {
 	initial := new(mockCDPSession)
 	initial.On("ResetScreencast").Return()
 	initial.On("SwitchTarget", "tab-1").Return(nil)
@@ -165,15 +167,23 @@ func (s *BrowserHandlerSuite) TestWSStartShowsADialogAlreadyOpen() {
 	initial.On("Close").Return().Maybe()
 	s.browserMgr.On("EnsureBrowser", mock.Anything, "ch-1", "").Return(nil)
 	s.browserMgr.On("GetCDPEndpoint", "ch-1").Return("ws://127.0.0.1:9222")
-	s.blockedManager(initial, confirmDialog)
+	mgr := s.blockedManager(initial, confirmDialog)
+	other := browser.Dialog{TargetID: "tab-2", Type: "prompt", Message: "Name?"}
+	chooser := browser.FileChooser{TargetID: "tab-2", NodeID: 7}
+	initial.openDialog(other)
+	initial.openFileChooser(chooser)
+	require.Eventually(s.T(), func() bool {
+		return len(mgr.PendingDialogs()) == 2 && len(mgr.PendingFileChoosers()) == 1
+	}, time.Second, 5*time.Millisecond)
 
 	ws, ts := s.dialBrowserWS()
 	defer ts.Close()
 	defer ws.Close()
 	require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgStart, ChannelID: "ch-1"}))
 	require.Equal(s.T(), bwsRespStarted, s.readUntil(ws, bwsRespStarted).Type)
-	resp := s.readUntil(ws, bwsRespDialog)
-	require.Equal(s.T(), &confirmDialog, resp.Dialog)
+	require.Equal(s.T(), &confirmDialog, s.readUntil(ws, bwsRespDialog).Dialog)
+	require.Equal(s.T(), &other, s.readUntil(ws, bwsRespDialog).Dialog)
+	require.Equal(s.T(), "tab-2", s.readUntil(ws, bwsRespFileChooser).TargetID)
 }
 
 func (s *BrowserHandlerSuite) TestAnswerDialogWithoutABrowserIsANoop() {
