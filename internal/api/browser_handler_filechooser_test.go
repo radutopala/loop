@@ -72,18 +72,18 @@ func (s *BrowserHandlerSuite) TestWSShowsAndAnswersFileChoosers() {
 	}
 }
 
-func (s *BrowserHandlerSuite) TestWSRefusesFilesOverTheLimit() {
-	ws, ts, mockCDP := s.startBrowserWS()
-	defer ts.Close()
-	defer ws.Close()
-
-	mockCDP.openFileChooser(browser.FileChooser{TargetID: "test-target", NodeID: 5})
-	s.readUntil(ws, bwsRespFileChooser)
+// Called directly: the over-limit pick is too big to send through a socket
+// quickly under -race.
+func (s *BrowserHandlerSuite) TestRefusesFilesOverTheLimit() {
+	client, bc := s.serverWSConn()
+	mockCDP := new(mockCDPSession)
+	mockCDP.On("TargetID").Return("test-target").Maybe()
+	bc.cdpMgr = s.newSyncTestManager("ch-1", mockCDP)
 
 	big := strings.Repeat("A", fileChooserMaxBytes/3*4+8)
-	require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgFiles, TargetID: "test-target",
-		Files: []browser.ChosenFile{{Name: "big.bin", Data: big}}}))
-	require.Equal(s.T(), "the files are over the 20 MB limit", s.readUntil(ws, bwsRespError).Message)
+	bc.answerFileChooser(browserWSMessage{Type: bwsMsgFiles, TargetID: "test-target",
+		Files: []browser.ChosenFile{{Name: "big.bin", Data: big}}})
+	require.Equal(s.T(), "the files are over the 20 MB limit", s.readUntil(client, bwsRespError).Message)
 	mockCDP.AssertNotCalled(s.T(), "SetChosenFiles", mock.Anything, mock.Anything, mock.Anything)
 }
 

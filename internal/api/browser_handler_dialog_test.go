@@ -191,7 +191,9 @@ func (s *BrowserHandlerSuite) TestAnswerDialogWithoutABrowserIsANoop() {
 	require.NotPanics(s.T(), func() { bc.answerDialog(browserWSMessage{Type: bwsMsgDialog, TargetID: "t1", Accept: true}) })
 }
 
-func (s *BrowserHandlerSuite) TestWSForwardsDownloads() {
+// serverWSConn dials a WS pair, returning the client end and a browserWSConn
+// on the server end.
+func (s *BrowserHandlerSuite) serverWSConn() (*websocket.Conn, *browserWSConn) {
 	connReady := make(chan *websocket.Conn, 1)
 	tsSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := wsUpgrader.Upgrade(w, r, nil)
@@ -200,14 +202,17 @@ func (s *BrowserHandlerSuite) TestWSForwardsDownloads() {
 		}
 		connReady <- conn
 	}))
-	defer tsSrv.Close()
+	s.T().Cleanup(tsSrv.Close)
 	client, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(tsSrv.URL, "http")+"/", nil)
 	require.NoError(s.T(), err)
-	defer client.Close()
+	s.T().Cleanup(func() { _ = client.Close() })
 	server := <-connReady
-	defer server.Close()
+	s.T().Cleanup(func() { _ = server.Close() })
+	return client, &browserWSConn{conn: server, logger: slog.Default(), stopCh: make(chan struct{})}
+}
 
-	bc := &browserWSConn{conn: server, logger: slog.Default(), stopCh: make(chan struct{})}
+func (s *BrowserHandlerSuite) TestWSForwardsDownloads() {
+	client, bc := s.serverWSConn()
 	events := make(chan browser.TabEvent, 1)
 	stop := make(chan struct{})
 	defer close(stop)

@@ -124,7 +124,14 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
   const [tabMenu, setTabMenu] = useState<{ x: number; y: number; path: string } | null>(null);
   // The tab being dragged, and where it would land: next to the tab at path,
   // on its right side when after is set.
-  const [draggingTab, setDraggingTab] = useState<string | null>(null);
+  const [draggingTab, setDraggingTabState] = useState<string | null>(null);
+  // Read by the drag handlers: a drop can come before the render that
+  // dragstart's state change brings.
+  const draggingRef = useRef<string | null>(null);
+  const setDraggingTab = useCallback((tab: string | null) => {
+    draggingRef.current = tab;
+    setDraggingTabState(tab);
+  }, []);
   const [dropAt, setDropAt] = useState<{ path: string; after: boolean } | null>(null);
 
   const selected = selectedPath ? parsePathKey(selectedPath) : null;
@@ -312,14 +319,14 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
               onDragOver={(e) => {
                 // Only a tab dragged from this panel; another panel's tab
                 // carries the same type.
-                if (draggingTab === null) return;
+                if (draggingRef.current === null) return;
                 e.preventDefault();
                 e.dataTransfer.dropEffect = "move";
                 const last = openTabs[openTabs.length - 1];
                 if (last && (dropAt?.path !== last || !dropAt.after)) setDropAt({ path: last, after: true });
               }}
               onDrop={(e) => {
-                const from = draggingTab;
+                const from = draggingRef.current;
                 const last = openTabs[openTabs.length - 1];
                 if (!from || !last) return;
                 e.preventDefault();
@@ -360,7 +367,7 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
                         setDropAt(null);
                       }}
                       onDragOver={(e) => {
-                        if (draggingTab === null) return;
+                        if (draggingRef.current === null) return;
                         e.preventDefault();
                         e.stopPropagation();
                         e.dataTransfer.dropEffect = "move";
@@ -373,7 +380,7 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
                         setDropAt((at) => (at?.path === tab ? null : at));
                       }}
                       onDrop={(e) => {
-                        const from = draggingTab;
+                        const from = draggingRef.current;
                         if (!from) return;
                         e.preventDefault();
                         e.stopPropagation();

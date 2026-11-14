@@ -130,6 +130,12 @@ func (s *BrowserHandlerSuite) TestTakeSavedTabsNoLoopDir() {
 	require.Nil(s.T(), s.srv.browser.takeSavedTabs("ch-1"))
 }
 
+func (s *BrowserHandlerSuite) TestSavedTabsPathNeedsAFileName() {
+	s.srv.browser.loopDir = s.T().TempDir()
+	require.Empty(s.T(), s.srv.browser.savedTabsPath("!!!"), "a channel id with no letters or digits leaves no file name")
+	require.Equal(s.T(), savedTabsFile(s.srv.browser.loopDir, "ch-1"), s.srv.browser.savedTabsPath("ch-1"))
+}
+
 // restoreSetup gives ch-1 a connected manager on t1 and saved, as the last
 // daemon would have left them.
 func (s *BrowserHandlerSuite) restoreSetup(saved string) (*browser.CDPManager, *mockCDPSession) {

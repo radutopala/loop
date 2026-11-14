@@ -26,12 +26,14 @@ type savedTab struct {
 }
 
 // savedTabsPath is where a channel's tabs wait for the next daemon. Empty when
-// the daemon has no loop dir to keep them in.
+// the daemon has no loop dir to keep them in, or the channel id leaves no
+// file name.
 func (s *browserService) savedTabsPath(channelID string) string {
-	if s.loopDir == "" {
+	name := container.SanitizeName(channelID)
+	if s.loopDir == "" || name == "" || strings.Contains(name, "..") {
 		return ""
 	}
-	return filepath.Join(s.loopDir, "browser-tabs", container.SanitizeName(channelID)+".json")
+	return filepath.Join(s.loopDir, "browser-tabs", name+".json")
 }
 
 // agentTabs narrows a browser's tab list to the tabs the channel's browser
