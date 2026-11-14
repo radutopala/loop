@@ -5,7 +5,7 @@ import { useTheme } from "../../ThemeContext";
 import { storageGet, storageSet } from "../../utils/storage";
 import { ContextMenu } from "../shared/ContextMenu";
 import { type PageContextMenu, pageMenuItems } from "./browserContextMenu";
-import { dialogButtons, dialogHeading, type PageDialog } from "./browserDialog";
+import { dialogButtons, dialogHeading, type PageDialog, type PageDialogs } from "./browserDialog";
 import { type PageSelectMenu, selectMenuItems } from "./browserSelectMenu";
 import { type BrowserInput, createFrameRenderer, createInputCoalescer } from "./browserStream";
 import { normalizeNavigateUrl, safeFaviconUrl } from "./browserUrl";
@@ -75,6 +75,7 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
     newTab,
     closeTab,
     dialog,
+    dialogs,
     answerDialog,
     chooseSelectOption,
   } = useBrowserWs({
@@ -292,7 +293,17 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
       }}
     >
       {/* Tab strip — Chrome-style rounded tabs */}
-      <TabStrip tabs={tabs} activeTargetId={activeTargetId} hoveredTab={hoveredTab} colors={colors} onTabClick={switchTab} onTabClose={closeTab} onNewTab={() => newTab()} onHover={setHoveredTab} />
+      <TabStrip
+        tabs={tabs}
+        activeTargetId={activeTargetId}
+        dialogs={dialogs}
+        hoveredTab={hoveredTab}
+        colors={colors}
+        onTabClick={switchTab}
+        onTabClose={closeTab}
+        onNewTab={() => newTab()}
+        onHover={setHoveredTab}
+      />
 
       {/* Toolbar — back/forward/reload + URL bar */}
       <div
@@ -582,9 +593,36 @@ function NavButton({ onClick, title, colors, children }: { onClick: () => void; 
   );
 }
 
+/** Marks a tab whose page waits on a confirm, prompt or leave-page dialog. */
+function DialogBadge({ dialog, color }: { dialog: PageDialog; color: string }) {
+  return (
+    <span
+      data-testid="browser-tab-dialog"
+      title={`Waiting for an answer: ${dialog.message || dialogHeading(dialog)}`}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 14,
+        height: 14,
+        borderRadius: 7,
+        flexShrink: 0,
+        backgroundColor: color,
+        color: "#fff",
+        fontSize: 10,
+        fontWeight: 700,
+        lineHeight: 1,
+      }}
+    >
+      !
+    </span>
+  );
+}
+
 function TabStrip({
   tabs,
   activeTargetId,
+  dialogs,
   hoveredTab,
   colors,
   onTabClick,
@@ -594,8 +632,11 @@ function TabStrip({
 }: {
   tabs: TabInfo[];
   activeTargetId: string;
+  /** Tabs blocked on a page dialog, flagged so one in the background is not missed. */
+  dialogs: PageDialogs;
   hoveredTab: string | null;
   colors: {
+    warning: string;
     sidebar: string;
     surface: string;
     border: string;
@@ -674,6 +715,7 @@ function TabStrip({
             }}
           >
             <TabIcon url={icon} broken={brokenIcons.has(icon ?? "")} isActive={isActive} colors={colors} onBroken={markIconBroken} />
+            {dialogs[tab.target_id] && <DialogBadge dialog={dialogs[tab.target_id]!} color={colors.warning} />}
             <span
               style={{
                 overflow: "hidden",
