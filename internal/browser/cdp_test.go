@@ -154,6 +154,9 @@ func (s *CDPSuite) TestNewCDPClientDefaultFieldBodies() {
 	require.Panics(s.T(), func() {
 		c.listenFunc(context.Background(), func(_ any) {})
 	})
+	require.Panics(s.T(), func() {
+		c.listenBrowserFunc(context.Background(), func(_ any) {})
+	})
 	_, _ = c.axTreeFunc(context.Background())
 	_, _ = c.boxModelFunc(context.Background(), 0)
 	_, _ = c.createTabFunc(context.Background(), "about:blank")
@@ -933,7 +936,7 @@ func (s *CDPSuite) TestSetDownloadDir() {
 	require.NoError(s.T(), s.client.SetDownloadDir(context.Background(), "/downloads"))
 	require.Same(s.T(), browser, executor)
 	require.Equal(s.T(), cdpbrowser.CommandSetDownloadBehavior, method)
-	require.Equal(s.T(), cdpbrowser.SetDownloadBehavior(cdpbrowser.SetDownloadBehaviorBehaviorAllow).WithDownloadPath("/downloads"), params)
+	require.Equal(s.T(), cdpbrowser.SetDownloadBehavior(cdpbrowser.SetDownloadBehaviorBehaviorAllow).WithDownloadPath("/downloads").WithEventsEnabled(true), params)
 }
 
 func (s *CDPSuite) TestSetDownloadDirError() {

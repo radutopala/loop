@@ -23,6 +23,7 @@ type mockCDPSession struct {
 	onClosed          func(string)
 	onDialog          func(Dialog)
 	onDialogClosed    func(string)
+	onDownload        func(Download)
 	closeBrowserErr   error
 	closeBrowserCalls int
 	// dead makes Alive report a session whose context died with its container.
@@ -162,6 +163,20 @@ func (m *mockCDPSession) WatchDialogs(onOpened func(Dialog), onClosed func(strin
 	m.onDialog, m.onDialogClosed = onOpened, onClosed
 }
 
+// WatchDownloads keeps the handler so a test can play Chrome saving a file.
+func (m *mockCDPSession) WatchDownloads(onChange func(Download)) {
+	m.watchMu.Lock()
+	defer m.watchMu.Unlock()
+	m.onDownload = onChange
+}
+
+// downloadWatcher returns the handler WatchDownloads was given.
+func (m *mockCDPSession) downloadWatcher() func(Download) {
+	m.watchMu.Lock()
+	defer m.watchMu.Unlock()
+	return m.onDownload
+}
+
 // dialogWatchers returns the handlers WatchDialogs was given.
 func (m *mockCDPSession) dialogWatchers() (func(Dialog), func(string)) {
 	m.watchMu.Lock()
@@ -275,7 +290,28 @@ func (s *CDPManagerSuite) TestConnectSetsDownloadDir() {
 			require.NoError(s.T(), mgr.Connect(context.Background()))
 			require.True(s.T(), mgr.IsConnected())
 			mockClient.AssertExpectations(s.T())
+			// Downloads are only watched once Chrome agreed to save them.
+			require.Equal(s.T(), tt.err == nil, mockClient.downloadWatcher() != nil)
 		})
+	}
+}
+
+func (s *CDPManagerSuite) TestDownloadsArePublished() {
+	mgr, mockClient := s.newTestManager(false)
+	mgr.cfg.DownloadDir = "/downloads"
+	mockClient.On("TargetID").Return("t1")
+	mockClient.On("SetDownloadDir", mock.Anything, "/downloads").Return(nil)
+	require.NoError(s.T(), mgr.Connect(context.Background()))
+
+	events, unsubscribe := mgr.Subscribe()
+	defer unsubscribe()
+	d := Download{GUID: "g1", Filename: "r.pdf", State: DownloadCompleted}
+	mockClient.downloadWatcher()(d)
+	select {
+	case ev := <-events:
+		require.Equal(s.T(), TabEvent{Kind: DownloadChanged, Download: d}, ev)
+	case <-time.After(time.Second):
+		s.T().Fatal("no download event")
 	}
 }
 

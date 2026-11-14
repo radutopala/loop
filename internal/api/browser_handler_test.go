@@ -705,6 +705,10 @@ func (m *mockCDPSession) WatchDialogs(onOpened func(browser.Dialog), _ func(targ
 	m.onDialog = onOpened
 }
 
+// WatchDownloads is a no-op: the handler tests send download events to
+// watchTabEvents directly.
+func (m *mockCDPSession) WatchDownloads(func(browser.Download)) {}
+
 // openDialog plays the page opening d.
 func (m *mockCDPSession) openDialog(d browser.Dialog) {
 	m.dialogMu.Lock()

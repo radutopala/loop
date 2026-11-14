@@ -6,6 +6,7 @@ import { storageGet, storageSet } from "../../utils/storage";
 import { ContextMenu } from "../shared/ContextMenu";
 import { type PageContextMenu, pageMenuItems } from "./browserContextMenu";
 import { dialogButtons, dialogHeading, type PageDialog, type PageDialogs } from "./browserDialog";
+import { downloadLabel, type PageDownload, withDownload, withoutDownload } from "./browserDownloads";
 import { type PageSelectMenu, selectMenuItems } from "./browserSelectMenu";
 import { type BrowserInput, createFrameRenderer, createInputCoalescer } from "./browserStream";
 import { normalizeNavigateUrl, safeFaviconUrl } from "./browserUrl";
@@ -40,6 +41,10 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
   // <select> brings up the options here, under the click.
   const [selectMenu, setSelectMenu] = useState<{ x: number; y: number; menu: PageSelectMenu } | null>(null);
   const clickAnchorRef = useRef({ x: 0, y: 0 });
+  // Downloads save into the channel's downloads dir with nothing on screen,
+  // so the pane says when one starts and how it ended.
+  const [downloads, setDownloads] = useState<readonly PageDownload[]>([]);
+  const dismissDownload = useCallback((guid: string) => setDownloads((prev) => withoutDownload(prev, guid)), []);
   const [error, setError] = useState<string | null>(null);
   const [hoveredTab, setHoveredTab] = useState<string | null>(null);
   const [showCookieImport, setShowCookieImport] = useState(false);
@@ -98,6 +103,9 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
     }, []),
     onSelectMenu: useCallback((menu: PageSelectMenu) => {
       setSelectMenu({ ...clickAnchorRef.current, menu });
+    }, []),
+    onDownload: useCallback((d: PageDownload) => {
+      setDownloads((prev) => withDownload(prev, d));
     }, []),
   });
   sendInputRef.current = sendInput;
@@ -391,6 +399,7 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
       <div
         ref={canvasContainerRef}
         style={{
+          position: "relative",
           flex: 1,
           overflow: "hidden",
           display: "flex",
@@ -422,6 +431,7 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
         ) : (
           <div style={{ color: colors.textDim, fontSize: 13 }}>{connected ? "Starting browser..." : "Connecting..."}</div>
         )}
+        <DownloadToasts downloads={downloads} colors={colors} onDismiss={dismissDownload} />
       </div>
       {selectMenu && <ContextMenu x={selectMenu.x} y={selectMenu.y} items={selectMenuItems(selectMenu.menu, chooseSelectOption)} onClose={() => setSelectMenu(null)} />}
       {pageMenu && <ContextMenu x={pageMenu.x} y={pageMenu.y} items={pageMenuItems(pageMenu.menu, pageMenuActions)} onClose={() => setPageMenu(null)} />}
@@ -430,6 +440,76 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
 }
 
 /* ---------- sub-components ---------- */
+
+/** How long a finished download's toast stays up. */
+const DOWNLOAD_TOAST_MS = 6000;
+
+/** Toasts for the page's downloads, in the pane's bottom-right corner. */
+function DownloadToasts({
+  downloads,
+  colors,
+  onDismiss,
+}: {
+  downloads: readonly PageDownload[];
+  colors: { surface: string; border: string; textLight: string; textDim: string };
+  onDismiss: (guid: string) => void;
+}) {
+  if (downloads.length === 0) return null;
+  return (
+    <div data-testid="browser-downloads" style={{ position: "absolute", right: 12, bottom: 12, display: "flex", flexDirection: "column", gap: 6, zIndex: 2 }}>
+      {downloads.map((d) => (
+        <DownloadToast key={d.guid} download={d} colors={colors} onDismiss={onDismiss} />
+      ))}
+    </div>
+  );
+}
+
+function DownloadToast({
+  download,
+  colors,
+  onDismiss,
+}: {
+  download: PageDownload;
+  colors: { surface: string; border: string; textLight: string; textDim: string };
+  onDismiss: (guid: string) => void;
+}) {
+  const { guid, state } = download;
+  // One that is still running stays until it ends.
+  useEffect(() => {
+    if (state === "started") return;
+    const t = setTimeout(() => onDismiss(guid), DOWNLOAD_TOAST_MS);
+    return () => clearTimeout(t);
+  }, [guid, state, onDismiss]);
+  return (
+    <div
+      role="status"
+      title={download.url}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        maxWidth: 320,
+        padding: "6px 8px 6px 10px",
+        fontSize: 12,
+        color: colors.textLight,
+        backgroundColor: colors.surface,
+        border: `1px solid ${colors.border}`,
+        borderRadius: 6,
+        boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
+      }}
+    >
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{downloadLabel(download)}</span>
+      <button
+        type="button"
+        aria-label="Dismiss"
+        onClick={() => onDismiss(guid)}
+        style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: colors.textDim, fontSize: 14, lineHeight: 1 }}
+      >
+        ×
+      </button>
+    </div>
+  );
+}
 
 /**
  * The JavaScript dialog the tab is blocked on, which headless Chrome never

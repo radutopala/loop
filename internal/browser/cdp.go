@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"path"
 	"sort"
 	"strings"
 	"sync"
@@ -39,15 +40,18 @@ type CDPClient struct {
 	logger      *slog.Logger
 
 	// Function deps — set by constructor, overridable in tests via direct struct construction.
-	runFn         func(context.Context, ...chromedp.Action) error
-	targetsFunc   func(context.Context) ([]*target.Info, error)
-	listenFunc    func(context.Context, func(any))
-	axTreeFunc    func(context.Context) ([]*accessibility.Node, error)
-	scanRefsFunc  func(context.Context) ([]ElementRef, error)
-	boxModelFunc  func(context.Context, cdp.BackendNodeID) (*cdpdom.BoxModel, error)
-	createTabFunc func(context.Context, string) (target.ID, error)
-	activateFunc  func(context.Context, target.ID) error
-	closeTabFunc  func(context.Context, string) error // injectable for testing
+	runFn       func(context.Context, ...chromedp.Action) error
+	targetsFunc func(context.Context) ([]*target.Info, error)
+	listenFunc  func(context.Context, func(any))
+	// listenBrowserFunc hears the browser session's events, as opposed to the
+	// tab's that listenFunc hears.
+	listenBrowserFunc func(context.Context, func(any))
+	axTreeFunc        func(context.Context) ([]*accessibility.Node, error)
+	scanRefsFunc      func(context.Context) ([]ElementRef, error)
+	boxModelFunc      func(context.Context, cdp.BackendNodeID) (*cdpdom.BoxModel, error)
+	createTabFunc     func(context.Context, string) (target.ID, error)
+	activateFunc      func(context.Context, target.ID) error
+	closeTabFunc      func(context.Context, string) error // injectable for testing
 
 	targetID target.ID   // the page target this client is attached to
 	exec     cdpExecutor // injectable cdp.Execute
@@ -297,6 +301,7 @@ func (c *CDPClient) NewContextForTarget(targetID string) (CDPSession, error) {
 		runFn:             c.runFn,
 		targetsFunc:       c.targetsFunc,
 		listenFunc:        c.listenFunc,
+		listenBrowserFunc: c.listenBrowserFunc,
 		axTreeFunc:        makeAxTreeFuncWith(c.runFn, c.exec),
 		scanRefsFunc:      makeScanRefsFuncWith(c.runFn, c.exec),
 		createTabFunc:     c.createTabFunc,
@@ -553,6 +558,9 @@ func NewCDPClient(ctx context.Context, wsURL string, logger *slog.Logger, opts .
 		listenFunc: func(ctx context.Context, fn func(any)) {
 			chromedp.ListenTarget(ctx, fn)
 		},
+		listenBrowserFunc: func(ctx context.Context, fn func(any)) {
+			chromedp.ListenBrowser(ctx, fn)
+		},
 		axTreeFunc:   makeAxTreeFuncWith(cfg.runFunc, cfg.exec),
 		scanRefsFunc: makeScanRefsFuncWith(cfg.runFunc, cfg.exec),
 		boxModelFunc: func(ctx context.Context, nodeID cdp.BackendNodeID) (*cdpdom.BoxModel, error) {
@@ -605,7 +613,8 @@ func (c *CDPClient) CloseBrowser(ctx context.Context) error {
 }
 
 // SetDownloadDir has Chrome save downloads into dir, under the name the site
-// suggests, instead of refusing them as headless Chrome does by default.
+// suggests, instead of refusing them as headless Chrome does by default, and
+// report them to WatchDownloads.
 //
 // Chrome drops the setting along with the session that made it. Sent on the
 // page session, it would be gone once that tab closed and downloads would
@@ -615,8 +624,49 @@ func (c *CDPClient) SetDownloadDir(ctx context.Context, dir string) error {
 	return runBoundedFor(ctx, c.commandDeadline(), func() error {
 		return c.runFn(c.ctx, chromedp.ActionFunc(func(ctx context.Context) error {
 			return c.exec(cdp.WithExecutor(ctx, chromedp.FromContext(ctx).Browser), cdpbrowser.CommandSetDownloadBehavior,
-				cdpbrowser.SetDownloadBehavior(cdpbrowser.SetDownloadBehaviorBehaviorAllow).WithDownloadPath(dir), nil)
+				cdpbrowser.SetDownloadBehavior(cdpbrowser.SetDownloadBehaviorBehaviorAllow).WithDownloadPath(dir).WithEventsEnabled(true), nil)
 		}))
+	})
+}
+
+// Download states a Download reports.
+const (
+	DownloadStarted   = "started"
+	DownloadCompleted = "completed"
+	DownloadCanceled  = "canceled"
+)
+
+// Download is a file Chrome saves into the download dir, at one of its
+// states. Filename is the site's suggestion when it starts and the name Chrome
+// actually used once it completes; a canceled one carries only its GUID.
+type Download struct {
+	GUID     string `json:"guid"`
+	URL      string `json:"url,omitempty"`
+	Filename string `json:"filename,omitempty"`
+	State    string `json:"state"`
+}
+
+// WatchDownloads reports downloads starting and finishing, from any tab.
+// Chrome sends these to the browser session that asked for them in
+// SetDownloadDir, so one watcher per connection hears every download. The
+// callback runs on CDP's event loop and must not block.
+func (c *CDPClient) WatchDownloads(onChange func(Download)) {
+	c.listenBrowserFunc(c.ctx, func(ev any) {
+		switch e := ev.(type) {
+		case *cdpbrowser.EventDownloadWillBegin:
+			onChange(Download{GUID: e.GUID, URL: e.URL, Filename: e.SuggestedFilename, State: DownloadStarted})
+		case *cdpbrowser.EventDownloadProgress:
+			switch e.State {
+			case cdpbrowser.DownloadProgressStateCompleted:
+				d := Download{GUID: e.GUID, State: DownloadCompleted}
+				if e.FilePath != "" {
+					d.Filename = path.Base(e.FilePath)
+				}
+				onChange(d)
+			case cdpbrowser.DownloadProgressStateCanceled:
+				onChange(Download{GUID: e.GUID, State: DownloadCanceled})
+			}
+		}
 	})
 }
 

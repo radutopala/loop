@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { browserAction, getWsUrl, wsProtocols } from "../api/loopApi";
 import type { PageContextMenu } from "../components/panels/browserContextMenu";
 import { type PageDialog, type PageDialogs, withDialog, withoutDialog } from "../components/panels/browserDialog";
+import type { PageDownload } from "../components/panels/browserDownloads";
 import type { PageSelectMenu } from "../components/panels/browserSelectMenu";
 
 interface BrowserWSMessage {
@@ -46,6 +47,7 @@ interface BrowserWSResponse {
   menu?: PageContextMenu;
   dialog?: PageDialog;
   select?: PageSelectMenu;
+  download?: PageDownload;
 }
 
 interface UseBrowserWsOptions {
@@ -59,9 +61,11 @@ interface UseBrowserWsOptions {
   onContextMenu?: (menu: PageContextMenu) => void;
   /** A click on a <select>, whose options the pane shows instead of Chrome. */
   onSelectMenu?: (menu: PageSelectMenu) => void;
+  /** A download, from any tab, starting or finishing. */
+  onDownload?: (download: PageDownload) => void;
 }
 
-export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarted, onStopped, onContextMenu, onSelectMenu }: UseBrowserWsOptions) {
+export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarted, onStopped, onContextMenu, onSelectMenu, onDownload }: UseBrowserWsOptions) {
   const wsRef = useRef<WebSocket | null>(null);
   const onFrameRef = useRef(onFrame);
   const onPageInfoRef = useRef(onPageInfo);
@@ -70,6 +74,7 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
   const onStoppedRef = useRef(onStopped);
   const onContextMenuRef = useRef(onContextMenu);
   const onSelectMenuRef = useRef(onSelectMenu);
+  const onDownloadRef = useRef(onDownload);
   const [connected, setConnected] = useState(false);
   const [started, setStarted] = useState(false);
   const [tabs, setTabs] = useState<TabInfo[]>([]);
@@ -86,6 +91,7 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
   onStoppedRef.current = onStopped;
   onContextMenuRef.current = onContextMenu;
   onSelectMenuRef.current = onSelectMenu;
+  onDownloadRef.current = onDownload;
 
   // Connect WebSocket with auto-reconnect.
   useEffect(() => {
@@ -156,6 +162,9 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
               break;
             case "select_menu":
               if (msg.select) onSelectMenuRef.current?.(msg.select);
+              break;
+            case "download":
+              if (msg.download) onDownloadRef.current?.(msg.download);
               break;
             case "dialog":
               if (msg.dialog) setDialogs((prev) => withDialog(prev, msg.dialog!));
