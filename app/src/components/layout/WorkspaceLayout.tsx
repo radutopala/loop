@@ -15,6 +15,7 @@ import { ExplainContext, useExplain } from "../../hooks/useExplain";
 import { LearnContext, useLearn } from "../../hooks/useLearn";
 import { prefersReducedMotion, usePresence } from "../../hooks/usePresence";
 import { takeStoredSession } from "../../hooks/useSessionPersistence";
+import { useWheelScrollsSideways } from "../../hooks/useWheelScrollsSideways";
 import type { LayoutType } from "../../layouts/persistence";
 import {
   clearLayout,
@@ -1863,23 +1864,25 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         >
           Layouts
         </span>
-        {layoutNames
-          .filter((name) => !(channel.parent_id && name === "Sessions"))
-          .filter((name) => !(name === "Review" && !channel.review_enabled))
-          .map((name) => (
-            <LayoutTab
-              key={name}
-              name={name}
-              active={name === activeName}
-              canDelete={layoutNames.length > 1}
-              onSelect={() => {
-                if (name !== activeName) switchLayout(name);
-              }}
-              onRename={(newName) => handleRenameLayout(name, newName)}
-              onDelete={() => handleDeleteLayout(name)}
-              onReorder={handleReorderLayout}
-            />
-          ))}
+        <LayoutTabStrip>
+          {layoutNames
+            .filter((name) => !(channel.parent_id && name === "Sessions"))
+            .filter((name) => !(name === "Review" && !channel.review_enabled))
+            .map((name) => (
+              <LayoutTab
+                key={name}
+                name={name}
+                active={name === activeName}
+                canDelete={layoutNames.length > 1}
+                onSelect={() => {
+                  if (name !== activeName) switchLayout(name);
+                }}
+                onRename={(newName) => handleRenameLayout(name, newName)}
+                onDelete={() => handleDeleteLayout(name)}
+                onReorder={handleReorderLayout}
+              />
+            ))}
+        </LayoutTabStrip>
         <div style={{ position: "relative", flexShrink: 0 }}>
           <button
             onClick={() => setShowNewLayoutMenu((v) => !v)}
@@ -2280,6 +2283,24 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
 
 // ── Layout Tab ──
 
+/**
+ * The row of layout tabs. It scrolls sideways once the tabs outgrow it, so
+ * every name stays readable and the controls after it stay on screen.
+ */
+function LayoutTabStrip({ children }: { children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useWheelScrollsSideways(ref);
+  return (
+    <div
+      ref={ref}
+      data-testid="layout-tab-strip"
+      style={{ display: "flex", alignItems: "center", gap: 4, flex: "0 1 auto", minWidth: 0, overflowX: "auto", overflowY: "hidden", scrollbarWidth: "none" }}
+    >
+      {children}
+    </div>
+  );
+}
+
 const TAB_DRAG_MIME = "application/x-loop-layout-tab";
 
 function LayoutTab({
@@ -2305,10 +2326,16 @@ function LayoutTab({
   const [confirming, setConfirming] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const tabRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (editing) inputRef.current?.select();
   }, [editing]);
+
+  // The strip scrolls, so the layout just switched to may sit out of view.
+  useEffect(() => {
+    if (active) tabRef.current?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [active]);
 
   // Close confirm popover on outside click.
   useEffect(() => {
@@ -2355,6 +2382,7 @@ function LayoutTab({
 
   return (
     <div
+      ref={tabRef}
       data-testid={`layout-tab-${name}`}
       draggable={!editing}
       onDragStart={handleDragStart}
@@ -2364,10 +2392,8 @@ function LayoutTab({
       onClick={onSelect}
       style={{
         ...buildTabButtonStyle(colors, active),
+        // Full width always: the strip scrolls instead of squeezing names.
         flexShrink: 0,
-        // Inactive tabs give up width (their names ellipsized) before the
-        // bar overflows, so the controls at its right end stay on screen.
-        ...(!active && { flexShrink: 1, minWidth: 32 }),
         position: "relative",
         paddingLeft: canDelete && !editing ? 4 : 10,
         paddingRight: canDelete && !editing ? 10 : 10,
