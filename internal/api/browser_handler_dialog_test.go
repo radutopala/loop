@@ -231,3 +231,8 @@ func (s *BrowserHandlerSuite) TestWSForwardsDownloads() {
 	require.Equal(s.T(), "https://b.com/", resp.URL)
 	require.Equal(s.T(), "B", resp.Title)
 }
+
+func (s *BrowserHandlerSuite) TestDispatchInputWithoutABrowserIsANoop() {
+	bc := &browserWSConn{}
+	require.NotPanics(s.T(), func() { bc.dispatchInput(browser.InputEvent{Type: "click"}) })
+}
