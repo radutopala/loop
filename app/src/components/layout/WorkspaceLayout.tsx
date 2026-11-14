@@ -2293,7 +2293,7 @@ function LayoutTabStrip({ children }: { children: React.ReactNode }) {
   return (
     <div
       ref={ref}
-      data-testid="layout-tab-strip"
+      data-testid="layout-tabs-strip"
       style={{ display: "flex", alignItems: "center", gap: 4, flex: "0 1 auto", minWidth: 0, overflowX: "auto", overflowY: "hidden", scrollbarWidth: "none" }}
     >
       {children}
