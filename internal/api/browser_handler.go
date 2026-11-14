@@ -86,7 +86,7 @@ type browserTabInfo struct {
 
 // browserWSResponse is a status message sent to the client.
 type browserWSResponse struct {
-	Type           string              `json:"type"` // "started", "stopped", "page_info", "error", "tabs", "tab_switched", "tab_created", "tab_closed", "clipboard", "context_menu", "dialog", "dialog_closed", "select_menu", "download"
+	Type           string              `json:"type"` // "started", "stopped", "page_info", "error", "tabs", "tab_switched", "tab_created", "tab_closed", "clipboard", "context_menu", "dialog", "dialog_closed", "select_menu", "download", "tab_updated"
 	URL            string              `json:"url,omitempty"`
 	Title          string              `json:"title,omitempty"`
 	Message        string              `json:"message,omitempty"`
@@ -153,6 +153,7 @@ const (
 	bwsRespDialogDone  = "dialog_closed"
 	bwsRespDownload    = "download"
 	bwsRespDownloads   = "downloads"
+	bwsRespTabUpdated  = "tab_updated"
 
 	cdpMaxRetries = 20
 	cdpRetryDelay = 500 * time.Millisecond
@@ -898,6 +899,13 @@ func (bc *browserWSConn) watchTabEvents(events <-chan browser.TabEvent, stop <-c
 			case browser.DownloadChanged:
 				d := ev.Download
 				bc.sendJSON(browserWSResponse{Type: bwsRespDownload, Download: &d})
+			case browser.TabUpdated:
+				bc.sendJSON(browserWSResponse{
+					Type:     bwsRespTabUpdated,
+					TargetID: ev.Tab.TargetID,
+					URL:      ev.Tab.URL,
+					Title:    ev.Tab.Title,
+				})
 			}
 		case <-stop:
 			return

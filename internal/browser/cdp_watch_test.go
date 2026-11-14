@@ -20,9 +20,11 @@ func (s *CDPSuite) TestWatchTargets() {
 		opener string
 	}
 	var gotOpened []opened
+	var gotChanged []TabInfo
 	var gotClosed []string
 	s.client.WatchTargets(
 		func(tab TabInfo, openerID string) { gotOpened = append(gotOpened, opened{tab, openerID}) },
+		func(tab TabInfo) { gotChanged = append(gotChanged, tab) },
 		func(targetID string) { gotClosed = append(gotClosed, targetID) },
 	)
 	require.NotNil(s.T(), listener)
@@ -32,12 +34,15 @@ func (s *CDPSuite) TestWatchTargets() {
 		&target.EventTargetCreated{TargetInfo: &target.Info{TargetID: "sw", Type: "service_worker"}},
 		&target.EventTargetCreated{},
 		&target.EventTargetDestroyed{TargetID: "t1"},
-		&target.EventTargetInfoChanged{TargetInfo: &target.Info{TargetID: "t1", Type: "page"}},
+		&target.EventTargetInfoChanged{TargetInfo: &target.Info{TargetID: "t1", Type: "page", URL: "https://c.com", Title: "C"}},
+		&target.EventTargetInfoChanged{TargetInfo: &target.Info{TargetID: "w1", Type: "worker"}},
+		&target.EventTargetInfoChanged{},
 	} {
 		listener(ev)
 	}
 
 	require.Equal(s.T(), []opened{{TabInfo{TargetID: "popup", URL: "https://b.com", Title: "B"}, "t1"}}, gotOpened)
+	require.Equal(s.T(), []TabInfo{{TargetID: "t1", URL: "https://c.com", Title: "C"}}, gotChanged)
 	require.Equal(s.T(), []string{"t1"}, gotClosed)
 }
 

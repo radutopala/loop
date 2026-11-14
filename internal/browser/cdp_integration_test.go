@@ -773,6 +773,7 @@ func (s *CDPIntegrationSuite) TestWatchTargetsSeesATabThePageOpens() {
 	closedCh := make(chan string, 4)
 	s.client.WatchTargets(
 		func(tab TabInfo, openerID string) { openedCh <- opened{tab.TargetID, openerID} },
+		func(TabInfo) {},
 		func(targetID string) { closedCh <- targetID },
 	)
 
