@@ -278,6 +278,8 @@ func (s *CDPSuite) screencastCalls(fail func(call string, n int) error) func() [
 			call = "start"
 		case *cdppage.ReloadParams:
 			call = "reload"
+		case *cdppage.StopScreencastParams:
+			call = "stop"
 		}
 
 		mu.Lock()
@@ -354,6 +356,60 @@ func (s *CDPSuite) TestStartScreencastClearsFlagWhenRecoveryFails() {
 			require.Eventually(s.T(), func() bool { return !screencastingNow(client) },
 				time.Second, 5*time.Millisecond,
 				"a start that could not be recovered must leave the client free to try again")
+		})
+	}
+}
+
+// A pane that comes back to a tab still streaming for an earlier pane got no
+// frame until the page repainted, so the panel reloaded the page on every
+// return and lost whatever state it held. Restarting the screencast hands the
+// new pane a frame instead.
+func (s *CDPSuite) TestStartScreencastRestartsAnActiveScreencast() {
+	calls := s.screencastCalls(func(call string, n int) error {
+		if call == "start" && n == 1 {
+			return errors.New("Screencast is already active (-32000)")
+		}
+		return nil
+	})
+
+	client := s.client
+	client.StartScreencast(60, 1920, 1080)
+
+	require.Eventually(s.T(), func() bool {
+		return slices.Equal(calls(), []string{"start", "stop", "start"})
+	}, time.Second, 5*time.Millisecond)
+	require.True(s.T(), screencastingNow(client))
+}
+
+func (s *CDPSuite) TestStartScreencastClearsFlagWhenTheRestartStopFails() {
+	s.screencastCalls(func(call string, _ int) error {
+		if call == "stop" {
+			return errors.New("stop failed")
+		}
+		return errors.New("Screencast is already active (-32000)")
+	})
+
+	client := s.client
+	client.StartScreencast(60, 1920, 1080)
+
+	require.Eventually(s.T(), func() bool { return !screencastingNow(client) },
+		time.Second, 5*time.Millisecond)
+}
+
+func (s *CDPSuite) TestScreencastActive() {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"no error", nil, false},
+		{"already active", errors.New("Screencast is already active (-32000)"), true},
+		{"some other failure", errors.New("Target closed"), false},
+	}
+
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			require.Equal(s.T(), tc.want, screencastActive(tc.err))
 		})
 	}
 }

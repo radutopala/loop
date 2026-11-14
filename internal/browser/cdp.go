@@ -822,8 +822,11 @@ func (c *CDPClient) StartScreencast(quality, maxWidth, maxHeight int) <-chan []b
 
 		go func() {
 			err := c.startScreencastCmd(quality, maxWidth, maxHeight)
-			if targetCrashed(err) {
+			switch {
+			case targetCrashed(err):
 				err = c.restartCrashedScreencast(quality, maxWidth, maxHeight)
+			case screencastActive(err):
+				err = c.restartActiveScreencast(quality, maxWidth, maxHeight)
 			}
 			if err == nil {
 				return
@@ -886,6 +889,26 @@ func (c *CDPClient) restartCrashedScreencast(quality, maxWidth, maxHeight int) e
 		return fmt.Errorf("reloading crashed target: %w", err)
 	}
 	return c.startScreencastCmd(quality, maxWidth, maxHeight)
+}
+
+// restartActiveScreencast stops a screencast Chrome still runs for an earlier
+// pane and starts it again.
+//
+// Chrome sends screencast frames only as the page repaints, except right after
+// a start. A pane that comes back to a tab whose screencast never stopped
+// would otherwise sit on whatever it last drew, or on nothing, until the page
+// happened to change.
+func (c *CDPClient) restartActiveScreencast(quality, maxWidth, maxHeight int) error {
+	if err := c.runActions(cdppage.StopScreencast()); err != nil {
+		return fmt.Errorf("stopping the earlier screencast: %w", err)
+	}
+	return c.startScreencastCmd(quality, maxWidth, maxHeight)
+}
+
+// screencastActive reports whether err is Chrome refusing a start because the
+// tab already streams.
+func screencastActive(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "Screencast is already active")
 }
 
 // targetCrashed reports whether err is Chrome's answer for a page whose

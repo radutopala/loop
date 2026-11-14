@@ -144,11 +144,12 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
 
   // Start streaming once browser is started, and re-request when the panel
   // becomes visible again (e.g. after a layout switch) to ensure frames flow.
+  // The daemon restarts the screencast so Chrome sends a first frame; the
+  // page itself is left alone, with whatever state the agent gave it.
   useEffect(() => {
     if (!started) return;
     startStreaming(1920, 1080);
-    reload();
-  }, [started, startStreaming, reload]);
+  }, [started, startStreaming]);
 
   // Update URL input when page info changes or active tab changes.
   // Prefer activeTab URL (always matches active tab) over url state
