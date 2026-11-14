@@ -20,6 +20,7 @@ type mockCDPSession struct {
 	mock.Mock
 	watchMu           sync.Mutex
 	onOpened          func(TabInfo, string)
+	onChanged         func(TabInfo)
 	onClosed          func(string)
 	onDialog          func(Dialog)
 	onDialogClosed    func(string)
@@ -149,10 +150,17 @@ func (m *mockCDPSession) SetDownloadDir(ctx context.Context, dir string) error {
 
 // WatchTargets keeps the handlers so a test can play Chrome opening and
 // closing tabs; a field rather than an expectation, as every Connect calls it.
-func (m *mockCDPSession) WatchTargets(onOpened func(tab TabInfo, openerID string), onClosed func(targetID string)) {
+func (m *mockCDPSession) WatchTargets(onOpened func(tab TabInfo, openerID string), onChanged func(tab TabInfo), onClosed func(targetID string)) {
 	m.watchMu.Lock()
 	defer m.watchMu.Unlock()
-	m.onOpened, m.onClosed = onOpened, onClosed
+	m.onOpened, m.onChanged, m.onClosed = onOpened, onChanged, onClosed
+}
+
+// changeWatcher returns the handler WatchTargets was given for tab changes.
+func (m *mockCDPSession) changeWatcher() func(TabInfo) {
+	m.watchMu.Lock()
+	defer m.watchMu.Unlock()
+	return m.onChanged
 }
 
 // WatchDialogs keeps the handlers so a test can play a page opening and
@@ -664,6 +672,111 @@ func (s *CDPManagerSuite) TestTabClosedByChromeReachesSubscribers() {
 
 	require.Eventually(s.T(), func() bool { return !mgr.IsTrackedTab("t1") }, time.Second, 5*time.Millisecond)
 	require.Equal(s.T(), []TabEvent{{Kind: TabRemoved, Tab: TabInfo{TargetID: "t1"}}}, drain(events))
+}
+
+func (s *CDPManagerSuite) TestTabChanged() {
+	mgr, mockClient := s.newTestManager(false)
+	mgr.titleRechecks = []time.Duration{0}
+	mgr.sleep = func(time.Duration) {}
+	mockClient.On("ListTabs", mock.Anything).Return(nil, errors.New("gone"))
+	mgr.TrackTab("t1")
+	events, _ := mgr.Subscribe()
+
+	a := TabInfo{TargetID: "t1", URL: "https://a.com", Title: "A"}
+	mgr.tabChanged(mockClient, a)
+	mgr.tabChanged(mockClient, a) // every attached client hears it: published once
+	mgr.tabChanged(mockClient, TabInfo{TargetID: "worker", URL: "https://w.com"})
+	b := TabInfo{TargetID: "t1", URL: "https://a.com", Title: "B"}
+	mgr.tabChanged(mockClient, b) // a new title alone needs no recheck
+
+	require.Equal(s.T(), []TabEvent{{Kind: TabUpdated, Tab: a}, {Kind: TabUpdated, Tab: b}}, drain(events))
+	mockClient.AssertNumberOfCalls(s.T(), "ListTabs", 1)
+
+	// A tab that closes and comes back under the same id is news again.
+	mgr.tabDestroyed("t1")
+	mgr.TrackTab("t1")
+	drain(events)
+	mgr.tabChanged(mockClient, b)
+	require.Equal(s.T(), []TabEvent{{Kind: TabUpdated, Tab: b}}, drain(events))
+	mockClient.AssertNumberOfCalls(s.T(), "ListTabs", 2)
+}
+
+func (s *CDPManagerSuite) TestTabChangedRechecksTheTitle() {
+	nav := TabInfo{TargetID: "t1", URL: "https://a.com/", Title: "a.com/"}
+	titled := TabInfo{TargetID: "t1", URL: "https://a.com/", Title: "A"}
+	tests := []struct {
+		name    string
+		lookups [][]TabInfo
+		err     error
+		want    []TabEvent
+		calls   int
+	}{
+		{
+			name:    "publishes the title the page sets, once",
+			lookups: [][]TabInfo{{nav}, {titled, {TargetID: "t2"}}, {titled}},
+			want:    []TabEvent{{Kind: TabUpdated, Tab: nav}, {Kind: TabUpdated, Tab: titled}},
+			calls:   3,
+		},
+		{
+			name:    "stops when the tab navigates on",
+			lookups: [][]TabInfo{{{TargetID: "t1", URL: "https://b.com/", Title: "B"}}},
+			want:    []TabEvent{{Kind: TabUpdated, Tab: nav}},
+			calls:   1,
+		},
+		{
+			name:    "stops when the tab is gone",
+			lookups: [][]TabInfo{{}},
+			want:    []TabEvent{{Kind: TabUpdated, Tab: nav}},
+			calls:   1,
+		},
+		{
+			name:  "stops when Chrome can't say",
+			err:   errors.New("closed"),
+			want:  []TabEvent{{Kind: TabUpdated, Tab: nav}},
+			calls: 1,
+		},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			mgr, mockClient := s.newTestManager(false)
+			mgr.titleRechecks = []time.Duration{time.Millisecond, time.Second, time.Minute}
+			var slept []time.Duration
+			mgr.sleep = func(d time.Duration) { slept = append(slept, d) }
+			if tt.err != nil {
+				mockClient.On("ListTabs", mock.Anything).Return(nil, tt.err)
+			}
+			for _, tabs := range tt.lookups {
+				mockClient.On("ListTabs", mock.Anything).Return(tabs, nil).Once()
+			}
+			mgr.TrackTab("t1")
+			events, _ := mgr.Subscribe()
+
+			mgr.tabChanged(mockClient, nav)
+
+			require.Equal(s.T(), tt.want, drain(events))
+			mockClient.AssertNumberOfCalls(s.T(), "ListTabs", tt.calls)
+			require.Equal(s.T(), mgr.titleRechecks[:tt.calls], slept)
+		})
+	}
+}
+
+func (s *CDPManagerSuite) TestTabChangedByChromeReachesSubscribers() {
+	mgr, mockClient := s.newTestManager(false)
+	mockClient.On("TargetID").Return("t1")
+	require.NoError(s.T(), mgr.Connect(context.Background()))
+	mgr.titleRechecks = nil
+	events, _ := mgr.Subscribe()
+
+	onChanged := mockClient.changeWatcher()
+	require.NotNil(s.T(), onChanged, "Connect must watch for tabs navigating")
+	onChanged(TabInfo{TargetID: "t1", URL: "https://b.com", Title: "B"})
+
+	var got []TabEvent
+	require.Eventually(s.T(), func() bool {
+		got = append(got, drain(events)...)
+		return len(got) == 1
+	}, time.Second, 5*time.Millisecond)
+	require.Equal(s.T(), []TabEvent{{Kind: TabUpdated, Tab: TabInfo{TargetID: "t1", URL: "https://b.com", Title: "B"}}}, got)
 }
 
 func (s *CDPManagerSuite) TestClose() {

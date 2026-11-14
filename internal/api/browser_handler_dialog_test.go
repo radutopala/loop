@@ -208,4 +208,11 @@ func (s *BrowserHandlerSuite) TestWSForwardsDownloads() {
 	resp := s.readResp(client)
 	require.Equal(s.T(), bwsRespDownload, resp.Type)
 	require.Equal(s.T(), &d, resp.Download)
+
+	events <- browser.TabEvent{Kind: browser.TabUpdated, Tab: browser.TabInfo{TargetID: "t1", URL: "https://b.com/", Title: "B"}}
+	resp = s.readResp(client)
+	require.Equal(s.T(), bwsRespTabUpdated, resp.Type)
+	require.Equal(s.T(), "t1", resp.TargetID)
+	require.Equal(s.T(), "https://b.com/", resp.URL)
+	require.Equal(s.T(), "B", resp.Title)
 }

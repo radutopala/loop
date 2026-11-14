@@ -212,6 +212,17 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
                 });
               }
               break;
+            case "tab_updated":
+              // A tab navigated or retitled itself — the agent's navigations
+              // and the page's own, which the pane would otherwise never hear.
+              if (msg.target_id) {
+                const id = msg.target_id;
+                const url = msg.url || "";
+                const title = msg.title || "";
+                setTabs((prev) => prev.map((t) => (t.target_id === id ? { ...t, url: url || t.url, title } : t)));
+                if (id === activeTargetIdRef.current) onPageInfoRef.current?.(url, title);
+              }
+              break;
             case "tab_closed":
               if (msg.target_id) {
                 setTabs((prev) => prev.filter((t) => t.target_id !== msg.target_id));

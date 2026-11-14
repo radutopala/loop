@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -64,6 +65,18 @@ type CDPManager struct {
 	// client that saw it open — the only kind of session able to answer it.
 	dialogs map[string]pendingDialog
 
+	// tabInfo is the URL and title last published for each tab. Every
+	// attached client sees a tab's change, so this keeps the panes from
+	// hearing it once per client.
+	tabInfo map[string]TabInfo
+
+	// titleRechecks are the waits, one after another, before looking up a
+	// tab's title again after it navigates: Chrome reports the navigation
+	// with the URL standing in for the title and stays quiet when the page
+	// sets its real one.
+	titleRechecks []time.Duration
+	sleep         func(time.Duration)
+
 	timeNow func() time.Time // injectable clock
 }
 
@@ -114,9 +127,9 @@ type CDPSession interface {
 	// reusing the existing browser WS connection (no new dial / permission prompt).
 	NewContextForTarget(targetID string) (CDPSession, error)
 	// WatchTargets reports page tabs Chrome opens, with the tab that opened
-	// them ("" when none did), and targets that close. The callbacks run on
-	// CDP's event loop and must not block.
-	WatchTargets(onOpened func(tab TabInfo, openerID string), onClosed func(targetID string))
+	// them ("" when none did), tabs whose URL or title changed, and targets
+	// that close. The callbacks run on CDP's event loop and must not block.
+	WatchTargets(onOpened func(tab TabInfo, openerID string), onChanged func(tab TabInfo), onClosed func(targetID string))
 	// WatchDialogs reports JavaScript dialogs opening and closing on the
 	// client's tab. The callbacks run on CDP's event loop and must not block.
 	WatchDialogs(onOpened func(Dialog), onClosed func(targetID string))
@@ -134,12 +147,15 @@ type CDPSession interface {
 // NewCDPManager creates a new CDPManager for the given WebSocket endpoint.
 func NewCDPManager(wsEndpoint string, cfg CDPManagerConfig, logger *slog.Logger) *CDPManager {
 	return &CDPManager{
-		wsEndpoint: wsEndpoint,
-		cfg:        cfg,
-		logger:     logger,
-		cdpFactory: defaultCDPFactory,
-		subs:       map[int]chan TabEvent{},
-		timeNow:    time.Now,
+		wsEndpoint:    wsEndpoint,
+		cfg:           cfg,
+		logger:        logger,
+		cdpFactory:    defaultCDPFactory,
+		subs:          map[int]chan TabEvent{},
+		tabInfo:       map[string]TabInfo{},
+		titleRechecks: []time.Duration{500 * time.Millisecond, time.Second, 2500 * time.Millisecond},
+		sleep:         time.Sleep,
+		timeNow:       time.Now,
 	}
 }
 
@@ -308,6 +324,7 @@ func (m *CDPManager) attach(initial CDPSession, targetID string) (CDPSession, er
 func (m *CDPManager) watch(client CDPSession) {
 	client.WatchTargets(
 		func(tab TabInfo, openerID string) { go m.tabOpened(tab, openerID) },
+		func(tab TabInfo) { go m.tabChanged(client, tab) },
 		func(targetID string) { go m.tabDestroyed(targetID) },
 	)
 	client.WatchDialogs(
@@ -408,6 +425,52 @@ func (m *CDPManager) tabOpened(tab TabInfo, openerID string) {
 	m.logger.Info("page opened a tab, following it", "target_id", tab.TargetID, "opener_id", openerID)
 	m.NotifyTabAdded(tab)
 	m.NotifyTargetSwitch(tab.TargetID)
+}
+
+// tabChanged tells the panes a tracked tab navigated — the agent's
+// navigations and the page's own, which the pane has no other way to hear
+// about — and, since Chrome won't say when the new page sets its title, looks
+// the title up again through client while the page loads.
+func (m *CDPManager) tabChanged(client CDPSession, tab TabInfo) {
+	if m.updateTab(tab) {
+		m.recheckTitle(client, tab)
+	}
+}
+
+// updateTab publishes tab when it differs from what the panes last heard,
+// reporting whether its URL changed.
+func (m *CDPManager) updateTab(tab TabInfo) (navigated bool) {
+	m.mu.Lock()
+	last, seen := m.tabInfo[tab.TargetID]
+	news := m.isTrackedLocked(tab.TargetID) && (!seen || last != tab)
+	if news {
+		m.tabInfo[tab.TargetID] = tab
+	}
+	m.mu.Unlock()
+	if news {
+		m.publish(TabEvent{Kind: TabUpdated, Tab: tab})
+	}
+	return news && (!seen || last.URL != tab.URL)
+}
+
+// recheckTitle looks tab up again after each of titleRechecks, publishing
+// what changed, until the tab closes or navigates on (that navigation runs
+// its own rechecks).
+func (m *CDPManager) recheckTitle(client CDPSession, tab TabInfo) {
+	for _, wait := range m.titleRechecks {
+		m.sleep(wait)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		tabs, err := client.ListTabs(ctx)
+		cancel()
+		if err != nil {
+			return
+		}
+		i := slices.IndexFunc(tabs, func(t TabInfo) bool { return t.TargetID == tab.TargetID })
+		if i < 0 || tabs[i].URL != tab.URL {
+			return
+		}
+		m.updateTab(tabs[i])
+	}
 }
 
 // tabDestroyed drops a tracked tab that closed without going through
@@ -583,6 +646,7 @@ func (m *CDPManager) untrackTabLocked(targetID string) {
 	}
 	m.tabOrder = filtered
 	delete(m.dialogs, targetID)
+	delete(m.tabInfo, targetID)
 }
 
 // IsTrackedTab returns true if the target is in the tab order.
@@ -670,6 +734,8 @@ const (
 	DialogClosed
 	// DownloadChanged means Download started, completed or was canceled.
 	DownloadChanged
+	// TabUpdated means Tab navigated or changed its title.
+	TabUpdated
 )
 
 // dialogTypeAlert is the dialog type Chrome reports for window.alert.

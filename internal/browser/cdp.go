@@ -1703,15 +1703,19 @@ func (c *CDPClient) SwitchTab(ctx context.Context, targetID string) error {
 	})
 }
 
-// WatchTargets reports page tabs being opened and targets closing. Chrome
-// sends these to every session that asked to discover targets, which chromedp
-// does when it attaches.
-func (c *CDPClient) WatchTargets(onOpened func(tab TabInfo, openerID string), onClosed func(targetID string)) {
+// WatchTargets reports page tabs being opened, navigating or retitled, and
+// targets closing. Chrome sends these to every session that asked to discover
+// targets, which chromedp does when it attaches.
+func (c *CDPClient) WatchTargets(onOpened func(tab TabInfo, openerID string), onChanged func(tab TabInfo), onClosed func(targetID string)) {
 	c.listenFunc(c.ctx, func(ev any) {
 		switch e := ev.(type) {
 		case *target.EventTargetCreated:
 			if i := e.TargetInfo; i != nil && i.Type == "page" {
 				onOpened(TabInfo{TargetID: string(i.TargetID), URL: i.URL, Title: i.Title}, string(i.OpenerID))
+			}
+		case *target.EventTargetInfoChanged:
+			if i := e.TargetInfo; i != nil && i.Type == "page" {
+				onChanged(TabInfo{TargetID: string(i.TargetID), URL: i.URL, Title: i.Title})
 			}
 		case *target.EventTargetDestroyed:
 			onClosed(string(e.TargetID))

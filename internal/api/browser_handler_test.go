@@ -694,7 +694,7 @@ func (m *mockCDPSession) SetDownloadDir(ctx context.Context, dir string) error {
 
 // WatchTargets is a no-op: the handler tests drive tab events through the
 // manager, and every Connect calls it, so it isn't an expectation.
-func (m *mockCDPSession) WatchTargets(func(tab browser.TabInfo, openerID string), func(targetID string)) {
+func (m *mockCDPSession) WatchTargets(func(tab browser.TabInfo, openerID string), func(tab browser.TabInfo), func(targetID string)) {
 }
 
 // WatchDialogs keeps the open handler for openDialog; every Connect calls it,
