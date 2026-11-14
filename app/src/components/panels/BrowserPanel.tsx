@@ -6,7 +6,7 @@ import { storageGet, storageSet } from "../../utils/storage";
 import { ContextMenu } from "../shared/ContextMenu";
 import { type PageContextMenu, pageMenuItems } from "./browserContextMenu";
 import { dialogButtons, dialogHeading, type PageDialog, type PageDialogs } from "./browserDialog";
-import { downloadLabel, type PageDownload, withDownload, withoutDownload } from "./browserDownloads";
+import { type DownloadList, downloadedFileDetail, downloadLabel, type PageDownload, withDownload, withoutDownload } from "./browserDownloads";
 import { type PageSelectMenu, selectMenuItems } from "./browserSelectMenu";
 import { type BrowserInput, createFrameRenderer, createInputCoalescer } from "./browserStream";
 import { normalizeNavigateUrl, safeFaviconUrl } from "./browserUrl";
@@ -45,9 +45,17 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
   // so the pane says when one starts and how it ended.
   const [downloads, setDownloads] = useState<readonly PageDownload[]>([]);
   const dismissDownload = useCallback((guid: string) => setDownloads((prev) => withoutDownload(prev, guid)), []);
+  // The downloads list: null while closed, then what the dir held when last read.
+  const [downloadList, setDownloadList] = useState<DownloadList | null>(null);
+  const [showDownloads, setShowDownloads] = useState(false);
+  const showDownloadsRef = useRef(false);
+  showDownloadsRef.current = showDownloads;
+  const listDownloadsRef = useRef<() => void>(() => {});
   const [error, setError] = useState<string | null>(null);
   const [hoveredTab, setHoveredTab] = useState<string | null>(null);
   const [showCookieImport, setShowCookieImport] = useState(false);
+  // Anchor of the "⋯" menu that holds downloads, cookie import and profile reset.
+  const [toolsMenu, setToolsMenu] = useState<{ x: number; y: number } | null>(null);
   const [importNotice, setImportNotice] = useState<string | null>(null);
   const [browserMode, setBrowserMode] = useState<"docker" | "host">(() => {
     if (fixedMode) return fixedMode;
@@ -83,6 +91,7 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
     dialogs,
     answerDialog,
     chooseSelectOption,
+    listDownloads,
   } = useBrowserWs({
     channelId,
     onFrame: useCallback((data: ArrayBuffer) => {
@@ -106,9 +115,17 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
     }, []),
     onDownload: useCallback((d: PageDownload) => {
       setDownloads((prev) => withDownload(prev, d));
+      // An open list follows the dir as files arrive.
+      if (showDownloadsRef.current) listDownloadsRef.current();
     }, []),
+    onDownloadList: useCallback((list: DownloadList) => setDownloadList(list), []),
   });
   sendInputRef.current = sendInput;
+  listDownloadsRef.current = listDownloads;
+  const openDownloads = useCallback(() => {
+    setShowDownloads(true);
+    listDownloads();
+  }, [listDownloads]);
 
   // Every canvas gesture goes through the coalescer, so a burst of moves or
   // wheel ticks becomes one dispatch per frame while clicks and keys still go
@@ -170,8 +187,8 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
     [reload],
   );
 
+  // The menu item asks first, in the menu's Yes/No bubble.
   const handleProfileReset = useCallback(() => {
-    if (!window.confirm("Reset the browser profile? The agent will be signed out of every site it has logged into.")) return;
     stopBrowser();
     resetBrowserProfile(channelId).then(() => {
       setTimeout(() => startBrowser(browserMode), 500);
@@ -364,13 +381,38 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
         {/* Docker / Host mode toggle pill — hidden when fixedMode is set */}
         {!fixedMode && <ModePill mode={browserMode} onToggle={handleModeToggle} colors={colors} />}
 
-        {/* Cookie import and profile reset — docker mode only; host mode
-            already runs on the user's own Chrome profile, cookies included */}
+        {/* Downloads, cookie import and profile reset — docker mode only; host
+            mode already runs on the user's own Chrome profile, cookies included */}
         {browserMode === "docker" && fixedMode !== "host" && (
-          <>
-            <ToolbarButton onClick={() => setShowCookieImport(true)} title="Import cookies from your own browser" label="Import cookies" colors={colors} />
-            <ToolbarButton onClick={handleProfileReset} title="Reset browser profile (signs the agent out everywhere)" label="Reset profile" colors={colors} />
-          </>
+          <ToolbarButton
+            onClick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              setToolsMenu((open) => (open ? null : { x: r.right, y: r.bottom + 4 }));
+            }}
+            title="Downloads, cookies and profile"
+            label="Browser menu"
+            text="⋯"
+            colors={colors}
+          />
+        )}
+        {toolsMenu && (
+          <ContextMenu
+            x={toolsMenu.x}
+            y={toolsMenu.y}
+            onClose={() => setToolsMenu(null)}
+            items={[
+              { label: "Downloads", title: "Files the browser downloaded", onClick: openDownloads },
+              { label: "Import cookies…", title: "Import cookies from your own browser", onClick: () => setShowCookieImport(true) },
+              {
+                label: "Reset profile",
+                separator: true,
+                title: "Signs the agent out of every site it has logged into",
+                danger: true,
+                confirm: "Reset profile?",
+                onClick: handleProfileReset,
+              },
+            ]}
+          />
         )}
       </div>
 
@@ -431,7 +473,8 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
         ) : (
           <div style={{ color: colors.textDim, fontSize: 13 }}>{connected ? "Starting browser..." : "Connecting..."}</div>
         )}
-        <DownloadToasts downloads={downloads} colors={colors} onDismiss={dismissDownload} />
+        {showDownloads && <DownloadsList list={downloadList} colors={colors} onClose={() => setShowDownloads(false)} />}
+        <DownloadToasts downloads={downloads} colors={colors} onDismiss={dismissDownload} onOpen={openDownloads} />
       </div>
       {selectMenu && <ContextMenu x={selectMenu.x} y={selectMenu.y} items={selectMenuItems(selectMenu.menu, chooseSelectOption)} onClose={() => setSelectMenu(null)} />}
       {pageMenu && <ContextMenu x={pageMenu.x} y={pageMenu.y} items={pageMenuItems(pageMenu.menu, pageMenuActions)} onClose={() => setPageMenu(null)} />}
@@ -441,45 +484,101 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
 
 /* ---------- sub-components ---------- */
 
-/** How long a finished download's toast stays up. */
-const DOWNLOAD_TOAST_MS = 6000;
+type DownloadColors = { surface: string; border: string; textLight: string; textDim: string };
 
-/** Toasts for the page's downloads, in the pane's bottom-right corner. */
-function DownloadToasts({
-  downloads,
-  colors,
-  onDismiss,
-}: {
-  downloads: readonly PageDownload[];
-  colors: { surface: string; border: string; textLight: string; textDim: string };
-  onDismiss: (guid: string) => void;
-}) {
+/**
+ * Toasts for the page's downloads, in the pane's bottom-right corner. Each
+ * stays until closed; clicking one opens the downloads list.
+ */
+function DownloadToasts({ downloads, colors, onDismiss, onOpen }: { downloads: readonly PageDownload[]; colors: DownloadColors; onDismiss: (guid: string) => void; onOpen: () => void }) {
   if (downloads.length === 0) return null;
   return (
     <div data-testid="browser-downloads" style={{ position: "absolute", right: 12, bottom: 12, display: "flex", flexDirection: "column", gap: 6, zIndex: 2 }}>
       {downloads.map((d) => (
-        <DownloadToast key={d.guid} download={d} colors={colors} onDismiss={onDismiss} />
+        <DownloadToast key={d.guid} download={d} colors={colors} onDismiss={onDismiss} onOpen={onOpen} />
       ))}
     </div>
   );
 }
 
-function DownloadToast({
-  download,
-  colors,
-  onDismiss,
-}: {
-  download: PageDownload;
-  colors: { surface: string; border: string; textLight: string; textDim: string };
-  onDismiss: (guid: string) => void;
-}) {
-  const { guid, state } = download;
-  // One that is still running stays until it ends.
-  useEffect(() => {
-    if (state === "started") return;
-    const t = setTimeout(() => onDismiss(guid), DOWNLOAD_TOAST_MS);
-    return () => clearTimeout(t);
-  }, [guid, state, onDismiss]);
+/**
+ * The channel's downloads dir, newest first, over the pane's top-right corner.
+ * Clicking a file copies its path: the dir is mounted into the agent's
+ * container at the same path, so it can be handed straight to the agent.
+ */
+function DownloadsList({ list, colors, onClose }: { list: DownloadList | null; colors: DownloadColors; onClose: () => void }) {
+  const [copied, setCopied] = useState("");
+  const copy = (path: string) => {
+    void navigator.clipboard.writeText(path).then(() => setCopied(path));
+  };
+  return (
+    <div
+      data-testid="browser-downloads-list"
+      style={{
+        position: "absolute",
+        top: 8,
+        right: 12,
+        width: 340,
+        maxHeight: "60%",
+        display: "flex",
+        flexDirection: "column",
+        fontSize: 12,
+        color: colors.textLight,
+        backgroundColor: colors.surface,
+        border: `1px solid ${colors.border}`,
+        borderRadius: 6,
+        boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
+        zIndex: 3,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px 6px 10px", borderBottom: `1px solid ${colors.border}` }}>
+        <span style={{ fontWeight: 600 }}>Downloads</span>
+        <span title={list?.dir} style={{ flex: 1, minWidth: 0, color: colors.textDim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", direction: "rtl", textAlign: "left" }}>
+          {/* rtl keeps the dir's tail in view; the marks keep its slashes in place */}
+          {list && `\u200E${list.dir}\u200E`}
+        </span>
+        <button
+          type="button"
+          aria-label="Close downloads"
+          onClick={onClose}
+          style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: colors.textDim, fontSize: 14, lineHeight: 1 }}
+        >
+          ×
+        </button>
+      </div>
+      <div style={{ overflowY: "auto" }}>
+        {list === null && <div style={{ padding: "8px 10px", color: colors.textDim }}>Loading…</div>}
+        {list?.files.length === 0 && <div style={{ padding: "8px 10px", color: colors.textDim }}>Nothing downloaded yet</div>}
+        {list?.files.map((f) => (
+          <button
+            key={f.path}
+            type="button"
+            onClick={() => copy(f.path)}
+            title={`Copy ${f.path}`}
+            style={{
+              display: "flex",
+              width: "100%",
+              gap: 8,
+              padding: "5px 10px",
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              color: "inherit",
+              font: "inherit",
+              textAlign: "left",
+            }}
+          >
+            <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
+            <span style={{ color: colors.textDim, whiteSpace: "nowrap" }}>{copied === f.path ? "path copied" : downloadedFileDetail(f)}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DownloadToast({ download, colors, onDismiss, onOpen }: { download: PageDownload; colors: DownloadColors; onDismiss: (guid: string) => void; onOpen: () => void }) {
+  const { guid } = download;
   return (
     <div
       role="status"
@@ -498,7 +597,25 @@ function DownloadToast({
         boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
       }}
     >
-      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{downloadLabel(download)}</span>
+      <button
+        type="button"
+        onClick={onOpen}
+        title="Show downloads"
+        style={{
+          background: "none",
+          border: "none",
+          padding: 0,
+          cursor: "pointer",
+          color: "inherit",
+          font: "inherit",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          minWidth: 0,
+        }}
+      >
+        {downloadLabel(download)}
+      </button>
       <button
         type="button"
         aria-label="Dismiss"
@@ -593,7 +710,19 @@ function DialogBar({
   );
 }
 
-function ToolbarButton({ onClick, title, label, colors }: { onClick: () => void; title: string; label: string; colors: { textDim: string } }) {
+function ToolbarButton({
+  onClick,
+  title,
+  label,
+  text,
+  colors,
+}: {
+  onClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
+  title: string;
+  label: string;
+  text?: string;
+  colors: { textDim: string };
+}) {
   return (
     <button
       onClick={onClick}
@@ -615,7 +744,7 @@ function ToolbarButton({ onClick, title, label, colors }: { onClick: () => void;
         flexShrink: 0,
       }}
     >
-      {label}
+      {text ?? label}
     </button>
   );
 }

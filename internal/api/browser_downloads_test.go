@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -48,13 +49,14 @@ func (s *BrowserHandlerSuite) TestListDownloads() {
 		{name: "off", err: "downloads are off for this browser"},
 		{name: "no dir yet", loopDir: loopDir, result: "No downloads yet. The browser saves them to " + dir},
 		{
+			// Newest first.
 			name:    "files",
 			loopDir: loopDir,
 			files:   map[string]string{"a.pdf": "pdf!", "b.zip.crdownload": "zi"},
 			subdir:  true,
 			result: "Downloads in " + dir + ":\n" +
-				"- " + filepath.Join(dir, "a.pdf") + " (4 bytes)\n" +
-				"- " + filepath.Join(dir, "b.zip") + " (still downloading, 2 bytes so far)\n",
+				"- " + filepath.Join(dir, "b.zip") + " (still downloading, 2 bytes so far)\n" +
+				"- " + filepath.Join(dir, "a.pdf") + " (4 bytes)\n",
 		},
 	}
 	for _, tt := range tests {
@@ -69,6 +71,10 @@ func (s *BrowserHandlerSuite) TestListDownloads() {
 			}
 			for name, body := range tt.files {
 				require.NoError(s.T(), os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644))
+			}
+			if tt.files != nil {
+				old := time.Now().Add(-time.Hour)
+				require.NoError(s.T(), os.Chtimes(filepath.Join(dir, "a.pdf"), old, old))
 			}
 
 			// Listing needs no browser, so none is started.
@@ -123,6 +129,53 @@ func (s *BrowserHandlerSuite) TestListDownloadsRefused() {
 			resp := s.srv.browser.listDownloads(tt.channelID)
 			require.Empty(s.T(), resp.Result)
 			require.Contains(s.T(), resp.Error, tt.err)
+		})
+	}
+}
+
+func (s *BrowserHandlerSuite) TestWSListDownloads() {
+	loopDir := s.T().TempDir()
+	dir := container.DownloadsDir(loopDir, "ch-1")
+	require.NoError(s.T(), os.MkdirAll(dir, 0o755))
+	old, recent := time.Now().Add(-time.Hour).Truncate(time.Second), time.Now().Truncate(time.Second)
+	for name, at := range map[string]time.Time{"a.pdf": old, "b.zip.crdownload": recent} {
+		require.NoError(s.T(), os.WriteFile(filepath.Join(dir, name), []byte("data"), 0o644))
+		require.NoError(s.T(), os.Chtimes(filepath.Join(dir, name), at, at))
+	}
+
+	tests := []struct {
+		name      string
+		loopDir   string
+		channelID string
+		want      browserWSResponse
+	}{
+		{name: "no channel", loopDir: loopDir, want: browserWSResponse{Type: bwsRespError, Message: "channel_id required"}},
+		{name: "off", channelID: "ch-1", want: browserWSResponse{Type: bwsRespError, Message: "downloads are off for this browser"}},
+		{name: "empty", loopDir: loopDir, channelID: "ch-2", want: browserWSResponse{Type: bwsRespDownloads, DownloadsDir: container.DownloadsDir(loopDir, "ch-2")}},
+		{
+			name: "files", loopDir: loopDir, channelID: "ch-1",
+			want: browserWSResponse{Type: bwsRespDownloads, DownloadsDir: dir, Files: []browserDownloadFile{
+				{Name: "b.zip", Path: filepath.Join(dir, "b.zip"), Size: 4, ModTime: recent, Partial: true},
+				{Name: "a.pdf", Path: filepath.Join(dir, "a.pdf"), Size: 4, ModTime: old},
+			}},
+		},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			s.srv.browser.setLoopDir(tt.loopDir)
+			ws, ts := s.dialBrowserWS()
+			defer ts.Close()
+			defer ws.Close()
+
+			require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgDownloads, ChannelID: tt.channelID}))
+			resp := s.readResp(ws)
+			for i := range resp.Files {
+				resp.Files[i].ModTime = resp.Files[i].ModTime.Local()
+			}
+			require.Equal(s.T(), tt.want, resp)
+			// Listing needs no browser, so none is started.
+			s.browserMgr.AssertNotCalled(s.T(), "EnsureBrowser")
 		})
 	}
 }

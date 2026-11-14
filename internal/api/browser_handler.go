@@ -32,6 +32,8 @@ type browserWSConn struct {
 	// invalidates the manager: its client's context dies with the container and
 	// its endpoint points at a host port that will not come back.
 	closeCDPMgr func(channelID string)
+	// listDownloads lists the channel's downloads dir for the pane.
+	listDownloads func(channelID string) (string, []browserDownloadFile, error)
 
 	// inputQ decouples pointer input from the read loop and collapses bursts;
 	// see inputQueue for why dispatching inline made the pane lag.
@@ -96,6 +98,9 @@ type browserWSResponse struct {
 	Dialog         *browser.Dialog     `json:"dialog,omitempty"`
 	Select         *browserSelectMenu  `json:"select,omitempty"`
 	Download       *browser.Download   `json:"download,omitempty"`
+	// DownloadsDir and Files answer list_downloads.
+	DownloadsDir string                `json:"downloads_dir,omitempty"`
+	Files        []browserDownloadFile `json:"files,omitempty"`
 }
 
 // browserSelectMenu lists the options of the <select> a click landed on.
@@ -127,6 +132,7 @@ const (
 	bwsMsgScreencast = "screencast"
 	bwsMsgInput      = "input"
 	bwsMsgDialog     = "dialog_answer"
+	bwsMsgDownloads  = "list_downloads"
 
 	bwsInputPaste       = "paste"
 	bwsInputCopy        = "copy"
@@ -146,6 +152,7 @@ const (
 	bwsRespDialog      = "dialog"
 	bwsRespDialogDone  = "dialog_closed"
 	bwsRespDownload    = "download"
+	bwsRespDownloads   = "downloads"
 
 	cdpMaxRetries = 20
 	cdpRetryDelay = 500 * time.Millisecond
@@ -185,8 +192,9 @@ func (s *browserService) handleBrowserWS(w http.ResponseWriter, r *http.Request)
 		closeCDPMgr: func(channelID string) {
 			s.closeCDPManager(channelID, s.modeFor(channelID))
 		},
-		stopCh: make(chan struct{}),
-		inputQ: newInputQueue(),
+		listDownloads: s.downloadFiles,
+		stopCh:        make(chan struct{}),
+		inputQ:        newInputQueue(),
 	}
 	defer bc.disconnect()
 	go bc.runInputWorker()
@@ -214,6 +222,8 @@ func (s *browserService) handleBrowserWS(w http.ResponseWriter, r *http.Request)
 			bc.handleInput(msg)
 		case bwsMsgDialog:
 			go bc.answerDialog(msg)
+		case bwsMsgDownloads:
+			bc.sendDownloads(msg.ChannelID)
 		default:
 			bc.sendError("unknown message type: " + msg.Type)
 		}
@@ -383,6 +393,21 @@ func (bc *browserWSConn) answerDialog(msg browserWSMessage) {
 	if err := cdpMgr.HandleDialog(context.Background(), msg.TargetID, msg.Accept, msg.Text); err != nil {
 		bc.sendError("answering the dialog failed: " + err.Error())
 	}
+}
+
+// sendDownloads answers the pane's list_downloads with what channelID's
+// browser has saved. Reading a dir needs no browser, so it works before start.
+func (bc *browserWSConn) sendDownloads(channelID string) {
+	if channelID == "" {
+		bc.sendError("channel_id required")
+		return
+	}
+	dir, files, err := bc.listDownloads(channelID)
+	if err != nil {
+		bc.sendError(err.Error())
+		return
+	}
+	bc.sendJSON(browserWSResponse{Type: bwsRespDownloads, DownloadsDir: dir, Files: files})
 }
 
 func (bc *browserWSConn) handleStop(ctx context.Context, msg browserWSMessage) {
