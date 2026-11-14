@@ -34,6 +34,9 @@ type browserWSConn struct {
 	closeCDPMgr func(channelID string)
 	// listDownloads lists the channel's downloads dir for the pane.
 	listDownloads func(channelID string) (string, []browserDownloadFile, error)
+	// restoreTabs reopens the tabs a docker browser had when the daemon last
+	// stopped, and returns the client on the one that was active.
+	restoreTabs func(ctx context.Context, channelID string, mgr *browser.CDPManager, client browser.CDPSession) browser.CDPSession
 
 	// inputQ decouples pointer input from the read loop and collapses bursts;
 	// see inputQueue for why dispatching inline made the pane lag.
@@ -204,6 +207,7 @@ func (s *browserService) handleBrowserWS(w http.ResponseWriter, r *http.Request)
 			s.closeCDPManager(channelID, s.modeFor(channelID))
 		},
 		listDownloads: s.downloadFiles,
+		restoreTabs:   s.restoreTabs,
 		stopCh:        make(chan struct{}),
 		inputQ:        newInputQueue(),
 	}
@@ -367,6 +371,9 @@ func (bc *browserWSConn) handleStart(ctx context.Context, msg browserWSMessage) 
 	}
 
 	cdpClient := cdpMgr.ActiveClient()
+	if !isHost && bc.restoreTabs != nil {
+		cdpClient = bc.restoreTabs(ctx, msg.ChannelID, cdpMgr, cdpClient)
+	}
 
 	bc.mu.Lock()
 	bc.cdpMgr = cdpMgr

@@ -67,6 +67,9 @@ type browserService struct {
 	captures   map[string]*browser.CaptureState // channelID -> state
 	capturesMu sync.Mutex
 
+	// restoreMu serializes taking a channel's saved tabs; see takeSavedTabs.
+	restoreMu sync.Mutex
+
 	// cookieReader reads the host browser's cookie stores for the import
 	// flow. Struct field, not a package function, so tests inject a fake
 	// instead of touching a real Keychain.
@@ -369,6 +372,9 @@ func (s *browserService) getBrowserCDP(ctx context.Context, channelID string) (b
 
 	// Connect always sets activeClient on success, so this is safe.
 	cdpClient := cdpMgr.ActiveClient()
+	if !isHost {
+		cdpClient = s.restoreTabs(ctx, channelID, cdpMgr, cdpClient)
+	}
 
 	// A freshly connected sidecar is the one moment an auto-import is worth
 	// doing: the profile is either brand new or has been idle long enough
@@ -615,29 +621,7 @@ func (s *browserService) dispatchBrowserAction(req browserActionRequest, cdpCl b
 		if err != nil {
 			return browserActionResponse{Error: fmt.Sprintf("list tabs failed: %v", err)}
 		}
-		// Filter to agent-tracked tabs only.
-		if cdpMgr != nil {
-			var filtered []browser.TabInfo
-			for _, t := range tabs {
-				if cdpMgr.IsTrackedTab(t.TargetID) {
-					filtered = append(filtered, t)
-				}
-			}
-			tabs = filtered
-		}
-		if cdpMgr != nil {
-			tabs = cdpMgr.OrderTabs(tabs)
-		}
-		activeTarget := ""
-		if cdpMgr != nil {
-			activeTarget = cdpMgr.ActiveTargetID()
-		}
-		for i := range tabs {
-			if tabs[i].TargetID == activeTarget {
-				tabs[i].Active = true
-			}
-		}
-		return browserActionResponse{Tabs: tabs}
+		return browserActionResponse{Tabs: agentTabs(cdpMgr, tabs)}
 
 	case "new_tab":
 		url := paramStr(params, "url")
@@ -931,8 +915,10 @@ func (s *browserService) cleanIdleBrowserSessions(ctx context.Context, timeout t
 	}
 }
 
-// cleanup stops all docker browser containers during shutdown.
+// cleanup stops all docker browser containers during shutdown, writing down
+// their tabs first so the next daemon opens them again.
 func (s *browserService) cleanup(ctx context.Context) {
+	s.saveTabs(ctx)
 	if c, ok := s.dockerProvider.(BrowserCleaner); ok {
 		c.Cleanup(ctx)
 	}
