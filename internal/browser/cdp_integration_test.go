@@ -91,6 +91,10 @@ func (s *CDPIntegrationSuite) SetupSuite() {
 		w.Header().Set("Content-Type", "text/html")
 		fmt.Fprint(w, `<html><head><title>Page 3</title></head><body><h1>Page 3</h1></body></html>`)
 	})
+	mux.HandleFunc("/opener", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, `<html><body style="margin:0"><a href="/page3" target="_blank" style="display:block;width:100vw;height:100vh">open</a></body></html>`)
+	})
 	s.testServer, s.testURL = startPageServer(t, mux)
 
 	// Start Chrome container.
@@ -758,4 +762,51 @@ func (s *CDPIntegrationSuite) TestScrollIntoView() {
 
 	err = s.client.ScrollIntoView(ctx, nodeID)
 	require.NoError(s.T(), err)
+}
+
+// --- Tabs the page opens ---
+
+func (s *CDPIntegrationSuite) TestWatchTargetsSeesATabThePageOpens() {
+	ctx := context.Background()
+	type opened struct{ id, opener string }
+	openedCh := make(chan opened, 4)
+	closedCh := make(chan string, 4)
+	s.client.WatchTargets(
+		func(tab TabInfo, openerID string) { openedCh <- opened{tab.TargetID, openerID} },
+		func(targetID string) { closedCh <- targetID },
+	)
+
+	require.NoError(s.T(), s.client.Navigate(ctx, s.testURL+"/opener"))
+	time.Sleep(300 * time.Millisecond)
+	require.NoError(s.T(), s.client.MouseClick(ctx, 200, 200, "left", 1))
+
+	var popup opened
+	select {
+	case popup = <-openedCh:
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("a target=_blank click must report the tab it opened")
+	}
+	// The suite's client may have been switched by earlier tests, so name the
+	// opener by the page it shows rather than by the client's target.
+	tabs, err := s.client.ListTabs(ctx)
+	require.NoError(s.T(), err)
+	var openerURL string
+	for _, t := range tabs {
+		if t.TargetID == popup.opener {
+			openerURL = t.URL
+		}
+	}
+	require.True(s.T(), strings.HasSuffix(openerURL, "/opener"), "opener %q shows %q", popup.opener, openerURL)
+
+	require.NoError(s.T(), s.client.CloseTab(ctx, popup.id))
+	for {
+		select {
+		case id := <-closedCh:
+			if id == popup.id {
+				return
+			}
+		case <-time.After(5 * time.Second):
+			s.T().Fatal("closing the tab must be reported")
+		}
+	}
 }

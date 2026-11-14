@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -565,6 +566,10 @@ type mockCDPSession struct {
 	attachFn func(targetID string) (browser.CDPSession, error)
 	// favicons is what Favicons returns; nil for the tabs that have none.
 	favicons map[string]string
+	// onDialog is the dialog handler the manager registered, so a test can
+	// play a page opening a dialog.
+	dialogMu sync.Mutex
+	onDialog func(browser.Dialog)
 }
 
 func (m *mockCDPSession) Alive() bool { return !m.dead }
@@ -685,6 +690,31 @@ func (m *mockCDPSession) SetCookies(ctx context.Context, cookies []browser.Cooki
 
 func (m *mockCDPSession) SetDownloadDir(ctx context.Context, dir string) error {
 	return m.Called(ctx, dir).Error(0)
+}
+
+// WatchTargets is a no-op: the handler tests drive tab events through the
+// manager, and every Connect calls it, so it isn't an expectation.
+func (m *mockCDPSession) WatchTargets(func(tab browser.TabInfo, openerID string), func(targetID string)) {
+}
+
+// WatchDialogs keeps the open handler for openDialog; every Connect calls it,
+// so it isn't an expectation.
+func (m *mockCDPSession) WatchDialogs(onOpened func(browser.Dialog), _ func(targetID string)) {
+	m.dialogMu.Lock()
+	defer m.dialogMu.Unlock()
+	m.onDialog = onOpened
+}
+
+// openDialog plays the page opening d.
+func (m *mockCDPSession) openDialog(d browser.Dialog) {
+	m.dialogMu.Lock()
+	fn := m.onDialog
+	m.dialogMu.Unlock()
+	fn(d)
+}
+
+func (m *mockCDPSession) HandleDialog(ctx context.Context, accept bool, promptText string) error {
+	return m.Called(ctx, accept, promptText).Error(0)
 }
 
 // --- Helper: start browser and get WS with CDP mock ---

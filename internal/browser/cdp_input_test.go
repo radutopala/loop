@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
+	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 	"github.com/stretchr/testify/require"
@@ -194,6 +196,45 @@ func (s *CDPSuite) TestCloseTabSuccess() {
 	err := s.client.CloseTab(context.Background(), "target-123")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "target-123", closedID)
+}
+
+func (s *CDPSuite) TestCloseTabTimesOut() {
+	s.client.commandTimeout = 10 * time.Millisecond
+	release := make(chan struct{})
+	defer close(release)
+	s.client.closeTabFunc = func(_ context.Context, _ string) error {
+		<-release
+		return nil
+	}
+	err := s.client.CloseTab(context.Background(), "t1")
+	require.ErrorContains(s.T(), err, "timed out")
+}
+
+func (s *CDPSuite) TestCloseTargetFunc() {
+	// The tab is closed from the browser session, without attaching to it.
+	runCtx, cancel := chromedp.NewContext(context.Background())
+	defer cancel()
+	browser := &chromedp.Browser{}
+	chromedp.FromContext(runCtx).Browser = browser
+	var gotCtx context.Context
+	runFn := func(ctx context.Context, actions ...chromedp.Action) error {
+		gotCtx = ctx
+		return actions[0].Do(runCtx)
+	}
+	var executor cdp.Executor
+	var method string
+	var params any
+	exec := func(ctx context.Context, m string, p, _ any) error {
+		executor, method, params = cdp.ExecutorFromContext(ctx), m, p
+		return nil
+	}
+	type sessionKey struct{}
+	sessionCtx := context.WithValue(context.Background(), sessionKey{}, "session")
+	require.NoError(s.T(), closeTargetFunc(sessionCtx, runFn, exec)(context.Background(), "t9"))
+	require.Equal(s.T(), sessionCtx, gotCtx)
+	require.Same(s.T(), browser, executor)
+	require.Equal(s.T(), target.CommandCloseTarget, method)
+	require.Equal(s.T(), target.CloseTarget("t9"), params)
 }
 
 func (s *CDPSuite) TestCloseTabError() {

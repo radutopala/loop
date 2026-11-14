@@ -414,3 +414,60 @@ func (s *BrowserHandlerSuite) TestSendJSONWriteError() {
 	}
 	bc.sendJSON(browserWSResponse{Type: bwsRespError, Message: "test"})
 }
+
+func (s *BrowserHandlerSuite) TestInputContextMenu() {
+	const at = 40.0
+	tests := []struct {
+		name      string
+		armErr    error
+		clickErr  error
+		read      string
+		readErr   error
+		wantMenu  *browserContextMenu
+		wantRead  bool
+		wantClick bool
+	}{
+		{
+			name:      "describes the link under the pointer",
+			read:      `{"link":"https://example.com/a","image":"https://example.com/i.png","selection":"words","editable":true}`,
+			wantMenu:  &browserContextMenu{Link: "https://example.com/a", Image: "https://example.com/i.png", Selection: "words", Editable: true},
+			wantRead:  true,
+			wantClick: true,
+		},
+		{name: "the page drew its own menu", read: "", wantRead: true, wantClick: true},
+		{name: "arming fails, the page still gets the click", armErr: errors.New("navigating"), wantClick: true},
+		{name: "the click fails", clickErr: errors.New("click fail"), wantClick: true},
+		{name: "reading the target fails", readErr: errors.New("gone"), wantRead: true, wantClick: true},
+		{name: "the page answers garbage", read: "not json", wantRead: true, wantClick: true},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			ws, ts, mockCDP := s.startBrowserWS()
+			defer ts.Close()
+			defer ws.Close()
+
+			mockCDP.On("EvaluateJS", mock.Anything, armContextMenuJS).Return("", tt.armErr)
+			mockCDP.On("MouseClick", mock.Anything, at, at, "right", 1).Return(tt.clickErr)
+			mockCDP.On("EvaluateJS", mock.Anything, contextMenuJS).Return(tt.read, tt.readErr)
+
+			require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgInput, InputType: bwsInputContextMenu, X: at, Y: at}))
+			if tt.wantMenu != nil {
+				resp := s.readResp(ws)
+				require.Equal(s.T(), bwsRespContextMenu, resp.Type)
+				require.Equal(s.T(), tt.wantMenu, resp.Menu)
+			} else {
+				// Nothing comes back: the next message is the answer to this probe.
+				time.Sleep(20 * time.Millisecond)
+				require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: "unknown"}))
+				require.Equal(s.T(), bwsRespError, s.readResp(ws).Type)
+			}
+			mockCDP.AssertCalled(s.T(), "MouseClick", mock.Anything, at, at, "right", 1)
+			if tt.wantRead {
+				mockCDP.AssertCalled(s.T(), "EvaluateJS", mock.Anything, contextMenuJS)
+			} else {
+				mockCDP.AssertNotCalled(s.T(), "EvaluateJS", mock.Anything, contextMenuJS)
+			}
+		})
+	}
+}

@@ -54,9 +54,15 @@ type CDPManager struct {
 	paneCount      int
 	lastUsedAt     time.Time
 
-	targetSwitchCh chan string  // signals MCP-initiated tab switches
-	tabAddedCh     chan TabInfo // signals MCP-initiated tab additions
-	tabRemovedCh   chan string  // signals MCP-initiated tab removals
+	// subs fan tab changes out to every pane watching this manager. One
+	// shared channel would hand each change to whichever pane read it first,
+	// so a second pane — or a stale watcher — silently swallowed it.
+	subs   map[int]chan TabEvent
+	nextID int
+
+	// dialogs holds the JavaScript dialog each tab is blocked on, with the
+	// client that saw it open — the only kind of session able to answer it.
+	dialogs map[string]pendingDialog
 
 	timeNow func() time.Time // injectable clock
 }
@@ -107,6 +113,15 @@ type CDPSession interface {
 	// NewContextForTarget creates a new CDP client for a different target,
 	// reusing the existing browser WS connection (no new dial / permission prompt).
 	NewContextForTarget(targetID string) (CDPSession, error)
+	// WatchTargets reports page tabs Chrome opens, with the tab that opened
+	// them ("" when none did), and targets that close. The callbacks run on
+	// CDP's event loop and must not block.
+	WatchTargets(onOpened func(tab TabInfo, openerID string), onClosed func(targetID string))
+	// WatchDialogs reports JavaScript dialogs opening and closing on the
+	// client's tab. The callbacks run on CDP's event loop and must not block.
+	WatchDialogs(onOpened func(Dialog), onClosed func(targetID string))
+	// HandleDialog accepts or dismisses the dialog open on the client's tab.
+	HandleDialog(ctx context.Context, accept bool, promptText string) error
 	// SetCookies installs cookies into the attached browser profile.
 	SetCookies(ctx context.Context, cookies []Cookie) error
 	// SetDownloadDir has Chrome save downloads into dir.
@@ -116,14 +131,12 @@ type CDPSession interface {
 // NewCDPManager creates a new CDPManager for the given WebSocket endpoint.
 func NewCDPManager(wsEndpoint string, cfg CDPManagerConfig, logger *slog.Logger) *CDPManager {
 	return &CDPManager{
-		wsEndpoint:     wsEndpoint,
-		cfg:            cfg,
-		logger:         logger,
-		cdpFactory:     defaultCDPFactory,
-		targetSwitchCh: make(chan string, 1),
-		tabAddedCh:     make(chan TabInfo, 1),
-		tabRemovedCh:   make(chan string, 1),
-		timeNow:        time.Now,
+		wsEndpoint: wsEndpoint,
+		cfg:        cfg,
+		logger:     logger,
+		cdpFactory: defaultCDPFactory,
+		subs:       map[int]chan TabEvent{},
+		timeNow:    time.Now,
 	}
 }
 
@@ -170,6 +183,7 @@ func (m *CDPManager) Connect(ctx context.Context) error {
 	tid := client.TargetID()
 	m.client = client
 	m.activeClient = client
+	m.watch(client)
 	if tid != "" {
 		m.activeTargetID = tid
 		m.trackTabLocked(tid)
@@ -239,6 +253,18 @@ func (m *CDPManager) GetOrCreate(ctx context.Context, targetID string) (CDPSessi
 		return nil, fmt.Errorf("no CDP connection for target %s (call Connect first)", targetID)
 	}
 
+	// A tab blocked on a dialog never finishes an attach, so the session that
+	// saw the dialog open is reused rather than waiting out the deadline.
+	m.mu.Lock()
+	p, blocked := m.dialogs[targetID]
+	if blocked {
+		m.activeClient = p.client
+	}
+	m.mu.Unlock()
+	if blocked {
+		return p.client, nil
+	}
+
 	// Only a listing that succeeded is evidence: if Chrome will not say what
 	// is open, attach and let the deadline decide, exactly as before.
 	if tabs, err := initial.ListTabs(ctx); err == nil && !hasTarget(tabs, targetID) {
@@ -257,10 +283,145 @@ func (m *CDPManager) attach(initial CDPSession, targetID string) (CDPSession, er
 		return nil, fmt.Errorf("attaching to target %s: %w", targetID, err)
 	}
 
+	m.watch(newClient)
 	m.mu.Lock()
 	m.activeClient = newClient
 	m.mu.Unlock()
 	return newClient, nil
+}
+
+// watch follows, through client, the tabs Chrome opens and closes on its own
+// and the dialogs its tab opens. Every attached client watches, since the
+// events arrive on a tab's session and stop when that tab closes; the
+// handlers ignore repeats.
+//
+// The handlers run on goroutines: chromedp calls listeners from its event
+// loop, and taking m.mu there would deadlock against Connect, which holds the
+// lock across CDP calls whose replies come through that same loop.
+func (m *CDPManager) watch(client CDPSession) {
+	client.WatchTargets(
+		func(tab TabInfo, openerID string) { go m.tabOpened(tab, openerID) },
+		func(targetID string) { go m.tabDestroyed(targetID) },
+	)
+	client.WatchDialogs(
+		func(d Dialog) { go m.dialogOpened(client, d) },
+		func(targetID string) { go m.dialogClosed(targetID) },
+	)
+}
+
+// ErrNoDialog reports that the tab has no JavaScript dialog open to answer.
+var ErrNoDialog = errors.New("no JavaScript dialog is open on this tab")
+
+// pendingDialog is a dialog waiting for an answer, and the client to give it
+// through.
+type pendingDialog struct {
+	dialog Dialog
+	client CDPSession
+}
+
+// dialogOpened answers an alert at once — it asks nothing, and leaving it
+// open freezes the page — and holds any other dialog for the user or the
+// agent to answer, telling subscribers about it.
+func (m *CDPManager) dialogOpened(client CDPSession, d Dialog) {
+	if d.Type == dialogTypeAlert {
+		m.logger.Info("accepting a JavaScript alert", "target_id", d.TargetID, "message", d.Message)
+		// Two sessions on one tab both see the alert; the second answer finds
+		// it gone, which is fine.
+		if err := client.HandleDialog(context.Background(), true, ""); err != nil {
+			m.logger.Debug("accepting a JavaScript alert failed", "target_id", d.TargetID, "error", err)
+		}
+		return
+	}
+	m.mu.Lock()
+	prev, seen := m.dialogs[d.TargetID]
+	if m.dialogs == nil {
+		m.dialogs = map[string]pendingDialog{}
+	}
+	m.dialogs[d.TargetID] = pendingDialog{dialog: d, client: client}
+	m.mu.Unlock()
+	if seen && prev.dialog == d {
+		return
+	}
+	m.publish(TabEvent{Kind: DialogOpened, Tab: TabInfo{TargetID: d.TargetID}, Dialog: d})
+}
+
+// dialogClosed forgets the dialog on targetID once Chrome says it is gone,
+// however it was answered.
+func (m *CDPManager) dialogClosed(targetID string) {
+	m.mu.Lock()
+	_, ok := m.dialogs[targetID]
+	delete(m.dialogs, targetID)
+	m.mu.Unlock()
+	if ok {
+		m.publish(TabEvent{Kind: DialogClosed, Tab: TabInfo{TargetID: targetID}})
+	}
+}
+
+// PendingDialog returns the dialog targetID is blocked on, if any.
+func (m *CDPManager) PendingDialog(targetID string) (Dialog, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.dialogs[targetID]
+	return p.dialog, ok
+}
+
+// HandleDialog answers the dialog targetID is blocked on: accept or dismiss
+// it, with promptText as a prompt's answer.
+func (m *CDPManager) HandleDialog(ctx context.Context, targetID string, accept bool, promptText string) error {
+	m.mu.Lock()
+	p, ok := m.dialogs[targetID]
+	m.mu.Unlock()
+	if !ok {
+		return ErrNoDialog
+	}
+	if err := p.client.HandleDialog(ctx, accept, promptText); err != nil {
+		return err
+	}
+	// Chrome says so too, but a follow-up action must not race that event and
+	// find the tab still blocked.
+	m.dialogClosed(targetID)
+	return nil
+}
+
+// tabOpened adopts a tab that a tracked tab opened — a target=_blank link or
+// window.open — and makes it the active one, as Chrome brings it to the front.
+// Left alone it stayed out of the strip and out of list_tabs, and the pane
+// kept streaming the tab it covered, which Chrome stops painting: a frozen
+// pane showing neither page.
+func (m *CDPManager) tabOpened(tab TabInfo, openerID string) {
+	m.mu.Lock()
+	adopt := openerID != "" && m.isTrackedLocked(openerID) && !m.isTrackedLocked(tab.TargetID)
+	if adopt {
+		m.trackTabLocked(tab.TargetID)
+	}
+	m.mu.Unlock()
+	if !adopt {
+		return
+	}
+	m.logger.Info("page opened a tab, following it", "target_id", tab.TargetID, "opener_id", openerID)
+	m.NotifyTabAdded(tab)
+	m.NotifyTargetSwitch(tab.TargetID)
+}
+
+// tabDestroyed drops a tracked tab that closed without going through
+// close_tab — window.close, a crashed renderer, the user's own Chrome — and
+// moves to its neighbour when it was the active one.
+func (m *CDPManager) tabDestroyed(targetID string) {
+	m.mu.Lock()
+	if !m.isTrackedLocked(targetID) {
+		m.mu.Unlock()
+		return
+	}
+	next := ""
+	if m.activeTargetID == targetID {
+		next = m.nextTabLocked(targetID)
+	}
+	m.untrackTabLocked(targetID)
+	m.mu.Unlock()
+	m.NotifyTabRemoved(targetID)
+	if next != "" {
+		m.NotifyTargetSwitch(next)
+	}
 }
 
 // EnsureLiveTarget re-points the active client when the tab it is attached to
@@ -414,12 +575,17 @@ func (m *CDPManager) untrackTabLocked(targetID string) {
 		}
 	}
 	m.tabOrder = filtered
+	delete(m.dialogs, targetID)
 }
 
 // IsTrackedTab returns true if the target is in the tab order.
 func (m *CDPManager) IsTrackedTab(targetID string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.isTrackedLocked(targetID)
+}
+
+func (m *CDPManager) isTrackedLocked(targetID string) bool {
 	for _, id := range m.tabOrder {
 		if id == targetID {
 			return true
@@ -432,6 +598,10 @@ func (m *CDPManager) IsTrackedTab(targetID string) bool {
 func (m *CDPManager) NextTabID(closedTargetID string) string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.nextTabLocked(closedTargetID)
+}
+
+func (m *CDPManager) nextTabLocked(closedTargetID string) string {
 	for i, id := range m.tabOrder {
 		if id == closedTargetID {
 			if i > 0 {
@@ -475,48 +645,85 @@ func (m *CDPManager) OrderTabs(tabs []TabInfo) []TabInfo {
 	return ordered
 }
 
-// --- Notification channels ---
+// --- Tab events ---
 
-// NotifyTargetSwitch signals a target switch to watching goroutines.
+// TabEventKind says what changed in a TabEvent.
+type TabEventKind int
+
+const (
+	// TabSwitched means Tab.TargetID became the active tab.
+	TabSwitched TabEventKind = iota
+	// TabAdded means Tab was opened.
+	TabAdded
+	// TabRemoved means Tab.TargetID was closed.
+	TabRemoved
+	// DialogOpened means Dialog opened on Tab.TargetID and waits for an answer.
+	DialogOpened
+	// DialogClosed means the dialog on Tab.TargetID was answered.
+	DialogClosed
+)
+
+// dialogTypeAlert is the dialog type Chrome reports for window.alert.
+const dialogTypeAlert = "alert"
+
+// TabEvent is one change to the tabs, as Subscribe delivers it.
+type TabEvent struct {
+	Kind   TabEventKind
+	Tab    TabInfo
+	Dialog Dialog // set for DialogOpened
+}
+
+// tabEventBuffer is how many changes a subscriber can fall behind by. A pane
+// busy restarting its screencast reads nothing for a moment, and an agent can
+// open, navigate and switch tabs in that moment.
+const tabEventBuffer = 64
+
+// Subscribe returns a channel that receives every tab change from now on, in
+// order, and a function that ends the subscription.
+func (m *CDPManager) Subscribe() (<-chan TabEvent, func()) {
+	ch := make(chan TabEvent, tabEventBuffer)
+	m.mu.Lock()
+	id := m.nextID
+	m.nextID++
+	m.subs[id] = ch
+	m.mu.Unlock()
+	return ch, func() {
+		m.mu.Lock()
+		delete(m.subs, id)
+		m.mu.Unlock()
+	}
+}
+
+// publish hands ev to every subscriber. A subscriber that has fallen a whole
+// buffer behind misses it rather than stalling the agent's tool call.
+func (m *CDPManager) publish(ev TabEvent) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, ch := range m.subs {
+		select {
+		case ch <- ev:
+		default:
+			m.logger.Warn("tab event dropped, subscriber is behind", "kind", ev.Kind, "target_id", ev.Tab.TargetID)
+		}
+	}
+}
+
+// NotifyTargetSwitch records targetID as the active tab and tells subscribers.
 func (m *CDPManager) NotifyTargetSwitch(targetID string) {
 	m.mu.Lock()
 	m.activeTargetID = targetID
 	m.mu.Unlock()
-	select {
-	case m.targetSwitchCh <- targetID:
-	default:
-	}
+	m.publish(TabEvent{Kind: TabSwitched, Tab: TabInfo{TargetID: targetID}})
 }
 
-// TargetSwitchCh returns the channel for target switch notifications.
-func (m *CDPManager) TargetSwitchCh() <-chan string {
-	return m.targetSwitchCh
-}
-
-// NotifyTabAdded signals a tab addition to watching goroutines.
+// NotifyTabAdded tells subscribers that tab was opened.
 func (m *CDPManager) NotifyTabAdded(tab TabInfo) {
-	select {
-	case m.tabAddedCh <- tab:
-	default:
-	}
+	m.publish(TabEvent{Kind: TabAdded, Tab: tab})
 }
 
-// TabAddedCh returns the channel for tab added notifications.
-func (m *CDPManager) TabAddedCh() <-chan TabInfo {
-	return m.tabAddedCh
-}
-
-// NotifyTabRemoved signals a tab removal to watching goroutines.
+// NotifyTabRemoved tells subscribers that targetID was closed.
 func (m *CDPManager) NotifyTabRemoved(targetID string) {
-	select {
-	case m.tabRemovedCh <- targetID:
-	default:
-	}
-}
-
-// TabRemovedCh returns the channel for tab removed notifications.
-func (m *CDPManager) TabRemovedCh() <-chan string {
-	return m.tabRemovedCh
+	m.publish(TabEvent{Kind: TabRemoved, Tab: TabInfo{TargetID: targetID}})
 }
 
 // Close closes the CDP connection and resets state.
@@ -541,6 +748,7 @@ func (m *CDPManager) Close() {
 	m.connected = false
 	m.activeTargetID = ""
 	m.tabOrder = nil
+	m.dialogs = nil
 }
 
 // WSEndpoint returns the WebSocket endpoint this manager is configured for.

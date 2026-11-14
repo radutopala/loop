@@ -73,6 +73,10 @@ const openStepFile = (channelId: string, path: string) => openChannelFile(channe
 // Wide enough for most absolute paths on one line; longer ones wrap.
 const TAB_TIP_WIDTH = 420;
 
+// Marks a drag as an editor tab being reordered, so other drops ignore it and
+// the strip ignores drags from elsewhere.
+const EDITOR_TAB_DRAG_MIME = "application/x-loop-editor-tab";
+
 export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ...panelProps }: EditorPanelProps) {
   const { colors } = useTheme();
   const {
@@ -98,6 +102,7 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
     closeTab,
     closeTabs,
     unpinFile,
+    moveTab,
     revealFile,
     previewTabsEnabled,
     markDirty,
@@ -117,6 +122,10 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
   const [previewHtml, setPreviewHtml] = useState("");
   const [editorMenu, setEditorMenu] = useState<{ x: number; y: number } | null>(null);
   const [tabMenu, setTabMenu] = useState<{ x: number; y: number; path: string } | null>(null);
+  // The tab being dragged, and where it would land: next to the tab at path,
+  // on its right side when after is set.
+  const [draggingTab, setDraggingTab] = useState<string | null>(null);
+  const [dropAt, setDropAt] = useState<{ path: string; after: boolean } | null>(null);
 
   const selected = selectedPath ? parsePathKey(selectedPath) : null;
   const selectedRelPath = selected ? selected.relativePath : null;
@@ -296,7 +305,28 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
               overflow: "hidden",
             }}
           >
-            <div ref={tabStripRef} data-testid="editor-tabs" style={{ display: "flex", alignItems: "center", flex: 1, minWidth: 0, overflowX: "auto" }}>
+            <div
+              ref={tabStripRef}
+              data-testid="editor-tabs"
+              // A drop past the last tab moves the dragged tab to the end.
+              onDragOver={(e) => {
+                if (!e.dataTransfer.types.includes(EDITOR_TAB_DRAG_MIME)) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+                const last = openTabs[openTabs.length - 1];
+                if (last && (dropAt?.path !== last || !dropAt.after)) setDropAt({ path: last, after: true });
+              }}
+              onDrop={(e) => {
+                const from = e.dataTransfer.getData(EDITOR_TAB_DRAG_MIME);
+                const last = openTabs[openTabs.length - 1];
+                if (!from || !last) return;
+                e.preventDefault();
+                moveTab(from, last, true);
+                setDraggingTab(null);
+                setDropAt(null);
+              }}
+              style={{ display: "flex", alignItems: "center", flex: 1, minWidth: 0, overflowX: "auto" }}
+            >
               {openTabs.map((tab) => {
                 const isActive = tab === selectedPath;
                 const isDirty = dirtyTabs.has(tab);
@@ -316,6 +346,40 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
                       data-deleted={isDeleted || undefined}
                       data-active={isActive || undefined}
                       data-preview={isPreview || undefined}
+                      data-dragging={draggingTab === tab || undefined}
+                      draggable
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData(EDITOR_TAB_DRAG_MIME, tab);
+                        e.dataTransfer.effectAllowed = "move";
+                        setDraggingTab(tab);
+                      }}
+                      onDragEnd={() => {
+                        setDraggingTab(null);
+                        setDropAt(null);
+                      }}
+                      onDragOver={(e) => {
+                        if (!e.dataTransfer.types.includes(EDITOR_TAB_DRAG_MIME)) return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        e.dataTransfer.dropEffect = "move";
+                        const r = e.currentTarget.getBoundingClientRect();
+                        const after = e.clientX > r.left + r.width / 2;
+                        if (dropAt?.path !== tab || dropAt.after !== after) setDropAt({ path: tab, after });
+                      }}
+                      onDragLeave={(e) => {
+                        if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+                        setDropAt((at) => (at?.path === tab ? null : at));
+                      }}
+                      onDrop={(e) => {
+                        const from = e.dataTransfer.getData(EDITOR_TAB_DRAG_MIME);
+                        if (!from) return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const r = e.currentTarget.getBoundingClientRect();
+                        moveTab(from, tab, e.clientX > r.left + r.width / 2);
+                        setDraggingTab(null);
+                        setDropAt(null);
+                      }}
                       onClick={() => {
                         if (isActive) clearAgentEdited(tab);
                         else switchToTab(tab);
@@ -342,6 +406,9 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
                         fontFamily: fonts.mono,
                         whiteSpace: "nowrap",
                         flexShrink: 0,
+                        opacity: draggingTab === tab ? 0.5 : undefined,
+                        // A bar on the side the dragged tab would land.
+                        boxShadow: dropAt?.path === tab && draggingTab !== tab ? `inset ${dropAt.after ? -2 : 2}px 0 0 ${colors.active}` : undefined,
                       }}
                       onMouseEnter={(e) => {
                         if (!isActive) e.currentTarget.style.backgroundColor = colors.hoverBg;

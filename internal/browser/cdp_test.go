@@ -909,15 +909,31 @@ func (s *CDPSuite) TestAlive() {
 // --- SetDownloadDir ---
 
 func (s *CDPSuite) TestSetDownloadDir() {
-	var got []chromedp.Action
+	// The setting must go on the browser session: one made on a page session
+	// is dropped when that tab closes.
+	runCtx, cancel := chromedp.NewContext(context.Background())
+	defer cancel()
+	browser := &chromedp.Browser{}
+	chromedp.FromContext(runCtx).Browser = browser
 	s.setRunFn(func(_ context.Context, actions ...chromedp.Action) error {
-		got = actions
+		for _, a := range actions {
+			if err := a.Do(runCtx); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
+	var executor cdp.Executor
+	var method string
+	var params any
+	s.client.exec = func(ctx context.Context, m string, p, _ any) error {
+		executor, method, params = cdp.ExecutorFromContext(ctx), m, p
+		return nil
+	}
 	require.NoError(s.T(), s.client.SetDownloadDir(context.Background(), "/downloads"))
-	require.Equal(s.T(), []chromedp.Action{
-		cdpbrowser.SetDownloadBehavior(cdpbrowser.SetDownloadBehaviorBehaviorAllow).WithDownloadPath("/downloads"),
-	}, got)
+	require.Same(s.T(), browser, executor)
+	require.Equal(s.T(), cdpbrowser.CommandSetDownloadBehavior, method)
+	require.Equal(s.T(), cdpbrowser.SetDownloadBehavior(cdpbrowser.SetDownloadBehaviorBehaviorAllow).WithDownloadPath("/downloads"), params)
 }
 
 func (s *CDPSuite) TestSetDownloadDirError() {

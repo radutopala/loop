@@ -428,26 +428,41 @@ func (s *BrowserHandlerSuite) TestBrowserActionCloseTabError() {
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionCloseTabWithNextTab() {
-	mockCDP := new(mockCDPSession)
-	s.setupActionMocks(mockCDP)
-	mockCDP.On("CloseTab", mock.Anything, "t2").Return(nil)
+	// The action runs on the mock client, so "test-target" is the active tab.
+	tests := []struct {
+		name       string
+		close      string
+		wantActive string
+	}{
+		{name: "the active tab hands over to the tab on its left", close: "test-target", wantActive: "t1"},
+		{name: "a background tab leaves the active one alone", close: "t3", wantActive: "test-target"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			mockCDP := new(mockCDPSession)
+			s.setupActionMocks(mockCDP)
+			mockCDP.On("CloseTab", mock.Anything, tt.close).Return(nil)
 
-	// Pre-populate the CDPManager with tracked tabs so NextTabID returns a valid next tab.
-	s.srv.browser.cdpManagersMu.Lock()
-	cdpMgr := s.srv.browser.cdpManagers["ch-1|docker"]
-	s.srv.browser.cdpManagersMu.Unlock()
-	cdpMgr.TrackTab("t1")
-	cdpMgr.TrackTab("t2")
-	cdpMgr.TrackTab("t3")
+			s.srv.browser.cdpManagersMu.Lock()
+			cdpMgr := s.srv.browser.cdpManagers["ch-1|docker"]
+			s.srv.browser.cdpManagersMu.Unlock()
+			cdpMgr.TrackTab("t1")
+			cdpMgr.TrackTab("test-target")
+			cdpMgr.TrackTab("t3")
 
-	w := s.postBrowserAction(browserActionRequest{
-		ChannelID: "ch-1",
-		Action:    "close_tab",
-		Params:    map[string]any{"target_id": "t2"},
-	})
-	var resp browserActionResponse
-	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
-	require.Contains(s.T(), resp.Result, "Closed tab t2")
+			w := s.postBrowserAction(browserActionRequest{
+				ChannelID: "ch-1",
+				Action:    "close_tab",
+				Params:    map[string]any{"target_id": tt.close},
+			})
+			var resp browserActionResponse
+			require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+			require.Contains(s.T(), resp.Result, "Closed tab "+tt.close)
+			require.Equal(s.T(), tt.wantActive, cdpMgr.ActiveTargetID())
+			require.False(s.T(), cdpMgr.IsTrackedTab(tt.close))
+		})
+	}
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionResizeWindow() {

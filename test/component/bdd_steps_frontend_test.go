@@ -381,6 +381,9 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	// Layout tab drag/drop + chat scroll (synthesized via JS — chromedp's
 	// real mouse can't deliver an HTML5 DataTransfer payload).
 	ctx.Step(`^I drag layout tab "([^"]*)" onto layout tab "([^"]*)"$`, tc.dragLayoutTab)
+	ctx.Step(`^I drag editor tab "([^"]*)" onto the (left|right) side of editor tab "([^"]*)"$`, tc.dragEditorTab)
+	ctx.Step(`^I drag editor tab "([^"]*)" past the last editor tab$`, tc.dragEditorTabToEnd)
+	ctx.Step(`^the editor tabs should soon be in the order "([^"]*)"$`, tc.assertEditorTabOrder)
 	ctx.Step(`^the layout tabs should be in order "([^"]*)"$`, tc.assertLayoutTabOrder)
 	ctx.Step(`^I scroll the chat messages to bottom$`, tc.scrollChatMessagesToBottom)
 	ctx.Step(`^I open the Learn view and nothing behind it scrolls$`, tc.openLearnViewSteady)
@@ -2667,6 +2670,74 @@ func (tc *TestContext) dragLayoutTab(fromName, toName string) error {
 	}
 	if result != "ok" {
 		return fmt.Errorf("dragLayoutTab %q→%q: %s", fromName, toName, result)
+	}
+	return nil
+}
+
+// dragEditorTab drags the editor tab for one file onto a side of another's,
+// with the pointer over that half of the target so the drop lands there.
+func (tc *TestContext) dragEditorTab(from, side, to string) error {
+	return tc.fireEditorTabDrag(from, fmt.Sprintf(`document.querySelector('[data-testid="editor-tab"][data-path=%q]')`, to), side == "right")
+}
+
+// dragEditorTabToEnd drops an editor tab on the strip past its last tab.
+func (tc *TestContext) dragEditorTabToEnd(from string) error {
+	return tc.fireEditorTabDrag(from, `document.querySelector('[data-testid="editor-tabs"]')`, true)
+}
+
+// fireEditorTabDrag dispatches the HTML5 drag events for moving the editor
+// tab at from onto dstJS, at the horizontal position a quarter of the way in
+// from dst's left edge, or from its right edge when right is set.
+func (tc *TestContext) fireEditorTabDrag(from, dstJS string, right bool) error {
+	js := fmt.Sprintf(`
+		(function() {
+			const MIME = 'application/x-loop-editor-tab';
+			const src = document.querySelector('[data-testid="editor-tab"][data-path=%q]');
+			const dst = %s;
+			if (!src || !dst) return 'tab not found';
+			const r = dst.getBoundingClientRect();
+			const x = %t ? r.right - r.width / 4 : r.left + r.width / 4;
+			const y = r.top + r.height / 2;
+			const dt = {
+				_data: {},
+				get types() { return Object.keys(this._data); },
+				effectAllowed: 'move',
+				dropEffect: 'move',
+				getData(m) { return this._data[m] || ''; },
+				setData(m, v) { this._data[m] = v; },
+			};
+			function fire(target, type) {
+				const e = new MouseEvent(type, {bubbles: true, cancelable: true, clientX: x, clientY: y});
+				Object.defineProperty(e, 'dataTransfer', {value: dt});
+				target.dispatchEvent(e);
+			}
+			fire(src, 'dragstart');
+			fire(dst, 'dragenter');
+			fire(dst, 'dragover');
+			fire(dst, 'drop');
+			fire(src, 'dragend');
+			return 'ok';
+		})()
+	`, from, dstJS, right)
+	var result string
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &result)); err != nil {
+		return fmt.Errorf("drag editor tab %q: %w", from, err)
+	}
+	if result != "ok" {
+		return fmt.Errorf("drag editor tab %q: %s", from, result)
+	}
+	return nil
+}
+
+// assertEditorTabOrder waits for the editor tab strip's left-to-right order
+// to match the comma-separated list of file paths.
+func (tc *TestContext) assertEditorTabOrder(expected string) error {
+	want := strings.Join(strings.Split(strings.ReplaceAll(expected, " ", ""), ","), ",")
+	js := fmt.Sprintf(`[...document.querySelectorAll('[data-testid="editor-tab"]')].map((t) => t.dataset.path).join(',') === %q`, want)
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Poll(js, nil, chromedp.WithPollingTimeout(5*time.Second), chromedp.WithPollingInterval(100*time.Millisecond))); err != nil {
+		var got string
+		_ = chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(`[...document.querySelectorAll('[data-testid="editor-tab"]')].map((t) => t.dataset.path).join(',')`, &got))
+		return fmt.Errorf("editor tab order: want %q, got %q: %w", want, got, err)
 	}
 	return nil
 }

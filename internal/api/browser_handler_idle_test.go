@@ -924,3 +924,56 @@ func (s *BrowserHandlerSuite) TestHandleStartResetsScreencastBeforeActivating() 
 	mockCDP.AssertCalled(s.T(), "SwitchTarget", "bg-target")
 	require.True(s.T(), resetBeforeSwitch, "screencast must be reset before the target is activated")
 }
+
+// A tab opened while the pane was away is recorded as active before anything
+// attaches to it; the pane must stream that tab, not the one it left.
+func (s *BrowserHandlerSuite) TestHandleStartReuseFollowsTheActiveTab() {
+	tests := []struct {
+		name     string
+		attachOK bool
+		want     string
+	}{
+		{"streams the tab opened while away", true, "tab-2"},
+		{"keeps the attached tab when the new one will not attach", false, "tab-1"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			ch := "ch-away-" + tt.want
+			opened := new(mockCDPSession)
+			opened.On("TargetID").Return("tab-2").Maybe()
+			opened.On("ResetScreencast").Return().Maybe()
+			opened.On("SwitchTarget", "tab-2").Return(nil).Maybe()
+			opened.On("Close").Return().Maybe()
+
+			initial := new(mockCDPSession)
+			initial.On("TargetID").Return("tab-1").Maybe()
+			initial.On("ResetScreencast").Return().Maybe()
+			initial.On("SwitchTarget", "tab-1").Return(nil).Maybe()
+			initial.On("Close").Return().Maybe()
+			initial.attachFn = func(string) (browser.CDPSession, error) {
+				if tt.attachOK {
+					return opened, nil
+				}
+				return nil, errors.New("timed out")
+			}
+
+			s.browserMgr.On("EnsureBrowser", mock.Anything, ch, "").Return(nil)
+			s.browserMgr.On("GetCDPEndpoint", ch).Return("ws://127.0.0.1:9222")
+			cdpMgr := s.newSyncTestManager(ch, initial)
+			cdpMgr.NotifyTargetSwitch("tab-2")
+
+			ws, ts := s.dialBrowserWS()
+			defer ts.Close()
+			defer ws.Close()
+			require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgStart, ChannelID: ch}))
+			require.Equal(s.T(), bwsRespStarted, s.readResp(ws).Type)
+
+			if tt.attachOK {
+				opened.AssertCalled(s.T(), "SwitchTarget", "tab-2")
+				initial.AssertNotCalled(s.T(), "SwitchTarget", mock.Anything)
+			} else {
+				initial.AssertCalled(s.T(), "SwitchTarget", "tab-1")
+			}
+		})
+	}
+}

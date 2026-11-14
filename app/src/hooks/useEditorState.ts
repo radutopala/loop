@@ -32,6 +32,7 @@ import { copyName, editToolFilePath, matchAbsPathToKey, parentDirKey } from "./e
 import { fileWatchMessage, parseFileWatchChange } from "./fileWatch";
 import { renamedPathKey, renameMapKeys, renameSetKeys } from "./renamePath";
 import { selectionAfterClose } from "./tabClose";
+import { moveTab as reorderTabs } from "./tabOrder";
 import type { ChatEventListener } from "./useChatStateStore";
 import { useContentCapsEpoch } from "./useContentCapsEpoch";
 import { useWebSocketConnection } from "./useWebSocketConnection";
@@ -153,6 +154,8 @@ export interface EditorStateApi {
   closeTabs: (paths: readonly string[]) => void;
   /** Makes a clean tab the preview tab, closing the one it takes over from. */
   unpinFile: (path: string) => void;
+  /** Moves the tab at from next to target in the strip: before it, or after it when after is set. */
+  moveTab: (from: string, target: string, after: boolean) => void;
   markDirty: () => void;
   saveFile: (filePath?: string) => void;
   saveAllDirty: () => void;
@@ -719,6 +722,10 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     },
     [previewTab, saveAllDirty, switchToTab, clearAgentEdited, setDeleted],
   );
+
+  const moveTab = useCallback((from: string, target: string, after: boolean) => {
+    setOpenTabs((prev) => reorderTabs(prev, from, target, after));
+  }, []);
 
   const closeTab = useCallback(
     (path: string, e?: React.MouseEvent) => {
@@ -1298,6 +1305,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     closeTab,
     closeTabs,
     unpinFile,
+    moveTab,
     markDirty,
     saveFile,
     saveAllDirty,

@@ -3,7 +3,9 @@ package browser
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +18,11 @@ import (
 // mockCDPSession implements CDPSession for testing.
 type mockCDPSession struct {
 	mock.Mock
+	watchMu           sync.Mutex
+	onOpened          func(TabInfo, string)
+	onClosed          func(string)
+	onDialog          func(Dialog)
+	onDialogClosed    func(string)
 	closeBrowserErr   error
 	closeBrowserCalls int
 	// dead makes Alive report a session whose context died with its container.
@@ -137,6 +144,40 @@ func (m *mockCDPSession) SetCookies(ctx context.Context, cookies []Cookie) error
 
 func (m *mockCDPSession) SetDownloadDir(ctx context.Context, dir string) error {
 	return m.Called(ctx, dir).Error(0)
+}
+
+// WatchTargets keeps the handlers so a test can play Chrome opening and
+// closing tabs; a field rather than an expectation, as every Connect calls it.
+func (m *mockCDPSession) WatchTargets(onOpened func(tab TabInfo, openerID string), onClosed func(targetID string)) {
+	m.watchMu.Lock()
+	defer m.watchMu.Unlock()
+	m.onOpened, m.onClosed = onOpened, onClosed
+}
+
+// WatchDialogs keeps the handlers so a test can play a page opening and
+// closing dialogs.
+func (m *mockCDPSession) WatchDialogs(onOpened func(Dialog), onClosed func(string)) {
+	m.watchMu.Lock()
+	defer m.watchMu.Unlock()
+	m.onDialog, m.onDialogClosed = onOpened, onClosed
+}
+
+// dialogWatchers returns the handlers WatchDialogs was given.
+func (m *mockCDPSession) dialogWatchers() (func(Dialog), func(string)) {
+	m.watchMu.Lock()
+	defer m.watchMu.Unlock()
+	return m.onDialog, m.onDialogClosed
+}
+
+func (m *mockCDPSession) HandleDialog(ctx context.Context, accept bool, promptText string) error {
+	return m.Called(ctx, accept, promptText).Error(0)
+}
+
+// watchers returns the handlers WatchTargets was given.
+func (m *mockCDPSession) watchers() (func(TabInfo, string), func(string)) {
+	m.watchMu.Lock()
+	defer m.watchMu.Unlock()
+	return m.onOpened, m.onClosed
 }
 
 type CDPManagerSuite struct {
@@ -436,64 +477,157 @@ func (s *CDPManagerSuite) TestOrderTabsEmpty() {
 	require.Equal(s.T(), tabs, result)
 }
 
-func (s *CDPManagerSuite) TestNotifyTargetSwitch() {
-	mgr, _ := s.newTestManager(false)
-
-	mgr.NotifyTargetSwitch("t42")
-	require.Equal(s.T(), "t42", mgr.ActiveTargetID())
-
-	select {
-	case tid := <-mgr.TargetSwitchCh():
-		require.Equal(s.T(), "t42", tid)
-	default:
-		s.T().Fatal("expected target switch signal")
+// drain reads the events already queued on ch.
+func drain(ch <-chan TabEvent) []TabEvent {
+	var got []TabEvent
+	for {
+		select {
+		case ev := <-ch:
+			got = append(got, ev)
+		default:
+			return got
+		}
 	}
 }
 
-func (s *CDPManagerSuite) TestNotifyTargetSwitchDropsWhenFull() {
+func (s *CDPManagerSuite) TestNotifyReachesEverySubscriberInOrder() {
 	mgr, _ := s.newTestManager(false)
+	first, _ := mgr.Subscribe()
+	second, _ := mgr.Subscribe()
+
+	mgr.NotifyTabAdded(TabInfo{TargetID: "t2", URL: "https://a.com"})
+	mgr.NotifyTargetSwitch("t2")
+	mgr.NotifyTabRemoved("t1")
+
+	want := []TabEvent{
+		{Kind: TabAdded, Tab: TabInfo{TargetID: "t2", URL: "https://a.com"}},
+		{Kind: TabSwitched, Tab: TabInfo{TargetID: "t2"}},
+		{Kind: TabRemoved, Tab: TabInfo{TargetID: "t1"}},
+	}
+	require.Equal(s.T(), want, drain(first))
+	require.Equal(s.T(), want, drain(second), "a second pane must see the same changes, not race the first for them")
+	require.Equal(s.T(), "t2", mgr.ActiveTargetID())
+}
+
+func (s *CDPManagerSuite) TestUnsubscribeStopsDelivery() {
+	mgr, _ := s.newTestManager(false)
+	ch, unsubscribe := mgr.Subscribe()
+	unsubscribe()
+
 	mgr.NotifyTargetSwitch("t1")
-	mgr.NotifyTargetSwitch("t2") // should not block
-
-	tid := <-mgr.TargetSwitchCh()
-	require.Equal(s.T(), "t1", tid)
+	require.Empty(s.T(), drain(ch))
 }
 
-func (s *CDPManagerSuite) TestNotifyTabAdded() {
+func (s *CDPManagerSuite) TestNotifyDoesNotBlockOnASubscriberThatIsBehind() {
 	mgr, _ := s.newTestManager(false)
-	tab := TabInfo{TargetID: "t1", URL: "https://a.com"}
-	mgr.NotifyTabAdded(tab)
+	ch, _ := mgr.Subscribe()
 
-	select {
-	case got := <-mgr.TabAddedCh():
-		require.Equal(s.T(), tab, got)
-	default:
-		s.T().Fatal("expected tab added signal")
+	for i := range tabEventBuffer + 1 {
+		mgr.NotifyTabRemoved(fmt.Sprintf("t%d", i))
+	}
+	require.Len(s.T(), drain(ch), tabEventBuffer)
+}
+
+func (s *CDPManagerSuite) TestConnectFollowsATabThePageOpens() {
+	mgr, mockClient := s.newTestManager(false)
+	mockClient.On("TargetID").Return("t1")
+	require.NoError(s.T(), mgr.Connect(context.Background()))
+	events, _ := mgr.Subscribe()
+
+	onOpened, _ := mockClient.watchers()
+	require.NotNil(s.T(), onOpened, "Connect must watch for tabs Chrome opens")
+	onOpened(TabInfo{TargetID: "popup", URL: "https://b.com"}, "t1")
+
+	var got []TabEvent
+	require.Eventually(s.T(), func() bool {
+		got = append(got, drain(events)...)
+		return len(got) == 2
+	}, time.Second, 5*time.Millisecond)
+	require.Equal(s.T(), []TabEvent{
+		{Kind: TabAdded, Tab: TabInfo{TargetID: "popup", URL: "https://b.com"}},
+		{Kind: TabSwitched, Tab: TabInfo{TargetID: "popup"}},
+	}, got)
+	require.True(s.T(), mgr.IsTrackedTab("popup"))
+	require.Equal(s.T(), "popup", mgr.ActiveTargetID())
+}
+
+func (s *CDPManagerSuite) TestTabOpenedIgnoresTabsItDoesNotOwn() {
+	tests := []struct {
+		name   string
+		tab    string
+		opener string
+	}{
+		{"opened by nobody, as our own new_tab is", "t9", ""},
+		{"opened by a tab the strip does not show", "t9", "untracked"},
+		{"already in the strip", "t2", "t1"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			mgr, _ := s.newTestManager(false)
+			mgr.TrackTab("t1")
+			mgr.TrackTab("t2")
+			events, _ := mgr.Subscribe()
+
+			mgr.tabOpened(TabInfo{TargetID: tt.tab}, tt.opener)
+
+			require.Empty(s.T(), drain(events))
+			require.Equal(s.T(), tt.tab == "t2", mgr.IsTrackedTab(tt.tab))
+		})
 	}
 }
 
-func (s *CDPManagerSuite) TestNotifyTabAddedDropsWhenFull() {
-	mgr, _ := s.newTestManager(false)
-	mgr.NotifyTabAdded(TabInfo{TargetID: "t1"})
-	mgr.NotifyTabAdded(TabInfo{TargetID: "t2"}) // should not block
-}
+func (s *CDPManagerSuite) TestTabDestroyed() {
+	tests := []struct {
+		name   string
+		tabs   []string
+		active string
+		closed string
+		want   []TabEvent
+	}{
+		{
+			name: "the active tab moves to its neighbour", tabs: []string{"t1", "t2"}, active: "t2", closed: "t2",
+			want: []TabEvent{{Kind: TabRemoved, Tab: TabInfo{TargetID: "t2"}}, {Kind: TabSwitched, Tab: TabInfo{TargetID: "t1"}}},
+		},
+		{
+			name: "a background tab only leaves the strip", tabs: []string{"t1", "t2"}, active: "t1", closed: "t2",
+			want: []TabEvent{{Kind: TabRemoved, Tab: TabInfo{TargetID: "t2"}}},
+		},
+		{
+			name: "the last tab has nowhere to move", tabs: []string{"t1"}, active: "t1", closed: "t1",
+			want: []TabEvent{{Kind: TabRemoved, Tab: TabInfo{TargetID: "t1"}}},
+		},
+		{
+			name: "a tab the strip never showed is ignored", tabs: []string{"t1"}, active: "t1", closed: "worker",
+		},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			mgr, _ := s.newTestManager(false)
+			for _, id := range tt.tabs {
+				mgr.TrackTab(id)
+			}
+			mgr.SwitchActive(tt.active)
+			events, _ := mgr.Subscribe()
 
-func (s *CDPManagerSuite) TestNotifyTabRemoved() {
-	mgr, _ := s.newTestManager(false)
-	mgr.NotifyTabRemoved("t1")
+			mgr.tabDestroyed(tt.closed)
 
-	select {
-	case tid := <-mgr.TabRemovedCh():
-		require.Equal(s.T(), "t1", tid)
-	default:
-		s.T().Fatal("expected tab removed signal")
+			require.Equal(s.T(), tt.want, drain(events))
+			require.False(s.T(), mgr.IsTrackedTab(tt.closed))
+		})
 	}
 }
 
-func (s *CDPManagerSuite) TestNotifyTabRemovedDropsWhenFull() {
-	mgr, _ := s.newTestManager(false)
-	mgr.NotifyTabRemoved("t1")
-	mgr.NotifyTabRemoved("t2") // should not block
+func (s *CDPManagerSuite) TestTabClosedByChromeReachesSubscribers() {
+	mgr, mockClient := s.newTestManager(false)
+	mockClient.On("TargetID").Return("t1")
+	require.NoError(s.T(), mgr.Connect(context.Background()))
+	events, _ := mgr.Subscribe()
+
+	_, onClosed := mockClient.watchers()
+	onClosed("t1")
+
+	require.Eventually(s.T(), func() bool { return !mgr.IsTrackedTab("t1") }, time.Second, 5*time.Millisecond)
+	require.Equal(s.T(), []TabEvent{{Kind: TabRemoved, Tab: TabInfo{TargetID: "t1"}}}, drain(events))
 }
 
 func (s *CDPManagerSuite) TestClose() {
@@ -626,6 +760,9 @@ func (s *CDPManagerSuite) TestGetOrCreateReusesAllocator() {
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), newMock, got)
 	existingMock.AssertCalled(s.T(), "NewContextForTarget", "t-new")
+	onOpened, onClosed := newMock.watchers()
+	require.NotNil(s.T(), onOpened, "an attached tab must be watched too: the first one may close")
+	require.NotNil(s.T(), onClosed)
 }
 
 func (s *CDPManagerSuite) TestGetOrCreateAttachError() {

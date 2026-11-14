@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { browserAction, getWsUrl, wsProtocols } from "../api/loopApi";
+import type { PageContextMenu } from "../components/panels/browserContextMenu";
+import { type PageDialog, type PageDialogs, withDialog, withoutDialog } from "../components/panels/browserDialog";
 
 interface BrowserWSMessage {
   type: string;
@@ -19,6 +21,7 @@ interface BrowserWSMessage {
   text?: string;
   modifiers?: number;
   target_id?: string;
+  accept?: boolean;
 }
 
 export interface TabInfo {
@@ -38,6 +41,8 @@ interface BrowserWSResponse {
   active_target_id?: string;
   target_id?: string;
   text?: string;
+  menu?: PageContextMenu;
+  dialog?: PageDialog;
 }
 
 interface UseBrowserWsOptions {
@@ -47,19 +52,23 @@ interface UseBrowserWsOptions {
   onError?: (message: string) => void;
   onStarted?: () => void;
   onStopped?: () => void;
+  /** A right-click in the page that wants the pane's menu. */
+  onContextMenu?: (menu: PageContextMenu) => void;
 }
 
-export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarted, onStopped }: UseBrowserWsOptions) {
+export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarted, onStopped, onContextMenu }: UseBrowserWsOptions) {
   const wsRef = useRef<WebSocket | null>(null);
   const onFrameRef = useRef(onFrame);
   const onPageInfoRef = useRef(onPageInfo);
   const onErrorRef = useRef(onError);
   const onStartedRef = useRef(onStarted);
   const onStoppedRef = useRef(onStopped);
+  const onContextMenuRef = useRef(onContextMenu);
   const [connected, setConnected] = useState(false);
   const [started, setStarted] = useState(false);
   const [tabs, setTabs] = useState<TabInfo[]>([]);
   const [activeTargetId, setActiveTargetId] = useState("");
+  const [dialogs, setDialogs] = useState<PageDialogs>({});
 
   const activeTargetIdRef = useRef(activeTargetId);
   activeTargetIdRef.current = activeTargetId;
@@ -69,6 +78,7 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
   onErrorRef.current = onError;
   onStartedRef.current = onStarted;
   onStoppedRef.current = onStopped;
+  onContextMenuRef.current = onContextMenu;
 
   // Connect WebSocket with auto-reconnect.
   useEffect(() => {
@@ -134,6 +144,15 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
               // the page comes back as text and is written to the host clipboard.
               if (msg.text) void navigator.clipboard?.writeText(msg.text).catch(() => {});
               break;
+            case "context_menu":
+              if (msg.menu) onContextMenuRef.current?.(msg.menu);
+              break;
+            case "dialog":
+              if (msg.dialog) setDialogs((prev) => withDialog(prev, msg.dialog!));
+              break;
+            case "dialog_closed":
+              if (msg.target_id) setDialogs((prev) => withoutDialog(prev, msg.target_id!));
+              break;
             case "error":
               onErrorRef.current?.(msg.message || "Unknown error");
               break;
@@ -168,6 +187,7 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
             case "tab_closed":
               if (msg.target_id) {
                 setTabs((prev) => prev.filter((t) => t.target_id !== msg.target_id));
+                setDialogs((prev) => withoutDialog(prev, msg.target_id!));
               }
               break;
           }
@@ -182,6 +202,8 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
         wsRef.current = null;
         setConnected(false);
         setStarted(false);
+        // The next start announces whatever is still open.
+        setDialogs({});
         reconnectTimer = setTimeout(() => {
           reconnectDelay = Math.min(reconnectDelay * 2, 10000);
           connect();
@@ -277,6 +299,14 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
     [send],
   );
 
+  /** Answers the dialog blocking targetId: OK or Cancel, with a prompt's text. */
+  const answerDialog = useCallback(
+    (targetId: string, accept: boolean, text?: string) => {
+      send({ type: "dialog_answer", target_id: targetId, accept, text });
+    },
+    [send],
+  );
+
   const listTabs = useCallback(() => {
     if (!channelId) return;
     browserAction(channelId, "list_tabs").then((resp) => {
@@ -336,6 +366,9 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
     goBack,
     goForward,
     sendInput,
+    // The dialog blocking the tab on screen, if any.
+    dialog: dialogs[activeTargetId] as PageDialog | undefined,
+    answerDialog,
     listTabs,
     switchTab,
     newTab,
