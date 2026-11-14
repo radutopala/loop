@@ -86,6 +86,32 @@ func (s *BrowserHandlerSuite) TestScreencastSendsBinaryFrames() {
 	time.Sleep(20 * time.Millisecond)
 }
 
+// A second screencast request from the same pane ends the first one's frame
+// stream, so the client stops sending this pane frames twice.
+func (s *BrowserHandlerSuite) TestScreencastAgainEndsTheEarlierStream() {
+	mockCDP := new(mockCDPSession)
+	mockCDP.On("StartScreencast", 60, 1280, 900).Return((<-chan []byte)(make(chan []byte)))
+	mockCDP.On("TargetID").Return("t1")
+	bc := &browserWSConn{cdp: mockCDP, logger: slog.Default(), stopCh: make(chan struct{})}
+	defer close(bc.stopCh)
+
+	bc.handleScreencast(browserWSMessage{Type: bwsMsgScreencast})
+	bc.handleScreencast(browserWSMessage{Type: bwsMsgScreencast})
+
+	require.Len(s.T(), mockCDP.screencastStops, 2)
+	select {
+	case <-mockCDP.screencastStops[0]:
+	default:
+		s.T().Fatal("the earlier stream must be stopped")
+	}
+	require.NotNil(s.T(), mockCDP.screencastStops[1])
+	select {
+	case <-mockCDP.screencastStops[1]:
+		s.T().Fatal("the new stream must keep running")
+	default:
+	}
+}
+
 func (s *BrowserHandlerSuite) TestWsFrameSenderStopCh() {
 	stopCh := make(chan struct{})
 	bc := &browserWSConn{stopCh: stopCh}

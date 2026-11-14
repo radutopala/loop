@@ -78,9 +78,15 @@ type CDPClient struct {
 	mu                 sync.Mutex
 	faviconData        map[string]string // icon URL -> data URL, "" when it could not be fetched
 	screencasting      bool
-	listenerRegistered bool        // true after first listenFunc registration
-	frameCh            chan []byte // decoded JPEG frames
-	stopCh             chan struct{}
+	listenerRegistered bool // true after first listenFunc registration
+	// frameSubs are the panes watching this tab, each with its own channel of
+	// decoded JPEG frames: one shared channel let whichever pane started last
+	// take the stream from the others.
+	frameSubs map[chan []byte]struct{}
+	// lastFrame is the newest frame of the current tab, handed to a pane that
+	// joins a running screencast — Chrome sends the next only on a repaint.
+	lastFrame []byte
+	stopCh    chan struct{}
 }
 
 // TargetID returns the Chrome page target ID this client is attached to.
@@ -102,7 +108,7 @@ func (c *CDPClient) SwitchTarget(targetID string) error {
 	c.targetID = target.ID(targetID)
 
 	c.mu.Lock()
-	c.frameCh = make(chan []byte, 2)
+	c.lastFrame = nil
 	c.stopCh = make(chan struct{})
 	c.mu.Unlock()
 
@@ -308,7 +314,7 @@ func (c *CDPClient) NewContextForTarget(targetID string) (CDPSession, error) {
 		activateFunc:      c.activateFunc,
 		closeTabFunc:      closeTargetFunc(cdpCtx, c.runFn, c.exec),
 		boxModelFunc:      c.boxModelFunc,
-		frameCh:           make(chan []byte, 2),
+		frameSubs:         map[chan []byte]struct{}{},
 		stopCh:            make(chan struct{}),
 	}, nil
 }
@@ -586,7 +592,7 @@ func NewCDPClient(ctx context.Context, wsURL string, logger *slog.Logger, opts .
 			}))
 		},
 		closeTabFunc: closeTargetFunc(cdpCtx, cfg.runFunc, cfg.exec),
-		frameCh:      make(chan []byte, 2),
+		frameSubs:    map[chan []byte]struct{}{},
 		stopCh:       make(chan struct{}),
 	}, nil
 }
@@ -760,16 +766,28 @@ func (c *CDPClient) GetPageInfo(ctx context.Context) (*PageInfo, error) {
 	})
 }
 
-// StartScreencast begins streaming JPEG frames from Chrome.
-// Frames are sent to the returned channel. Call StopScreencast to stop.
-// Each call returns a NEW channel — callers must not hold old references.
-func (c *CDPClient) StartScreencast(quality, maxWidth, maxHeight int) <-chan []byte {
+// StartScreencast begins streaming JPEG frames from Chrome, or joins the
+// stream already running. Frames go to the returned channel, one per caller,
+// until stop closes; a caller joining a running stream gets the newest frame
+// straight away. Call StopScreencast to stop Chrome's stream.
+func (c *CDPClient) StartScreencast(quality, maxWidth, maxHeight int, stop <-chan struct{}) <-chan []byte {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Always create a fresh frameCh so old pipeFrames goroutines can't
-	// steal frames from the new one (two readers on one channel = race).
-	c.frameCh = make(chan []byte, 2)
+	ch := make(chan []byte, 2)
+	if c.screencasting && c.lastFrame != nil {
+		ch <- c.lastFrame
+	}
+	c.frameSubs[ch] = struct{}{}
+	go func() {
+		select {
+		case <-stop:
+		case <-c.ctx.Done():
+		}
+		c.mu.Lock()
+		delete(c.frameSubs, ch)
+		c.mu.Unlock()
+	}()
 	c.logger.Info("StartScreencast", "already_screencasting", c.screencasting, "target_id", string(c.targetID))
 
 	// Register the frame listener ONCE per CDP client lifetime.
@@ -795,23 +813,14 @@ func (c *CDPClient) StartScreencast(quality, maxWidth, maxHeight int) <-chan []b
 			}()
 
 			c.mu.Lock()
-			ch := c.frameCh
+			c.lastFrame = data
+			subs := make([]chan []byte, 0, len(c.frameSubs))
+			for sub := range c.frameSubs {
+				subs = append(subs, sub)
+			}
 			c.mu.Unlock()
-			// Keep the newest frame, not the oldest. A full buffer means the
-			// pane is behind; discarding the frame that just arrived would
-			// hand it another stale one and hold the lag open, so an old
-			// frame is dropped to make room instead.
-			for {
-				select {
-				case ch <- data:
-					return
-				default:
-				}
-				select {
-				case <-ch:
-				default:
-					// Drained by the consumer in between; try again.
-				}
+			for _, sub := range subs {
+				sendNewest(sub, data)
 			}
 		})
 	}
@@ -844,7 +853,26 @@ func (c *CDPClient) StartScreencast(quality, maxWidth, maxHeight int) <-chan []b
 		}()
 	}
 
-	return c.frameCh
+	return ch
+}
+
+// sendNewest puts frame on ch, keeping the newest frame rather than the
+// oldest. A full buffer means the pane is behind; discarding the frame that
+// just arrived would hand it another stale one and hold the lag open, so an
+// old frame is dropped to make room instead.
+func sendNewest(ch chan []byte, frame []byte) {
+	for {
+		select {
+		case ch <- frame:
+			return
+		default:
+		}
+		select {
+		case <-ch:
+		default:
+			// Drained by the consumer in between; try again.
+		}
+	}
 }
 
 // startScreencastCmd issues Page.startScreencast under the screencast deadline.

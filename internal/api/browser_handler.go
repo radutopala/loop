@@ -670,10 +670,13 @@ func (bc *browserWSConn) handleScreencast(msg browserWSMessage) {
 
 	newStopCh := make(chan struct{})
 	bc.mu.Lock()
+	if bc.screencastStopCh != nil {
+		close(bc.screencastStopCh)
+	}
 	bc.screencastStopCh = newStopCh
 	bc.mu.Unlock()
 
-	frameCh := cdp.StartScreencast(60, w, h)
+	frameCh := cdp.StartScreencast(60, w, h, newStopCh)
 	ws := &wsFrameSender{bc: bc, stopCh: newStopCh}
 	go bc.pipeFrames(frameCh, ws, cdp.TargetID())
 }
@@ -778,7 +781,7 @@ func (bc *browserWSConn) restartScreencastForTarget(ctx context.Context, _ brows
 	bc.mu.Unlock()
 
 	activeCDP.ResetScreencast()
-	frameCh := activeCDP.StartScreencast(60, 1920, 1080)
+	frameCh := activeCDP.StartScreencast(60, 1920, 1080, newStopCh)
 	ws := &wsFrameSender{bc: bc, stopCh: newStopCh}
 	go bc.pipeFrames(frameCh, ws, targetID)
 	_, _ = activeCDP.EvaluateJS(ctx, "window.scrollBy(0,1);window.scrollBy(0,-1)")

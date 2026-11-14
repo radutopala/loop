@@ -51,7 +51,7 @@ func (s *CDPSuite) SetupTest() {
 			return "", nil
 		},
 		activateFunc: func(_ context.Context, _ target.ID) error { return nil },
-		frameCh:      make(chan []byte, 2),
+		frameSubs:    map[chan []byte]struct{}{},
 		stopCh:       make(chan struct{}),
 		allocCancel:  func() {},
 		ctxCancel:    func() {},
