@@ -65,6 +65,10 @@ type CDPManager struct {
 	// client that saw it open — the only kind of session able to answer it.
 	dialogs map[string]pendingDialog
 
+	// fileChoosers holds the file chooser each tab has open, with the client
+	// that saw it open, until the pane answers it.
+	fileChoosers map[string]pendingFileChooser
+
 	// tabInfo is the URL and title last published for each tab. Every
 	// attached client sees a tab's change, so this keeps the panes from
 	// hearing it once per client.
@@ -135,6 +139,15 @@ type CDPSession interface {
 	WatchDialogs(onOpened func(Dialog), onClosed func(targetID string))
 	// HandleDialog accepts or dismisses the dialog open on the client's tab.
 	HandleDialog(ctx context.Context, accept bool, promptText string) error
+	// InterceptFileChoosers has Chrome report the client tab's file choosers
+	// to WatchFileChoosers instead of cancelling them.
+	InterceptFileChoosers(ctx context.Context) error
+	// WatchFileChoosers reports file choosers the client's tab opens. The
+	// callback runs on CDP's event loop and must not block.
+	WatchFileChoosers(onOpened func(FileChooser))
+	// SetChosenFiles answers the file chooser nodeID opened, cancelling it
+	// when files is nil.
+	SetChosenFiles(ctx context.Context, nodeID cdp.BackendNodeID, files []ChosenFile) error
 	// SetCookies installs cookies into the attached browser profile.
 	SetCookies(ctx context.Context, cookies []Cookie) error
 	// SetDownloadDir has Chrome save downloads into dir.
@@ -331,6 +344,64 @@ func (m *CDPManager) watch(client CDPSession) {
 		func(d Dialog) { go m.dialogOpened(client, d) },
 		func(targetID string) { go m.dialogClosed(targetID) },
 	)
+	client.WatchFileChoosers(func(fc FileChooser) { go m.fileChooserOpened(client, fc) })
+	// Off the caller's path: a tab blocked on a dialog answers nothing until
+	// the dialog goes, and attaching must not wait on it.
+	go func() {
+		if err := client.InterceptFileChoosers(context.Background()); err != nil {
+			m.logger.Debug("intercepting file choosers failed", "target_id", client.TargetID(), "error", err)
+		}
+	}()
+}
+
+// ErrNoFileChooser reports that the tab has no file chooser open to answer.
+var ErrNoFileChooser = errors.New("no file chooser is open on this tab")
+
+// pendingFileChooser is a file chooser waiting for files, and the client to
+// send them through.
+type pendingFileChooser struct {
+	chooser FileChooser
+	client  CDPSession
+}
+
+// fileChooserOpened holds a file chooser for the pane to answer, telling
+// subscribers about it. Every session on the tab sees it open; the repeats
+// are dropped.
+func (m *CDPManager) fileChooserOpened(client CDPSession, fc FileChooser) {
+	m.mu.Lock()
+	prev, seen := m.fileChoosers[fc.TargetID]
+	if m.fileChoosers == nil {
+		m.fileChoosers = map[string]pendingFileChooser{}
+	}
+	m.fileChoosers[fc.TargetID] = pendingFileChooser{chooser: fc, client: client}
+	m.mu.Unlock()
+	if seen && prev.chooser == fc {
+		return
+	}
+	m.publish(TabEvent{Kind: FileChooserOpened, Tab: TabInfo{TargetID: fc.TargetID}, FileChooser: fc})
+}
+
+// PendingFileChooser returns the file chooser open on targetID, if any.
+func (m *CDPManager) PendingFileChooser(targetID string) (FileChooser, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.fileChoosers[targetID]
+	return p.chooser, ok
+}
+
+// AnswerFileChooser gives the file chooser open on targetID the picked
+// files, or cancels it when files is nil. The chooser is done with either
+// way: an answer that fails found its input gone, and a retry would too.
+func (m *CDPManager) AnswerFileChooser(ctx context.Context, targetID string, files []ChosenFile) error {
+	m.mu.Lock()
+	p, ok := m.fileChoosers[targetID]
+	delete(m.fileChoosers, targetID)
+	m.mu.Unlock()
+	if !ok {
+		return ErrNoFileChooser
+	}
+	m.publish(TabEvent{Kind: FileChooserClosed, Tab: TabInfo{TargetID: targetID}})
+	return p.client.SetChosenFiles(ctx, p.chooser.NodeID, files)
 }
 
 // ErrNoDialog reports that the tab has no JavaScript dialog open to answer.
@@ -646,6 +717,7 @@ func (m *CDPManager) untrackTabLocked(targetID string) {
 	}
 	m.tabOrder = filtered
 	delete(m.dialogs, targetID)
+	delete(m.fileChoosers, targetID)
 	delete(m.tabInfo, targetID)
 }
 
@@ -736,6 +808,11 @@ const (
 	DownloadChanged
 	// TabUpdated means Tab navigated or changed its title.
 	TabUpdated
+	// FileChooserOpened means FileChooser opened on Tab.TargetID and waits
+	// for files.
+	FileChooserOpened
+	// FileChooserClosed means the file chooser on Tab.TargetID was answered.
+	FileChooserClosed
 )
 
 // dialogTypeAlert is the dialog type Chrome reports for window.alert.
@@ -747,6 +824,8 @@ type TabEvent struct {
 	Tab      TabInfo
 	Dialog   Dialog   // set for DialogOpened
 	Download Download // set for DownloadChanged
+	// FileChooser is set for FileChooserOpened.
+	FileChooser FileChooser
 }
 
 // tabEventBuffer is how many changes a subscriber can fall behind by. A pane

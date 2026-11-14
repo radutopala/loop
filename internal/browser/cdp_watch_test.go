@@ -3,11 +3,15 @@ package browser
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	cdpbrowser "github.com/chromedp/cdproto/browser"
+	cdpdom "github.com/chromedp/cdproto/dom"
 	cdppage "github.com/chromedp/cdproto/page"
+	cdpruntime "github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
+	"github.com/go-json-experiment/json/jsontext"
 	"github.com/stretchr/testify/require"
 )
 
@@ -124,4 +128,118 @@ func (s *CDPSuite) TestWatchDownloads() {
 		{GUID: "g2", State: DownloadCompleted},
 		{GUID: "g3", State: DownloadCanceled},
 	}, got)
+}
+
+func (s *CDPSuite) TestInterceptFileChoosers() {
+	var method string
+	var params any
+	s.client.exec = func(_ context.Context, m string, p, _ any) error {
+		method, params = m, p
+		return nil
+	}
+	s.setRunFn(runActions)
+	require.NoError(s.T(), s.client.InterceptFileChoosers(context.Background()))
+	require.Equal(s.T(), cdppage.CommandSetInterceptFileChooserDialog, method)
+	require.Equal(s.T(), cdppage.SetInterceptFileChooserDialog(true), params)
+}
+
+func (s *CDPSuite) TestWatchFileChoosers() {
+	var listener func(any)
+	s.client.listenFunc = func(_ context.Context, fn func(any)) { listener = fn }
+	s.client.targetID = target.ID("t1")
+
+	var got []FileChooser
+	s.client.WatchFileChoosers(func(fc FileChooser) { got = append(got, fc) })
+	require.NotNil(s.T(), listener)
+
+	s.client.targetID = target.ID("t2")
+	for _, ev := range []any{
+		&cdppage.EventFileChooserOpened{Mode: cdppage.FileChooserOpenedModeSelectMultiple, BackendNodeID: 7},
+		&cdppage.EventFileChooserOpened{Mode: cdppage.FileChooserOpenedModeSelectSingle, BackendNodeID: 8},
+		// showOpenFilePicker: no input to put the files on.
+		&cdppage.EventFileChooserOpened{Mode: cdppage.FileChooserOpenedModeSelectSingle},
+		&cdppage.EventLoadEventFired{},
+	} {
+		listener(ev)
+	}
+
+	require.Equal(s.T(), []FileChooser{
+		{TargetID: "t1", Multiple: true, NodeID: 7},
+		{TargetID: "t1", NodeID: 8},
+	}, got)
+}
+
+func (s *CDPSuite) TestSetChosenFiles() {
+	files := []ChosenFile{{Name: "a.txt", Type: "text/plain", Data: "aGk="}}
+	okResult := &cdpruntime.RemoteObject{Value: jsontext.Value(`"ok"`)}
+	tests := []struct {
+		name    string
+		files   []ChosenFile
+		node    *cdpruntime.RemoteObject
+		resolve error
+		call    error
+		result  cdpruntime.CallFunctionOnReturns
+		wantArg string
+		wantErr string
+	}{
+		{name: "files set", files: files, node: &cdpruntime.RemoteObject{ObjectID: "obj"}, result: cdpruntime.CallFunctionOnReturns{Result: okResult},
+			wantArg: `[{"name":"a.txt","type":"text/plain","data":"aGk="}]`},
+		{name: "cancelled", node: &cdpruntime.RemoteObject{ObjectID: "obj"}, result: cdpruntime.CallFunctionOnReturns{Result: okResult}},
+		{name: "node not found", files: files, resolve: errors.New("No node with given id found"), wantErr: "finding the file input: No node"},
+		{name: "node resolves to nothing", files: files, wantErr: "the file input is gone"},
+		{name: "call fails", files: files, node: &cdpruntime.RemoteObject{ObjectID: "obj"}, call: errors.New("context gone"), wantErr: "setting the files: context gone"},
+		{name: "page throws", files: files, node: &cdpruntime.RemoteObject{ObjectID: "obj"},
+			result:  cdpruntime.CallFunctionOnReturns{ExceptionDetails: &cdpruntime.ExceptionDetails{Text: "Uncaught", Exception: &cdpruntime.RemoteObject{Description: "InvalidCharacterError"}}},
+			wantErr: "InvalidCharacterError"},
+		{name: "page refuses", files: files, node: &cdpruntime.RemoteObject{ObjectID: "obj"},
+			result:  cdpruntime.CallFunctionOnReturns{Result: &cdpruntime.RemoteObject{Value: jsontext.Value(`"the file input is gone"`)}},
+			wantErr: "setting the files: the file input is gone"},
+		{name: "no result", files: files, node: &cdpruntime.RemoteObject{ObjectID: "obj"}, wantErr: "setting the files: "},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			var call *cdpruntime.CallFunctionOnParams
+			s.client.exec = func(_ context.Context, m string, p, res any) error {
+				switch m {
+				case cdpdom.CommandResolveNode:
+					require.Equal(s.T(), cdpdom.ResolveNode().WithBackendNodeID(9), p)
+					res.(*cdpdom.ResolveNodeReturns).Object = tc.node
+					return tc.resolve
+				case cdpruntime.CommandCallFunctionOn:
+					call = p.(*cdpruntime.CallFunctionOnParams)
+					*res.(*cdpruntime.CallFunctionOnReturns) = tc.result
+					return tc.call
+				}
+				return fmt.Errorf("unexpected %s", m)
+			}
+			s.setRunFn(runActions)
+
+			err := s.client.SetChosenFiles(context.Background(), 9, tc.files)
+			if tc.wantErr != "" {
+				require.ErrorContains(s.T(), err, tc.wantErr)
+				return
+			}
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), setChosenFilesJS, call.FunctionDeclaration)
+			require.Equal(s.T(), cdpruntime.RemoteObjectID("obj"), call.ObjectID)
+			require.True(s.T(), call.ReturnByValue)
+			if tc.wantArg == "" {
+				require.Empty(s.T(), call.Arguments, "a cancel passes no files")
+				return
+			}
+			require.Len(s.T(), call.Arguments, 1)
+			require.JSONEq(s.T(), tc.wantArg, string(call.Arguments[0].Value))
+		})
+	}
+}
+
+// runActions runs each action against the context it is given, as chromedp
+// would, so the CDP calls inside them reach the client's exec.
+func runActions(ctx context.Context, actions ...chromedp.Action) error {
+	for _, a := range actions {
+		if err := a.Do(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
 }

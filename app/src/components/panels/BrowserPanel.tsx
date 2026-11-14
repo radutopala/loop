@@ -7,6 +7,7 @@ import { ContextMenu } from "../shared/ContextMenu";
 import { type PageContextMenu, pageMenuItems } from "./browserContextMenu";
 import { dialogButtons, dialogHeading, type PageDialog, type PageDialogs } from "./browserDialog";
 import { type DownloadList, downloadedFileDetail, downloadLabel, type PageDownload, withDownload, withoutDownload } from "./browserDownloads";
+import { type ChosenFile, fileChooserProblem, type PageFileChooser, readChosenFiles } from "./browserFileChooser";
 import { type PageSelectMenu, selectMenuItems } from "./browserSelectMenu";
 import { type BrowserInput, createFrameRenderer, createInputCoalescer } from "./browserStream";
 import { normalizeNavigateUrl, safeFaviconUrl } from "./browserUrl";
@@ -90,6 +91,8 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
     dialog,
     dialogs,
     answerDialog,
+    fileChooser,
+    answerFileChooser,
     chooseSelectOption,
     listDownloads,
   } = useBrowserWs({
@@ -438,6 +441,8 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
 
       {dialog && <DialogBar key={`${dialog.target_id}:${dialog.type}:${dialog.message}`} dialog={dialog} colors={colors} onAnswer={(accept, text) => answerDialog(dialog.target_id, accept, text)} />}
 
+      {fileChooser && <FileChooserBar key={fileChooser.target_id} chooser={fileChooser} colors={colors} onAnswer={(files) => answerFileChooser(fileChooser.target_id, files)} />}
+
       {/* Screencast canvas */}
       <div
         ref={canvasContainerRef}
@@ -709,6 +714,103 @@ function DialogBar({
         </button>
         <button type="button" onClick={accept} style={button(true)} autoFocus={!isPrompt}>
           {buttons.accept}
+        </button>
+      </span>
+    </div>
+  );
+}
+
+/**
+ * The file chooser a page's file input opened. Chrome has no screen to show
+ * one on, so the pick happens here — through the system picker or by
+ * dropping files on the bar — and the files go to that input.
+ */
+function FileChooserBar({
+  chooser,
+  colors,
+  onAnswer,
+}: {
+  chooser: PageFileChooser;
+  colors: { surface: string; border: string; textLight: string; textDim: string; active: string; white: string; error: string };
+  onAnswer: (files: ChosenFile[] | null) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  const pick = async (list: FileList | null) => {
+    let files = list ? Array.from(list) : [];
+    if (!chooser.multiple) files = files.slice(0, 1);
+    if (files.length === 0) return;
+    const tooBig = fileChooserProblem(files);
+    if (tooBig) {
+      setProblem(tooBig);
+      return;
+    }
+    setProblem(null);
+    setSending(true);
+    try {
+      onAnswer(await readChosenFiles(files));
+    } catch {
+      setSending(false);
+      setProblem("Reading the files failed.");
+    }
+  };
+  const button = (primary: boolean): CSSProperties => ({
+    padding: "3px 12px",
+    fontSize: 12,
+    borderRadius: 4,
+    cursor: sending ? "default" : "pointer",
+    border: `1px solid ${primary ? colors.active : colors.border}`,
+    backgroundColor: primary ? colors.active : "transparent",
+    color: primary ? colors.white : colors.textLight,
+    fontFamily: "inherit",
+    opacity: sending ? 0.6 : 1,
+  });
+  return (
+    <div
+      role="alertdialog"
+      aria-label="Page file chooser"
+      data-testid="browser-file-chooser"
+      onKeyDown={(e) => {
+        if (e.key === "Escape") onAnswer(null);
+      }}
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => {
+        e.preventDefault();
+        if (!sending) void pick(e.dataTransfer.files);
+      }}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        flexWrap: "wrap",
+        padding: "6px 12px",
+        fontSize: 12,
+        color: colors.textLight,
+        backgroundColor: colors.surface,
+        borderBottom: `1px solid ${colors.border}`,
+        flexShrink: 0,
+      }}
+    >
+      <span style={{ color: colors.textDim }}>{chooser.multiple ? "The page asks for files." : "The page asks for a file."}</span>
+      <span style={{ color: colors.textDim }}>{sending ? "Sending…" : "Choose, or drop them here."}</span>
+      {problem && <span style={{ color: colors.error }}>{problem}</span>}
+      <input
+        ref={inputRef}
+        type="file"
+        multiple={chooser.multiple}
+        hidden
+        onChange={(e) => {
+          void pick(e.target.files);
+          e.target.value = "";
+        }}
+      />
+      <span style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
+        <button type="button" disabled={sending} onClick={() => onAnswer(null)} style={button(false)}>
+          Cancel
+        </button>
+        <button type="button" disabled={sending} autoFocus onClick={() => inputRef.current?.click()} style={button(true)}>
+          {chooser.multiple ? "Choose files…" : "Choose file…"}
         </button>
       </span>
     </div>

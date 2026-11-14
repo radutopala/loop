@@ -394,6 +394,26 @@ The files travel inside the script because in Docker mode Chrome runs in its
 own container and can't read the agent's paths, which CDP
 `DOM.setFileInputFiles` would need.
 
+### File choosers in the pane
+
+Every tab the daemon attaches to runs CDP
+`Page.setInterceptFileChooserDialog`, so a click on a file input opens no
+native picker in Chrome. Chrome sends `Page.fileChooserOpened` instead, and the
+daemon keeps that chooser for the tab and tells the panes about it (WebSocket
+`file_chooser`, and on a reconnect `start` sends it again).
+
+The pane then shows a bar above the page. Choose files... opens the picker on
+your own machine (browsers only open one after a click, so the pane can't open
+it on its own), and you can also drop files on the bar. Cancel, or Escape,
+cancels the pick. The pane reads the files (20 MB in all at most, checked again
+by the daemon) and sends them base64-encoded in `file_chooser_answer`; an empty
+list is a cancel. The daemon resolves the input from the chooser's backend
+node, sets the files through a `DataTransfer` and fires `input` and `change`,
+or `cancel` for a cancel, then tells every pane `file_chooser_closed`.
+
+An agent should not click a file input: the chooser waits for a person at the
+pane. `upload_file` sets the files directly instead.
+
 ## MCP Browser Tools
 
 ### Proxy Mode (agent containers)

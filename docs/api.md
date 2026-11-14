@@ -3581,7 +3581,7 @@ The endpoint handles Chrome lifecycle internally: lazily starts Chrome on first 
 
 WebSocket endpoint for browser screencast streaming and input.
 
-Returns 503 if browser is not configured. The WS handles four message types:
+Returns 503 if browser is not configured. The WS handles these message types, among others:
 
 | Message | Direction | Description |
 |---------|-----------|-------------|
@@ -3589,6 +3589,7 @@ Returns 503 if browser is not configured. The WS handles four message types:
 | `stop` | Client → Server | Stop the browser session |
 | `screencast` | Client → Server | Start screencast frame streaming (with `width`/`height`) |
 | `input` | Client → Server | Mouse/keyboard input events |
+| `file_chooser_answer` | Client → Server | Files for a tab's open file chooser (`target_id`, `files: [{name, type, data}]` with base64 `data`); an empty list cancels |
 | Binary frames | Server → Client | JPEG screencast frames |
 | `started` | Server → Client | CDP connected, ready |
 | `stopped` | Server → Client | Session stopped |
@@ -3596,6 +3597,8 @@ Returns 503 if browser is not configured. The WS handles four message types:
 | `tab_switched` | Server → Client | Active tab changed |
 | `tab_created` | Server → Client | New tab opened |
 | `tab_closed` | Server → Client | Tab closed |
+| `file_chooser` | Server → Client | A page opened a file chooser (`file_chooser: {target_id, multiple}`) |
+| `file_chooser_closed` | Server → Client | The tab's file chooser was answered |
 | `error` | Server → Client | Error message |
 
 Control operations (navigate, tabs, reload, etc.) go through `POST /api/browser/action`, not the WebSocket.
