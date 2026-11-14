@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -102,6 +103,7 @@ func (s *BrowserHandlerSuite) TestInputClick() {
 	defer ts.Close()
 	defer ws.Close()
 
+	mockCDP.On("EvaluateJS", mock.Anything, fmt.Sprintf(selectAtJS, 100.0, 200.0)).Return("", nil)
 	mockCDP.On("MouseClick", mock.Anything, float64(100), float64(200), "left", 1).Return(nil)
 	require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgInput, InputType: "click", X: 100, Y: 200}))
 	time.Sleep(20 * time.Millisecond)
@@ -215,6 +217,7 @@ func (s *BrowserHandlerSuite) TestInputDispatchError() {
 	defer ts.Close()
 	defer ws.Close()
 
+	mockCDP.On("EvaluateJS", mock.Anything, mock.Anything).Return("", nil)
 	mockCDP.On("MouseClick", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("click fail"))
 	require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgInput, InputType: "click", X: 1, Y: 2}))
 	time.Sleep(20 * time.Millisecond)
@@ -468,6 +471,89 @@ func (s *BrowserHandlerSuite) TestInputContextMenu() {
 			} else {
 				mockCDP.AssertNotCalled(s.T(), "EvaluateJS", mock.Anything, contextMenuJS)
 			}
+		})
+	}
+}
+
+func (s *BrowserHandlerSuite) TestInputClickOnSelect() {
+	const at = 30.0
+	tests := []struct {
+		name      string
+		read      string
+		readErr   error
+		wantMenu  *browserSelectMenu
+		wantClick bool
+	}{
+		{
+			name: "lists the options instead of clicking",
+			read: `{"selected":1,"options":[{"label":"One"},{"label":"Two","group":"G"},{"label":"Off","disabled":true}]}`,
+			wantMenu: &browserSelectMenu{Selected: 1, Options: []browserSelectOption{
+				{Label: "One"}, {Label: "Two", Group: "G"}, {Label: "Off", Disabled: true},
+			}},
+		},
+		{name: "not a select, so a plain click", read: "", wantClick: true},
+		{name: "the lookup fails, so a plain click", readErr: errors.New("navigating"), wantClick: true},
+		{name: "the page answers garbage", read: "not json"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			ws, ts, mockCDP := s.startBrowserWS()
+			defer ts.Close()
+			defer ws.Close()
+
+			mockCDP.On("EvaluateJS", mock.Anything, fmt.Sprintf(selectAtJS, at, at)).Return(tt.read, tt.readErr)
+			mockCDP.On("MouseClick", mock.Anything, at, at, "left", 1).Return(nil)
+
+			require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgInput, InputType: "click", X: at, Y: at}))
+			if tt.wantMenu != nil {
+				resp := s.readResp(ws)
+				require.Equal(s.T(), bwsRespSelectMenu, resp.Type)
+				require.Equal(s.T(), tt.wantMenu, resp.Select)
+			} else {
+				time.Sleep(20 * time.Millisecond)
+				require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: "unknown"}))
+				require.Equal(s.T(), bwsRespError, s.readResp(ws).Type)
+			}
+			if tt.wantClick {
+				mockCDP.AssertCalled(s.T(), "MouseClick", mock.Anything, at, at, "left", 1)
+			} else {
+				mockCDP.AssertNotCalled(s.T(), "MouseClick", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+			}
+		})
+	}
+}
+
+func (s *BrowserHandlerSuite) TestInputSelectChoose() {
+	tests := []struct {
+		name    string
+		res     string
+		err     error
+		wantMsg string
+	}{
+		{name: "applies the pick quietly", res: ""},
+		{name: "the select is gone", res: "gone", wantMsg: "The dropdown is no longer on the page"},
+		{name: "the page fails", err: errors.New("navigating")},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			ws, ts, mockCDP := s.startBrowserWS()
+			defer ts.Close()
+			defer ws.Close()
+
+			mockCDP.On("EvaluateJS", mock.Anything, fmt.Sprintf(chooseSelectJS, 2)).Return(tt.res, tt.err)
+			require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgInput, InputType: bwsInputSelect, Index: 2}))
+			if tt.wantMsg != "" {
+				resp := s.readResp(ws)
+				require.Equal(s.T(), bwsRespError, resp.Type)
+				require.Equal(s.T(), tt.wantMsg, resp.Message)
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+			require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: "unknown"}))
+			require.NotEqual(s.T(), "The dropdown is no longer on the page", s.readResp(ws).Message)
+			mockCDP.AssertCalled(s.T(), "EvaluateJS", mock.Anything, fmt.Sprintf(chooseSelectJS, 2))
 		})
 	}
 }

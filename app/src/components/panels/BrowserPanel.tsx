@@ -6,6 +6,7 @@ import { storageGet, storageSet } from "../../utils/storage";
 import { ContextMenu } from "../shared/ContextMenu";
 import { type PageContextMenu, pageMenuItems } from "./browserContextMenu";
 import { dialogButtons, dialogHeading, type PageDialog } from "./browserDialog";
+import { type PageSelectMenu, selectMenuItems } from "./browserSelectMenu";
 import { type BrowserInput, createFrameRenderer, createInputCoalescer } from "./browserStream";
 import { normalizeNavigateUrl, safeFaviconUrl } from "./browserUrl";
 import { CookieImportDialog } from "./CookieImportDialog";
@@ -35,6 +36,10 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
   // user right-clicked once the backend says what was under the pointer.
   const [pageMenu, setPageMenu] = useState<{ x: number; y: number; menu: PageContextMenu } | null>(null);
   const menuAnchorRef = useRef({ x: 0, y: 0 });
+  // Its dropdowns open in a popup the screencast never shows, so a click on a
+  // <select> brings up the options here, under the click.
+  const [selectMenu, setSelectMenu] = useState<{ x: number; y: number; menu: PageSelectMenu } | null>(null);
+  const clickAnchorRef = useRef({ x: 0, y: 0 });
   const [error, setError] = useState<string | null>(null);
   const [hoveredTab, setHoveredTab] = useState<string | null>(null);
   const [showCookieImport, setShowCookieImport] = useState(false);
@@ -53,26 +58,47 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
   const sendInputRef = useRef<(ev: BrowserInput) => void>(() => {});
   const inputQueueRef = useRef(createInputCoalescer((ev) => sendInputRef.current(ev)));
 
-  const { connected, started, tabs, activeTargetId, startBrowser, stopBrowser, startStreaming, navigate, reload, goBack, goForward, sendInput, switchTab, newTab, closeTab, dialog, answerDialog } =
-    useBrowserWs({
-      channelId,
-      onFrame: useCallback((data: ArrayBuffer) => {
-        drawFrameRef.current(data);
-      }, []),
-      onPageInfo: useCallback((pageUrl: string, _pageTitle: string) => {
-        setUrl(pageUrl);
-      }, []),
-      onError: useCallback((msg: string) => {
-        setError(msg);
-      }, []),
-      onStarted: useCallback(() => {
-        setError(null);
-        setUrl("");
-      }, []),
-      onContextMenu: useCallback((menu: PageContextMenu) => {
-        setPageMenu({ ...menuAnchorRef.current, menu });
-      }, []),
-    });
+  const {
+    connected,
+    started,
+    tabs,
+    activeTargetId,
+    startBrowser,
+    stopBrowser,
+    startStreaming,
+    navigate,
+    reload,
+    goBack,
+    goForward,
+    sendInput,
+    switchTab,
+    newTab,
+    closeTab,
+    dialog,
+    answerDialog,
+    chooseSelectOption,
+  } = useBrowserWs({
+    channelId,
+    onFrame: useCallback((data: ArrayBuffer) => {
+      drawFrameRef.current(data);
+    }, []),
+    onPageInfo: useCallback((pageUrl: string, _pageTitle: string) => {
+      setUrl(pageUrl);
+    }, []),
+    onError: useCallback((msg: string) => {
+      setError(msg);
+    }, []),
+    onStarted: useCallback(() => {
+      setError(null);
+      setUrl("");
+    }, []),
+    onContextMenu: useCallback((menu: PageContextMenu) => {
+      setPageMenu({ ...menuAnchorRef.current, menu });
+    }, []),
+    onSelectMenu: useCallback((menu: PageSelectMenu) => {
+      setSelectMenu({ ...clickAnchorRef.current, menu });
+    }, []),
+  });
   sendInputRef.current = sendInput;
 
   // Every canvas gesture goes through the coalescer, so a burst of moves or
@@ -166,6 +192,7 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
       const y = (e.clientY - rect.top) * scaleY;
       switch (e.type) {
         case "click":
+          clickAnchorRef.current = { x: e.clientX, y: e.clientY };
           pushInput({ type: "click", x, y, button: "left", clickCount: 1 });
           break;
         case "dblclick":
@@ -385,6 +412,7 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
           <div style={{ color: colors.textDim, fontSize: 13 }}>{connected ? "Starting browser..." : "Connecting..."}</div>
         )}
       </div>
+      {selectMenu && <ContextMenu x={selectMenu.x} y={selectMenu.y} items={selectMenuItems(selectMenu.menu, chooseSelectOption)} onClose={() => setSelectMenu(null)} />}
       {pageMenu && <ContextMenu x={pageMenu.x} y={pageMenu.y} items={pageMenuItems(pageMenu.menu, pageMenuActions)} onClose={() => setPageMenu(null)} />}
     </div>
   );
