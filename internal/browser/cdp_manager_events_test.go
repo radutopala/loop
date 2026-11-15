@@ -1,10 +1,12 @@
 package browser
 
 import (
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
 
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,33 +42,108 @@ func (s *CDPManagerSuite) TestBackgroundRunsOffTheCaller() {
 	}
 }
 
-func (s *CDPManagerSuite) TestAttachWatchesATabOnce() {
+func (s *CDPManagerSuite) TestAttachReusesATabsClient() {
 	mgr, mockClient, _ := s.connectedManager()
 	first := &mockCDPSession{}
 	first.On("TargetID").Return("t2").Maybe()
-	second := &mockCDPSession{}
-	second.On("TargetID").Return("t2").Maybe()
 	reopened := &mockCDPSession{}
 	reopened.On("TargetID").Return("t2").Maybe()
 	mockClient.On("NewContextForTarget", "t2").Return(first, nil).Once()
-	mockClient.On("NewContextForTarget", "t2").Return(second, nil).Once()
 	mockClient.On("NewContextForTarget", "t2").Return(reopened, nil).Once()
-
-	_, err := mgr.attach(mockClient, "t2")
-	require.NoError(s.T(), err)
-	require.NotNil(s.T(), first.changeWatcher(), "the first client on a tab watches it")
 
 	got, err := mgr.attach(mockClient, "t2")
 	require.NoError(s.T(), err)
-	require.Same(s.T(), second, got)
-	require.Nil(s.T(), second.changeWatcher(), "a tab already watched must not be watched twice")
+	require.Same(s.T(), first, got)
+	require.NotNil(s.T(), first.changeWatcher(), "the client on a tab watches it")
 
-	// A tab that closes and comes back under the same id is watched again.
+	// Asking again hands out the same client: a second one could never be
+	// let go, since cancelling it closes the tab.
+	mgr.SwitchActive("t1")
+	again, err := mgr.attach(mockClient, "t2")
+	require.NoError(s.T(), err)
+	require.Same(s.T(), first, again)
+	require.Same(s.T(), first, mgr.ActiveClient())
+
+	// A tab that closes lets its client go, and one that comes back under the
+	// same id is attached and watched again.
+	first.On("Close").Return().Once()
 	mgr.TrackTab("t2")
 	mgr.tabDestroyed("t2")
-	_, err = mgr.attach(mockClient, "t2")
+	first.AssertExpectations(s.T())
+	got, err = mgr.attach(mockClient, "t2")
 	require.NoError(s.T(), err)
+	require.Same(s.T(), reopened, got)
 	require.NotNil(s.T(), reopened.changeWatcher())
+	mockClient.AssertExpectations(s.T())
+}
+
+func (s *CDPManagerSuite) TestAttachToTheConnectionsTabReusesIt() {
+	mgr, mockClient, _ := s.connectedManager()
+	got, err := mgr.attach(mockClient, "t1")
+	require.NoError(s.T(), err)
+	require.Same(s.T(), mockClient, got)
+	mockClient.AssertNotCalled(s.T(), "NewContextForTarget", "t1")
+
+	// Its tab closing leaves the connection's client alone: Close lets it go.
+	mgr.tabDestroyed("t1")
+	mockClient.AssertNotCalled(s.T(), "Close")
+}
+
+func (s *CDPManagerSuite) TestClosingAnUntrackedTabLetsItsClientGo() {
+	mgr, mockClient, _ := s.connectedManager()
+	t3 := &mockCDPSession{}
+	t3.On("TargetID").Return("t3").Maybe()
+	t3.On("Close").Return().Once()
+	mockClient.On("NewContextForTarget", "t3").Return(t3, nil).Once()
+	_, err := mgr.attach(mockClient, "t3")
+	require.NoError(s.T(), err)
+	require.False(s.T(), mgr.IsTrackedTab("t3"))
+
+	mgr.tabDestroyed("t3")
+	t3.AssertExpectations(s.T())
+	// Gone for good: a later tabDestroyed has nothing to let go.
+	mgr.tabDestroyed("t3")
+}
+
+func (s *CDPManagerSuite) TestConcurrentAttachesShareOneClient() {
+	mgr, mockClient, _ := s.connectedManager()
+	t2 := &mockCDPSession{}
+	t2.On("TargetID").Return("t2").Maybe()
+	release := make(chan struct{})
+	mockClient.On("NewContextForTarget", "t2").Run(func(mock.Arguments) { <-release }).Return(t2, nil).Once()
+
+	first := make(chan CDPSession, 1)
+	go func() {
+		c, err := mgr.attach(mockClient, "t2")
+		require.NoError(s.T(), err)
+		first <- c
+	}()
+	require.Eventually(s.T(), func() bool {
+		mgr.mu.Lock()
+		defer mgr.mu.Unlock()
+		return mgr.attaching["t2"] != nil
+	}, time.Second, time.Millisecond)
+	// The second caller finds the first one attaching and waits for it.
+	time.AfterFunc(50*time.Millisecond, func() { close(release) })
+	got, err := mgr.attach(mockClient, "t2")
+	require.NoError(s.T(), err)
+	require.Same(s.T(), t2, got)
+	require.Same(s.T(), t2, <-first)
+	mockClient.AssertNumberOfCalls(s.T(), "NewContextForTarget", 1)
+}
+
+func (s *CDPManagerSuite) TestFailedAttachLetsTheNextOneTry() {
+	mgr, mockClient, _ := s.connectedManager()
+	t2 := &mockCDPSession{}
+	t2.On("TargetID").Return("t2").Maybe()
+	mockClient.On("NewContextForTarget", "t2").Return(nil, errors.New("wedged")).Once()
+	mockClient.On("NewContextForTarget", "t2").Return(t2, nil).Once()
+
+	_, err := mgr.attach(mockClient, "t2")
+	require.ErrorContains(s.T(), err, "wedged")
+	got, err := mgr.attach(mockClient, "t2")
+	require.NoError(s.T(), err)
+	require.Same(s.T(), t2, got)
 }
 
 func (s *CDPManagerSuite) TestNavigatingDropsTheFileChooser() {

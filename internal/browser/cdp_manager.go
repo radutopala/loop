@@ -75,10 +75,16 @@ type CDPManager struct {
 	// hearing it once per client.
 	tabInfo map[string]TabInfo
 
-	// watched are the tabs a client already watches. One client per tab is
-	// enough to hear its events, and every client attached to the same tab
-	// would hear each of them again, accepting an alert once per client.
-	watched map[string]bool
+	// sessions holds the one client attached to each tab, which also
+	// watches it. Every client attached to the same tab would hear each of
+	// its events again, accepting an alert once per client, and none of
+	// them can be let go while the tab lives: cancelling an attached
+	// session closes its tab. So a tab is attached once and that client is
+	// handed out from then on, until the tab goes.
+	sessions map[string]CDPSession
+	// attaching holds, per tab, the attach in flight; a second caller waits
+	// for it rather than opening a session of its own.
+	attaching map[string]chan struct{}
 
 	// events runs the watched clients' events one at a time, in the order
 	// they arrived; see enqueue.
@@ -229,7 +235,7 @@ func (m *CDPManager) Connect(ctx context.Context) error {
 	tid := client.TargetID()
 	m.client = client
 	m.activeClient = client
-	m.watched = map[string]bool{tid: true}
+	m.sessions = map[string]CDPSession{tid: client}
 	m.watch(client)
 	if tid != "" {
 		m.activeTargetID = tid
@@ -286,9 +292,9 @@ func (m *CDPManager) ActiveTargetID() string {
 	return m.activeTargetID
 }
 
-// GetOrCreate creates a new CDP client for the given target by reusing the
-// browser WS connection from Connect(). Each call creates a fresh context —
-// no caching. Must be called after Connect().
+// GetOrCreate returns the CDP client for the given target, attaching one over
+// the browser WS connection from Connect() the first time the target is
+// asked for. Must be called after Connect().
 //
 // A target that is no longer open is reported as ErrTargetGone instead of
 // being attached to. Attaching to a dead target does not fail, it hangs: the
@@ -324,27 +330,52 @@ func (m *CDPManager) GetOrCreate(ctx context.Context, targetID string) (CDPSessi
 	return m.attach(initial, targetID)
 }
 
-// attach opens a session on targetID over the browser connection and makes it
-// the active client, with no liveness check. Callers that already know the
-// target is open use this: re-listing would cost a round-trip to learn what
-// they just saw, and a tab opened moments ago may not be listed yet.
+// attach makes targetID's client the active one, opening a session on it over
+// the browser connection unless the tab already has one, with no liveness
+// check. Callers that already know the target is open use this: re-listing
+// would cost a round-trip to learn what they just saw, and a tab opened
+// moments ago may not be listed yet.
 func (m *CDPManager) attach(initial CDPSession, targetID string) (CDPSession, error) {
-	newClient, err := initial.NewContextForTarget(targetID)
-	if err != nil {
-		return nil, fmt.Errorf("attaching to target %s: %w", targetID, err)
+	m.mu.Lock()
+	for {
+		if cached, ok := m.sessions[targetID]; ok {
+			m.activeClient = cached
+			m.mu.Unlock()
+			return cached, nil
+		}
+		inFlight, ok := m.attaching[targetID]
+		if !ok {
+			break
+		}
+		// A second session on the tab could never be let go, since
+		// cancelling it would close the tab, so wait for the first.
+		m.mu.Unlock()
+		<-inFlight
+		m.mu.Lock()
 	}
+	done := make(chan struct{})
+	if m.attaching == nil {
+		m.attaching = map[string]chan struct{}{}
+	}
+	m.attaching[targetID] = done
+	m.mu.Unlock()
+
+	newClient, err := initial.NewContextForTarget(targetID)
 
 	m.mu.Lock()
+	delete(m.attaching, targetID)
+	close(done)
+	if err != nil {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("attaching to target %s: %w", targetID, err)
+	}
+	if m.sessions == nil {
+		m.sessions = map[string]CDPSession{}
+	}
+	m.sessions[targetID] = newClient
 	m.activeClient = newClient
-	fresh := !m.watched[targetID]
-	if m.watched == nil {
-		m.watched = map[string]bool{}
-	}
-	m.watched[targetID] = true
 	m.mu.Unlock()
-	if fresh {
-		m.watch(newClient)
-	}
+	m.watch(newClient)
 	return newClient, nil
 }
 
@@ -613,6 +644,8 @@ func (m *CDPManager) recheckTitle(client CDPSession, tab TabInfo) {
 func (m *CDPManager) tabDestroyed(targetID string) {
 	m.mu.Lock()
 	if !m.isTrackedLocked(targetID) {
+		// Not in the strip, but it may still have been attached to.
+		m.dropSessionLocked(targetID)
 		m.mu.Unlock()
 		return
 	}
@@ -782,7 +815,18 @@ func (m *CDPManager) untrackTabLocked(targetID string) {
 	delete(m.dialogs, targetID)
 	delete(m.fileChoosers, targetID)
 	delete(m.tabInfo, targetID)
-	delete(m.watched, targetID)
+	m.dropSessionLocked(targetID)
+}
+
+// dropSessionLocked lets go of the session attached to a tab that is gone:
+// it holds nothing, and cancelling it ends its goroutines and listeners. Off
+// the lock, since cancelling waits on Chrome. The connection's own client
+// stays; Close lets it go, with the browser.
+func (m *CDPManager) dropSessionLocked(targetID string) {
+	if s, ok := m.sessions[targetID]; ok && s != m.client {
+		m.background(s.Close)
+	}
+	delete(m.sessions, targetID)
 }
 
 // IsTrackedTab returns true if the target is in the tab order.
@@ -970,7 +1014,8 @@ func (m *CDPManager) Close() {
 	m.dialogs = nil
 	m.fileChoosers = nil
 	m.tabInfo = map[string]TabInfo{}
-	m.watched = nil
+	// The attached sessions hang off the connection's context and end with it.
+	m.sessions = nil
 }
 
 // WSEndpoint returns the WebSocket endpoint this manager is configured for.
