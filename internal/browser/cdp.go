@@ -1299,8 +1299,15 @@ const scanRefsJSTemplate = `(() => {
       if (parts.length) return parts.join(" ");
     }
     // A form control is named by its <label>s, ahead of its own text — a
-    // select's would be every option — and its placeholder.
-    const labels = [...(el.labels || [])].map(text).filter(Boolean);
+    // select's would be every option — and its placeholder. A label wrapping
+    // controls leaves out their text: a select's options aren't its name.
+    const labelText = (l) => {
+      if (!l.querySelector("select, textarea, button")) return text(l);
+      const c = l.cloneNode(true);
+      c.querySelectorAll("select, textarea, button").forEach((n) => n.remove());
+      return (c.textContent || "").trim().replace(/\s+/g, " ").slice(0, 200);
+    };
+    const labels = [...(el.labels || [])].map(labelText).filter(Boolean);
     if (labels.length) return labels.join(" ");
     const own = text(el);
     if (own) return own;

@@ -37,6 +37,8 @@ const testPage = `<!DOCTYPE html>
       <option value="user">User</option>
     </select>
     <input type="checkbox" id="agree" name="agree"> <label for="agree">I agree</label>
+    <label>Country <select id="country"><option>Romania</option><option>France</option></select></label>
+    <label>Notes <textarea id="notes">draft text</textarea></label>
     <button type="submit" id="submit-btn">Submit</button>
     <button type="button" id="action-btn" onclick="document.title='clicked'">Action</button>
   </form>
@@ -221,9 +223,9 @@ func (s *CDPIntegrationSuite) TestReadPageFormElements() {
 	require.NotEmpty(s.T(), roles["checkbox"], "should find checkbox")
 
 	// Controls are named by their <label>, not their placeholder or options.
-	require.Equal(s.T(), []string{"Username", "Email"}, roles["textbox"])
+	require.Equal(s.T(), []string{"Username", "Email", "Notes"}, roles["textbox"], "a wrapping label leaves out the textarea's text")
 	require.Equal(s.T(), []string{"I agree"}, roles["checkbox"])
-	require.Equal(s.T(), []string{"Admin User"}, roles["combobox"], "an unlabelled select keeps its own text")
+	require.Equal(s.T(), []string{"Admin User", "Country"}, roles["combobox"], "an unlabelled select keeps its own text; a wrapped one is named without its options")
 }
 
 func (s *CDPIntegrationSuite) TestReadPageBoundingBoxes() {
