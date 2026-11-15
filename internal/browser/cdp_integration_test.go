@@ -219,6 +219,11 @@ func (s *CDPIntegrationSuite) TestReadPageFormElements() {
 	require.NotEmpty(s.T(), roles["button"], "should find buttons")
 	require.NotEmpty(s.T(), roles["combobox"], "should find select dropdown")
 	require.NotEmpty(s.T(), roles["checkbox"], "should find checkbox")
+
+	// Controls are named by their <label>, not their placeholder or options.
+	require.Equal(s.T(), []string{"Username", "Email"}, roles["textbox"])
+	require.Equal(s.T(), []string{"I agree"}, roles["checkbox"])
+	require.Equal(s.T(), []string{"Admin User"}, roles["combobox"], "an unlabelled select keeps its own text")
 }
 
 func (s *CDPIntegrationSuite) TestReadPageBoundingBoxes() {
@@ -801,8 +806,9 @@ func (s *CDPIntegrationSuite) TestScrollIntoView() {
 	s.nav()
 	ctx := context.Background()
 
-	// Get refs — each now includes BackendDOMNodeID.
-	refs, err := s.client.GetElementRefs(ctx)
+	// Only the accessibility walk names Chrome's nodes; the in-page scan that
+	// GetElementRefs prefers leaves BackendDOMNodeID unset.
+	refs, err := s.client.axElementRefs()
 	require.NoError(s.T(), err)
 	require.NotEmpty(s.T(), refs)
 
