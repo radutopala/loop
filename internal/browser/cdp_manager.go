@@ -603,10 +603,15 @@ func (m *CDPManager) dropFileChooser(targetID string) {
 }
 
 // updateTab publishes tab when it differs from what the panes last heard,
-// reporting whether its URL changed.
+// reporting whether its URL changed. An update with no title for the page
+// the tab already shows keeps the title it had, rather than blanking it; a
+// new page starts with what it reports.
 func (m *CDPManager) updateTab(tab TabInfo) (navigated bool) {
 	m.mu.Lock()
 	last, seen := m.tabInfo[tab.TargetID]
+	if seen && tab.Title == "" && tab.URL == last.URL {
+		tab.Title = last.Title
+	}
 	news := m.isTrackedLocked(tab.TargetID) && (!seen || last != tab)
 	if news {
 		m.tabInfo[tab.TargetID] = tab
