@@ -1279,8 +1279,9 @@ const maxScannedRefs = 5000
 // sidecar sitting near its cap is then one page read away from a renderer that
 // dies mid-walk, which is how a crashed tab was first seen here.
 //
-// The walk in axElementRefs stays as the fallback: it sees cross-origin frames,
-// which script in the page cannot.
+// The walk in axElementRefs stays as the fallback for a page the scan finds
+// nothing in. Cross-origin frames, which script in the page cannot enter, are
+// scanned on their own by frameRefs.
 var scanRefsJS = fmt.Sprintf(scanRefsJSTemplate, scanRoleList, maxScannedRefs)
 
 // scanRefsJSTemplate takes the interactive role list and the ref budget.
@@ -1346,7 +1347,7 @@ const scanRefsJSTemplate = `(() => {
             const box = el.getBoundingClientRect();
             visit(doc, dx + box.x, dy + box.y);
           }
-        } catch (e) { /* cross-origin: the accessibility walk is the only way in */ }
+        } catch (e) { /* cross-origin: frameRefs scans it on its own */ }
       }
       const role = roleOf(el);
       if (!roles.has(role)) continue;
@@ -1391,25 +1392,9 @@ func makeScanRefsFuncWith(runFn func(context.Context, ...chromedp.Action) error,
 	return func(ctx context.Context) ([]ElementRef, error) {
 		var refs []ElementRef
 		err := runFn(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-			var res struct {
-				Result struct {
-					Value json.RawMessage `json:"value"`
-				} `json:"result"`
-				ExceptionDetails *struct {
-					Text string `json:"text"`
-				} `json:"exceptionDetails"`
-			}
-			params := cdpruntime.Evaluate(scanRefsJS).WithReturnByValue(true).WithAwaitPromise(false)
-			if e := exec(ctx, string(cdpruntime.CommandEvaluate), params, &res); e != nil {
-				return e
-			}
-			if res.ExceptionDetails != nil {
-				return fmt.Errorf("scanning page: %s", res.ExceptionDetails.Text)
-			}
-			if len(res.Result.Value) == 0 {
-				return nil
-			}
-			return json.Unmarshal(res.Result.Value, &refs)
+			var err error
+			refs, err = evalScan(ctx, exec, cdpruntime.Evaluate(scanRefsJS))
+			return err
 		}))
 		if err != nil {
 			return nil, err
@@ -1430,16 +1415,23 @@ func (c *CDPClient) GetElementRefs(ctx context.Context) ([]ElementRef, error) {
 
 // elementRefs collects the page's interactive elements, in-page scan first.
 //
-// The accessibility walk answers only when the scan cannot: script in the page
-// sees neither cross-origin frames nor a document that has already stopped
-// answering, and both end here with no refs at all.
+// Script in the page cannot enter a cross-origin frame, so those frames are
+// scanned one by one through CDP and their elements follow the page's. The
+// accessibility walk answers only when nothing does: a document that has
+// already stopped answering ends here with no refs at all.
 func (c *CDPClient) elementRefs() ([]ElementRef, error) {
 	refs, err := c.scanRefsFunc(c.ctx)
 	if err != nil {
 		c.logger.Debug("in-page element scan failed, falling back to the accessibility tree",
 			"error", err, "target_id", string(c.targetID))
 	}
+	if err == nil {
+		refs = append(refs, c.frameRefs()...)
+	}
 	if err == nil && len(refs) > 0 {
+		if len(refs) > maxScannedRefs {
+			refs = refs[:maxScannedRefs]
+		}
 		for i := range refs {
 			refs[i].RefID = fmt.Sprintf("ref_%d", i+1)
 		}
