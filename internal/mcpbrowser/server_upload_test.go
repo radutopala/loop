@@ -69,12 +69,12 @@ func (s *ServerSuite) TestUploadFile() {
 }
 
 func (s *ServerSuite) TestUploadJSCarriesTheFiles() {
-	files := []uploadFile{{Name: `a "b".png`, Type: "image/png", Data: base64.StdEncoding.EncodeToString([]byte{0, 1, 2})}}
+	files := []browser.ChosenFile{{Name: `a "b".png`, Type: "image/png", Data: base64.StdEncoding.EncodeToString([]byte{0, 1, 2})}}
 	js := uploadJS("document.body", files)
 
 	start := strings.Index(js, "const files = ") + len("const files = ")
 	end := strings.Index(js[start:], ";\n")
-	var got []uploadFile
+	var got []browser.ChosenFile
 	require.NoError(s.T(), json.Unmarshal([]byte(js[start:start+end]), &got))
 	require.Equal(s.T(), files, got)
 	require.Contains(s.T(), js, "try { el = document.body; }")
@@ -92,7 +92,7 @@ func (s *ServerSuite) TestReadUploadFilesTypesByExtension() {
 	srv := New("http://x", "ch", nil)
 	files, err := srv.readUploadFiles([]string{png, txt, bare})
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), []uploadFile{
+	require.Equal(s.T(), []browser.ChosenFile{
 		{Name: "shot.png", Type: "image/png", Data: "iQ=="},
 		{Name: "notes.txt", Type: "text/plain", Data: "eQ=="},
 		{Name: "README", Type: "", Data: "eA=="},

@@ -1831,6 +1831,22 @@ func (c *CDPClient) WatchFileChoosers(onOpened func(FileChooser)) {
 	})
 }
 
+// SetInputFilesJS is a JS function that sets a file input's files from
+// ChosenFiles (base64 data) and fires the events a real pick fires. Scripts
+// that pick files call it as (SetInputFilesJS)(input, files).
+const SetInputFilesJS = `function (input, files) {
+  const dt = new DataTransfer();
+  for (const f of files) {
+    const bin = atob(f.data);
+    const buf = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+    dt.items.add(new File([buf], f.name, { type: f.type }));
+  }
+  input.files = dt.files;
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}`
+
 // setChosenFilesJS runs on the file input with the picked files, or with no
 // argument when the pick was cancelled, and fires the events a real chooser
 // fires. It answers "ok" or why not.
@@ -1840,16 +1856,7 @@ const setChosenFilesJS = `function (files) {
     this.dispatchEvent(new Event("cancel", { bubbles: true }));
     return "ok";
   }
-  const dt = new DataTransfer();
-  for (const f of files) {
-    const bin = atob(f.data);
-    const buf = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
-    dt.items.add(new File([buf], f.name, { type: f.type }));
-  }
-  this.files = dt.files;
-  this.dispatchEvent(new Event("input", { bubbles: true }));
-  this.dispatchEvent(new Event("change", { bubbles: true }));
+  (` + SetInputFilesJS + `)(this, files);
   return "ok";
 }`
 
