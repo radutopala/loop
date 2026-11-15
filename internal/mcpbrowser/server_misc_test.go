@@ -64,14 +64,14 @@ func (s *ServerSuite) TestChannelIDForwarded() {
 	srv.httpClient = ts.Client()
 	session := connectClient(s.T(), srv)
 
-	_ = callTool(s.T(), session, "go_back", nil)
+	_ = callTool(s.T(), session, "reload", nil)
 	require.Equal(s.T(), "my-channel", gotChannelID)
 }
 
 // ==================== unused import guard ====================
 
-func (s *ServerSuite) TestStringsUsed() {
-	// strings.ToLower is used in handleFind — ensure the import is exercised.
+func (s *ServerSuite) TestHandleFindElementsDirect() {
+	// handleFindElements called directly, outside an MCP session.
 	srv := New("http://x", "ch", nil)
 	srv.refs = []browser.ElementRef{{RefID: "ref_1", Role: "BUTTON", Name: "OK"}}
 
@@ -84,10 +84,10 @@ func (s *ServerSuite) TestStringsUsed() {
 	srv.apiURL = ts.URL
 	srv.httpClient = ts.Client()
 
-	res, _, err := srv.handleFind(context.Background(), "button")
+	res, _, err := srv.handleFindElements(context.Background(), "button")
 	require.NoError(s.T(), err)
 	require.False(s.T(), res.IsError)
-	require.Contains(s.T(), getText(s.T(), res), "Found 1 element(s)")
+	require.Equal(s.T(), "1 of 1 elements match \"button\":\n[ref_1] BUTTON: OK\n", getText(s.T(), res))
 }
 
 // ==================== handleComputer direct (no HTTP) ====================

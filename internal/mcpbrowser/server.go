@@ -270,7 +270,7 @@ func describeWait(w waitSpec) string {
 
 type computerInput struct {
 	Action   string  `json:"action" jsonschema:"The action to perform: click,right_click,double_click,triple_click,type,key,scroll,move,hover,screenshot,wait,left_click_drag"`
-	Ref      refArg  `json:"ref,omitempty" jsonschema:"Element ref to interact with, from read_page or find"`
+	Ref      refArg  `json:"ref,omitempty" jsonschema:"Element ref to interact with, from find_elements"`
 	X        float64 `json:"x,omitempty" jsonschema:"X coordinate (or end X for left_click_drag)"`
 	Y        float64 `json:"y,omitempty" jsonschema:"Y coordinate (or end Y for left_click_drag)"`
 	Text     string  `json:"text,omitempty" jsonschema:"Text to type or key name"`
@@ -318,46 +318,26 @@ func (s *Server) registerTools() {
 		return textResult(msg), nil, nil
 	})
 
+	type findElementsInput struct {
+		Query string `json:"query,omitempty" jsonschema:"Optional words that must all appear in an element's role, name or value, ignoring case, such as \"submit button\". Leave out to list every element."`
+	}
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
-		Name:        "read_page",
-		Description: "Get the accessibility tree of interactive elements on the current page. Returns element refs that can be used with the computer tool. If the page turns out to be a login wall or a CAPTCHA, do not try to solve it — call AskUserQuestion so the user can sign in through the Browser panel; the session persists afterwards.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
-		resp, err := s.callAction(ctx, "get_element_refs", nil)
-		if err != nil {
-			return errorResult(fmt.Sprintf("failed to get element refs: %v", err)), nil, nil
-		}
-		s.refs = resp.ElementRefs
-
-		infoResp, _ := s.callAction(ctx, "get_page_info", nil)
-		result := ""
-		if infoResp != nil && infoResp.PageInfo != nil {
-			result = fmt.Sprintf("Page: %s — %s\n\n", infoResp.PageInfo.URL, infoResp.PageInfo.Title)
-		}
-
-		if len(s.refs) == 0 {
-			result += "No interactive elements found."
-		} else {
-			for _, ref := range s.refs {
-				line := fmt.Sprintf("[%s] %s: %s", ref.RefID, ref.Role, ref.Name)
-				if ref.Value != "" {
-					line += fmt.Sprintf(" (value: %s)", ref.Value)
-				}
-				result += line + "\n"
-			}
-		}
-		return textResult(result), nil, nil
+		Name:        "find_elements",
+		Description: "List the interactive elements on the current page (links, buttons, fields, selects, checkboxes, tabs...) with refs for computer, form_input and upload_file. With a query, only the elements whose role, name or value contains every word of it; when none does, every element, so you can pick. For the page's readable text use get_page_text. If the page turns out to be a login wall or a CAPTCHA, do not try to solve it — call AskUserQuestion so the user can sign in through the Browser panel; the session persists afterwards.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input findElementsInput) (*mcp.CallToolResult, any, error) {
+		return s.handleFindElements(ctx, input.Query)
 	})
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "computer",
 		InputSchema: inputSchemaFor[computerInput](),
-		Description: "Perform computer actions: click, type, key, scroll, move, screenshot, wait, triple_click, double_click. Use ref from read_page for precise element targeting. With wait_for_selector or wait_for_text, wait and screenshot first wait for the page to match, and the other actions wait after acting — e.g. for what a click loads.",
+		Description: "Perform computer actions: click, type, key, scroll, move, screenshot, wait, triple_click, double_click. Use ref from find_elements for precise element targeting. With wait_for_selector or wait_for_text, wait and screenshot first wait for the page to match, and the other actions wait after acting — e.g. for what a click loads.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input computerInput) (*mcp.CallToolResult, any, error) {
 		return s.handleComputer(ctx, input)
 	})
 
 	type formInputInput struct {
-		Ref   refArg `json:"ref" jsonschema:"Element ref from read_page or find"`
+		Ref   refArg `json:"ref" jsonschema:"Element ref from find_elements"`
 		Value string `json:"value" jsonschema:"Value to enter in the form field"`
 	}
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
@@ -419,26 +399,6 @@ func (s *Server) registerTools() {
 			return errorResult(fmt.Sprintf("writing screenshot file: %v", writeErr)), nil, nil
 		}
 		return textResult(fmt.Sprintf("Saved screenshot to %s (%d bytes)", path, len(data))), nil, nil
-	})
-
-	mcp.AddTool(s.mcpServer, &mcp.Tool{
-		Name:        "go_back",
-		Description: "Navigate back in browser history.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
-		if _, err := s.callAction(ctx, "go_back", nil); err != nil {
-			return errorResult(fmt.Sprintf("back failed: %v", err)), nil, nil
-		}
-		return textResult("Navigated back"), nil, nil
-	})
-
-	mcp.AddTool(s.mcpServer, &mcp.Tool{
-		Name:        "go_forward",
-		Description: "Navigate forward in browser history.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
-		if _, err := s.callAction(ctx, "go_forward", nil); err != nil {
-			return errorResult(fmt.Sprintf("forward failed: %v", err)), nil, nil
-		}
-		return textResult("Navigated forward"), nil, nil
 	})
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
@@ -570,20 +530,6 @@ func (s *Server) registerTools() {
 		return textResult(resp.Result), nil, nil
 	})
 
-	// find: fuzzy-find elements by natural language query.
-	type findInput struct {
-		Query string `json:"query" jsonschema:"Natural language query to match against element roles and names"`
-	}
-	mcp.AddTool(s.mcpServer, &mcp.Tool{
-		Name:        "find",
-		Description: "Find interactive elements matching a natural language query. Returns up to 20 matching refs from the accessibility tree.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, input findInput) (*mcp.CallToolResult, any, error) {
-		if input.Query == "" {
-			return errorResult("query is required"), nil, nil
-		}
-		return s.handleFind(ctx, input.Query)
-	})
-
 	// read_console_messages: read captured browser console messages.
 	type consoleInput struct {
 		Pattern    string `json:"pattern,omitempty" jsonschema:"Regex pattern to filter messages"`
@@ -710,7 +656,7 @@ func (s *Server) runComputer(ctx context.Context, input computerInput) (*mcp.Cal
 	x, y := input.X, input.Y
 	if input.Ref > 0 {
 		if int(input.Ref) > len(s.refs) {
-			return errorResult(fmt.Sprintf("ref %d out of range (1-%d), call read_page first", input.Ref, len(s.refs))), nil, nil
+			return errorResult(fmt.Sprintf("ref %d out of range (1-%d), call find_elements first", input.Ref, len(s.refs))), nil, nil
 		}
 		ref := s.refs[input.Ref-1]
 		x = ref.X + ref.Width/2
@@ -836,43 +782,41 @@ func scrollToRefJS(ref browser.ElementRef) string {
 		ref.Y, ref.Height)
 }
 
-// handleFind searches element refs from the host for matches against a natural language query.
-func (s *Server) handleFind(ctx context.Context, query string) (*mcp.CallToolResult, any, error) {
+// handleFindElements lists the page's element refs, narrowed to those holding
+// every word of query when there is one and any do.
+func (s *Server) handleFindElements(ctx context.Context, query string) (*mcp.CallToolResult, any, error) {
 	resp, err := s.callAction(ctx, "get_element_refs", nil)
 	if err != nil {
 		return errorResult(fmt.Sprintf("failed to get element refs: %v", err)), nil, nil
 	}
 	s.refs = resp.ElementRefs
 
-	queryLower := strings.ToLower(query)
-	var matches []browser.ElementRef
-	for _, ref := range s.refs {
-		roleLower := strings.ToLower(ref.Role)
-		nameLower := strings.ToLower(ref.Name)
-		descLower := strings.ToLower(ref.Description)
-		if strings.Contains(roleLower, queryLower) ||
-			strings.Contains(nameLower, queryLower) ||
-			strings.Contains(descLower, queryLower) {
-			matches = append(matches, ref)
-			if len(matches) >= 20 {
-				break
-			}
+	var b strings.Builder
+	if info, _ := s.callAction(ctx, "get_page_info", nil); info != nil && info.PageInfo != nil {
+		fmt.Fprintf(&b, "Page: %s — %s\n\n", info.PageInfo.URL, info.PageInfo.Title)
+	}
+	if len(s.refs) == 0 {
+		b.WriteString("No interactive elements found.")
+		return textResult(b.String()), nil, nil
+	}
+
+	shown := s.refs
+	if strings.TrimSpace(query) != "" {
+		if matches := matchRefs(s.refs, query); len(matches) > 0 {
+			shown = matches
+			fmt.Fprintf(&b, "%d of %d elements match %q:\n", len(matches), len(s.refs), query)
+		} else {
+			fmt.Fprintf(&b, "No element contains every word of %q. All %d elements:\n", query, len(s.refs))
 		}
 	}
-
-	if len(matches) == 0 {
-		return textResult(fmt.Sprintf("No elements found matching %q", query)), nil, nil
-	}
-
-	result := fmt.Sprintf("Found %d element(s) matching %q:\n", len(matches), query)
-	for _, ref := range matches {
-		line := fmt.Sprintf("[%s] %s: %s", ref.RefID, ref.Role, ref.Name)
+	for _, ref := range shown {
+		fmt.Fprintf(&b, "[%s] %s: %s", ref.RefID, ref.Role, ref.Name)
 		if ref.Value != "" {
-			line += fmt.Sprintf(" (value: %s)", ref.Value)
+			fmt.Fprintf(&b, " (value: %s)", ref.Value)
 		}
-		result += line + "\n"
+		b.WriteString("\n")
 	}
-	return textResult(result), nil, nil
+	return textResult(b.String()), nil, nil
 }
 
 // captureScreenshot takes a screenshot via the action backend and returns the

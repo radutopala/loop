@@ -237,9 +237,9 @@ func (s *ServerSuite) TestNavigateEmptyURL() {
 	require.Contains(s.T(), getText(s.T(), res), "url is required")
 }
 
-// ==================== read_page ====================
+// ==================== find_elements ====================
 
-func (s *ServerSuite) TestReadPageSuccess() {
+func (s *ServerSuite) TestFindElementsListsEveryElement() {
 	refs := []browser.ElementRef{
 		{RefID: "ref_1", Role: "button", Name: "Submit", Value: "go"},
 		{RefID: "ref_2", Role: "link", Name: "Home"},
@@ -254,7 +254,7 @@ func (s *ServerSuite) TestReadPageSuccess() {
 			writeJSON(w, actionResponse{PageInfo: &browser.PageInfo{URL: "https://x.com", Title: "X"}})
 		}
 	})
-	res := callTool(s.T(), session, "read_page", nil)
+	res := callTool(s.T(), session, "find_elements", nil)
 	require.False(s.T(), res.IsError)
 	text := getText(s.T(), res)
 	require.Contains(s.T(), text, "Page: https://x.com")
@@ -263,7 +263,7 @@ func (s *ServerSuite) TestReadPageSuccess() {
 	require.Len(s.T(), srv.refs, 2)
 }
 
-func (s *ServerSuite) TestReadPageNoRefs() {
+func (s *ServerSuite) TestFindElementsNoRefs() {
 	_, session := setupTest(s.T(), func(w http.ResponseWriter, r *http.Request) {
 		_, action, _ := decodeActionRequest(s.T(), r)
 		if action == "get_element_refs" {
@@ -272,16 +272,16 @@ func (s *ServerSuite) TestReadPageNoRefs() {
 			writeJSON(w, actionResponse{})
 		}
 	})
-	res := callTool(s.T(), session, "read_page", nil)
+	res := callTool(s.T(), session, "find_elements", nil)
 	require.False(s.T(), res.IsError)
 	require.Contains(s.T(), getText(s.T(), res), "No interactive elements found.")
 }
 
-func (s *ServerSuite) TestReadPageError() {
+func (s *ServerSuite) TestFindElementsError() {
 	_, session := setupTest(s.T(), func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, actionResponse{Error: "dom error"})
 	})
-	res := callTool(s.T(), session, "read_page", nil)
+	res := callTool(s.T(), session, "find_elements", nil)
 	require.True(s.T(), res.IsError)
 	require.Contains(s.T(), getText(s.T(), res), "failed to get element refs: dom error")
 }

@@ -10,7 +10,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
-// refArg is an element ref from read_page or find. Both list refs as
+// refArg is an element ref from find_elements, which lists refs as
 // "ref_N", so an agent naturally passes that back; it is accepted as well as
 // the bare number N.
 type refArg int
@@ -37,7 +37,7 @@ func (r *refArg) UnmarshalJSON(data []byte) error {
 // only, and the SDK would reject "ref_3" before the tool ever saw it.
 var refSchema = &jsonschema.Schema{
 	Types:       []string{"integer", "string"},
-	Description: `Element ref from read_page or find: the number N or "ref_N"`,
+	Description: `Element ref from find_elements: the number N or "ref_N"`,
 }
 
 // inputSchemaFor is T's input schema with refArg fields taking either form.

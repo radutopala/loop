@@ -8,48 +8,6 @@ import (
 	"github.com/radutopala/loop/internal/browser"
 )
 
-func (s *ServerSuite) TestGoBackSuccess() {
-	_, session := setupTest(s.T(), func(w http.ResponseWriter, r *http.Request) {
-		_, action, _ := decodeActionRequest(s.T(), r)
-		require.Equal(s.T(), "go_back", action)
-		writeJSON(w, actionResponse{Result: "ok"})
-	})
-	res := callTool(s.T(), session, "go_back", nil)
-	require.False(s.T(), res.IsError)
-	require.Contains(s.T(), getText(s.T(), res), "Navigated back")
-}
-
-func (s *ServerSuite) TestGoBackError() {
-	_, session := setupTest(s.T(), func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, actionResponse{Error: "back err"})
-	})
-	res := callTool(s.T(), session, "go_back", nil)
-	require.True(s.T(), res.IsError)
-	require.Contains(s.T(), getText(s.T(), res), "back failed: back err")
-}
-
-// ==================== go_forward ====================
-
-func (s *ServerSuite) TestGoForwardSuccess() {
-	_, session := setupTest(s.T(), func(w http.ResponseWriter, r *http.Request) {
-		_, action, _ := decodeActionRequest(s.T(), r)
-		require.Equal(s.T(), "go_forward", action)
-		writeJSON(w, actionResponse{Result: "ok"})
-	})
-	res := callTool(s.T(), session, "go_forward", nil)
-	require.False(s.T(), res.IsError)
-	require.Contains(s.T(), getText(s.T(), res), "Navigated forward")
-}
-
-func (s *ServerSuite) TestGoForwardError() {
-	_, session := setupTest(s.T(), func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, actionResponse{Error: "fwd err"})
-	})
-	res := callTool(s.T(), session, "go_forward", nil)
-	require.True(s.T(), res.IsError)
-	require.Contains(s.T(), getText(s.T(), res), "forward failed: fwd err")
-}
-
 // ==================== reload ====================
 
 func (s *ServerSuite) TestReloadSuccess() {
