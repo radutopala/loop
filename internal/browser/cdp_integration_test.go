@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -339,8 +340,17 @@ func (s *CDPIntegrationSuite) TestMouseMove() {
 
 func (s *CDPIntegrationSuite) TestMouseScroll() {
 	s.nav()
-	err := s.client.MouseScroll(context.Background(), 100, 100, 0, 100)
+	ctx := context.Background()
+	_, err := s.client.EvaluateJS(ctx, `document.body.style.height = "5000px"; window.scrollTo(0, 0)`)
 	require.NoError(s.T(), err)
+
+	// A positive deltaY scrolls down, as computer's scroll action relies on.
+	require.NoError(s.T(), s.client.MouseScroll(ctx, 100, 100, 0, 300))
+	require.Eventually(s.T(), func() bool {
+		y, err := s.client.EvaluateJS(ctx, "window.scrollY")
+		n, perr := strconv.ParseFloat(y, 64)
+		return err == nil && perr == nil && n > 0
+	}, 5*time.Second, 100*time.Millisecond)
 }
 
 func (s *CDPIntegrationSuite) TestTypeText() {

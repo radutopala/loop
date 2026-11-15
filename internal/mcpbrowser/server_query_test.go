@@ -168,6 +168,22 @@ func (s *ServerSuite) TestSwitchTabEmptyTargetID() {
 	require.Contains(s.T(), getText(s.T(), res), "index or target_id is required")
 }
 
+func (s *ServerSuite) TestTabIDAlias() {
+	for _, tool := range []string{"switch_tab", "close_tab"} {
+		s.Run(tool, func() {
+			_, session := setupTest(s.T(), func(w http.ResponseWriter, r *http.Request) {
+				_, action, params := decodeActionRequest(s.T(), r)
+				require.Equal(s.T(), tool, action)
+				require.Equal(s.T(), "t3", params["target_id"])
+				writeJSON(w, actionResponse{Result: "ok"})
+			})
+			res := callTool(s.T(), session, tool, map[string]any{"tab_id": "t3"})
+			require.False(s.T(), res.IsError, getText(s.T(), res))
+			require.Contains(s.T(), getText(s.T(), res), "tab t3")
+		})
+	}
+}
+
 // ==================== close_tab ====================
 
 func (s *ServerSuite) TestCloseTabSuccess() {

@@ -438,11 +438,14 @@ Requires `chrome://inspect/#remote-debugging` enabled in Chrome.
 ### Available Tools
 `navigate`, `find_elements`, `computer`, `form_input`, `upload_file`, `screenshot`, `save_screenshot`, `reload`, `evaluate`, `list_tabs`, `new_tab`, `switch_tab`, `close_tab`, `page_info`, `get_page_text`, `read_console_messages`, `read_network_requests`, `resize_window`, `list_downloads` (proxy mode only)
 
+### Pointing and scrolling
+`computer` targets an element by `ref` from `find_elements`, or a point by `x` and `y`. It also takes the point as `coordinate`, `[x, y]` (or the string `"[x, y]"`), and `left_click` as another name for `click`, as agents used to computer-use tools send them. `scroll` takes `delta_x`/`delta_y` in CSS pixels (positive scrolls right/down), or `direction` (`up`, `down`, `left`, `right`) with `amount` in notches of 100 pixels; with neither it scrolls down 3 notches.
+
 ### Waiting for a page
 Pages that build their content with script after loading can be read too early. `navigate`, `screenshot`, `save_screenshot` and `computer` take `wait_for_selector` and/or `wait_for_text`, with `wait_timeout_ms` (default 10000, max 60000). The tool polls the page every 250 ms through `evaluate_js` until it matches, and fails with a timeout error if it never does. `computer` waits after acting, except for `wait` and `screenshot`, which wait first; `computer` `wait` without either pauses for `duration` ms.
 
 ### Tabs
-`list_tabs` numbers the tabs `[1]`, `[2]`, …; `switch_tab` and `close_tab` take that number as `index`, or the tab's `target_id`. `switch_tab` also brings the tab to the front in Chrome, since Chrome throttles a tab in the background.
+`list_tabs` numbers the tabs `[1]`, `[2]`, …; `switch_tab` and `close_tab` take that number as `index`, or the tab's `target_id` (also accepted as `tab_id`). `switch_tab` also brings the tab to the front in Chrome, since Chrome throttles a tab in the background.
 
 The Docker sidecar starts Chrome with `--disable-background-timer-throttling`, `--disable-renderer-backgrounding` and `--disable-backgrounding-occluded-windows`, so pages keep running their timers and rendering when nobody looks at them.
 
