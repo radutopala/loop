@@ -87,7 +87,7 @@ func (a *app) ensureImageWithBroadcast(ctx context.Context, client container.Doc
 		mgr.SetStatus(container.ImageBuildStatus{State: "building", Phase: phase})
 		hub.BroadcastImageBuildStatus(events.ImageBuildStatusData{State: "building", Phase: phase})
 	}
-	err := a.ensureImage(ctx, client, cfg, setPhase)
+	err := a.ensureImageRetrying(ctx, client, cfg, setPhase, logger)
 	endChrome()
 	if err != nil {
 		logger.Error("ensuring agent image failed", "error", err)
@@ -100,6 +100,55 @@ func (a *app) ensureImageWithBroadcast(ctx context.Context, client container.Doc
 		logger.Info("agent image ready", "image", cfg.ContainerImage)
 	}
 	go mgr.RunUpdateChecker(ctx, 30*time.Minute)
+}
+
+// ensureImageRetrying ensures the images, trying again after each of
+// imageRetryWaits while the build fails on the registry or the network: a
+// registry answering 429 or timing out once would otherwise leave the daemon
+// without an agent image until it restarts, and every container start
+// failing with "No such image". The builds stay begun meanwhile, so those
+// starts wait for the retry instead.
+func (a *app) ensureImageRetrying(ctx context.Context, client container.DockerClient, cfg *config.Config, setPhase func(string), logger *slog.Logger) error {
+	err := a.ensureImage(ctx, client, cfg, setPhase)
+	for _, wait := range a.imageRetryWaits {
+		if err == nil || !transientImageError(err) {
+			return err
+		}
+		logger.Warn("ensuring agent image failed, retrying", "retry_in", wait, "error", err)
+		setPhase("retrying")
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(wait):
+		}
+		err = a.ensureImage(ctx, client, cfg, setPhase)
+	}
+	return err
+}
+
+// transientImageErrors are the image build failures that a later try can
+// get past: the registry throttling or failing, or the network dropping.
+var transientImageErrors = []string{
+	"429 Too Many Requests",
+	"toomanyrequests",
+	"500 Internal Server Error",
+	"502 Bad Gateway",
+	"503 Service Unavailable",
+	"504 Gateway Timeout",
+	"TLS handshake timeout",
+	"i/o timeout",
+	"connection reset by peer",
+}
+
+// transientImageError reports whether err is one of transientImageErrors.
+func transientImageError(err error) bool {
+	msg := err.Error()
+	for _, s := range transientImageErrors {
+		if strings.Contains(msg, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // isReleaseVersion reports whether v looks like a tagged release rather than a

@@ -270,6 +270,57 @@ func (s *MainSuite) TestEnsureImageWithBroadcastError() {
 	require.Equal(s.T(), []string{"chrome", "agent"}, ended, "a failed ensure must release both images")
 }
 
+func (s *MainSuite) TestEnsureImageRetrying() {
+	throttled := errors.New(`failed to resolve source metadata for docker.io/library/golang:1.27: unexpected status from HEAD request: 429 Too Many Requests`)
+	broken := errors.New("Dockerfile:3: unknown instruction")
+	tests := []struct {
+		name      string
+		results   []error
+		cancelled bool
+		wantErr   error
+		wantCalls int
+		wantPhase []string
+	}{
+		{name: "first try works", results: []error{nil}, wantCalls: 1},
+		{name: "a broken build is not retried", results: []error{broken}, wantErr: broken, wantCalls: 1},
+		{name: "a throttled registry is retried", results: []error{throttled, throttled, nil}, wantCalls: 3, wantPhase: []string{"retrying", "retrying"}},
+		{name: "retries run out", results: []error{throttled, throttled, throttled}, wantErr: throttled, wantCalls: 3, wantPhase: []string{"retrying", "retrying"}},
+		{name: "a retry that turns permanent stops", results: []error{throttled, broken}, wantErr: broken, wantCalls: 2, wantPhase: []string{"retrying"}},
+		{name: "shutdown stops the wait", results: []error{throttled}, cancelled: true, wantErr: throttled, wantCalls: 1, wantPhase: []string{"retrying"}},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.app = newApp()
+			s.app.imageRetryWaits = []time.Duration{time.Millisecond, time.Millisecond}
+			if tc.cancelled {
+				s.app.imageRetryWaits = []time.Duration{time.Hour}
+			}
+			calls := 0
+			s.app.ensureImage = func(context.Context, container.DockerClient, *config.Config, func(string)) error {
+				calls++
+				return tc.results[calls-1]
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if tc.cancelled {
+				cancel()
+			}
+			var phases []string
+			err := s.app.ensureImageRetrying(ctx, nil, testConfig(), func(p string) { phases = append(phases, p) }, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			require.Equal(s.T(), tc.wantErr, err)
+			require.Equal(s.T(), tc.wantCalls, calls)
+			require.Equal(s.T(), tc.wantPhase, phases)
+		})
+	}
+}
+
+func (s *MainSuite) TestTransientImageError() {
+	for _, msg := range transientImageErrors {
+		require.True(s.T(), transientImageError(errors.New("building image: "+msg+": exit status 1")), msg)
+	}
+	require.False(s.T(), transientImageError(errors.New("No such image: loop-agent:latest")))
+}
+
 func (s *MainSuite) TestEnsureImageListError() {
 	dockerClient := new(mockDockerClient)
 	dockerClient.On("ImageList", mock.Anything, "loop-agent:latest").Return(nil, errors.New("list error"))
