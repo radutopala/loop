@@ -744,6 +744,22 @@ func (s *CDPManagerSuite) TestTabChanged() {
 	mockClient.AssertNumberOfCalls(s.T(), "ListTabs", 2)
 }
 
+func (s *CDPManagerSuite) TestTabChangedWithoutATitleKeepsTheOneItHad() {
+	mgr, mockClient := s.newTestManager(false)
+	mgr.titleRechecks = nil
+	mgr.TrackTab("t1")
+	events, _ := mgr.Subscribe()
+
+	a := TabInfo{TargetID: "t1", URL: "https://a.com", Title: "A"}
+	mgr.tabChanged(mockClient, a)
+	// Same page, no title: nothing new to tell.
+	mgr.tabChanged(mockClient, TabInfo{TargetID: "t1", URL: "https://a.com"})
+	// A new page with no title yet starts blank.
+	moved := TabInfo{TargetID: "t1", URL: "https://b.com"}
+	mgr.tabChanged(mockClient, moved)
+	require.Equal(s.T(), []TabEvent{{Kind: TabUpdated, Tab: a}, {Kind: TabUpdated, Tab: moved}}, drain(events))
+}
+
 func (s *CDPManagerSuite) TestTabChangedRechecksTheTitle() {
 	nav := TabInfo{TargetID: "t1", URL: "https://a.com/", Title: "a.com/"}
 	titled := TabInfo{TargetID: "t1", URL: "https://a.com/", Title: "A"}
