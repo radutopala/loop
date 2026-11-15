@@ -4,6 +4,7 @@ package mcpbrowser
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -269,17 +270,20 @@ func describeWait(w waitSpec) string {
 }
 
 type computerInput struct {
-	Action   string  `json:"action" jsonschema:"The action to perform: click,right_click,double_click,triple_click,type,key,scroll,move,hover,screenshot,wait,left_click_drag"`
-	Ref      refArg  `json:"ref,omitempty" jsonschema:"Element ref to interact with, from find_elements"`
-	X        float64 `json:"x,omitempty" jsonschema:"X coordinate (or end X for left_click_drag)"`
-	Y        float64 `json:"y,omitempty" jsonschema:"Y coordinate (or end Y for left_click_drag)"`
-	Text     string  `json:"text,omitempty" jsonschema:"Text to type or key name"`
-	DeltaX   float64 `json:"delta_x,omitempty" jsonschema:"Horizontal scroll amount"`
-	DeltaY   float64 `json:"delta_y,omitempty" jsonschema:"Vertical scroll amount"`
-	Button   string  `json:"button,omitempty" jsonschema:"Mouse button: left,right,middle"`
-	Duration int     `json:"duration,omitempty" jsonschema:"For action wait without wait_for_selector or wait_for_text: how long to wait, in milliseconds (max 60000)"`
-	StartX   float64 `json:"start_x,omitempty" jsonschema:"Start X coordinate for left_click_drag"`
-	StartY   float64 `json:"start_y,omitempty" jsonschema:"Start Y coordinate for left_click_drag"`
+	Action     string    `json:"action" jsonschema:"The action to perform: click (or left_click),right_click,double_click,triple_click,type,key,scroll,scroll_to,move,hover,screenshot,wait,left_click_drag"`
+	Ref        refArg    `json:"ref,omitempty" jsonschema:"Element ref to interact with, from find_elements"`
+	X          float64   `json:"x,omitempty" jsonschema:"X coordinate (or end X for left_click_drag)"`
+	Y          float64   `json:"y,omitempty" jsonschema:"Y coordinate (or end Y for left_click_drag)"`
+	Coordinate pointArg  `json:"coordinate,omitempty" jsonschema:"[x, y], the same as x and y"`
+	Text       string    `json:"text,omitempty" jsonschema:"Text to type or key name"`
+	DeltaX     float64   `json:"delta_x,omitempty" jsonschema:"Horizontal scroll, in pixels: positive scrolls right"`
+	DeltaY     float64   `json:"delta_y,omitempty" jsonschema:"Vertical scroll, in pixels: positive scrolls down"`
+	Direction  string    `json:"direction,omitempty" jsonschema:"Scroll direction instead of delta_x and delta_y: up,down,left,right (default down)"`
+	Amount     numberArg `json:"amount,omitempty" jsonschema:"With direction: how many wheel notches to scroll, 100 pixels each (default 3)"`
+	Button     string    `json:"button,omitempty" jsonschema:"Mouse button: left,right,middle"`
+	Duration   int       `json:"duration,omitempty" jsonschema:"For action wait without wait_for_selector or wait_for_text: how long to wait, in milliseconds (max 60000)"`
+	StartX     float64   `json:"start_x,omitempty" jsonschema:"Start X coordinate for left_click_drag"`
+	StartY     float64   `json:"start_y,omitempty" jsonschema:"Start Y coordinate for left_click_drag"`
 	waitSpec
 }
 
@@ -331,7 +335,7 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "computer",
 		InputSchema: inputSchemaFor[computerInput](),
-		Description: "Perform computer actions: click, type, key, scroll, move, screenshot, wait, triple_click, double_click. Use ref from find_elements for precise element targeting. With wait_for_selector or wait_for_text, wait and screenshot first wait for the page to match, and the other actions wait after acting — e.g. for what a click loads.",
+		Description: "Perform computer actions: click, type, key, scroll, move, screenshot, wait, triple_click, double_click. Target an element by ref, or a point by x and y or coordinate. Use ref from find_elements for precise element targeting. With wait_for_selector or wait_for_text, wait and screenshot first wait for the page to match, and the other actions wait after acting — e.g. for what a click loads.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input computerInput) (*mcp.CallToolResult, any, error) {
 		return s.handleComputer(ctx, input)
 	})
@@ -468,40 +472,18 @@ func (s *Server) registerTools() {
 		return textResult(resp.Result), nil, nil
 	})
 
-	type switchTabInput struct {
-		Index    int    `json:"index,omitempty" jsonschema:"Number of the tab to switch to, as list_tabs shows it in brackets (1 is the first tab)"`
-		TargetID string `json:"target_id,omitempty" jsonschema:"Target ID of the tab to switch to, as list_tabs shows it after id:. Used instead of index when both are given"`
-	}
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "switch_tab",
 		Description: "Make a browser tab the active one, which the other tools then act on, and bring it to the front. Pass index or target_id from list_tabs.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, input switchTabInput) (*mcp.CallToolResult, any, error) {
-		targetID, err := s.resolveTab(ctx, input.Index, input.TargetID)
-		if err != nil {
-			return errorResult(fmt.Sprintf("switch tab failed: %v", err)), nil, nil
-		}
-		if _, err := s.callAction(ctx, "switch_tab", map[string]any{"target_id": targetID}); err != nil {
-			return errorResult(fmt.Sprintf("switch tab failed: %v", err)), nil, nil
-		}
-		return textResult("Switched to tab " + targetID), nil, nil
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input tabInput) (*mcp.CallToolResult, any, error) {
+		return s.actOnTab(ctx, input, "switch_tab", "switch tab", "Switched to tab ")
 	})
 
-	type closeTabInput struct {
-		Index    int    `json:"index,omitempty" jsonschema:"Number of the tab to close, as list_tabs shows it in brackets (1 is the first tab)"`
-		TargetID string `json:"target_id,omitempty" jsonschema:"Target ID of the tab to close, as list_tabs shows it after id:. Used instead of index when both are given"`
-	}
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "close_tab",
 		Description: "Close a browser tab. Pass index or target_id from list_tabs.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, input closeTabInput) (*mcp.CallToolResult, any, error) {
-		targetID, err := s.resolveTab(ctx, input.Index, input.TargetID)
-		if err != nil {
-			return errorResult(fmt.Sprintf("close tab failed: %v", err)), nil, nil
-		}
-		if _, err := s.callAction(ctx, "close_tab", map[string]any{"target_id": targetID}); err != nil {
-			return errorResult(fmt.Sprintf("close tab failed: %v", err)), nil, nil
-		}
-		return textResult("Closed tab " + targetID), nil, nil
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input tabInput) (*mcp.CallToolResult, any, error) {
+		return s.actOnTab(ctx, input, "close_tab", "close tab", "Closed tab ")
 	})
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
@@ -595,6 +577,26 @@ func (s *Server) registerTools() {
 	})
 }
 
+// tabInput names a tab for switch_tab and close_tab.
+type tabInput struct {
+	Index    int    `json:"index,omitempty" jsonschema:"Number of the tab, as list_tabs shows it in brackets (1 is the first tab)"`
+	TargetID string `json:"target_id,omitempty" jsonschema:"Target ID of the tab, as list_tabs shows it after id:. Used instead of index when both are given"`
+	TabID    string `json:"tab_id,omitempty" jsonschema:"The same as target_id"`
+}
+
+// actOnTab runs a tab action on the tab input names. what names the action in
+// errors, and done prefixes the target ID in the result.
+func (s *Server) actOnTab(ctx context.Context, input tabInput, action, what, done string) (*mcp.CallToolResult, any, error) {
+	targetID, err := s.resolveTab(ctx, input.Index, cmp.Or(input.TargetID, input.TabID))
+	if err != nil {
+		return errorResult(fmt.Sprintf("%s failed: %v", what, err)), nil, nil
+	}
+	if _, err := s.callAction(ctx, action, map[string]any{"target_id": targetID}); err != nil {
+		return errorResult(fmt.Sprintf("%s failed: %v", what, err)), nil, nil
+	}
+	return textResult(done + targetID), nil, nil
+}
+
 // resolveTab returns targetID, or else the target ID of the index-th tab
 // (1-based) that list_tabs shows.
 func (s *Server) resolveTab(ctx context.Context, index int, targetID string) (string, error) {
@@ -654,6 +656,9 @@ func (s *Server) handleComputer(ctx context.Context, input computerInput) (*mcp.
 func (s *Server) runComputer(ctx context.Context, input computerInput) (*mcp.CallToolResult, any, error) {
 	// Resolve coordinates from ref if provided.
 	x, y := input.X, input.Y
+	if len(input.Coordinate) == 2 {
+		x, y = input.Coordinate[0], input.Coordinate[1]
+	}
 	if input.Ref > 0 {
 		if int(input.Ref) > len(s.refs) {
 			return errorResult(fmt.Sprintf("ref %d out of range (1-%d), call find_elements first", input.Ref, len(s.refs))), nil, nil
@@ -669,7 +674,7 @@ func (s *Server) runComputer(ctx context.Context, input computerInput) (*mcp.Cal
 	}
 
 	switch input.Action {
-	case "click":
+	case "click", "left_click":
 		if _, err := s.callAction(ctx, "mouse_click", map[string]any{"x": x, "y": y, "button": btn, "click_count": 1}); err != nil {
 			return errorResult(fmt.Sprintf("click failed: %v", err)), nil, nil
 		}
@@ -706,11 +711,14 @@ func (s *Server) runComputer(ctx context.Context, input computerInput) (*mcp.Cal
 		return textResult(fmt.Sprintf("Pressed key %q", input.Text)), nil, nil
 
 	case "scroll":
-		dy := input.DeltaY
-		if dy == 0 {
-			dy = -3 // Default scroll down.
+		dx, dy := input.DeltaX, input.DeltaY
+		if dx == 0 && dy == 0 {
+			var err error
+			if dx, dy, err = scrollDeltas(input.Direction, float64(input.Amount)); err != nil {
+				return errorResult(err.Error()), nil, nil
+			}
 		}
-		if _, err := s.callAction(ctx, "mouse_scroll", map[string]any{"x": x, "y": y, "delta_x": input.DeltaX, "delta_y": dy}); err != nil {
+		if _, err := s.callAction(ctx, "mouse_scroll", map[string]any{"x": x, "y": y, "delta_x": dx, "delta_y": dy}); err != nil {
 			return errorResult(fmt.Sprintf("scroll failed: %v", err)), nil, nil
 		}
 		return textResult(fmt.Sprintf("Scrolled at (%.0f, %.0f)", x, y)), nil, nil
@@ -773,9 +781,31 @@ func (s *Server) runComputer(ctx context.Context, input computerInput) (*mcp.Cal
 	}
 }
 
-// scrollToRefJS centres a scanned ref in the viewport. It returns a string
-// because EvaluateJS decodes the result into one, and window.scrollBy answers
-// with undefined.
+// wheelNotch is how far one notch of amount scrolls, in CSS pixels.
+const wheelNotch = 100
+
+// scrollDeltas turns a direction and a number of wheel notches into scroll
+// deltas. Without a direction it scrolls down, and without an amount 3 notches.
+func scrollDeltas(direction string, amount float64) (dx, dy float64, err error) {
+	if amount == 0 {
+		amount = 3
+	}
+	d := amount * wheelNotch
+	switch direction {
+	case "", "down":
+		return 0, d, nil
+	case "up":
+		return 0, -d, nil
+	case "right":
+		return d, 0, nil
+	case "left":
+		return -d, 0, nil
+	}
+	return 0, 0, fmt.Errorf("unknown scroll direction %q: use up, down, left or right", direction)
+}
+
+// scrollToRefJS centres a scanned ref in the viewport. It answers "scrolled"
+// so the tool's result says something: window.scrollBy returns undefined.
 func scrollToRefJS(ref browser.ElementRef) string {
 	return fmt.Sprintf(
 		`(() => { window.scrollBy(0, %f - (window.innerHeight - %f) / 2); return "scrolled"; })()`,

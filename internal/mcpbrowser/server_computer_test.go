@@ -148,16 +148,100 @@ func (s *ServerSuite) TestComputerKeyNoText() {
 	require.Contains(s.T(), getText(s.T(), res), "text is required for key action")
 }
 
-func (s *ServerSuite) TestComputerScrollDefault() {
-	_, session := setupTest(s.T(), func(w http.ResponseWriter, r *http.Request) {
-		_, action, params := decodeActionRequest(s.T(), r)
-		require.Equal(s.T(), "mouse_scroll", action)
-		require.Equal(s.T(), float64(-3), params["delta_y"])
-		writeJSON(w, actionResponse{Result: "ok"})
+func (s *ServerSuite) TestComputerScrollDirection() {
+	tests := []struct {
+		name   string
+		args   map[string]any
+		dx, dy float64
+	}{
+		{"default is 3 notches down", map[string]any{}, 0, 300},
+		{"down", map[string]any{"direction": "down", "amount": 2}, 0, 200},
+		{"up with an amount string", map[string]any{"direction": "up", "amount": "10"}, 0, -1000},
+		{"down with a quoted amount", map[string]any{"direction": "down", "amount": `"5"`}, 0, 500},
+		{"right", map[string]any{"direction": "right"}, 300, 0},
+		{"left", map[string]any{"direction": "left", "amount": 1}, -100, 0},
+		{"deltas win over direction", map[string]any{"direction": "up", "delta_y": 40.0}, 0, 40},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			_, session := setupTest(s.T(), func(w http.ResponseWriter, r *http.Request) {
+				_, action, params := decodeActionRequest(s.T(), r)
+				require.Equal(s.T(), "mouse_scroll", action)
+				require.Equal(s.T(), tt.dx, params["delta_x"])
+				require.Equal(s.T(), tt.dy, params["delta_y"])
+				writeJSON(w, actionResponse{Result: "ok"})
+			})
+			args := map[string]any{"action": "scroll", "x": 780.0, "y": 700.0}
+			for k, v := range tt.args {
+				args[k] = v
+			}
+			res := callTool(s.T(), session, "computer", args)
+			require.False(s.T(), res.IsError, getText(s.T(), res))
+			require.Contains(s.T(), getText(s.T(), res), "Scrolled at (780, 700)")
+		})
+	}
+}
+
+func (s *ServerSuite) TestComputerScrollUnknownDirection() {
+	srv := New("http://x", "ch", nil)
+	res, _, err := srv.handleComputer(context.Background(), computerInput{Action: "scroll", Direction: "sideways"})
+	require.NoError(s.T(), err)
+	require.True(s.T(), res.IsError)
+	require.Contains(s.T(), getText(s.T(), res), `unknown scroll direction "sideways"`)
+}
+
+func (s *ServerSuite) TestComputerLeftClickCoordinate() {
+	tests := []struct {
+		name       string
+		coordinate any
+	}{
+		{"array", []any{732, 523}},
+		{"string", "[732, 523]"},
+		{"quoted string", `"[732, 523]"`},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			_, session := setupTest(s.T(), func(w http.ResponseWriter, r *http.Request) {
+				_, action, params := decodeActionRequest(s.T(), r)
+				require.Equal(s.T(), "mouse_click", action)
+				require.Equal(s.T(), float64(732), params["x"])
+				require.Equal(s.T(), float64(523), params["y"])
+				writeJSON(w, actionResponse{Result: "ok"})
+			})
+			res := callTool(s.T(), session, "computer", map[string]any{"action": "left_click", "coordinate": tt.coordinate})
+			require.False(s.T(), res.IsError, getText(s.T(), res))
+			require.Contains(s.T(), getText(s.T(), res), "Clicked at (732, 523)")
+		})
+	}
+}
+
+func (s *ServerSuite) TestComputerBadCoordinate() {
+	tests := []struct {
+		name       string
+		coordinate any
+	}{
+		{"one number", []any{732}},
+		{"not a pair", "732, 523"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			_, session := setupTest(s.T(), func(http.ResponseWriter, *http.Request) {
+				s.T().Fatal("no action should run")
+			})
+			res := callTool(s.T(), session, "computer", map[string]any{"action": "click", "coordinate": tt.coordinate})
+			require.True(s.T(), res.IsError)
+			require.Contains(s.T(), getText(s.T(), res), "coordinate must be [x, y]")
+		})
+	}
+}
+
+func (s *ServerSuite) TestComputerBadAmount() {
+	_, session := setupTest(s.T(), func(http.ResponseWriter, *http.Request) {
+		s.T().Fatal("no action should run")
 	})
-	res := callTool(s.T(), session, "computer", map[string]any{"action": "scroll"})
-	require.False(s.T(), res.IsError)
-	require.Contains(s.T(), getText(s.T(), res), "Scrolled at (0, 0)")
+	res := callTool(s.T(), session, "computer", map[string]any{"action": "scroll", "direction": "down", "amount": "lots"})
+	require.True(s.T(), res.IsError)
+	require.Contains(s.T(), getText(s.T(), res), "must be a number")
 }
 
 func (s *ServerSuite) TestComputerScrollExplicit() {
