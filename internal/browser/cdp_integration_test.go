@@ -258,6 +258,27 @@ func (s *CDPIntegrationSuite) TestEvaluateJS() {
 	require.Equal(s.T(), "Loop CDP Test Page", result)
 }
 
+func (s *CDPIntegrationSuite) TestEvaluateJSAnyValue() {
+	s.nav()
+	tests := []struct{ expr, want string }{
+		{"1+1", "2"},
+		{"true", "true"},
+		{"null", "null"},
+		{"undefined", "undefined"},
+		{"void document.title", "undefined"},
+		{"({a: 1, b: [\"x\"]})", `{"a":1,"b":["x"]}`},
+		{"[1, 2]", "[1,2]"},
+		{"0/0", "NaN"},
+		{"10n ** 20n", "100000000000000000000n"},
+		{"'plain'", "plain"},
+	}
+	for _, tt := range tests {
+		got, err := s.client.EvaluateJS(context.Background(), tt.expr)
+		require.NoError(s.T(), err, tt.expr)
+		require.Equal(s.T(), tt.want, got, tt.expr)
+	}
+}
+
 func (s *CDPIntegrationSuite) TestEvaluateJSModifiesPage() {
 	s.nav()
 	_, err := s.client.EvaluateJS(context.Background(), `document.getElementById("output").textContent = "hello from JS"`)
