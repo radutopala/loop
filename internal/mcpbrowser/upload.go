@@ -11,18 +11,13 @@ import (
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/radutopala/loop/internal/browser"
 )
 
 // defaultUploadMaxBytes caps what one upload_file call sends: the files go
 // to the page base64-encoded inside a single script.
 const defaultUploadMaxBytes = 20 << 20
-
-// uploadFile is one file as the page script receives it.
-type uploadFile struct {
-	Name string `json:"name"`
-	Type string `json:"type"`
-	Data string `json:"data"`
-}
 
 type uploadFileInput struct {
 	Ref      refArg   `json:"ref,omitempty" jsonschema:"Element ref from read_page or find: the file input, or the button or label that opens it"`
@@ -80,8 +75,8 @@ func (s *Server) handleUploadFile(ctx context.Context, input uploadFileInput) (*
 
 // readUploadFiles reads and encodes the files, refusing them once together
 // they pass the server's cap.
-func (s *Server) readUploadFiles(paths []string) ([]uploadFile, error) {
-	files := make([]uploadFile, 0, len(paths))
+func (s *Server) readUploadFiles(paths []string) ([]browser.ChosenFile, error) {
+	files := make([]browser.ChosenFile, 0, len(paths))
 	var total int64
 	for _, p := range paths {
 		// Sized before it is read, so a huge file is refused without being
@@ -100,7 +95,7 @@ func (s *Server) readUploadFiles(paths []string) ([]uploadFile, error) {
 		}
 		// A browser's File.type is the bare media type, without "; charset=".
 		typ, _, _ := strings.Cut(mime.TypeByExtension(filepath.Ext(p)), ";")
-		files = append(files, uploadFile{
+		files = append(files, browser.ChosenFile{
 			Name: filepath.Base(p),
 			Type: typ,
 			Data: base64.StdEncoding.EncodeToString(data),
@@ -124,22 +119,13 @@ const uploadJSTemplate = `(() => {
   for (let a = el; !input && a; a = a.parentElement) input = a.querySelector('input[type=file]');
   if (!input) return "no file input there";
   if (files.length > 1 && !input.multiple) return "that input takes one file";
-  const dt = new DataTransfer();
-  for (const f of files) {
-    const bin = atob(f.data);
-    const buf = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
-    dt.items.add(new File([buf], f.name, { type: f.type }));
-  }
-  input.files = dt.files;
-  input.dispatchEvent(new Event("input", { bubbles: true }));
-  input.dispatchEvent(new Event("change", { bubbles: true }));
+  (` + browser.SetInputFilesJS + `)(input, files);
   return "ok";
 })()`
 
 // uploadJS is the upload script for files, starting the search for the
 // input at the element the start expression yields.
-func uploadJS(start string, files []uploadFile) string {
+func uploadJS(start string, files []browser.ChosenFile) string {
 	data, _ := json.Marshal(files) // plain strings: never fails
 	return fmt.Sprintf(uploadJSTemplate, data, start)
 }

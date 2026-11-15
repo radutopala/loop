@@ -4,6 +4,7 @@ package browser
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -94,6 +95,10 @@ func (s *CDPIntegrationSuite) SetupSuite() {
 	mux.HandleFunc("/opener", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		fmt.Fprint(w, `<html><body style="margin:0"><a href="/page3" target="_blank" style="display:block;width:100vw;height:100vh">open</a></body></html>`)
+	})
+	mux.HandleFunc("/upload", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, uploadPage)
 	})
 	s.testServer, s.testURL = startPageServer(t, mux)
 
@@ -505,6 +510,58 @@ func (s *CDPIntegrationSuite) TestClickRef() {
 	time.Sleep(200 * time.Millisecond)
 	title, _ := s.client.EvaluateJS(context.Background(), "document.title")
 	require.Equal(s.T(), "clicked", title)
+}
+
+// --- File choosers ---
+
+// uploadPage logs the events its file input fires, with the files it holds.
+const uploadPage = `<html><body style="margin:0">
+<input type="file" id="f" multiple style="position:fixed;left:0;top:0;width:300px;height:60px">
+<script>
+window.log = [];
+const f = document.getElementById("f");
+f.addEventListener("input", () => log.push("input"));
+f.addEventListener("change", () => log.push("change " + [...f.files].map(x => x.name + "/" + x.type + "/" + x.size).join(",")));
+f.addEventListener("cancel", () => log.push("cancel"));
+</script></body></html>`
+
+// openChooser loads the upload page and clicks its input, returning the
+// chooser Chrome reports.
+func (s *CDPIntegrationSuite) openChooser(opened <-chan FileChooser) FileChooser {
+	require.NoError(s.T(), s.client.Navigate(context.Background(), s.testURL+"/upload"))
+	time.Sleep(300 * time.Millisecond)
+	require.NoError(s.T(), s.client.MouseClick(context.Background(), 50, 30, "left", 1))
+	select {
+	case fc := <-opened:
+		return fc
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("no file chooser opened")
+		return FileChooser{}
+	}
+}
+
+func (s *CDPIntegrationSuite) TestSetChosenFiles() {
+	require.NoError(s.T(), s.client.InterceptFileChoosers(context.Background()))
+	opened := make(chan FileChooser, 4)
+	s.client.WatchFileChoosers(func(fc FileChooser) { opened <- fc })
+
+	fc := s.openChooser(opened)
+	require.True(s.T(), fc.Multiple)
+	files := []ChosenFile{
+		{Name: "a.txt", Type: "text/plain", Data: base64.StdEncoding.EncodeToString([]byte("hello"))},
+		{Name: "b.png", Type: "image/png", Data: base64.StdEncoding.EncodeToString([]byte{0, 1, 2})},
+	}
+	require.NoError(s.T(), s.client.SetChosenFiles(context.Background(), fc.NodeID, files))
+	got, err := s.client.EvaluateJS(context.Background(), "log.join('|')")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "input|change a.txt/text/plain/5,b.png/image/png/3", got)
+
+	// A cancelled pick fires cancel and leaves no files.
+	fc = s.openChooser(opened)
+	require.NoError(s.T(), s.client.SetChosenFiles(context.Background(), fc.NodeID, nil))
+	got, err = s.client.EvaluateJS(context.Background(), "log.join('|') + ' ' + f.files.length")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "cancel 0", got)
 }
 
 // --- Tabs ---
