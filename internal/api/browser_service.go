@@ -561,7 +561,8 @@ func (s *browserService) dispatchBrowserAction(req browserActionRequest, cdpCl b
 
 	case "key_press":
 		key := paramStr(params, "key")
-		if err := cdpCl.KeyPress(bg, key, 0); err != nil {
+		name, mods := browser.ParseKeyCombo(key)
+		if err := cdpCl.KeyPress(bg, name, mods); err != nil {
 			return browserActionResponse{Error: fmt.Sprintf("key press failed: %v", err)}
 		}
 		return browserActionResponse{Result: fmt.Sprintf("Pressed key %q", key)}

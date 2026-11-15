@@ -2,6 +2,7 @@ package mcpbrowser
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 )
@@ -53,8 +54,10 @@ func bringIntoViewJS(x, y float64) string {
 // Typing into a select does not work: the click opens its list, and the
 // typed letters only highlight an option until the list is closed.
 func selectOptionJS(x, y float64, value string) string {
-	v, _ := json.Marshal(value) // a string: never fails
-	return fmt.Sprintf(`(() => {
+	return fmt.Sprintf(selectOptionJSTemplate, x, y, base64.StdEncoding.EncodeToString([]byte(value)))
+}
+
+const selectOptionJSTemplate = `(() => {
   let x = %f, y = %f, el = document.elementFromPoint(x, y);
   while (el && (el.tagName === "IFRAME" || el.tagName === "FRAME")) {
     let doc = null;
@@ -66,7 +69,8 @@ func selectOptionJS(x, y float64, value string) string {
     el = doc.elementFromPoint(x, y);
   }
   if (!el || el.tagName !== "SELECT") return "";
-  const want = %s, opts = [...el.options];
+  const want = new TextDecoder().decode(Uint8Array.from(atob("%s"), c => c.charCodeAt(0)));
+  const opts = [...el.options];
   const opt = opts.find(o => o.value === want || o.text.trim() === want) ||
     opts.find(o => o.text.trim().toLowerCase() === want.toLowerCase());
   if (!opt) return "no option " + JSON.stringify(want) + "; the options are: " + opts.map(o => o.text.trim()).join(", ");
@@ -76,5 +80,4 @@ func selectOptionJS(x, y float64, value string) string {
   el.dispatchEvent(new Event("input", {bubbles: true}));
   el.dispatchEvent(new Event("change", {bubbles: true}));
   return "selected";
-})()`, x, y, v)
-}
+})()`

@@ -102,6 +102,10 @@ func (s *CDPIntegrationSuite) SetupSuite() {
 		w.Header().Set("Content-Type", "text/html")
 		fmt.Fprint(w, `<html><body style="margin:0"><a href="/page3" target="_blank" style="display:block;width:100vw;height:100vh">open</a></body></html>`)
 	})
+	mux.HandleFunc("/checks", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, checksPage)
+	})
 	mux.HandleFunc("/upload", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		fmt.Fprint(w, uploadPage)

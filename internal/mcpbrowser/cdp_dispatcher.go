@@ -211,7 +211,8 @@ func (d *cdpDispatcher) dispatch(ctx context.Context, action string, params map[
 
 	case "key_press":
 		key, _ := params["key"].(string)
-		if err := cdp.KeyPress(ctx, key, 0); err != nil {
+		name, mods := browser.ParseKeyCombo(key)
+		if err := cdp.KeyPress(ctx, name, mods); err != nil {
 			return nil, fmt.Errorf("key press failed: %w", err)
 		}
 		return &actionResponse{Result: fmt.Sprintf("Pressed %s", key)}, nil
