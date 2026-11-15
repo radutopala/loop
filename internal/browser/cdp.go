@@ -1298,6 +1298,10 @@ const scanRefsJSTemplate = `(() => {
       }).filter(Boolean);
       if (parts.length) return parts.join(" ");
     }
+    // A form control is named by its <label>s, ahead of its own text — a
+    // select's would be every option — and its placeholder.
+    const labels = [...(el.labels || [])].map(text).filter(Boolean);
+    if (labels.length) return labels.join(" ");
     const own = text(el);
     if (own) return own;
     return (el.getAttribute("placeholder") || el.getAttribute("title") || el.getAttribute("alt") || "").trim();
