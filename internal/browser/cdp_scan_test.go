@@ -61,9 +61,9 @@ func (s *CDPSuite) TestGetElementRefsUsesTheInPageScan() {
 	require.Equal(s.T(), "Home", refs[1].Name)
 }
 
-// A scan that fails or sees nothing is the cross-origin-frame case, and the
-// document that has stopped answering script at all: the walk is the only
-// remaining way to describe the page.
+// A scan that fails, or that finds nothing in the page or its frames, leaves
+// the walk as the only remaining way to describe the page: a document that has
+// stopped answering script, or one whose controls script cannot see.
 func (s *CDPSuite) TestGetElementRefsFallsBackToTheAccessibilityWalk() {
 	cases := []struct {
 		name string

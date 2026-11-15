@@ -71,6 +71,9 @@ type CDPIntegrationSuite struct {
 	client      *CDPClient
 	testServer  *httptest.Server
 	testURL     string // base URL of testServer as reachable from Chrome's container
+	// frameServer serves the page testServer's /frames embeds from another
+	// port: cross-origin, yet the same site, so Chrome keeps it in-process.
+	frameServer *httptest.Server
 }
 
 func TestCDPIntegration(t *testing.T) {
@@ -102,6 +105,15 @@ func (s *CDPIntegrationSuite) SetupSuite() {
 		w.Header().Set("Content-Type", "text/html")
 		fmt.Fprint(w, uploadPage)
 	})
+	var frameURL string
+	s.frameServer, frameURL = startPageServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, framePage("Same-site pay"))
+	}))
+	mux.HandleFunc("/frames", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintf(w, framesPage, frameURL, crossSiteFrameURL)
+	})
 	s.testServer, s.testURL = startPageServer(t, mux)
 
 	// Start Chrome container.
@@ -113,6 +125,7 @@ func (s *CDPIntegrationSuite) SetupSuite() {
 	).CombinedOutput()
 	require.NoError(t, err, "start chrome container: %s", out)
 	s.containerID = strings.TrimSpace(string(out))
+	serveCrossSiteFrame(t, s.containerID)
 
 	// Get host port.
 	portOut, err := exec.Command("docker", "port", s.containerID, "9222/tcp").CombinedOutput()
@@ -150,6 +163,9 @@ func (s *CDPIntegrationSuite) TearDownSuite() {
 	}
 	if s.testServer != nil {
 		s.testServer.Close()
+	}
+	if s.frameServer != nil {
+		s.frameServer.Close()
 	}
 }
 
