@@ -279,12 +279,12 @@ Connect() ──► cdpFactory (NewCDPClient)
 GetOrCreate() ──► NewContextForTarget(targetID)
                   │ (Target.attachToTarget over same WS)
                   ▼
-              Fresh CDPSession per tab (no cache)
+              One CDPSession per tab (cached)
 ```
 
 - `Connect()` creates the initial connection via factory (with retries for Docker)
-- `GetOrCreate(targetID)` creates child contexts from the initial connection via `NewContextForTarget` — no new WebSocket dial, no Chrome permission prompt
-- No client cache — each tab switch creates a fresh context (cheap: just `Target.attachToTarget`)
+- `GetOrCreate(targetID)` attaches a child context from the initial connection via `NewContextForTarget` the first time a tab is asked for — no new WebSocket dial, no Chrome permission prompt
+- One client per tab, reused on every later switch and let go when the tab closes. A second session can't be released while its tab lives: cancelling an attached chromedp context closes the tab
 
 ### Key Methods
 
