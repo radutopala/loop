@@ -347,13 +347,28 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "form_input",
 		InputSchema: inputSchemaFor[formInputInput](),
-		Description: "Fill in a form field by clicking it, clearing existing content, and typing the new value.",
+		Description: "Fill in a form field by clicking it, clearing existing content, and typing the new value. For a select, picks the option whose value or text is the given value.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input formInputInput) (*mcp.CallToolResult, any, error) {
 		ref := int(input.Ref)
 		if ref < 1 || ref > len(s.refs) {
 			return errorResult(fmt.Sprintf("ref %d out of range (1-%d)", ref, len(s.refs))), nil, nil
 		}
-		if _, err := s.callAction(ctx, "click_ref", map[string]any{"refs": s.refs, "ref_index": ref}); err != nil {
+		x, y, err := s.refPoint(ctx, ref)
+		if err != nil {
+			return errorResult(err.Error()), nil, nil
+		}
+		resp, err := s.callAction(ctx, "evaluate_js", map[string]any{"expression": selectOptionJS(x, y, input.Value)})
+		if err != nil {
+			return errorResult(fmt.Sprintf("form_input failed: %v", err)), nil, nil
+		}
+		switch resp.Result {
+		case "selected":
+			return textResult(fmt.Sprintf("Selected %q in ref_%d", input.Value, input.Ref)), nil, nil
+		case "":
+		default:
+			return errorResult(fmt.Sprintf("form_input failed: %s", resp.Result)), nil, nil
+		}
+		if _, err := s.callAction(ctx, "mouse_click", map[string]any{"x": x, "y": y, "button": "left", "click_count": 1}); err != nil {
 			return errorResult(fmt.Sprintf("click failed: %v", err)), nil, nil
 		}
 		if _, err := s.callAction(ctx, "key_press", map[string]any{"key": "Control+a"}); err != nil {
@@ -663,9 +678,12 @@ func (s *Server) runComputer(ctx context.Context, input computerInput) (*mcp.Cal
 		if int(input.Ref) > len(s.refs) {
 			return errorResult(fmt.Sprintf("ref %d out of range (1-%d), call find_elements first", input.Ref, len(s.refs))), nil, nil
 		}
-		ref := s.refs[input.Ref-1]
-		x = ref.X + ref.Width/2
-		y = ref.Y + ref.Height/2
+		if input.Action != "scroll_to" {
+			var err error
+			if x, y, err = s.refPoint(ctx, int(input.Ref)); err != nil {
+				return errorResult(err.Error()), nil, nil
+			}
+		}
 	}
 
 	btn := input.Button
@@ -767,11 +785,11 @@ func (s *Server) runComputer(ctx context.Context, input computerInput) (*mcp.Cal
 		// never asks Chrome to name the nodes it found, which is most of
 		// why it is cheap. Their rect is viewport-relative, so scrolling
 		// by the difference puts the element on screen.
-		action, params := "scroll_into_view", map[string]any{"backend_node_id": ref.BackendDOMNodeID}
 		if ref.BackendDOMNodeID == 0 {
-			action, params = "evaluate_js", map[string]any{"expression": scrollToRefJS(ref)}
-		}
-		if _, err := s.callAction(ctx, action, params); err != nil {
+			if _, _, err := s.refPoint(ctx, int(input.Ref)); err != nil {
+				return errorResult(fmt.Sprintf("scroll_to failed: %v", err)), nil, nil
+			}
+		} else if _, err := s.callAction(ctx, "scroll_into_view", map[string]any{"backend_node_id": ref.BackendDOMNodeID}); err != nil {
 			return errorResult(fmt.Sprintf("scroll_to failed: %v", err)), nil, nil
 		}
 		return textResult(fmt.Sprintf("Scrolled ref %d (%s: %s) into view", input.Ref, ref.Role, ref.Name)), nil, nil
@@ -802,14 +820,6 @@ func scrollDeltas(direction string, amount float64) (dx, dy float64, err error) 
 		return -d, 0, nil
 	}
 	return 0, 0, fmt.Errorf("unknown scroll direction %q: use up, down, left or right", direction)
-}
-
-// scrollToRefJS centres a scanned ref in the viewport. It answers "scrolled"
-// so the tool's result says something: window.scrollBy returns undefined.
-func scrollToRefJS(ref browser.ElementRef) string {
-	return fmt.Sprintf(
-		`(() => { window.scrollBy(0, %f - (window.innerHeight - %f) / 2); return "scrolled"; })()`,
-		ref.Y, ref.Height)
 }
 
 // handleFindElements lists the page's element refs, narrowed to those holding

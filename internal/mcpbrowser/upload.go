@@ -49,8 +49,7 @@ func (s *Server) handleUploadFile(ctx context.Context, input uploadFileInput) (*
 	case ref < 1 || ref > len(s.refs):
 		return errorResult(fmt.Sprintf("ref %d out of range (1-%d)", ref, len(s.refs))), nil, nil
 	default:
-		r := s.refs[ref-1]
-		start, target = fmt.Sprintf("document.elementFromPoint(%f, %f)", r.X+r.Width/2, r.Y+r.Height/2), fmt.Sprintf("ref_%d", ref)
+		target = fmt.Sprintf("ref_%d", ref)
 	}
 	if len(input.Paths) == 0 {
 		return errorResult("paths is required"), nil, nil
@@ -58,6 +57,13 @@ func (s *Server) handleUploadFile(ctx context.Context, input uploadFileInput) (*
 	files, err := s.readUploadFiles(input.Paths)
 	if err != nil {
 		return errorResult(err.Error()), nil, nil
+	}
+	if start == "" {
+		x, y, err := s.refPoint(ctx, ref)
+		if err != nil {
+			return errorResult(err.Error()), nil, nil
+		}
+		start = fmt.Sprintf("document.elementFromPoint(%f, %f)", x, y)
 	}
 	resp, err := s.callAction(ctx, "evaluate_js", map[string]any{"expression": uploadJS(start, files)})
 	if err != nil {

@@ -12,85 +12,105 @@ import (
 	"github.com/radutopala/loop/internal/browser"
 )
 
-func (s *ServerSuite) TestFormInputSuccess() {
-	callCount := 0
-	srv, session := setupTest(s.T(), func(w http.ResponseWriter, r *http.Request) {
-		_, action, _ := decodeActionRequest(s.T(), r)
-		callCount++
-		switch action {
-		case "click_ref":
-		case "key_press":
-		case "type_text":
-		}
-		writeJSON(w, actionResponse{Result: "ok"})
-	})
-	srv.refs = []browser.ElementRef{{RefID: "ref_1", Role: "textbox", Name: "Name"}}
-	res := callTool(s.T(), session, "form_input", map[string]any{"ref": 1, "value": "John"})
-	require.False(s.T(), res.IsError)
-	require.Contains(s.T(), getText(s.T(), res), `Entered "John" in ref_1`)
-	require.Equal(s.T(), 3, callCount)
-}
-
-func (s *ServerSuite) TestFormInputRefOutOfRange() {
-	srv, session := setupTest(s.T(), func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, actionResponse{Result: "ok"})
-	})
-	srv.refs = []browser.ElementRef{{RefID: "ref_1"}}
-	res := callTool(s.T(), session, "form_input", map[string]any{"ref": 5, "value": "x"})
-	require.True(s.T(), res.IsError)
-	require.Contains(s.T(), getText(s.T(), res), "ref 5 out of range")
-}
-
-func (s *ServerSuite) TestFormInputRefZero() {
-	srv, session := setupTest(s.T(), func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, actionResponse{Result: "ok"})
-	})
-	srv.refs = []browser.ElementRef{{RefID: "ref_1"}}
-	res := callTool(s.T(), session, "form_input", map[string]any{"ref": 0, "value": "x"})
-	require.True(s.T(), res.IsError)
-	require.Contains(s.T(), getText(s.T(), res), "ref 0 out of range")
-}
-
-func (s *ServerSuite) TestFormInputClickError() {
-	srv, session := setupTest(s.T(), func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, actionResponse{Error: "click err"})
-	})
-	srv.refs = []browser.ElementRef{{RefID: "ref_1"}}
-	res := callTool(s.T(), session, "form_input", map[string]any{"ref": 1, "value": "x"})
-	require.True(s.T(), res.IsError)
-	require.Contains(s.T(), getText(s.T(), res), "click failed: click err")
-}
-
-func (s *ServerSuite) TestFormInputKeyPressError() {
-	callCount := 0
-	srv, session := setupTest(s.T(), func(w http.ResponseWriter, _ *http.Request) {
-		callCount++
-		if callCount == 1 {
-			writeJSON(w, actionResponse{Result: "ok"}) // click ok
-		} else {
-			writeJSON(w, actionResponse{Error: "key err"})
-		}
-	})
-	srv.refs = []browser.ElementRef{{RefID: "ref_1"}}
-	res := callTool(s.T(), session, "form_input", map[string]any{"ref": 1, "value": "x"})
-	require.True(s.T(), res.IsError)
-	require.Contains(s.T(), getText(s.T(), res), "select all failed: key err")
-}
-
-func (s *ServerSuite) TestFormInputTypeError() {
-	callCount := 0
-	srv, session := setupTest(s.T(), func(w http.ResponseWriter, _ *http.Request) {
-		callCount++
-		if callCount < 3 {
-			writeJSON(w, actionResponse{Result: "ok"})
-		} else {
-			writeJSON(w, actionResponse{Error: "type err"})
-		}
-	})
-	srv.refs = []browser.ElementRef{{RefID: "ref_1"}}
-	res := callTool(s.T(), session, "form_input", map[string]any{"ref": 1, "value": "x"})
-	require.True(s.T(), res.IsError)
-	require.Contains(s.T(), getText(s.T(), res), "type failed: type err")
+func (s *ServerSuite) TestFormInput() {
+	inView := actionResponse{Result: "[0,0]"}
+	ok := actionResponse{Result: "ok"}
+	tests := []struct {
+		name    string
+		ref     int
+		resps   []actionResponse // one per call, in order
+		actions []string
+		isError bool
+		text    string
+	}{
+		{
+			name:    "types into a field",
+			ref:     1,
+			resps:   []actionResponse{inView, {Result: ""}, ok, ok, ok},
+			actions: []string{"evaluate_js", "evaluate_js", "mouse_click", "key_press", "type_text"},
+			text:    `Entered "France" in ref_1`,
+		},
+		{
+			name:    "picks a select's option",
+			ref:     1,
+			resps:   []actionResponse{inView, {Result: "selected"}},
+			actions: []string{"evaluate_js", "evaluate_js"},
+			text:    `Selected "France" in ref_1`,
+		},
+		{
+			name:    "a select without the option",
+			ref:     1,
+			resps:   []actionResponse{inView, {Result: `no option "France"; the options are: Romania`}},
+			actions: []string{"evaluate_js", "evaluate_js"},
+			isError: true,
+			text:    `form_input failed: no option "France"; the options are: Romania`,
+		},
+		{name: "ref out of range", ref: 5, isError: true, text: "ref 5 out of range (1-1)"},
+		{name: "ref zero", ref: 0, isError: true, text: "ref 0 out of range (1-1)"},
+		{
+			name:    "scrolling fails",
+			ref:     1,
+			resps:   []actionResponse{{Error: "tab gone"}},
+			actions: []string{"evaluate_js"},
+			isError: true,
+			text:    "scrolling ref_1 into view failed: tab gone",
+		},
+		{
+			name:    "the select check fails",
+			ref:     1,
+			resps:   []actionResponse{inView, {Error: "eval err"}},
+			actions: []string{"evaluate_js", "evaluate_js"},
+			isError: true,
+			text:    "form_input failed: eval err",
+		},
+		{
+			name:    "click fails",
+			ref:     1,
+			resps:   []actionResponse{inView, {Result: ""}, {Error: "click err"}},
+			actions: []string{"evaluate_js", "evaluate_js", "mouse_click"},
+			isError: true,
+			text:    "click failed: click err",
+		},
+		{
+			name:    "select all fails",
+			ref:     1,
+			resps:   []actionResponse{inView, {Result: ""}, ok, {Error: "key err"}},
+			actions: []string{"evaluate_js", "evaluate_js", "mouse_click", "key_press"},
+			isError: true,
+			text:    "select all failed: key err",
+		},
+		{
+			name:    "typing fails",
+			ref:     1,
+			resps:   []actionResponse{inView, {Result: ""}, ok, ok, {Error: "type err"}},
+			actions: []string{"evaluate_js", "evaluate_js", "mouse_click", "key_press", "type_text"},
+			isError: true,
+			text:    "type failed: type err",
+		},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			var actions []string
+			var click map[string]any
+			srv, session := setupTest(s.T(), func(w http.ResponseWriter, r *http.Request) {
+				_, action, params := decodeActionRequest(s.T(), r)
+				if action == "mouse_click" {
+					click = params
+				}
+				writeJSON(w, tt.resps[len(actions)])
+				actions = append(actions, action)
+			})
+			srv.refs = []browser.ElementRef{{RefID: "ref_1", Role: "combobox", Name: "Country", X: 10, Y: 20, Width: 100, Height: 30}}
+			res := callTool(s.T(), session, "form_input", map[string]any{"ref": tt.ref, "value": "France"})
+			require.Equal(s.T(), tt.isError, res.IsError)
+			require.Contains(s.T(), getText(s.T(), res), tt.text)
+			require.Equal(s.T(), tt.actions, actions)
+			if click != nil {
+				require.Equal(s.T(), float64(60), click["x"])
+				require.Equal(s.T(), float64(35), click["y"])
+			}
+		})
+	}
 }
 
 // ==================== screenshot ====================

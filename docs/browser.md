@@ -441,6 +441,8 @@ Requires `chrome://inspect/#remote-debugging` enabled in Chrome.
 ### Pointing and scrolling
 `computer` targets an element by `ref` from `find_elements`, or a point by `x` and `y`. It also takes the point as `coordinate`, `[x, y]` (or the string `"[x, y]"`), and `left_click` as another name for `click`, as agents used to computer-use tools send them. `scroll` takes `delta_x`/`delta_y` in CSS pixels (positive scrolls right/down), or `direction` (`up`, `down`, `left`, `right`) with `amount` in notches of 100 pixels; with neither it scrolls down 3 notches.
 
+A ref outside the viewport is scrolled into it before `computer`, `form_input` or `upload_file` acts on it. `form_input` on a `<select>` picks the option whose value or text matches, and fires `input` and `change` as a user's pick would; a select inside a cross-origin frame is typed into instead.
+
 ### Waiting for a page
 Pages that build their content with script after loading can be read too early. `navigate`, `screenshot`, `save_screenshot` and `computer` take `wait_for_selector` and/or `wait_for_text`, with `wait_timeout_ms` (default 10000, max 60000). The tool polls the page every 250 ms through `evaluate_js` until it matches, and fails with a timeout error if it never does. `computer` waits after acting, except for `wait` and `screenshot`, which wait first; `computer` `wait` without either pauses for `duration` ms.
 

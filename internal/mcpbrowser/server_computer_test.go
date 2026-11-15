@@ -426,20 +426,67 @@ func (s *ServerSuite) TestComputerRefOutOfRange() {
 	require.Contains(s.T(), getText(s.T(), res), "ref 5 out of range")
 }
 
+// A ref is clicked at its centre once it is on screen. One below the viewport
+// is scrolled into it first, and every ref moves with the page.
 func (s *ServerSuite) TestComputerRefResolution() {
-	// Ref 1 -> center is (100+20, 200+10) = (120, 210)
-	srv, session := setupTest(s.T(), func(w http.ResponseWriter, r *http.Request) {
-		_, _, params := decodeActionRequest(s.T(), r)
-		require.Equal(s.T(), float64(120), params["x"])
-		require.Equal(s.T(), float64(210), params["y"])
-		writeJSON(w, actionResponse{Result: "ok"})
-	})
-	srv.refs = []browser.ElementRef{
-		{RefID: "ref_1", X: 100, Y: 200, Width: 40, Height: 20},
+	tests := []struct {
+		name    string
+		view    actionResponse
+		isError bool
+		text    string
+		refs    []browser.ElementRef
+	}{
+		{
+			name: "on screen",
+			view: actionResponse{Result: "[0,0]"},
+			text: "Clicked at (120, 210)",
+			refs: []browser.ElementRef{{RefID: "ref_1", X: 100, Y: 200, Width: 40, Height: 20}, {RefID: "ref_2", X: 5, Y: 3000}},
+		},
+		{
+			name: "below the viewport",
+			view: actionResponse{Result: "[0,150]"},
+			text: "Clicked at (120, 60)",
+			refs: []browser.ElementRef{{RefID: "ref_1", X: 100, Y: 50, Width: 40, Height: 20}, {RefID: "ref_2", X: 5, Y: 2850}},
+		},
+		{
+			name:    "the scroll fails",
+			view:    actionResponse{Error: "tab gone"},
+			isError: true,
+			text:    "scrolling ref_1 into view failed: tab gone",
+			refs:    []browser.ElementRef{{RefID: "ref_1", X: 100, Y: 200, Width: 40, Height: 20}, {RefID: "ref_2", X: 5, Y: 3000}},
+		},
+		{
+			name:    "the page answers something else",
+			view:    actionResponse{Result: "undefined"},
+			isError: true,
+			text:    `scrolling ref_1 into view failed: unexpected answer "undefined"`,
+			refs:    []browser.ElementRef{{RefID: "ref_1", X: 100, Y: 200, Width: 40, Height: 20}, {RefID: "ref_2", X: 5, Y: 3000}},
+		},
 	}
-	res := callTool(s.T(), session, "computer", map[string]any{"action": "click", "ref": 1})
-	require.False(s.T(), res.IsError)
-	require.Contains(s.T(), getText(s.T(), res), "Clicked at (120, 210)")
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			var expr string
+			srv, session := setupTest(s.T(), func(w http.ResponseWriter, r *http.Request) {
+				_, action, params := decodeActionRequest(s.T(), r)
+				if action == "evaluate_js" {
+					expr, _ = params["expression"].(string)
+					writeJSON(w, tt.view)
+					return
+				}
+				require.Equal(s.T(), "mouse_click", action)
+				writeJSON(w, actionResponse{Result: "ok"})
+			})
+			srv.refs = []browser.ElementRef{
+				{RefID: "ref_1", X: 100, Y: 200, Width: 40, Height: 20},
+				{RefID: "ref_2", X: 5, Y: 3000},
+			}
+			res := callTool(s.T(), session, "computer", map[string]any{"action": "click", "ref": 1})
+			require.Equal(s.T(), tt.isError, res.IsError)
+			require.Contains(s.T(), getText(s.T(), res), tt.text)
+			require.Contains(s.T(), expr, "const x = 120.000000, y = 210.000000")
+			require.Equal(s.T(), tt.refs, srv.refs)
+		})
+	}
 }
 
 func (s *ServerSuite) TestComputerLeftClickDrag() {
@@ -541,7 +588,7 @@ func (s *ServerSuite) TestComputerScrollToScannedRef() {
 		_, action, params := decodeActionRequest(s.T(), r)
 		require.Equal(s.T(), "evaluate_js", action)
 		expr, _ = params["expression"].(string)
-		writeJSON(w, actionResponse{Result: "scrolled"})
+		writeJSON(w, actionResponse{Result: "[0,3550]"})
 	})
 	srv.refs = []browser.ElementRef{
 		{RefID: "ref_1", Role: "button", Name: "Submit", Y: 4000, Height: 40},
@@ -549,8 +596,9 @@ func (s *ServerSuite) TestComputerScrollToScannedRef() {
 	res := callTool(s.T(), session, "computer", map[string]any{"action": "scroll_to", "ref": 1})
 	require.False(s.T(), res.IsError)
 	require.Contains(s.T(), getText(s.T(), res), "Scrolled ref 1")
-	require.Contains(s.T(), expr, "window.scrollBy")
-	require.Contains(s.T(), expr, "4000")
+	require.Contains(s.T(), expr, "scrollBy(")
+	require.Contains(s.T(), expr, "4020")
+	require.Equal(s.T(), float64(450), srv.refs[0].Y, "the ref moves with the page")
 }
 
 func (s *ServerSuite) TestComputerScrollToOutOfRange() {
@@ -574,15 +622,20 @@ func (s *ServerSuite) TestComputerScrollToRefZero() {
 }
 
 func (s *ServerSuite) TestComputerScrollToError() {
-	srv, session := setupTest(s.T(), func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, actionResponse{Error: "scroll failed"})
-	})
-	srv.refs = []browser.ElementRef{
-		{RefID: "ref_1", Role: "link", Name: "Home"},
+	for name, ref := range map[string]browser.ElementRef{
+		"scanned ref":       {RefID: "ref_1", Role: "link", Name: "Home"},
+		"accessibility ref": {RefID: "ref_1", Role: "link", Name: "Home", BackendDOMNodeID: cdp.BackendNodeID(7)},
+	} {
+		s.Run(name, func() {
+			srv, session := setupTest(s.T(), func(w http.ResponseWriter, _ *http.Request) {
+				writeJSON(w, actionResponse{Error: "scroll failed"})
+			})
+			srv.refs = []browser.ElementRef{ref}
+			res := callTool(s.T(), session, "computer", map[string]any{"action": "scroll_to", "ref": 1})
+			require.True(s.T(), res.IsError)
+			require.Contains(s.T(), getText(s.T(), res), "scroll_to failed")
+		})
 	}
-	res := callTool(s.T(), session, "computer", map[string]any{"action": "scroll_to", "ref": 1})
-	require.True(s.T(), res.IsError)
-	require.Contains(s.T(), getText(s.T(), res), "scroll_to failed")
 }
 
 // ==================== form_input ====================

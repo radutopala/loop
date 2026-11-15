@@ -29,6 +29,7 @@ func (s *ServerSuite) TestUploadFile() {
 		isError  bool
 		text     string
 		start    string
+		view     *actionResponse // the answer to scrolling the ref into view
 	}{
 		{name: "uploads the files", args: map[string]any{"ref": 1, "paths": []string{report, notes}}, resp: actionResponse{Result: "ok"}, called: true, text: "Uploaded report.pdf, notes.txt to ref_1", start: "document.elementFromPoint(60.000000, 35.000000)"},
 		{name: "uploads by selector", args: map[string]any{"selector": `input[name="cv"]`, "paths": []string{report}}, resp: actionResponse{Result: "ok"}, called: true, text: `Uploaded report.pdf to input[name="cv"]`, start: `document.querySelector("input[name=\"cv\"]")`},
@@ -40,6 +41,7 @@ func (s *ServerSuite) TestUploadFile() {
 		{name: "a directory", args: map[string]any{"ref": 1, "paths": []string{dir}}, isError: true, text: "reading " + dir},
 		{name: "over the limit", args: map[string]any{"ref": 1, "paths": []string{report, notes}}, maxBytes: 8, isError: true, text: "files are over the 0 MB upload limit"},
 		{name: "page refuses", args: map[string]any{"ref": 1, "paths": []string{report, notes}}, resp: actionResponse{Result: "that input takes one file"}, called: true, isError: true, text: "upload failed: that input takes one file", start: "document.elementFromPoint("},
+		{name: "scrolling the ref fails", args: map[string]any{"ref": 1, "paths": []string{report}}, view: &actionResponse{Error: "tab gone"}, isError: true, text: "scrolling ref_1 into view failed: tab gone"},
 		{name: "action error", args: map[string]any{"ref": 1, "paths": []string{report}}, resp: actionResponse{Error: "tab crashed"}, called: true, isError: true, text: "upload failed: tab crashed", start: "document.elementFromPoint("},
 	}
 	for _, tt := range tests {
@@ -49,7 +51,16 @@ func (s *ServerSuite) TestUploadFile() {
 			srv, session := setupTest(s.T(), func(w http.ResponseWriter, r *http.Request) {
 				_, action, params := decodeActionRequest(s.T(), r)
 				require.Equal(s.T(), "evaluate_js", action)
-				expr, _ = params["expression"].(string)
+				e, _ := params["expression"].(string)
+				if strings.Contains(e, "scrollBy(") {
+					view := actionResponse{Result: "[0,0]"}
+					if tt.view != nil {
+						view = *tt.view
+					}
+					writeJSON(w, view)
+					return
+				}
+				expr = e
 				called = true
 				writeJSON(w, tt.resp)
 			})

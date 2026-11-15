@@ -1177,7 +1177,7 @@ In headless/Linux environments where Electron can't launch, `LOOP_NO_ELECTRON=1 
 | `find_elements` | List the page's interactive elements with refs, optionally only those holding every word of a query |
 | `computer` | Perform click, type, key, scroll, move, screenshot, drag and wait actions |
 | `screenshot` | Take a screenshot of the current page, optionally once a selector or text shows |
-| `form_input` | Fill in a form field (click, clear, type) |
+| `form_input` | Fill in a form field (click, clear, type), or pick a select's option |
 | `evaluate` | Evaluate JavaScript in the page context |
 | `get_page_text` | Get all text content from the page |
 | `read_console_messages` | Read captured browser console messages |
