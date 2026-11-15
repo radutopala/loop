@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { type BranchInfo, fetchBranches } from "../../api/git";
+import { placeMenu } from "../../splitPane/menuPlacement";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import { logErr } from "../../utils/log";
@@ -16,9 +17,10 @@ import { WorktreeRows } from "../shared/WorktreeRows";
  * its thread or imported as one. Only rendered for channels backed by a git
  * repo (a dir_path).
  *
- * The dropdown is portaled to the document body and positioned at the button's
- * lower-right via fixed coordinates, so it opens down-and-to-the-right of the
- * click instead of being clipped by the sidebar's overflow.
+ * The dropdown is portaled to the document body with fixed coordinates, so
+ * the sidebar's overflow can't clip it. It opens below the button, or above it
+ * when a row low in the list leaves no room, and follows the button as the
+ * sidebar scrolls, the window resizes or the menu grows with what it loads.
  */
 export function SidebarWorktreeButton({
   channelId,
@@ -49,6 +51,37 @@ export function SidebarWorktreeButton({
   const tall = (hasPRs && (prs === null || prs.length > 0)) || hasWorktrees;
   const sectioned = hasPRs || hasWorktrees;
 
+  // Measured before paint. Only top and left are taken: the menu's own height
+  // is capped to the window already, and a maxHeight here would change what
+  // the resize observer measures next.
+  const place = useCallback(() => {
+    const button = buttonRef.current;
+    const menu = menuRef.current;
+    if (!button || !menu) return;
+    const { top, left } = placeMenu(button.getBoundingClientRect(), { width: menu.offsetWidth, height: menu.offsetHeight }, { width: window.innerWidth, height: window.innerHeight });
+    setCoords((c) => (c.top === top && c.left === left ? c : { top, left }));
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    place();
+    // Captured, to hear the sidebar's own scroll; the menu's lists scrolling
+    // moves nothing.
+    const onScroll = (e: Event) => {
+      if (menuRef.current?.contains(e.target as Node)) return;
+      place();
+    };
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", place);
+    const observer = new ResizeObserver(place);
+    if (menuRef.current) observer.observe(menuRef.current);
+    return () => {
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", place);
+      observer.disconnect();
+    };
+  }, [open, place]);
+
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
@@ -67,8 +100,6 @@ export function SidebarWorktreeButton({
         setOpen(false);
         return;
       }
-      const rect = buttonRef.current?.getBoundingClientRect();
-      if (rect) setCoords({ top: rect.bottom + 4, left: rect.left });
       setSearch("");
       setBranchInfo(null);
       setOpen(true);

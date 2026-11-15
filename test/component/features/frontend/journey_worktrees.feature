@@ -268,3 +268,17 @@ Feature: Worktrees Journey
     And I click on the button with title "Branch"
     Then the element "[data-testid='branch-picker-worktrees']" should contain text "sb-wt-orphan"
     And the element "[data-testid='branch-picker-worktrees']" should not contain text "imp"
+
+  @sidebar-wt-fit
+  Scenario: The sidebar +wt picker stays inside the window when the window shrinks
+    Given I set up a test channel via API for git repo "bdd-sb-wt-fit"
+    And I open the app in a browser
+    And I wait for text "bdd-sb-wt-fit" to appear
+
+    When I hover over "bdd-sb-wt-fit" in the sidebar
+    And I click the worktree button for "bdd-sb-wt-fit" in the sidebar
+    Then the element "[data-testid='sidebar-worktree-picker']" should fit inside the window
+
+    # Shrinking the window under the open picker moves it back inside.
+    When I resize the window to 1280x180
+    Then the element "[data-testid='sidebar-worktree-picker']" should fit inside the window
