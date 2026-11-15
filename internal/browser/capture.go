@@ -23,8 +23,11 @@ type CaptureState struct {
 	NetworkMu   sync.Mutex
 	NetworkReqs []NetworkRequest
 
-	Started    bool
-	lastClient CaptureClient // tracks last wired client to avoid duplicate rewiring
+	Started bool
+	// wired are the clients already feeding the buffers. A tab keeps its
+	// client, so switching back to one must not listen on it twice and
+	// record each of its messages again.
+	wired map[CaptureClient]bool
 }
 
 // Enable wires up console and network capture on the given CDP client.
@@ -38,14 +41,14 @@ func (cs *CaptureState) Enable(ctx context.Context, client CaptureClient) {
 }
 
 // Rewire enables capture on a new CDP client (e.g. after a tab switch)
-// without clearing the existing buffers. No-op if client is the same as the
-// last wired client. Old listeners on previous targets continue running,
-// so events from all visited tabs accumulate.
+// without clearing the existing buffers. No-op if the client is already
+// wired. Old listeners on previous targets continue running, so events from
+// all visited tabs accumulate.
 func (cs *CaptureState) Rewire(ctx context.Context, client CaptureClient) {
 	if client == nil || reflect.ValueOf(client).IsNil() {
 		return
 	}
-	if client == cs.lastClient {
+	if cs.wired[client] {
 		return
 	}
 	cs.wireCapture(ctx, client)
@@ -54,7 +57,10 @@ func (cs *CaptureState) Rewire(ctx context.Context, client CaptureClient) {
 // wireCapture sets up console and network event listeners on the given client,
 // feeding captured events into the shared buffers.
 func (cs *CaptureState) wireCapture(ctx context.Context, client CaptureClient) {
-	cs.lastClient = client
+	if cs.wired == nil {
+		cs.wired = map[CaptureClient]bool{}
+	}
+	cs.wired[client] = true
 	consoleCh := make(chan ConsoleMessage, 100)
 	if err := client.EnableConsoleCapture(ctx, consoleCh); err == nil {
 		go func() {

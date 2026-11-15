@@ -140,6 +140,21 @@ func (s *CaptureSuite) TestRewireSameClientIsNoop() {
 	require.Nil(s.T(), client.networkCh)
 }
 
+// A tab keeps its client, so switching back to one must not listen on it a
+// second time.
+func (s *CaptureSuite) TestRewireBackToAWiredClientIsNoop() {
+	cs := &CaptureState{}
+	tab1 := &mockCaptureClient{}
+	cs.Enable(context.Background(), tab1)
+	cs.Rewire(context.Background(), &mockCaptureClient{})
+
+	tab1.consoleCh = nil
+	tab1.networkCh = nil
+	cs.Rewire(context.Background(), tab1)
+	require.Nil(s.T(), tab1.consoleCh)
+	require.Nil(s.T(), tab1.networkCh)
+}
+
 func (s *CaptureSuite) TestReadConsoleFiltering() {
 	cs := &CaptureState{}
 	client := &mockCaptureClient{}
