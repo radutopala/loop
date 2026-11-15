@@ -148,6 +148,7 @@ type app struct {
 	newPluginDocker        func() (pluginDockerClient, error)
 	runDocker              func(ctx context.Context, stdout, stderr io.Writer, args ...string) error
 	ensureImage            func(context.Context, container.DockerClient, *config.Config, func(string)) error
+	imageRetryWaits        []time.Duration // waits before retrying a startup image build that failed on the network
 	newEmbedder            func(*config.Config) (embeddings.Embedder, error)
 	loadProjectMemoryPaths func(string) []string
 	memoryTrust            *config.TrustStore // long-lived: each reindex asks it about every dir
@@ -328,6 +329,7 @@ func newApp() *app {
 	a.ensureChannelFn = a.ensureChannel
 	a.ensureAllChannelsFn = a.ensureAllChannels
 	a.ensureImage = a.defaultEnsureImage
+	a.imageRetryWaits = []time.Duration{15 * time.Second, 30 * time.Second, time.Minute}
 	a.newEmbedder = a.defaultNewEmbedder
 	a.memoryTrust = config.NewTrustStoreIn(func() (string, error) { return a.userConfigDir() })
 	a.loadProjectMemoryPaths = a.defaultLoadProjectMemoryPaths
