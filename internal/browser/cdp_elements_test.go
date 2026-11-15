@@ -8,6 +8,7 @@ import (
 	"github.com/chromedp/cdproto/accessibility"
 	"github.com/chromedp/cdproto/cdp"
 	cdpdom "github.com/chromedp/cdproto/dom"
+	cdpruntime "github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 	"github.com/go-json-experiment/json/jsontext"
 	"github.com/stretchr/testify/require"
@@ -19,6 +20,28 @@ func (s *CDPSuite) TestEvaluateJSSuccess() {
 	result, err := s.client.EvaluateJS(context.Background(), "1+1")
 	require.NoError(s.T(), err)
 	_ = result
+}
+
+func (s *CDPSuite) TestRemoteValueText() {
+	tests := []struct {
+		name string
+		v    *cdpruntime.RemoteObject
+		want string
+	}{
+		{name: "nothing", v: nil, want: ""},
+		{name: "a string", v: &cdpruntime.RemoteObject{Type: "string", Value: []byte(`"a \"b\""`)}, want: `a "b"`},
+		{name: "a number", v: &cdpruntime.RemoteObject{Type: "number", Value: []byte(`3`)}, want: "3"},
+		{name: "an object", v: &cdpruntime.RemoteObject{Type: "object", Value: []byte(`{"a":1}`)}, want: `{"a":1}`},
+		{name: "null", v: &cdpruntime.RemoteObject{Type: "object", Subtype: "null", Value: []byte(`null`)}, want: "null"},
+		{name: "undefined", v: &cdpruntime.RemoteObject{Type: "undefined"}, want: "undefined"},
+		{name: "a bigint", v: &cdpruntime.RemoteObject{Type: "bigint", UnserializableValue: "7n"}, want: "7n"},
+		{name: "a function", v: &cdpruntime.RemoteObject{Type: "function", Description: "() => 1"}, want: "() => 1"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			require.Equal(s.T(), tt.want, remoteValueText(tt.v))
+		})
+	}
 }
 
 func (s *CDPSuite) TestEvaluateJSError() {

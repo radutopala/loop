@@ -1944,12 +1944,34 @@ func closeTargetFunc(cdpCtx context.Context, runFn func(context.Context, ...chro
 // connection dropping rather than anything here noticing.
 func (c *CDPClient) EvaluateJS(ctx context.Context, expression string) (string, error) {
 	return boundedFor(ctx, c.pageReadDeadline(), func() (string, error) {
-		var result string
-		if err := c.runFn(c.ctx, chromedp.Evaluate(expression, &result)); err != nil {
+		var result *cdpruntime.RemoteObject
+		if err := c.runFn(c.ctx, chromedp.Evaluate(expression, &result, chromedp.EvalAsValue)); err != nil {
 			return "", fmt.Errorf("evaluating JS: %w", err)
 		}
-		return result, nil
+		return remoteValueText(result), nil
 	})
+}
+
+// remoteValueText renders what a script returned: a string as itself, any
+// other value as its JSON, and what JSON can't hold (undefined, NaN, a BigInt,
+// a function) the way the console writes it.
+func remoteValueText(v *cdpruntime.RemoteObject) string {
+	switch {
+	case v == nil:
+		return ""
+	case v.UnserializableValue != "":
+		return string(v.UnserializableValue)
+	case len(v.Value) == 0:
+		if v.Description != "" {
+			return v.Description
+		}
+		return string(v.Type)
+	}
+	var str string
+	if v.Type == cdpruntime.TypeString && json.Unmarshal(v.Value, &str) == nil {
+		return str
+	}
+	return string(v.Value)
 }
 
 // ConsoleMessage represents a captured browser console message.
