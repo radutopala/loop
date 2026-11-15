@@ -283,6 +283,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^"([^"]*)" is still the height I noted$`, tc.assertElementHeightKept)
 	ctx.Step(`^I click the last "([^"]*)"$`, tc.clickLast)
 	ctx.Step(`^the element "([^"]*)" should fit inside the window$`, tc.assertElementInsideWindow)
+	ctx.Step(`^I resize the window to (\d+)x(\d+)$`, tc.resizeWindow)
 	ctx.Step(`^the element "([^"]*)" should be below "([^"]*)"$`, tc.assertElementBelow)
 	ctx.Step(`^I click "([^"]*)" in the git panel$`, tc.clickInGitPanel)
 
@@ -4043,13 +4044,32 @@ func (tc *TestContext) assertElementInsideWindow(selector string) error {
 		return "ok";
 	})()`, selector)
 	var res string
-	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Poll(`!!document.querySelector(`+strconv.Quote(selector)+`)`, nil, chromedp.WithPollingTimeout(5*time.Second)), chromedp.Evaluate(js, &res)); err != nil {
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Poll(`!!document.querySelector(`+strconv.Quote(selector)+`)`, nil, chromedp.WithPollingTimeout(5*time.Second))); err != nil {
 		return err
 	}
-	if res != "ok" {
-		return fmt.Errorf("element %q: %s", selector, res)
+	// A layout change (a resize, a scroll) moves the element a frame later,
+	// so give it a moment to settle inside.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &res)); err != nil {
+			return err
+		}
+		if res == "ok" {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("element %q: %s", selector, res)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
-	return nil
+}
+
+// resizeWindow overrides the viewport size, which fires the page's resize
+// event the way a user dragging the window edge does.
+func (tc *TestContext) resizeWindow(width, height int64) error {
+	return chromedp.Run(tc.chromeTab.ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		return emulation.SetDeviceMetricsOverride(width, height, 1, false).Do(ctx)
+	}))
 }
 
 // assertElementBelow checks the first element matching selector starts at or
