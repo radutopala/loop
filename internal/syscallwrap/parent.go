@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/unix"
 
@@ -62,7 +63,7 @@ func (a *app) runParent() error {
 		return fmt.Errorf("load policy: %w", err)
 	}
 
-	uid, gid, err := a.lookupUser(hostUser)
+	uid, gid, err := a.waitForUser(hostUser)
 	if err != nil {
 		return fmt.Errorf("lookup user %q: %w", hostUser, err)
 	}
@@ -312,6 +313,29 @@ type gateConfigJSON struct {
 // A name is looked up in /etc/passwd, where entrypoint.sh created it before
 // we're invoked. A numeric "uid" or "uid:gid" (gid defaulting to uid) is
 // taken as is, for images that have no passwd entry for their user.
+// userWaitStep and defaultUserWaitTries give the agent user up to 10s to
+// appear.
+const (
+	userWaitStep         = 100 * time.Millisecond
+	defaultUserWaitTries = 100
+)
+
+// waitForUser looks name up, and looks again while it does not exist yet.
+// The image entrypoint creates the agent user with useradd once the
+// container has started, and a terminal pane's exec can reach here first:
+// its own wait is for the uid, which gives up after about 2s on a busy host.
+// Any other error, or a user still missing after the wait, is returned.
+func (a *app) waitForUser(name string) (int, int, error) {
+	for try := 0; ; try++ {
+		uid, gid, err := a.lookupUser(name)
+		var unknown user.UnknownUserError
+		if err == nil || !errors.As(err, &unknown) || try >= a.userWaitTries {
+			return uid, gid, err
+		}
+		a.sleep(userWaitStep)
+	}
+}
+
 func defaultLookupUser(name string) (int, int, error) {
 	if uidStr, gidStr, ok := numericUser(name); ok {
 		return parseUIDGID(uidStr, gidStr)

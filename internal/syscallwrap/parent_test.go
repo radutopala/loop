@@ -132,8 +132,11 @@ type fakeParentDeps struct {
 	token string
 
 	lookupUserErr error
-	lookupUID     int
-	lookupGID     int
+	// lookupUserFn, when set, answers the lookup instead.
+	lookupUserFn func(name string) (int, int, error)
+	sleeps       []time.Duration
+	lookupUID    int
+	lookupGID    int
 
 	socketpairErr error
 	socketpairFn  func() (int, int, error)
@@ -237,8 +240,13 @@ func (f *fakeParentDeps) wire() *app {
 			}
 			return []byte(validPolicyJSON), nil
 		},
-		tokenFile: testGateTokenFile,
+		tokenFile:     testGateTokenFile,
+		userWaitTries: 3,
+		sleep:         func(d time.Duration) { f.sleeps = append(f.sleeps, d) },
 		lookupUser: func(name string) (int, int, error) {
+			if f.lookupUserFn != nil {
+				return f.lookupUserFn(name)
+			}
 			if f.lookupUserErr != nil {
 				return 0, 0, f.lookupUserErr
 			}
@@ -446,6 +454,52 @@ func (s *ParentSuite) TestRunParentLookupUserError() {
 	err := f.wire().runParent()
 	s.Require().Error(err)
 	s.Require().Contains(err.Error(), "lookup user")
+}
+
+func (s *ParentSuite) TestRunParentWaitsForUser() {
+	tests := []struct {
+		name    string
+		missing int // lookups that find no user before one does
+		other   error
+		wantErr string
+		sleeps  int
+	}{
+		{name: "there at once"},
+		{name: "appears after two looks", missing: 2, sleeps: 2},
+		{name: "never appears", missing: 10, wantErr: "unknown user root", sleeps: 3},
+		{name: "other error is not waited on", other: errors.New("nss down"), wantErr: "nss down"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			f := newFakeParentDeps(s.T())
+			f.defaultEnv()
+			f.socketpairErr = errors.New("stop here")
+			looks := 0
+			f.lookupUserFn = func(name string) (int, int, error) {
+				s.Require().Equal("root", name)
+				looks++
+				if tt.other != nil {
+					return 0, 0, tt.other
+				}
+				if looks <= tt.missing {
+					return 0, 0, user.UnknownUserError(name)
+				}
+				return 1000, 1000, nil
+			}
+			err := f.wire().runParent()
+			s.Require().Error(err)
+			if tt.wantErr != "" {
+				s.Require().Contains(err.Error(), "lookup user")
+				s.Require().Contains(err.Error(), tt.wantErr)
+			} else {
+				s.Require().Contains(err.Error(), "stop here")
+			}
+			s.Require().Len(f.sleeps, tt.sleeps)
+			for _, d := range f.sleeps {
+				s.Require().Equal(userWaitStep, d)
+			}
+		})
+	}
 }
 
 func (s *ParentSuite) TestRunParentSocketpairError() {

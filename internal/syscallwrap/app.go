@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"runtime"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/unix"
 
@@ -114,8 +115,12 @@ type app struct {
 	readFile func(path string) ([]byte, error)
 	// tokenFile holds the per-container bearer token (root-only, see
 	// httpapprover.GateTokenFile). A field so tests can point it elsewhere.
-	tokenFile     string
-	lookupUser    func(name string) (uid, gid int, err error)
+	tokenFile  string
+	lookupUser func(name string) (uid, gid int, err error)
+	// userWaitTries is how many more times runParent looks the user up,
+	// userWaitStep apart, while it does not exist yet (see waitForUser).
+	userWaitTries int
+	sleep         func(time.Duration)
 	socketpair    func() (parentFD, childFD int, err error)
 	startChild    func(argv []string, env []string, childEnd *os.File, uid, gid int) (*os.Process, error)
 	newApprover   func(apiURL, token string) agentgate.Approver
@@ -160,6 +165,8 @@ func newApp() *app {
 		readFile:      os.ReadFile,
 		tokenFile:     httpapprover.GateTokenFile,
 		lookupUser:    defaultLookupUser,
+		userWaitTries: defaultUserWaitTries,
+		sleep:         time.Sleep,
 		socketpair:    defaultSocketpair,
 		startChild:    defaultStartChild,
 		newApprover:   defaultNewApprover,

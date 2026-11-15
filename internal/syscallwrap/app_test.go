@@ -174,6 +174,8 @@ func (s *AppSuite) TestNewAppWiresDefaults() {
 	s.Require().NotNil(a.readFile)
 	s.Require().Equal(httpapprover.GateTokenFile, a.tokenFile)
 	s.Require().NotNil(a.lookupUser)
+	s.Require().Equal(defaultUserWaitTries, a.userWaitTries)
+	s.Require().NotNil(a.sleep)
 	s.Require().NotNil(a.socketpair)
 	s.Require().NotNil(a.startChild)
 	s.Require().NotNil(a.newApprover)

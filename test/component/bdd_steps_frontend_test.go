@@ -1086,31 +1086,30 @@ func (tc *TestContext) clickInSidebar(text string) error {
 	return tc.clickInRegion(text, "sidebar")
 }
 
-// openSettingsPanelSection clicks the sidebar Settings button (retrying until
-// the panel mounts) then waits for the named NavButton to be ready (loaded=true
-// has resolved + schema-driven sections rendered), then clicks it. Mirrors the
-// retry-poll pattern used by openGlobalTasksPanel — single clicks can race
-// React hydration in CI and silently no-op.
+// openSettingsPanelSection opens Settings from the sidebar, waits for the
+// named NavButton (loaded=true has resolved and the schema-driven sections
+// rendered), then clicks it. One poll does both: it clicks the sidebar button
+// whenever the panel is missing, so a panel that closes again (a single click
+// racing React hydration, or a channel selection on load) is reopened. On a
+// timeout it reports what the page showed.
 //
-// Both Poll calls use WithPollingInterval (setTimeout-based) instead of the
-// default "raf" mode — headless Chrome throttles requestAnimationFrame on
-// pages that aren't actively painted (Vite dev server in CI), so the rAF
-// poller can fire only a handful of times in 15s and the click retry never
-// hits.
+// The poll uses WithPollingInterval (setTimeout-based) instead of the default
+// "raf" mode — headless Chrome throttles requestAnimationFrame on pages that
+// aren't actively painted (Vite dev server in CI), so the rAF poller can fire
+// only a handful of times in 15s and the click retry never hits.
 func (tc *TestContext) openSettingsPanelSection(section string) error {
 	navTestID := "settings-nav-" + strings.ReplaceAll(strings.ToLower(section), " ", "-")
 	// The button toggles the panel, so a click that lands before the panel
-	// from the previous click has rendered closes it again. Click once and
-	// retry only if the panel is still missing a few seconds later.
-	openJS := `(() => {
-		if (document.querySelector('[data-testid="settings-panel"]')) return true;
-		const now = Date.now();
-		if (now - (window.__bddSettingsClickAt || 0) < 3000) return false;
-		const btn = document.querySelector('[data-testid="sidebar-settings-btn"]');
-		if (btn) { window.__bddSettingsClickAt = now; btn.click(); }
-		return false;
-	})()`
-	navJS := fmt.Sprintf(`(() => {
+	// from the previous click has rendered closes it again. Click, and click
+	// again only if the panel is still missing a few seconds later.
+	readyJS := fmt.Sprintf(`(() => {
+		if (!document.querySelector('[data-testid="settings-panel"]')) {
+			const now = Date.now();
+			if (now - (window.__bddSettingsClickAt || 0) < 3000) return false;
+			const btn = document.querySelector('[data-testid="sidebar-settings-btn"]');
+			if (btn) { window.__bddSettingsClickAt = now; btn.click(); }
+			return false;
+		}
 		const el = document.querySelector('[data-testid=%q]');
 		if (!el) return false;
 		const r = el.getBoundingClientRect();
@@ -1122,12 +1121,21 @@ func (tc *TestContext) openSettingsPanelSection(section string) error {
 		el.click();
 		return true;
 	})()`, navTestID)
-	return chromedp.Run(tc.chromeTab.ctx,
+	err := chromedp.Run(tc.chromeTab.ctx,
 		chromedp.WaitVisible(`[data-testid="sidebar-settings-btn"]`, chromedp.ByQuery),
-		chromedp.Poll(openJS, nil, chromedp.WithPollingTimeout(15*time.Second), chromedp.WithPollingInterval(100*time.Millisecond)),
-		chromedp.Poll(navJS, nil, chromedp.WithPollingTimeout(15*time.Second), chromedp.WithPollingInterval(100*time.Millisecond)),
+		chromedp.Poll(readyJS, nil, chromedp.WithPollingTimeout(15*time.Second), chromedp.WithPollingInterval(100*time.Millisecond)),
 		chromedp.Evaluate(clickNavJS, nil),
 	)
+	if err == nil {
+		return nil
+	}
+	var state string
+	_ = chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(`(() => {
+		const panel = !!document.querySelector('[data-testid="settings-panel"]');
+		const navs = [...document.querySelectorAll('[data-testid^="settings-nav-"]')].map(e => e.dataset.testid);
+		return "panel=" + panel + " navs=[" + navs.join(", ") + "]";
+	})()`, &state))
+	return fmt.Errorf("opening settings section %q: %w (%s)", section, err, state)
 }
 
 func (tc *TestContext) clickInTasksPanel(text string) error {
