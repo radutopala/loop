@@ -102,38 +102,79 @@ func (s *ServerSuite) TestListTabsError() {
 
 // ==================== new_tab ====================
 
-func (s *ServerSuite) TestNewTabSuccess() {
-	_, session := setupTest(s.T(), func(w http.ResponseWriter, r *http.Request) {
-		_, action, params := decodeActionRequest(s.T(), r)
-		require.Equal(s.T(), "new_tab", action)
-		require.Equal(s.T(), "https://new.com", params["url"])
-		writeJSON(w, actionResponse{Result: "Opened new tab (id: t99) at https://new.com"})
-	})
-	res := callTool(s.T(), session, "new_tab", map[string]any{"url": "https://new.com"})
-	require.False(s.T(), res.IsError)
-	text := getText(s.T(), res)
-	require.Contains(s.T(), text, "Opened new tab (id: t99)")
-	require.Contains(s.T(), text, "https://new.com")
-}
-
-func (s *ServerSuite) TestNewTabEmptyURL() {
-	_, session := setupTest(s.T(), func(w http.ResponseWriter, r *http.Request) {
-		_, _, params := decodeActionRequest(s.T(), r)
-		require.Equal(s.T(), "about:blank", params["url"])
-		writeJSON(w, actionResponse{Result: "Opened new tab (id: t0) at about:blank"})
-	})
-	res := callTool(s.T(), session, "new_tab", map[string]any{"url": ""})
-	require.False(s.T(), res.IsError)
-	require.Contains(s.T(), getText(s.T(), res), "about:blank")
-}
-
-func (s *ServerSuite) TestNewTabError() {
-	_, session := setupTest(s.T(), func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, actionResponse{Error: "tab err"})
-	})
-	res := callTool(s.T(), session, "new_tab", map[string]any{"url": "https://fail.com"})
-	require.True(s.T(), res.IsError)
-	require.Contains(s.T(), getText(s.T(), res), "new tab failed: tab err")
+func (s *ServerSuite) TestNewTab() {
+	opened := actionResponse{Result: "Opened new tab t9"}
+	tests := []struct {
+		name    string
+		url     string
+		resps   []actionResponse // one per call, in order
+		actions []string
+		isError bool
+		text    string
+	}{
+		{
+			name:    "opens blank and navigates there",
+			url:     "https://new.com",
+			resps:   []actionResponse{opened, {Result: "ok", PageInfo: &browser.PageInfo{URL: "https://new.com/", Title: "New"}}},
+			actions: []string{"new_tab", "navigate"},
+			text:    "Opened new tab t9, at https://new.com/ — New",
+		},
+		{
+			name:    "navigate without page info",
+			url:     "https://new.com",
+			resps:   []actionResponse{opened, {Result: "ok"}},
+			actions: []string{"new_tab", "navigate"},
+			text:    "Opened new tab t9, at https://new.com",
+		},
+		{
+			name:    "no URL",
+			resps:   []actionResponse{opened},
+			actions: []string{"new_tab"},
+			text:    "Opened new tab t9",
+		},
+		{
+			name:    "about:blank",
+			url:     "about:blank",
+			resps:   []actionResponse{opened},
+			actions: []string{"new_tab"},
+			text:    "Opened new tab t9",
+		},
+		{
+			name:    "opening fails",
+			url:     "https://fail.com",
+			resps:   []actionResponse{{Error: "tab err"}},
+			actions: []string{"new_tab"},
+			isError: true,
+			text:    "new tab failed: tab err",
+		},
+		{
+			name:    "navigating fails",
+			url:     "https://fail.com",
+			resps:   []actionResponse{opened, {Error: "nav err"}},
+			actions: []string{"new_tab", "navigate"},
+			isError: true,
+			text:    "Opened new tab t9, but navigate failed: nav err",
+		},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			var actions []string
+			_, session := setupTest(s.T(), func(w http.ResponseWriter, r *http.Request) {
+				_, action, params := decodeActionRequest(s.T(), r)
+				if action == "new_tab" {
+					require.Equal(s.T(), "about:blank", params["url"])
+				} else {
+					require.Equal(s.T(), tt.url, params["url"])
+				}
+				writeJSON(w, tt.resps[len(actions)])
+				actions = append(actions, action)
+			})
+			res := callTool(s.T(), session, "new_tab", map[string]any{"url": tt.url})
+			require.Equal(s.T(), tt.isError, res.IsError)
+			require.Equal(s.T(), tt.text, getText(s.T(), res))
+			require.Equal(s.T(), tt.actions, actions)
+		})
+	}
 }
 
 // ==================== switch_tab ====================

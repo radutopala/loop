@@ -112,6 +112,45 @@ func (s *CDPSuite) TestGetElementRefsSuccess() {
 	require.Equal(s.T(), float64(50), refs[0].Height)
 }
 
+func (s *CDPSuite) TestGetElementRefsCheckState() {
+	checked := func(v string) []*accessibility.Property {
+		return []*accessibility.Property{
+			{Name: accessibility.PropertyNameFocusable, Value: &accessibility.Value{Value: jsontext.Value("true")}},
+			{Name: accessibility.PropertyNameChecked, Value: &accessibility.Value{Value: jsontext.Value(v)}},
+		}
+	}
+	tests := []struct {
+		name  string
+		props []*accessibility.Property
+		value string
+	}{
+		{"ticked", checked("true"), "checked"},
+		{"clear", checked("false"), "unchecked"},
+		{"mixed", checked(`"mixed"`), "mixed"},
+		{"no state", nil, "on"},
+		{"state without value", []*accessibility.Property{{Name: accessibility.PropertyNameChecked}}, "on"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.client.axTreeFunc = func(_ context.Context) ([]*accessibility.Node, error) {
+				return []*accessibility.Node{{
+					Role:             &accessibility.Value{Value: jsontext.Value("checkbox")},
+					Value:            &accessibility.Value{Value: jsontext.Value("on")},
+					Properties:       tt.props,
+					BackendDOMNodeID: cdp.BackendNodeID(1),
+				}}, nil
+			}
+			s.client.boxModelFunc = func(_ context.Context, _ cdp.BackendNodeID) (*cdpdom.BoxModel, error) {
+				return &cdpdom.BoxModel{Content: []float64{0, 0, 10, 0, 10, 10, 0, 10}}, nil
+			}
+			refs, err := s.client.GetElementRefs(context.Background())
+			require.NoError(s.T(), err)
+			require.Len(s.T(), refs, 1)
+			require.Equal(s.T(), tt.value, refs[0].Value)
+		})
+	}
+}
+
 func (s *CDPSuite) TestGetElementRefsTreeError() {
 	s.client.axTreeFunc = func(_ context.Context) ([]*accessibility.Node, error) {
 		return nil, errors.New("tree error")

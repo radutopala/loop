@@ -474,17 +474,27 @@ func (s *Server) registerTools() {
 	}
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "new_tab",
-		Description: "Open a new browser tab with the given URL.",
+		Description: "Open a new browser tab with the given URL, wait for it to load and make it the active tab.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input newTabInput) (*mcp.CallToolResult, any, error) {
-		url := input.URL
-		if url == "" {
-			url = "about:blank"
-		}
-		resp, err := s.callAction(ctx, "new_tab", map[string]any{"url": url})
+		// A tab opened on its URL answers before the page loads, so the next
+		// tool would read about:blank. Opening it blank and navigating there
+		// waits for the load the way navigate does.
+		resp, err := s.callAction(ctx, "new_tab", map[string]any{"url": "about:blank"})
 		if err != nil {
 			return errorResult(fmt.Sprintf("new tab failed: %v", err)), nil, nil
 		}
-		return textResult(resp.Result), nil, nil
+		if input.URL == "" || input.URL == "about:blank" {
+			return textResult(resp.Result), nil, nil
+		}
+		nav, err := s.callAction(ctx, "navigate", map[string]any{"url": input.URL})
+		if err != nil {
+			return errorResult(fmt.Sprintf("%s, but navigate failed: %v", resp.Result, err)), nil, nil
+		}
+		msg := resp.Result + ", at " + input.URL
+		if nav.PageInfo != nil {
+			msg = fmt.Sprintf("%s, at %s — %s", resp.Result, nav.PageInfo.URL, nav.PageInfo.Title)
+		}
+		return textResult(msg), nil, nil
 	})
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{

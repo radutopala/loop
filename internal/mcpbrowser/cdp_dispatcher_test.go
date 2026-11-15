@@ -259,10 +259,10 @@ func (s *CDPDispatcherSuite) TestMouseScrollError() {
 }
 
 func (s *CDPDispatcherSuite) TestKeyPress() {
-	s.mock.On("KeyPress", mock.Anything, "Enter", 0).Return(nil)
-	resp, err := s.d.dispatch(context.Background(), "key_press", map[string]any{"key": "Enter"})
+	s.mock.On("KeyPress", mock.Anything, "Enter", 2).Return(nil)
+	resp, err := s.d.dispatch(context.Background(), "key_press", map[string]any{"key": "ctrl+Return"})
 	require.NoError(s.T(), err)
-	require.Contains(s.T(), resp.Result, "Pressed Enter")
+	require.Contains(s.T(), resp.Result, "Pressed ctrl+Return")
 }
 
 func (s *CDPDispatcherSuite) TestKeyPressError() {

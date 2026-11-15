@@ -151,16 +151,17 @@ func (s *BrowserHandlerSuite) TestBrowserActionMouseUpError() {
 func (s *BrowserHandlerSuite) TestBrowserActionKeyPress() {
 	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
-	mockCDP.On("KeyPress", mock.Anything, "Enter", 0).Return(nil)
+	mockCDP.On("KeyPress", mock.Anything, "a", 2).Return(nil)
 
 	w := s.postBrowserAction(browserActionRequest{
 		ChannelID: "ch-1",
 		Action:    "key_press",
-		Params:    map[string]any{"key": "Enter"},
+		Params:    map[string]any{"key": "Control+a"},
 	})
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Contains(s.T(), resp.Result, "Pressed key")
+	mockCDP.AssertCalled(s.T(), "KeyPress", mock.Anything, "a", 2)
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionKeyPressError() {

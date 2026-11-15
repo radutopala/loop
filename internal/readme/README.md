@@ -1183,7 +1183,7 @@ In headless/Linux environments where Electron can't launch, `LOOP_NO_ELECTRON=1 
 | `read_console_messages` | Read captured browser console messages |
 | `read_network_requests` | Read captured network requests |
 | `list_tabs` | List all open browser tabs |
-| `new_tab` | Open a new browser tab |
+| `new_tab` | Open a new browser tab at a URL, wait for it to load and make it active |
 | `switch_tab` | Switch to a browser tab by its `list_tabs` number or target ID |
 | `close_tab` | Close a browser tab by its `list_tabs` number or target ID |
 | `resize_window` | Resize the browser viewport |

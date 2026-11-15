@@ -1054,6 +1054,7 @@ type namedKey struct {
 var namedKeys = map[string]namedKey{
 	"Backspace":  {"Backspace", 8, ""},
 	"Tab":        {"Tab", 9, ""},
+	" ":          {"Space", 32, " "},
 	"Enter":      {"Enter", 13, "\r"},
 	"Escape":     {"Escape", 27, ""},
 	"PageUp":     {"PageUp", 33, ""},
@@ -1335,6 +1336,15 @@ const scanRefsJSTemplate = `(() => {
     }
     return el.isContentEditable ? "textbox" : "";
   };
+  // A checkbox's value attribute is usually "on" whatever its state, so
+  // checkable roles report the state instead, as the accessibility walk does.
+  const checkable = new Set(["checkbox", "radio", "switch"]);
+  const checkState = (el) => {
+    const aria = el.getAttribute("aria-checked");
+    const native = el.tagName === "INPUT" && !el.hasAttribute("role");
+    if (native ? el.indeterminate : aria === "mixed") return "mixed";
+    return (native ? el.checked : aria === "true") ? "checked" : "unchecked";
+  };
   const out = [];
   const visit = (root, dx, dy) => {
     for (const el of root.querySelectorAll("*")) {
@@ -1351,14 +1361,16 @@ const scanRefsJSTemplate = `(() => {
       }
       const role = roleOf(el);
       if (!roles.has(role)) continue;
-      if (el.checkVisibility && !el.checkVisibility({ visibilityProperty: true, opacityProperty: true, contentVisibilityAuto: true })) continue;
+      // Transparent elements stay: styled checkboxes and file inputs are often
+      // opacity 0 over their own artwork and still take the click.
+      if (el.checkVisibility && !el.checkVisibility({ visibilityProperty: true, contentVisibilityAuto: true })) continue;
       const box = el.getBoundingClientRect();
       if (box.width <= 0 || box.height <= 0) continue;
       out.push({
         role: role,
         name: named(el),
         description: (el.getAttribute("aria-description") || el.getAttribute("title") || "").trim(),
-        value: typeof el.value === "string" ? el.value.slice(0, 200) : "",
+        value: checkable.has(role) ? checkState(el) : typeof el.value === "string" ? el.value.slice(0, 200) : "",
         x: box.x + dx,
         y: box.y + dy,
         width: box.width,
@@ -1440,6 +1452,25 @@ func (c *CDPClient) elementRefs() ([]ElementRef, error) {
 	return c.axElementRefs()
 }
 
+// axCheckState names a node's checked state as the in-page scan does:
+// "checked", "unchecked" or "mixed". It answers false for a node without one.
+func axCheckState(node *accessibility.Node) (string, bool) {
+	for _, p := range node.Properties {
+		if p.Name != accessibility.PropertyNameChecked || p.Value == nil {
+			continue
+		}
+		switch strings.Trim(string(p.Value.Value), `"`) {
+		case "true":
+			return "checked", true
+		case "mixed":
+			return "mixed", true
+		default:
+			return "unchecked", true
+		}
+	}
+	return "", false
+}
+
 // axElementRefs walks the whole accessibility tree, asking for a box model per
 // interactive node.
 func (c *CDPClient) axElementRefs() ([]ElementRef, error) {
@@ -1478,6 +1509,9 @@ func (c *CDPClient) axElementRefs() ([]ElementRef, error) {
 		val := ""
 		if node.Value != nil {
 			val = strings.Trim(fmt.Sprintf("%v", node.Value.Value), `"`)
+		}
+		if state, ok := axCheckState(node); ok {
+			val = state
 		}
 
 		// Get bounding box via DOM.getBoxModel. Skip if not available
