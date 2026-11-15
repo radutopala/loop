@@ -20,8 +20,8 @@ import (
 const defaultUploadMaxBytes = 20 << 20
 
 type uploadFileInput struct {
-	Ref      refArg   `json:"ref,omitempty" jsonschema:"Element ref from read_page or find: the file input, or the button or label that opens it"`
-	Selector string   `json:"selector,omitempty" jsonschema:"CSS selector of the file input, or of an element that holds it, for an input read_page doesn't list (inputs are often hidden behind a styled button). Use instead of ref."`
+	Ref      refArg   `json:"ref,omitempty" jsonschema:"Element ref from find_elements: the file input, or the button or label that opens it"`
+	Selector string   `json:"selector,omitempty" jsonschema:"CSS selector of the file input, or of an element that holds it, for an input find_elements doesn't list (inputs are often hidden behind a styled button). Use instead of ref."`
 	Paths    []string `json:"paths" jsonschema:"Paths of the files to upload, read from this machine"`
 }
 

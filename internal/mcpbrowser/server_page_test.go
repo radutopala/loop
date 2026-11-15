@@ -1,8 +1,9 @@
 package mcpbrowser
 
 import (
-	"fmt"
+	"context"
 	"net/http"
+	"testing"
 
 	"github.com/stretchr/testify/require"
 
@@ -63,114 +64,78 @@ func (s *ServerSuite) TestGetPageTextError() {
 	require.Contains(s.T(), getText(s.T(), res), "get page text failed: eval err")
 }
 
-// ==================== find ====================
+// ==================== find_elements with a query ====================
 
-func (s *ServerSuite) TestFindSuccess() {
+// findPageHandler answers the page scan with refs and the page info with a
+// fixed URL and title.
+func findPageHandler(t *testing.T, refs []browser.ElementRef) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		_, action, _ := decodeActionRequest(t, r)
+		if action == "get_element_refs" {
+			writeJSON(w, actionResponse{ElementRefs: refs})
+			return
+		}
+		writeJSON(w, actionResponse{PageInfo: &browser.PageInfo{URL: "https://x.com", Title: "X"}})
+	}
+}
+
+func (s *ServerSuite) TestFindElementsQuery() {
 	refs := []browser.ElementRef{
 		{RefID: "ref_1", Role: "button", Name: "Submit Form"},
 		{RefID: "ref_2", Role: "link", Name: "Home Page"},
-		{RefID: "ref_3", Role: "textbox", Name: "Email"},
+		{RefID: "ref_3", Role: "textbox", Name: "Search", Value: "hello"},
+		{RefID: "ref_4", Role: "button", Name: "Cancel"},
 	}
-	srv, session := setupTest(s.T(), func(w http.ResponseWriter, r *http.Request) {
-		_, action, _ := decodeActionRequest(s.T(), r)
-		require.Equal(s.T(), "get_element_refs", action)
-		writeJSON(w, actionResponse{ElementRefs: refs})
-	})
-	res := callTool(s.T(), session, "find", map[string]any{"query": "submit"})
-	require.False(s.T(), res.IsError)
-	text := getText(s.T(), res)
-	require.Contains(s.T(), text, "Found 1 element(s)")
-	require.Contains(s.T(), text, "[ref_1] button: Submit Form")
-	require.Len(s.T(), srv.refs, 3)
-}
-
-func (s *ServerSuite) TestFindCaseInsensitive() {
-	refs := []browser.ElementRef{
-		{RefID: "ref_1", Role: "button", Name: "SUBMIT"},
+	all := "[ref_1] button: Submit Form\n[ref_2] link: Home Page\n[ref_3] textbox: Search (value: hello)\n[ref_4] button: Cancel\n"
+	tests := []struct {
+		name  string
+		query string
+		want  string
+	}{
+		{name: "no query lists everything", query: "", want: all},
+		{name: "a blank query lists everything", query: "  ", want: all},
+		{
+			name: "words from name and role", query: "submit button",
+			want: "1 of 4 elements match \"submit button\":\n[ref_1] button: Submit Form\n",
+		},
+		{
+			name: "a role keeps page order", query: "BUTTON",
+			want: "2 of 4 elements match \"BUTTON\":\n[ref_1] button: Submit Form\n[ref_4] button: Cancel\n",
+		},
+		{
+			name: "the value counts", query: "hello",
+			want: "1 of 4 elements match \"hello\":\n[ref_3] textbox: Search (value: hello)\n",
+		},
+		{
+			name: "no match lists everything", query: "close button or X button",
+			want: "No element contains every word of \"close button or X button\". All 4 elements:\n" + all,
+		},
 	}
-	_, session := setupTest(s.T(), func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, actionResponse{ElementRefs: refs})
-	})
-	res := callTool(s.T(), session, "find", map[string]any{"query": "submit"})
-	require.False(s.T(), res.IsError)
-	require.Contains(s.T(), getText(s.T(), res), "Found 1 element(s)")
-}
-
-func (s *ServerSuite) TestFindByRole() {
-	refs := []browser.ElementRef{
-		{RefID: "ref_1", Role: "button", Name: "Click Me"},
-		{RefID: "ref_2", Role: "checkbox", Name: "Accept"},
-	}
-	_, session := setupTest(s.T(), func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, actionResponse{ElementRefs: refs})
-	})
-	res := callTool(s.T(), session, "find", map[string]any{"query": "checkbox"})
-	require.False(s.T(), res.IsError)
-	text := getText(s.T(), res)
-	require.Contains(s.T(), text, "Found 1 element(s)")
-	require.Contains(s.T(), text, "[ref_2] checkbox: Accept")
-}
-
-func (s *ServerSuite) TestFindNoMatch() {
-	refs := []browser.ElementRef{
-		{RefID: "ref_1", Role: "button", Name: "Submit"},
-	}
-	_, session := setupTest(s.T(), func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, actionResponse{ElementRefs: refs})
-	})
-	res := callTool(s.T(), session, "find", map[string]any{"query": "nonexistent"})
-	require.False(s.T(), res.IsError)
-	require.Contains(s.T(), getText(s.T(), res), `No elements found matching "nonexistent"`)
-}
-
-func (s *ServerSuite) TestFindMaxResults() {
-	var refs []browser.ElementRef
-	for i := 1; i <= 25; i++ {
-		refs = append(refs, browser.ElementRef{
-			RefID: fmt.Sprintf("ref_%d", i),
-			Role:  "button",
-			Name:  fmt.Sprintf("Button %d", i),
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			srv, session := setupTest(s.T(), findPageHandler(s.T(), refs))
+			res := callTool(s.T(), session, "find_elements", map[string]any{"query": tt.query})
+			require.False(s.T(), res.IsError)
+			require.Equal(s.T(), "Page: https://x.com — X\n\n"+tt.want, getText(s.T(), res))
+			require.Len(s.T(), srv.refs, 4, "the refs are kept for computer and form_input")
 		})
 	}
-	_, session := setupTest(s.T(), func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, actionResponse{ElementRefs: refs})
-	})
-	res := callTool(s.T(), session, "find", map[string]any{"query": "button"})
-	require.False(s.T(), res.IsError)
-	text := getText(s.T(), res)
-	require.Contains(s.T(), text, "Found 20 element(s)")
-	require.Contains(s.T(), text, "[ref_20]")
-	require.NotContains(s.T(), text, "[ref_21]")
 }
 
-func (s *ServerSuite) TestFindEmptyQuery() {
-	_, session := setupTest(s.T(), func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, actionResponse{})
-	})
-	res := callTool(s.T(), session, "find", map[string]any{"query": ""})
-	require.True(s.T(), res.IsError)
-	require.Contains(s.T(), getText(s.T(), res), "query is required")
-}
-
-func (s *ServerSuite) TestFindError() {
-	_, session := setupTest(s.T(), func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, actionResponse{Error: "ax tree err"})
-	})
-	res := callTool(s.T(), session, "find", map[string]any{"query": "button"})
-	require.True(s.T(), res.IsError)
-	require.Contains(s.T(), getText(s.T(), res), "failed to get element refs: ax tree err")
-}
-
-func (s *ServerSuite) TestFindWithValue() {
-	refs := []browser.ElementRef{
-		{RefID: "ref_1", Role: "textbox", Name: "Search", Value: "hello"},
+func (s *ServerSuite) TestBrowserToolList() {
+	srv := New("http://x", "ch", nil)
+	session := connectClient(s.T(), srv)
+	res, err := session.ListTools(context.Background(), nil)
+	require.NoError(s.T(), err)
+	names := map[string]bool{}
+	for _, tool := range res.Tools {
+		names[tool.Name] = true
 	}
-	_, session := setupTest(s.T(), func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, actionResponse{ElementRefs: refs})
-	})
-	res := callTool(s.T(), session, "find", map[string]any{"query": "search"})
-	require.False(s.T(), res.IsError)
-	require.Contains(s.T(), getText(s.T(), res), "(value: hello)")
+	require.True(s.T(), names["find_elements"])
+	require.True(s.T(), names["get_page_text"])
+	for _, gone := range []string{"read_page", "find", "go_back", "go_forward"} {
+		require.False(s.T(), names[gone], "%s is folded into other tools", gone)
+	}
 }
 
 // ==================== read_console_messages ====================

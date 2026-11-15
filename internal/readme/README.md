@@ -1174,10 +1174,9 @@ In headless/Linux environments where Electron can't launch, `LOOP_NO_ELECTRON=1 
 | `resume_workflow_run` | Resume a paused workflow with an optional response |
 | | **Browser Automation** |
 | `navigate` | Navigate the browser to a URL, optionally waiting for a selector or text |
-| `read_page` | Get the page's interactive elements |
+| `find_elements` | List the page's interactive elements with refs, optionally only those holding every word of a query |
 | `computer` | Perform click, type, key, scroll, move, screenshot, drag and wait actions |
 | `screenshot` | Take a screenshot of the current page, optionally once a selector or text shows |
-| `find` | Find interactive elements by natural language query |
 | `form_input` | Fill in a form field (click, clear, type) |
 | `evaluate` | Evaluate JavaScript in the page context |
 | `get_page_text` | Get all text content from the page |
