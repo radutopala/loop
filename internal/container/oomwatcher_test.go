@@ -167,17 +167,20 @@ func (s *OOMWatcherSuite) TestRunOnceReturnsWhenContextCanceled() {
 }
 
 func (s *OOMWatcherSuite) TestRunOnceIgnoresClosedErrChAndWaitsForMsg() {
-	msgCh := make(chan events.Message, 1)
+	// Nothing is sent until the closed error stream has been seen: with an
+	// event waiting as well, select picks either, and the closed stream could
+	// go unseen.
+	msgCh := make(chan events.Message)
 	errCh := make(chan error)
 	close(errCh)
-	msgCh <- events.Message{Actor: events.Actor{ID: "c1", Attributes: map[string]string{ChannelLabelKey: "ch-1"}}}
 
 	notified := make(chan struct{}, 1)
+	logged := make(chan string, 4)
 	watcher := NewOOMWatcher(func(_ context.Context) (<-chan events.Message, <-chan error) {
 		return msgCh, errCh
 	}, func(_ context.Context, _, _ string) {
 		notified <- struct{}{}
-	}, discardLogger())
+	}, slog.New(signalHandler{logged}))
 
 	done := make(chan struct{})
 	go func() {
@@ -185,6 +188,13 @@ func (s *OOMWatcherSuite) TestRunOnceIgnoresClosedErrChAndWaitsForMsg() {
 		close(done)
 	}()
 
+	select {
+	case msg := <-logged:
+		require.Contains(s.T(), msg, "error stream closed")
+	case <-time.After(2 * time.Second):
+		s.T().Fatal("runOnce never saw the closed errCh")
+	}
+	msgCh <- events.Message{Actor: events.Actor{ID: "c1", Attributes: map[string]string{ChannelLabelKey: "ch-1"}}}
 	select {
 	case <-notified:
 	case <-time.After(2 * time.Second):
@@ -197,6 +207,17 @@ func (s *OOMWatcherSuite) TestRunOnceIgnoresClosedErrChAndWaitsForMsg() {
 		s.T().Fatal("runOnce did not return after msgCh closed")
 	}
 }
+
+// signalHandler hands each log message to ch, so a test can wait for one.
+type signalHandler struct{ ch chan<- string }
+
+func (h signalHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h signalHandler) Handle(_ context.Context, r slog.Record) error {
+	h.ch <- r.Message
+	return nil
+}
+func (h signalHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h signalHandler) WithGroup(string) slog.Handler      { return h }
 
 func (s *OOMWatcherSuite) TestRunStopsWhenContextCanceled() {
 	msgCh := make(chan events.Message)

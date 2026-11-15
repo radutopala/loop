@@ -74,6 +74,7 @@ func (w *OOMWatcher) runOnce(ctx context.Context) {
 			return
 		case err, ok := <-errCh:
 			if !ok {
+				w.logger.Debug("oom watcher: error stream closed, watching events only")
 				errCh = nil
 				continue
 			}
