@@ -425,9 +425,9 @@ function AppInner() {
   }, [selectedId, channels]);
 
   const doSelect = useCallback(
-    (id: string | null) => {
+    (id: string | null, keepPanels = false) => {
       setScrollToMessageId(null);
-      closeAllPanels();
+      if (!keepPanels) closeAllPanels();
       if (id) {
         markRead(id);
         // Refresh channels so the opened channel's agent_running (which seeds the
@@ -479,16 +479,17 @@ function AppInner() {
     [channelExists, handleSelect],
   );
 
-  // Auto-select DM channel if nothing is selected on first load.
+  // Auto-select DM channel if nothing is selected on first load. It keeps any
+  // panel open: the channels can arrive after the user has opened Settings.
   const autoSelectedRef = useRef(false);
   useEffect(() => {
     if (autoSelectedRef.current || selectedId || getHashChannelId()) return;
     const dm = channels.find((c) => c.name === "dm" && !c.parent_id);
     if (dm) {
       autoSelectedRef.current = true;
-      handleSelect(dm.id);
+      doSelect(dm.id, true);
     }
-  }, [channels, selectedId, handleSelect]);
+  }, [channels, selectedId, doSelect]);
 
   const handleSelectMessage = useCallback((channelId: string, messageId: number) => {
     setScrollToMessageId(messageId);
