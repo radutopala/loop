@@ -61,6 +61,9 @@ type CDPManager struct {
 	// so a second pane — or a stale watcher — silently swallowed it.
 	subs   map[int]chan TabEvent
 	nextID int
+	// stopTitlePoll ends the title poll that runs while anyone subscribes;
+	// nil when none runs.
+	stopTitlePoll chan struct{}
 
 	// dialogs holds the JavaScript dialog each tab is blocked on, with the
 	// client that saw it open — the only kind of session able to answer it.
@@ -99,6 +102,11 @@ type CDPManager struct {
 	// background runs the title rechecks, off the event queue; tests run them
 	// in place.
 	background func(func())
+	// titlePollEvery is how often the tabs are listed again while a pane
+	// watches, for titles a page sets after the rechecks are over; after
+	// times the waits, so tests can tick it by hand.
+	titlePollEvery time.Duration
+	after          func(time.Duration) <-chan time.Time
 
 	timeNow func() time.Time // injectable clock
 }
@@ -179,16 +187,18 @@ type CDPSession interface {
 // NewCDPManager creates a new CDPManager for the given WebSocket endpoint.
 func NewCDPManager(wsEndpoint string, cfg CDPManagerConfig, logger *slog.Logger) *CDPManager {
 	return &CDPManager{
-		wsEndpoint:    wsEndpoint,
-		cfg:           cfg,
-		logger:        logger,
-		cdpFactory:    defaultCDPFactory,
-		subs:          map[int]chan TabEvent{},
-		tabInfo:       map[string]TabInfo{},
-		titleRechecks: []time.Duration{500 * time.Millisecond, time.Second, 2500 * time.Millisecond},
-		sleep:         time.Sleep,
-		background:    func(fn func()) { go fn() },
-		timeNow:       time.Now,
+		wsEndpoint:     wsEndpoint,
+		cfg:            cfg,
+		logger:         logger,
+		cdpFactory:     defaultCDPFactory,
+		subs:           map[int]chan TabEvent{},
+		tabInfo:        map[string]TabInfo{},
+		titleRechecks:  []time.Duration{500 * time.Millisecond, time.Second, 2500 * time.Millisecond},
+		sleep:          time.Sleep,
+		background:     func(fn func()) { go fn() },
+		titlePollEvery: 2 * time.Second,
+		after:          time.After,
+		timeNow:        time.Now,
 	}
 }
 
@@ -954,11 +964,56 @@ func (m *CDPManager) Subscribe() (<-chan TabEvent, func()) {
 	id := m.nextID
 	m.nextID++
 	m.subs[id] = ch
+	if m.stopTitlePoll == nil {
+		m.stopTitlePoll = make(chan struct{})
+		go m.pollTitles(m.stopTitlePoll)
+	}
 	m.mu.Unlock()
 	return ch, func() {
 		m.mu.Lock()
 		delete(m.subs, id)
+		if len(m.subs) == 0 && m.stopTitlePoll != nil {
+			close(m.stopTitlePoll)
+			m.stopTitlePoll = nil
+		}
 		m.mu.Unlock()
+	}
+}
+
+// pollTitles lists the tabs again every titlePollEvery until stop. Chrome
+// says nothing when a page changes its title on its own — a chat counting
+// unread messages, a page retitled long after it loaded — so a pane would
+// otherwise keep showing the old one.
+func (m *CDPManager) pollTitles(stop <-chan struct{}) {
+	for {
+		select {
+		case <-stop:
+			return
+		case <-m.after(m.titlePollEvery):
+		}
+		m.refreshTabs()
+	}
+}
+
+// refreshTabs hands every tab Chrome lists to the event queue as a change,
+// in turn with the ones Chrome reports; tabs that look as they did are
+// passed over there.
+func (m *CDPManager) refreshTabs() {
+	m.mu.Lock()
+	client := m.client
+	m.mu.Unlock()
+	if client == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	tabs, err := client.ListTabs(ctx)
+	cancel()
+	if err != nil {
+		m.logger.Debug("listing tabs for their titles failed", "error", err)
+		return
+	}
+	for _, tab := range tabs {
+		m.events.enqueue(func() { m.tabChanged(client, tab) })
 	}
 }
 

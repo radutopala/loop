@@ -1,6 +1,7 @@
 package browser
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"sync"
@@ -181,4 +182,58 @@ func (s *CDPManagerSuite) TestPendingListsEveryTab() {
 
 	require.Equal(s.T(), []Dialog{confirmOn("t1"), confirmOn("t2")}, mgr.PendingDialogs())
 	require.Equal(s.T(), []FileChooser{chooserOn("t1"), chooserOn("t3")}, mgr.PendingFileChoosers())
+}
+
+func (s *CDPManagerSuite) TestTitlePollPublishesTitlesChromeKeepsQuietAbout() {
+	mgr, mockClient := s.newTestManager(false)
+	mgr.titleRechecks = nil
+	tick := make(chan time.Time)
+	mgr.after = func(time.Duration) <-chan time.Time { return tick }
+	mockClient.On("TargetID").Return("t1")
+	require.NoError(s.T(), mgr.Connect(context.Background()))
+	shown := TabInfo{TargetID: "t1", URL: "https://a.com", Title: "A"}
+	mgr.tabChanged(mockClient, shown)
+	events, unsubscribe := mgr.Subscribe()
+	defer unsubscribe()
+
+	// A failed listing, then one where nothing tracked changed, tell the panes
+	// nothing; the page retitling itself later does.
+	retitled := TabInfo{TargetID: "t1", URL: "https://a.com", Title: "A (3 unread)"}
+	mockClient.On("ListTabs", mock.Anything).Return(nil, errors.New("gone")).Once()
+	mockClient.On("ListTabs", mock.Anything).Return([]TabInfo{shown, {TargetID: "untracked", URL: "https://x.com", Title: "X"}}, nil).Once()
+	mockClient.On("ListTabs", mock.Anything).Return([]TabInfo{retitled}, nil).Once()
+	for range 3 {
+		tick <- time.Time{}
+	}
+	select {
+	case ev := <-events:
+		require.Equal(s.T(), TabEvent{Kind: TabUpdated, Tab: retitled}, ev)
+	case <-time.After(time.Second):
+		s.T().Fatal("the later title never reached the pane")
+	}
+	require.Empty(s.T(), drain(events))
+	mockClient.AssertExpectations(s.T())
+}
+
+func (s *CDPManagerSuite) TestTitlePollRunsWhileAnyoneSubscribes() {
+	mgr, _ := s.newTestManager(false)
+	polling := func() bool {
+		mgr.mu.Lock()
+		defer mgr.mu.Unlock()
+		return mgr.stopTitlePoll != nil
+	}
+	require.False(s.T(), polling())
+	_, first := mgr.Subscribe()
+	_, second := mgr.Subscribe()
+	require.True(s.T(), polling())
+	first()
+	require.True(s.T(), polling(), "a pane still watches")
+	second()
+	require.False(s.T(), polling())
+	_, again := mgr.Subscribe()
+	require.True(s.T(), polling())
+	again()
+
+	// Before it connects there is nothing to list.
+	mgr.refreshTabs()
 }

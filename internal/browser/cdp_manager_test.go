@@ -259,6 +259,8 @@ func (s *CDPManagerSuite) newTestManager(discoverExisting bool) (*CDPManager, *m
 	}
 	mgr.timeNow = func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	mgr.background = func(fn func()) { fn() }
+	// The title poll waits for good unless a test ticks it.
+	mgr.after = func(time.Duration) <-chan time.Time { return nil }
 	return mgr, mockClient
 }
 
