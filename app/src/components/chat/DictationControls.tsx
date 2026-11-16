@@ -9,8 +9,8 @@ type Dictation = ReturnType<typeof useDictation>;
 const isMac = typeof navigator !== "undefined" && navigator.platform.includes("Mac");
 
 /** The corner tab's buttons and its padding. */
-const CORNER_BUTTON = 24;
-const CORNER_PAD = 3;
+const CORNER_BUTTON = 20;
+const CORNER_PAD = 2;
 /** The composer's own padding on the right and top (see ChatInput's inputWrapper). */
 const COMPOSER_PAD_RIGHT = 14;
 
@@ -56,11 +56,11 @@ export function DictationCorner({ d }: { d: Dictation }) {
         borderLeft: `1px solid ${colors.border}`,
         borderBottom: `1px solid ${colors.border}`,
         // The outer corner follows the composer's (16px less its border).
-        borderRadius: "0 15px 0 12px",
+        borderRadius: "0 15px 0 10px",
       }}
     >
       <DictationMicButton d={d} />
-      {n === 2 && <span style={{ width: 1, height: 14, background: colors.border, flexShrink: 0 }} />}
+      {n === 2 && <span style={{ width: 1, height: 12, background: colors.border, flexShrink: 0 }} />}
       <PromptEditButton d={d} />
     </div>
   );
@@ -111,7 +111,7 @@ export function DictationMicButton({ d }: { d: Dictation }) {
           flexShrink: 0,
           background: recording || d.ui.phase === "transcribing" ? colors.border : "transparent",
           border: "none",
-          borderRadius: 8,
+          borderRadius: 6,
           color: c,
           opacity: disabled ? 0.4 : 1,
           cursor: disabled ? "default" : "pointer",
@@ -119,7 +119,7 @@ export function DictationMicButton({ d }: { d: Dictation }) {
           animation: recording ? "loop-dictation-pulse 1s ease-in-out infinite" : undefined,
         }}
       >
-        <MicIcon size={13} />
+        <MicIcon size={11} />
       </button>
     </HoverTip>
   );
@@ -167,7 +167,7 @@ export function PromptEditButton({ d }: { d: Dictation }) {
           flexShrink: 0,
           background: editHold ? colors.border : "transparent",
           border: "none",
-          borderRadius: 8,
+          borderRadius: 6,
           color: c,
           opacity: disabled ? 0.4 : 1,
           cursor: disabled ? "default" : "pointer",
@@ -175,7 +175,7 @@ export function PromptEditButton({ d }: { d: Dictation }) {
           animation: recording || d.ui.phase === "editing" ? "loop-dictation-pulse 1s ease-in-out infinite" : undefined,
         }}
       >
-        <EditVoiceIcon size={13} />
+        <EditVoiceIcon size={11} />
       </button>
     </HoverTip>
   );
