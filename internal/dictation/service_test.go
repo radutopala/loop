@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -42,16 +43,28 @@ type ServiceSuite struct {
 	cfg    Config
 	svc    *Service
 	ts     *httptest.Server
+	// With holding set, the test server keeps a model download waiting until
+	// release closes, so the test sees it under way.
+	holding *atomic.Bool
+	release chan struct{}
 }
 
 func TestServiceSuite(t *testing.T) { suite.Run(t, new(ServiceSuite)) }
 
 func (s *ServiceSuite) SetupTest() {
 	s.server = new(mockLocalServer)
+	holding, release := new(atomic.Bool), make(chan struct{})
+	s.holding, s.release = holding, release
 	s.ts = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/inference" {
 			_, _ = w.Write([]byte(`{"text":"hi"}`))
 			return
+		}
+		if holding.Load() {
+			select {
+			case <-release:
+			case <-r.Context().Done():
+			}
 		}
 		http.NotFound(w, r)
 	}))
@@ -133,8 +146,10 @@ func (s *ServiceSuite) downloadFailed() {
 func (s *ServiceSuite) TestStatusStartsDownloadWhenEnabled() {
 	s.server.On("Running").Return(false)
 	s.server.On("FindBinary").Return("/bin/whisper-server", nil)
+	s.holding.Store(true)
 	st := s.svc.Status()
 	require.True(s.T(), st.Download.Active)
+	close(s.release)
 	s.downloadFailed()
 }
 

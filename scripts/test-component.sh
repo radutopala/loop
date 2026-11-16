@@ -296,10 +296,11 @@ if [ -n "$TEST_RUN" ]; then
     TEST_FLAGS="-run $TEST_RUN"
 fi
 
-# Run component tests. A full docs-capture run drives ~22 per-section scenarios
-# (each its own browser + live agent + MP4 encode), so allow generous headroom.
-# Override with GO_TEST_TIMEOUT.
-TEST_TIMEOUT=900s
+# Run component tests. The backend and frontend suites together take about
+# 15 minutes in CI, so this leaves room for new scenarios. A full docs-capture
+# run drives ~22 per-section scenarios (each its own browser + live agent +
+# MP4 encode), so allow generous headroom. Override with GO_TEST_TIMEOUT.
+TEST_TIMEOUT=1500s
 [ -n "$LOOP_DOCS_CAPTURE" ] && TEST_TIMEOUT=2700s
 [ -n "$GO_TEST_TIMEOUT" ] && TEST_TIMEOUT="$GO_TEST_TIMEOUT"
 
