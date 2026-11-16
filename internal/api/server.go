@@ -187,6 +187,7 @@ type Server struct {
 	msgHandler              IncomingMessageHandler
 	runCanceller            RunCanceller
 	explainer               Explainer
+	promptEditor            PromptEditor
 	learnTurner             LearnTurner
 	planResolver            PlanResolver
 	sessionSwitcher         SessionSwitcher
@@ -638,6 +639,8 @@ func (s *Server) registerAgentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/channels/{id}/explain", s.handleSetExplain)
 	mux.HandleFunc("GET /api/channels/{id}/explanations", s.handleListExplanations)
 	mux.HandleFunc("POST /api/channels/{id}/explanations", s.handleExplain)
+	mux.HandleFunc("POST /api/channels/{id}/prompt-edit", s.handlePromptEdit)
+	mux.HandleFunc("GET /api/channels/{id}/prompt-edit", s.handlePromptEditState)
 	mux.HandleFunc("GET /api/channels/{id}/walkthroughs", s.handleListWalkthroughs)
 	mux.HandleFunc("POST /api/channels/{id}/walkthroughs", s.handleCreateWalkthrough)
 	mux.HandleFunc("GET /api/channels/{id}/walkthroughs/{wid}", s.handleGetWalkthrough)

@@ -16,7 +16,14 @@ export interface HoldKey {
   shiftKey?: boolean;
 }
 
+/** What a hold does with the speech: dictate it into the composer, or take
+ *  it as an instruction that edits the draft. */
+export type HoldMode = "dictate" | "edit";
+
 export interface HoldCallbacks {
+  /** Whether a hold may edit the draft; without it, Shift with the key
+   *  types as usual. */
+  canEdit?(): boolean;
   /** The key went down (or the button was pressed): capture may begin, unseen. */
   prepare(): void;
   /** Dictation starts for real. */
@@ -43,7 +50,8 @@ type Phase = "idle" | "armed" | "active";
 
 /**
  * The hold-to-talk state machine. The key alone, held for holdMs, starts
- * dictation; releasing it stops. Any other key while armed aborts (so the
+ * dictation; releasing it stops. With Shift down too (when canEdit allows),
+ * the hold is an edit hold instead (see mode). Any other key while armed aborts (so the
  * key's combos still type); while active it cancels, as does Esc. The mic
  * button starts at once on press. Released within holdMs it latches, and
  * dictation goes on until the next press; held longer, the release stops
@@ -53,6 +61,7 @@ type Phase = "idle" | "armed" | "active";
 export class HoldToTalk {
   private phase: Phase = "idle";
   private source: "key" | "pointer" = "key";
+  private holdMode: HoldMode = "dictate";
   private timer: unknown = null;
   /** A quick click left the mic on until the next press. */
   private latched = false;
@@ -73,12 +82,19 @@ export class HoldToTalk {
     return this.phase === "active";
   }
 
+  /** What the current (or last) hold does with the speech. */
+  get mode(): HoldMode {
+    return this.holdMode;
+  }
+
   keyDown(e: HoldKey): boolean {
     if (e.code === this.code && this.source === "key" && this.phase !== "idle") return true;
     if (e.code === this.code && this.phase === "idle") {
-      if (e.repeat || e.ctrlKey || e.metaKey || e.shiftKey) return false;
+      if (e.repeat || e.ctrlKey || e.metaKey) return false;
+      if (e.shiftKey && !this.cb.canEdit?.()) return false;
       this.phase = "armed";
       this.source = "key";
+      this.holdMode = e.shiftKey ? "edit" : "dictate";
       this.cb.prepare();
       this.timer = this.timers.set(() => {
         this.timer = null;
@@ -125,7 +141,9 @@ export class HoldToTalk {
     return this.latched;
   }
 
-  pointerDown(): void {
+  /** The mic button (dictate) or the edit button was pressed. A press while
+   *  latched stops, whichever button it is. */
+  pointerDown(mode: HoldMode = "dictate"): void {
     if (this.latched) {
       this.reset();
       this.cb.stop();
@@ -134,6 +152,7 @@ export class HoldToTalk {
     if (this.phase !== "idle") return;
     this.phase = "active";
     this.source = "pointer";
+    this.holdMode = mode;
     this.timer = this.timers.set(() => {
       this.timer = null;
     }, this.holdMs);

@@ -219,3 +219,57 @@ describe("HoldToTalk", () => {
     expect(calls).toEqual(["prepare", "start"]);
   });
 });
+
+describe("HoldToTalk edit holds", () => {
+  const alt = { code: DICTATION_HOLD_CODE, key: "Alt" };
+
+  function makeEditable(canEdit: boolean) {
+    const calls: string[] = [];
+    const t = fakeTimers();
+    const hold = new HoldToTalk(
+      {
+        canEdit: () => canEdit,
+        prepare: () => calls.push("prepare"),
+        start: () => calls.push("start"),
+        stop: () => calls.push("stop"),
+        cancel: () => calls.push("cancel"),
+        abort: () => calls.push("abort"),
+      },
+      t.timers,
+    );
+    return { hold, calls, ...t };
+  }
+
+  it("Shift with the key starts an edit hold when the composer can edit", () => {
+    const { hold, calls, advance } = makeEditable(true);
+    expect(hold.mode).toBe("dictate");
+    hold.keyDown({ ...alt, shiftKey: true });
+    advance(DICTATION_HOLD_MS);
+    expect(hold.mode).toBe("edit");
+    expect(calls).toEqual(["prepare", "start"]);
+    hold.keyUp(alt);
+    expect(calls).toEqual(["prepare", "start", "stop"]);
+    // The mode outlives the hold, for the final that follows the release.
+    expect(hold.mode).toBe("edit");
+    hold.keyDown(alt);
+    expect(hold.mode).toBe("dictate");
+  });
+
+  it("Shift with the key types as usual when it can't", () => {
+    const { hold, calls } = makeEditable(false);
+    expect(hold.keyDown({ ...alt, shiftKey: true })).toBe(false);
+    expect(calls).toEqual([]);
+  });
+
+  it("the edit button starts an edit hold, and a press of either button stops a latched one", () => {
+    const { hold, calls } = makeEditable(true);
+    hold.pointerDown("edit");
+    expect(hold.mode).toBe("edit");
+    hold.pointerUp();
+    expect(hold.latchedOn).toBe(true);
+    hold.pointerDown();
+    expect(calls).toEqual(["prepare", "start", "stop"]);
+    hold.pointerDown();
+    expect(hold.mode).toBe("dictate");
+  });
+});

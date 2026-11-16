@@ -129,7 +129,7 @@ class FakeSide implements SideReader {
   reads: string[] = [];
   text = "write-up";
   running = false;
-  read(view: "learn" | "explain", lines: number) {
+  read(view: "learn" | "explain" | "edits", lines: number) {
     this.reads.push(`${view} ${lines}`);
     return this.text;
   }
@@ -1182,8 +1182,8 @@ describe("the side view", () => {
   });
 
   it.each([
-    { name: "no view", view: undefined, error: "view is required: learn, explain, shell" },
-    { name: "an unknown view", view: "git", error: 'unknown view "git"; use learn, explain, shell' },
+    { name: "no view", view: undefined, error: "view is required: learn, explain, edits, shell" },
+    { name: "an unknown view", view: "git", error: 'unknown view "git"; use learn, explain, edits, shell' },
   ])("refuses to open $name", async ({ view, error }) => {
     expect(await run([{ op: "open_side", view }])).toEqual([{ op: "open_side", ok: false, error }]);
   });
@@ -1201,7 +1201,7 @@ describe("the side view", () => {
     expect(await run([{ op, pane: "side", text: "ls" }])).toEqual([{ op, ok: false, error: "no side view is open; open_side {view} first" }]);
   });
 
-  it.each(["learn", "explain"] as const)("reads the %s view's text", async (view) => {
+  it.each(["learn", "explain", "edits"] as const)("reads the %s view's text", async (view) => {
     ws.side = view;
     expect(await run([{ op: "read_output", pane: "side", lines: 7 }])).toEqual([{ op: "read_output", ok: true, pane: "side", output: "write-up" }]);
     expect(side.reads).toEqual([`${view} 7`]);
@@ -1264,6 +1264,11 @@ describe("the side view", () => {
     expect(await run([{ op: "send_input", pane: "side", text: "hi" }])).toEqual([
       { op: "send_input", ok: false, error: "send_input on the side view types into the Shell view or asks the Learn view's learn thread; the Explain view takes no input" },
     ]);
+  });
+
+  it("refuses input to the Edits view", async () => {
+    ws.side = "edits";
+    expect(await run([{ op: "send_input", pane: "side", text: "hi" }])).toEqual([{ op: "send_input", ok: false, error: "the Edits view's chat is read-only: only edits by voice run in it" }]);
   });
 
   it("waits for the Explain view to be idle", async () => {

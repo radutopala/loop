@@ -3,6 +3,7 @@ import { fetchComposerHistory, resolveAsk, resolvePlan } from "../../api/channel
 import { fetchShortcuts, type PromptShortcut } from "../../api/configApi";
 import { type FileSearchResult, type RootEntry, searchFiles } from "../../api/files";
 import { resolveGateApproval, sendCommand, sendMessage } from "../../api/loopApi";
+import { editPrompt } from "../../api/promptEdit";
 import { ShortcutsVersionContext } from "../../hooks/shortcutsVersion";
 import { useDictation } from "../../hooks/useDictation";
 import type { QueuedEditSaveResult } from "../../hooks/useQueuedEdit";
@@ -17,7 +18,8 @@ import { ComposerSwitchPills } from "./ComposerSwitchPills";
 import { ContinueIcon } from "./ContinueIcon";
 import { draftText } from "./chatDrafts";
 import { composerHeight, composerMaxHeight } from "./composerHeight";
-import { DictationBanner, DictationMicButton } from "./DictationControls";
+import { DictationBanner, DictationCorner, dictationCornerReserve } from "./DictationControls";
+import type { PromptEditRequest } from "./dictationController";
 import { ExplainToggle } from "./ExplainToggle";
 import { HoverTip } from "./HoverTip";
 import { LearnToggle } from "./LearnToggle";
@@ -341,7 +343,9 @@ export function ChatInput({
   // so handleSend reads it.
   const [dictationSend, setDictationSend] = useState(0);
   const requestDictationSend = useCallback(() => setDictationSend((n) => n + 1), []);
-  const dictation = useDictation(inputRef, setDictatedText, requestDictationSend);
+  // An edit hold rewrites the draft on the composer's selected model/effort.
+  const editDraft = useCallback((req: PromptEditRequest, signal: AbortSignal) => editPrompt(channelId, req, signal), [channelId]);
+  const dictation = useDictation(inputRef, setDictatedText, requestDictationSend, editDraft);
   const cmdDropdownRef = useRef<HTMLDivElement>(null);
   const shortcutDropdownRef = useRef<HTMLDivElement>(null);
 
@@ -1071,12 +1075,15 @@ export function ChatInput({
     ],
   );
 
+  // Room on the right for the dictation buttons in the composer's corner.
+  const cornerReserve = dictationCornerReserve(dictation);
   const bannerStyle: React.CSSProperties = {
     display: "flex",
     alignItems: "center",
     gap: 8,
     width: "100%",
-    padding: "4px 0 8px",
+    boxSizing: "border-box",
+    padding: `4px ${cornerReserve}px 8px 0`,
     borderBottom: `1px solid ${colors.border}`,
     marginBottom: 8,
     fontSize: 12,
@@ -1096,6 +1103,7 @@ export function ChatInput({
 
   return (
     <div style={{ position: "relative", ...styles.inputWrapper, flexDirection: "column" }}>
+      <DictationCorner d={dictation} />
       {editingQueued && (
         <div data-testid="queued-edit-banner" style={bannerStyle}>
           <span style={{ flex: 1, color: colors.active }}>Editing a queued message — it won't start until you save or cancel</span>
@@ -1244,7 +1252,7 @@ export function ChatInput({
       <DictationBanner d={dictation} />
       <textarea
         ref={inputRef}
-        style={{ ...styles.textarea, width: "100%" }}
+        style={{ ...styles.textarea, width: "100%", boxSizing: "border-box", paddingRight: cornerReserve }}
         value={text}
         onChange={handleChange}
         // While dictating the text is the dictation's: keys don't edit or send it.
@@ -1322,7 +1330,6 @@ export function ChatInput({
           </HoverTip>
         )}
         <div style={{ flex: 1 }} />
-        <DictationMicButton d={dictation} />
         <LearnToggle />
         <ExplainToggle />
         <ComposerSwitchPills />

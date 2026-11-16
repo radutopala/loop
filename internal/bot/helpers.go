@@ -10,6 +10,7 @@ import (
 
 	"github.com/radutopala/loop/internal/explain"
 	"github.com/radutopala/loop/internal/learn"
+	"github.com/radutopala/loop/internal/promptedit"
 )
 
 // FormatApprovalDetails renders a key/value summary as quoted markdown lines.
@@ -82,6 +83,7 @@ func removeMCPConfigWith(removeFn func(string) error, dirPath, channelID string)
 		"mcp-" + channelID + ".json",
 		"mcp-" + channelID + "-" + learn.AgentID + ".json",
 		"mcp-" + channelID + "-" + explain.AgentID + ".json",
+		"mcp-" + channelID + "-" + promptedit.AgentID + ".json",
 	} {
 		p := filepath.Join(dirPath, ".loop", name)
 		if err := removeFn(p); err != nil && !errors.Is(err, os.ErrNotExist) {

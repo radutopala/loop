@@ -77,6 +77,7 @@ func (s *OrchestratorSuite) TestLookupHiddenKind() {
 	}{
 		{db.ChannelKindLearn, "learn"},
 		{db.ChannelKindExplain, "explain"},
+		{db.ChannelKindPromptEdit, "prompt-edit"},
 		{db.PluginKind("cogtest"), "plugin"},
 		{db.PluginKind("echo"), "plugin"},
 		{"chat", ""},

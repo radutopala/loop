@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type DictationStatus, fetchDictationStatus, startDictationModelDownload } from "../../api/dictation";
-import { dictationAvailability, downloadDictationModel, downloadProgressText, MODEL_POLL_MS, micButtonTip, modelSizeLabel } from "./dictationModel";
+import { dictationAvailability, downloadDictationModel, downloadProgressText, editButtonTip, MODEL_POLL_MS, micButtonTip, modelSizeLabel } from "./dictationModel";
 
 function status(patch: Partial<DictationStatus> = {}, download: Partial<DictationStatus["download"]> = {}): DictationStatus {
   return {
@@ -46,6 +46,8 @@ describe("prompt text", () => {
     expect(micButtonTip("ready", status({ model_ready: true }), true)).toContain("Right Option");
     expect(micButtonTip("ready", status({ model_ready: true }), false)).toContain("Right Alt");
     expect(micButtonTip("needs_model", status(), false)).toContain("~550 MB");
+    expect(editButtonTip("ready", status({ model_ready: true }), true)).toMatch(/^Edit by voice\nHold Shift\+Right Option/);
+    expect(editButtonTip("needs_model", status(), false)).toBe(`Edit by voice\nNeeds a one-time ~550 MB model download; press to set it up.`);
   });
 });
 

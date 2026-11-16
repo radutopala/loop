@@ -60,12 +60,13 @@ type Channel struct {
 }
 
 // Kinds of hidden thread. ChannelKindLearn runs a channel's learn passes,
-// ChannelKindExplain its explanations. A plugin's agent runs use a kind of
-// their own, ChannelKindPluginPrefix followed by the plugin's id (see
-// PluginKind).
+// ChannelKindExplain its explanations, ChannelKindPromptEdit the composer's
+// edits by voice. A plugin's agent runs use a kind of their own,
+// ChannelKindPluginPrefix followed by the plugin's id (see PluginKind).
 const (
 	ChannelKindLearn        = "learn"
 	ChannelKindExplain      = "explain"
+	ChannelKindPromptEdit   = "prompt-edit"
 	ChannelKindPluginPrefix = "plugin:"
 )
 
@@ -100,7 +101,8 @@ func IsUnlistedKind(kind string) bool {
 // IsHiddenKind reports whether kind marks a hidden thread, one the user
 // never sees in the sidebar, search or session import.
 func IsHiddenKind(kind string) bool {
-	if kind == ChannelKindLearn || kind == ChannelKindExplain {
+	switch kind {
+	case ChannelKindLearn, ChannelKindExplain, ChannelKindPromptEdit:
 		return true
 	}
 	_, ok := PluginOfKind(kind)

@@ -49,6 +49,15 @@ func (o *Orchestrator) defaultHiddenKinds() map[string]hiddenKind {
 				return o.applyExplainRequest(ctx, req, parent, turnID)
 			},
 		},
+		// A prompt-edit thread only ever runs the composer's edits by
+		// voice, each read-only in a session of its own.
+		db.ChannelKindPromptEdit: {
+			name:  "prompt-edit",
+			admit: o.admitPromptEdit,
+			apply: func(_ context.Context, req *agent.AgentRequest, msg *bot.IncomingMessage, parent *db.Channel, _ string) error {
+				return o.applyPromptEditRequest(req, msg, parent)
+			},
+		},
 		// A plugin's thread only ever runs the agent runs the plugin asked
 		// for, each in a session of its own.
 		db.ChannelKindPluginPrefix: {

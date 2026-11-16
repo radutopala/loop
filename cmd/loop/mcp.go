@@ -16,6 +16,7 @@ import (
 	"github.com/radutopala/loop/internal/logging"
 	"github.com/radutopala/loop/internal/mcpserver"
 	"github.com/radutopala/loop/internal/plugin"
+	"github.com/radutopala/loop/internal/promptedit"
 )
 
 // closeLogFile closes f and merges any close error into existingErr. If
@@ -111,9 +112,9 @@ func (a *app) runMCP(channelID, apiURL, dirPath, logPath, authorID, platform, ag
 		// Chat has no terminal: it isn't registered, and the daemon queues
 		// the messages sent to it.
 		memOpts = append(memOpts, mcpserver.WithAgentSender(agentID))
-	case agentID == explain.AgentID:
-		// An explanation only reads: like a learn pass it works alone, and
-		// it has no tools of its own either.
+	case agentID == explain.AgentID, agentID == promptedit.AgentID:
+		// An explanation or a prompt edit only reads: like a learn pass it
+		// works alone, and it has no tools of its own either.
 	default:
 		memOpts = append(memOpts, mcpserver.WithAgentTools(agentID))
 	}

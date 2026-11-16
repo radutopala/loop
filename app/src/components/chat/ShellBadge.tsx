@@ -15,8 +15,8 @@ interface ShellBadgeProps {
 }
 
 /**
- * The chat pane's Shell label, at the right of its header after the Explain
- * and Learn ones, while the chat's container runs. It opens the Shell view, a shell in
+ * The chat pane's Shell label, at the right of its header after the Explain,
+ * Learn and Edits ones, while the chat's container runs. It opens the Shell view, a shell in
  * that container beside the chat (open, it closes it).
  */
 export function ShellBadge({ leafId, running, open, onToggle }: ShellBadgeProps) {
@@ -37,8 +37,8 @@ export function ShellBadge({ leafId, running, open, onToggle }: ShellBadgeProps)
         height: 16,
         boxSizing: "border-box",
         whiteSpace: "nowrap",
-        // After the Explain (1) and Learn (2) badges, whichever mounts first.
-        order: 3,
+        // After the Explain (1), Learn (2) and Edits (3) badges, whichever mounts first.
+        order: 4,
         background: open ? colors.hoverBg : "transparent",
         border: `1px solid ${colors.border}`,
         color: colors.textDim,

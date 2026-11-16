@@ -300,6 +300,8 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("PUT /api/channels/{id}/explain", s.srv.handleSetExplain)
 	s.mux.HandleFunc("GET /api/channels/{id}/explanations", s.srv.handleListExplanations)
 	s.mux.HandleFunc("POST /api/channels/{id}/explanations", s.srv.handleExplain)
+	s.mux.HandleFunc("POST /api/channels/{id}/prompt-edit", s.srv.handlePromptEdit)
+	s.mux.HandleFunc("GET /api/channels/{id}/prompt-edit", s.srv.handlePromptEditState)
 	s.mux.HandleFunc("GET /api/channels/{id}/walkthroughs", s.srv.handleListWalkthroughs)
 	s.mux.HandleFunc("POST /api/channels/{id}/walkthroughs", s.srv.handleCreateWalkthrough)
 	s.mux.HandleFunc("GET /api/channels/{id}/walkthroughs/{wid}", s.srv.handleGetWalkthrough)

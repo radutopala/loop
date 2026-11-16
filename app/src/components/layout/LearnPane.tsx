@@ -129,10 +129,10 @@ export function LearnPane({ uiChannelId, learn, worktree, roots, subscribeChanne
       <div data-learn-thread style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
         <style>{"@keyframes loop-learn-blink { 50% { outline-color: transparent; } }"}</style>
         {learn.learnChannelId ? (
-          <LearnThread
+          <HiddenThreadChat
             key={learn.learnChannelId}
             uiChannelId={uiChannelId}
-            learnChannelId={learn.learnChannelId}
+            threadId={learn.learnChannelId}
             running={learn.running}
             roots={roots}
             subscribeChannelEvents={subscribeChannelEvents}
@@ -221,31 +221,37 @@ function useFocusedTurn(paneRef: React.RefObject<HTMLDivElement | null>, learn: 
   return highlighted;
 }
 
-function LearnThread({
+/**
+ * A hidden thread's chat in a side view: the learn thread's, or the
+ * prompt-edit one's. With readOnlyNote, the note stands in for its composer.
+ */
+export function HiddenThreadChat({
   uiChannelId,
-  learnChannelId,
+  threadId,
   running,
   roots,
   subscribeChannelEvents,
   getChatState,
   onChatStateUnmount,
+  readOnlyNote,
 }: {
   uiChannelId?: string;
-  learnChannelId: string;
+  threadId: string;
   running: boolean;
   roots?: RootEntry[];
   subscribeChannelEvents?: (channelId: string, listener: ChatEventListener) => () => void;
   getChatState?: (channelId: string) => ActiveChatState | undefined;
   onChatStateUnmount?: (channelId: string, state: ActiveChatState) => void;
+  readOnlyNote?: string;
 }) {
-  const subscribe = useCallback((listener: ChatEventListener) => subscribeChannelEvents?.(learnChannelId, listener) ?? (() => {}), [learnChannelId, subscribeChannelEvents]);
-  // A reply (or a pass) running when the view opens shows as it is: its
-  // Stop button, streamed text, activity and gates. The store keeps them up
-  // to date meanwhile, the learn thread staying subscribed (see useLearn).
-  const onUnmount = useCallback((state: ActiveChatState) => onChatStateUnmount?.(learnChannelId, state), [learnChannelId, onChatStateUnmount]);
-  const chatState = useChatState(learnChannelId, running, { initialState: getChatState?.(learnChannelId), onUnmount, subscribeChatEvents: subscribe });
-  useChatPaneInput(uiChannelId ?? null, SIDE_PANE, learnChannelId, chatState);
-  return <ChatView channelId={learnChannelId} chatState={chatState} roots={roots} noAutoFocus />;
+  const subscribe = useCallback((listener: ChatEventListener) => subscribeChannelEvents?.(threadId, listener) ?? (() => {}), [threadId, subscribeChannelEvents]);
+  // A run going when the view opens shows as it is: its Stop button,
+  // streamed text, activity and gates. The store keeps them up to date
+  // meanwhile, the thread staying subscribed (see useLearn, usePromptEdits).
+  const onUnmount = useCallback((state: ActiveChatState) => onChatStateUnmount?.(threadId, state), [threadId, onChatStateUnmount]);
+  const chatState = useChatState(threadId, running, { initialState: getChatState?.(threadId), onUnmount, subscribeChatEvents: subscribe });
+  useChatPaneInput(uiChannelId ?? null, SIDE_PANE, threadId, chatState);
+  return <ChatView channelId={threadId} chatState={chatState} roots={roots} noAutoFocus readOnlyNote={readOnlyNote} />;
 }
 
 function ProposalCard({

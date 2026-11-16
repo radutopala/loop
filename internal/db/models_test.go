@@ -103,6 +103,7 @@ func (s *ModelsSuite) TestIsHiddenKind() {
 	}{
 		{ChannelKindLearn, true},
 		{ChannelKindExplain, true},
+		{ChannelKindPromptEdit, true},
 		{PluginKind("cogtest"), true},
 		{ChannelKindPluginPrefix, false},
 		{"plugin", false},

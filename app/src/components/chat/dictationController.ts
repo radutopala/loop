@@ -1,5 +1,5 @@
 import type { AudioCapture } from "./dictationCapture";
-import { type HoldKey, type HoldTimers, HoldToTalk } from "./dictationHold";
+import { DICTATION_HOLD_CODE, type HoldKey, type HoldMode, type HoldTimers, HoldToTalk } from "./dictationHold";
 import type { DictationAvailability } from "./dictationModel";
 import { pcmLevel } from "./dictationPcm";
 import { DictationStream, type SocketLike } from "./dictationStream";
@@ -11,14 +11,39 @@ export type MicAccess = "granted" | "denied" | "not-determined" | "restricted" |
 export type DictationNotice = "needs_model" | "unavailable" | "mic_denied";
 
 export interface DictationUiState {
-  phase: "idle" | "recording" | "transcribing";
+  /** editing: an edit hold's instruction is being applied to the draft. */
+  phase: "idle" | "recording" | "transcribing" | "editing";
+  /** What the current or last hold does with the speech. */
+  mode: HoldMode;
+  /** An edit hold's instruction as heard so far; it never goes in the
+   *  composer. */
+  instruction: string;
+  /** The last edit can be undone (Undo, or Cmd/Ctrl+Z in the composer). */
+  undo: boolean;
   /** Input level, 0..1, while recording. */
   level: number;
   error: string | null;
   notice: DictationNotice | null;
 }
 
-export const IDLE_DICTATION: DictationUiState = { phase: "idle", level: 0, error: null, notice: null };
+export const IDLE_DICTATION: DictationUiState = { phase: "idle", mode: "dictate", instruction: "", undo: false, level: 0, error: null, notice: null };
+
+/** A draft, its selection, and the spoken instruction to apply to it. */
+export interface PromptEditRequest {
+  draft: string;
+  start: number;
+  end: number;
+  instruction: string;
+}
+
+/** The edited draft and the span in it the edit wrote. */
+export interface PromptEditResult {
+  text: string;
+  from: number;
+  to: number;
+}
+
+const MODIFIER_KEYS = new Set(["Shift", "Meta", "Control", "Alt", "AltGraph", "CapsLock"]);
 
 export interface DictationDeps {
   /** The composer's text and selection now. */
@@ -37,6 +62,9 @@ export interface DictationDeps {
   /** Sends the composer's message, once the final text is written. */
   send(): void;
   onState(s: DictationUiState): void;
+  /** Applies an edit hold's instruction to the draft; without it there are
+   *  no edit holds. */
+  editPrompt?(req: PromptEditRequest, signal: AbortSignal): Promise<PromptEditResult>;
   timers?: HoldTimers;
 }
 
@@ -54,6 +82,13 @@ function isPermissionError(err: unknown): boolean {
  * takes its place and the caret goes after it. A cancel puts the composer
  * back as it was. The message is sent only when the dictation ends with a
  * send phrase, which is left out of it.
+ *
+ * An edit hold (Shift with the hold key, or the edit button) takes the
+ * speech as an instruction instead: it shows above the composer as it's
+ * heard, and on release editPrompt rewrites the draft (or the selection) as
+ * it asks. The composer is read-only meanwhile, and Esc drops the edit. The
+ * rewritten span is selected, and Undo or Cmd/Ctrl+Z puts the draft back
+ * until the next key typed there.
  */
 export class DictationController {
   readonly hold: HoldToTalk;
@@ -69,10 +104,16 @@ export class DictationController {
   /** Bumped per session, so late callbacks from an old one are dropped. */
   private session = 0;
   private refreshing: Promise<void> | null = null;
+  private mode: HoldMode = "dictate";
+  /** The edit under way, to abort with Esc. */
+  private editAbort: AbortController | null = null;
+  /** The draft before the last edit, and the text the edit left. */
+  private lastEdit: { before: ComposerSnapshot; after: string } | null = null;
 
   constructor(private readonly d: DictationDeps) {
     this.hold = new HoldToTalk(
       {
+        canEdit: () => !!d.editPrompt && !this.editAbort,
         prepare: () => this.prepare(),
         start: () => this.start(),
         stop: () => void this.stop(),
@@ -93,9 +134,41 @@ export class DictationController {
   }
 
   keyDown(e: HoldKey): boolean {
+    if (this.editAbort) {
+      if (e.key !== "Escape") return false;
+      this.cancelEdit();
+      return true;
+    }
+    if (this.lastEdit && !this.hold.busy) {
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "z") {
+        this.undoEdit();
+        return true;
+      }
+      if (e.code !== DICTATION_HOLD_CODE && !MODIFIER_KEYS.has(e.key)) this.clearUndo();
+    }
     // Turned off in the config, the hold key types as usual.
     if (!this.hold.busy && this.d.availability() === "disabled") return false;
     return this.hold.keyDown(e);
+  }
+
+  /** Puts the draft back as it was before the last edit, unless it has
+   *  changed since. */
+  undoEdit(): void {
+    const e = this.lastEdit;
+    this.clearUndo();
+    if (e && this.d.read().text === e.after) this.d.write(e.before.text, e.before.start, e.before.end);
+  }
+
+  private clearUndo(): void {
+    if (!this.lastEdit) return;
+    this.lastEdit = null;
+    this.set({ undo: false });
+  }
+
+  private cancelEdit(): void {
+    this.editAbort?.abort();
+    this.editAbort = null;
+    this.set({ phase: "idle", instruction: "" });
   }
 
   keyUp(e: HoldKey): boolean {
@@ -109,6 +182,8 @@ export class DictationController {
 
   /** Drops any session without touching the composer (unmount). */
   dispose(): void {
+    this.editAbort?.abort();
+    this.editAbort = null;
     this.stream?.cancel();
     this.reset();
   }
@@ -130,6 +205,11 @@ export class DictationController {
   private start(): void {
     this.holding = false;
     if (this.stream) return;
+    if (this.editAbort) {
+      this.abort();
+      this.hold.release();
+      return;
+    }
     const a = this.d.availability();
     if (a !== "ready") {
       this.abort();
@@ -138,6 +218,8 @@ export class DictationController {
       return;
     }
     this.holding = true;
+    this.mode = this.hold.mode;
+    this.clearUndo();
     const id = ++this.session;
     this.base = this.d.read();
     this.committed = "";
@@ -149,7 +231,7 @@ export class DictationController {
     });
     for (const buf of this.pending) this.stream.sendAudio(buf);
     this.pending = [];
-    this.set({ phase: "recording", level: 0, error: null, notice: null });
+    this.set({ phase: "recording", mode: this.mode, instruction: "", level: 0, error: null, notice: null });
     if (this.capture) return;
     void this.d
       .micAccess(true)
@@ -256,12 +338,20 @@ export class DictationController {
   private partial(committed: string, tentative: string): void {
     if (!this.base) return;
     this.committed = committed;
+    if (this.mode === "edit") {
+      this.set({ instruction: previewDictation({ text: "", start: 0, end: 0 }, committed, tentative).text });
+      return;
+    }
     const p = previewDictation(this.base, committed, tentative);
     this.d.write(p.text, p.tentativeFrom, p.to);
   }
 
   private final(text: string): void {
     if (!this.base) return;
+    if (this.mode === "edit") {
+      void this.edit(this.base, text.trim());
+      return;
+    }
     const rest = stripSendPhrase(text, this.d.sendPhrases());
     const out = spliceDictation(this.base, rest ?? text);
     this.d.write(out.text, out.to, out.to);
@@ -269,14 +359,41 @@ export class DictationController {
   }
 
   private failed(code: string, message: string): void {
-    // Keep what was already committed; only the unstable tail goes.
-    if (this.base) {
+    // Keep what was already committed; only the unstable tail goes. An edit
+    // hold wrote nothing.
+    if (this.base && this.mode === "dictate") {
       const out = spliceDictation(this.base, this.committed);
       this.d.write(out.text, out.to, out.to);
     }
     if (code === "model_missing") this.set({ notice: "needs_model" });
     else if (code === "binary_missing") this.set({ notice: "unavailable" });
     else this.set({ error: message });
+  }
+
+  /** Applies an edit hold's instruction to the draft it began on. */
+  private async edit(base: ComposerSnapshot, instruction: string): Promise<void> {
+    if (!instruction) return;
+    const editPrompt = this.d.editPrompt;
+    if (!editPrompt) return;
+    const abort = new AbortController();
+    this.editAbort = abort;
+    this.set({ phase: "editing", instruction, level: 0 });
+    try {
+      const res = await editPrompt({ draft: base.text, start: base.start, end: base.end, instruction }, abort.signal);
+      if (this.editAbort !== abort) return;
+      this.editAbort = null;
+      if (this.d.read().text !== base.text) {
+        this.set({ phase: "idle", error: "The draft changed meanwhile; the edit was dropped." });
+        return;
+      }
+      this.d.write(res.text, res.from, res.to);
+      this.lastEdit = { before: base, after: res.text };
+      this.set({ phase: "idle", undo: true });
+    } catch (err) {
+      if (this.editAbort !== abort) return;
+      this.editAbort = null;
+      this.set({ phase: "idle", error: `Couldn't edit the prompt: ${err instanceof Error ? err.message : String(err)}` });
+    }
   }
 
   private restore(): void {
@@ -293,6 +410,7 @@ export class DictationController {
     this.committed = "";
     this.holding = false;
     this.hold.release();
+    if (this.editAbort) return;
     if (this.state.phase !== "idle" || this.state.level !== 0) this.set({ phase: "idle", level: 0 });
   }
 }

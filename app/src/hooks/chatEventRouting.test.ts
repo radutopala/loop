@@ -52,6 +52,7 @@ describe("run-end alerts", () => {
     ["learn-reply", false, false, false],
     ["explain", false, false, false],
     ["plugin", false, false, false],
+    ["prompt-edit", false, false, false],
   ] as const)("trigger=%j → unread %j, notify %j, bounce %j", (trigger, alerts, notifies, bounces) => {
     expect(alertsOnRunEnd(trigger)).toBe(alerts);
     expect(notifiesOnRunEnd(trigger)).toBe(notifies);

@@ -157,12 +157,13 @@ function readerOf(run: Run, channelId: string): SideReader {
   return reader;
 }
 
-/** How a step reaches its pane: a terminal, a chat (a chat pane, or the
- *  Learn view's learn thread), or the Explain view's text. */
+/** How a step reaches its pane: a terminal, a chat (a chat pane, the
+ *  Learn view's learn thread or the Edits view's prompt-edit thread), or
+ *  the Explain view's text. */
 function targetOf(step: UiStep, run: Run): "terminal" | "chat" | "explain" {
   if (onSide(step)) {
     const { view } = sideOf(run);
-    return view === "shell" ? "terminal" : view === "learn" ? "chat" : "explain";
+    return view === "shell" ? "terminal" : view === "learn" || view === "edits" ? "chat" : "explain";
   }
   const { ws } = workspaceOf(run);
   return CHAT_PANELS.includes(findPane(ws.view().panes, step.pane).panel) ? "chat" : "terminal";
@@ -539,6 +540,7 @@ async function sendInput(step: UiStep, run: Run): Promise<StepOutput> {
   if (typeof step.text !== "string") throw new StepError("text is required");
   const target = targetOf(step, run);
   if (target === "explain") throw new StepError("send_input on the side view types into the Shell view or asks the Learn view's learn thread; the Explain view takes no input");
+  if (target === "chat" && onSide(step) && sideOf(run).view === "edits") throw new StepError("the Edits view's chat is read-only: only edits by voice run in it");
   if (target === "chat") return sendChat(step, run, step.text);
   const { host } = run;
   const { pane, t } = await terminalOf(step, run, "types into", (t) => t.status() === "running" && t.lastOutputAt() > 0 && host.now() - t.lastOutputAt() >= INPUT_QUIET_MS);
