@@ -2349,7 +2349,11 @@ function LayoutTab({
   const { colors } = useTheme();
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(name);
-  const [confirming, setConfirming] = useState(false);
+  // The tab's box while its delete confirmation shows. The popover is portaled
+  // over it: the tab strip scrolls, so it would clip a popover inside it.
+  const [confirmAt, setConfirmAt] = useState<DOMRect | null>(null);
+  const confirming = confirmAt !== null;
+  const setConfirming = (on: boolean) => setConfirmAt(on ? (tabRef.current?.getBoundingClientRect() ?? null) : null);
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const tabRef = useRef<HTMLDivElement>(null);
@@ -2368,10 +2372,20 @@ function LayoutTab({
     if (!confirming) return;
     const handler = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      if (!target.closest("[data-confirm-popover]")) setConfirming(false);
+      if (!target.closest("[data-confirm-popover]")) setConfirmAt(null);
     };
+    // The popover holds the tab's box, so it closes once the tab moves: the
+    // strip scrolls or the window resizes.
+    const close = () => setConfirmAt(null);
+    const strip = tabRef.current?.parentElement;
     document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    window.addEventListener("resize", close);
+    strip?.addEventListener("scroll", close);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      window.removeEventListener("resize", close);
+      strip?.removeEventListener("scroll", close);
+    };
   }, [confirming]);
 
   const commitRename = () => {
@@ -2511,15 +2525,21 @@ function LayoutTab({
           {name}
         </span>
       )}
-      {confirming && (
-        <ConfirmPopover
-          onYes={() => {
-            setConfirming(false);
-            onDelete();
-          }}
-          onNo={() => setConfirming(false)}
-        />
-      )}
+      {confirmAt &&
+        createPortal(
+          <div style={{ position: "fixed", left: confirmAt.left, top: confirmAt.top, width: confirmAt.width, height: confirmAt.height, pointerEvents: "none", zIndex: 1000 }}>
+            <div style={{ pointerEvents: "auto" }}>
+              <ConfirmPopover
+                onYes={() => {
+                  setConfirmAt(null);
+                  onDelete();
+                }}
+                onNo={() => setConfirmAt(null)}
+              />
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
