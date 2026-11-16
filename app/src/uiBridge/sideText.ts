@@ -32,6 +32,11 @@ export function explainText(explanations: Explanation[], lines: number): string 
   return tail(text || "No explanations yet.", lines);
 }
 
+/** The Edits view's last lines: its prompt-edit thread's messages. */
+export function editsText(messages: ChatLine[], lines: number): string {
+  return tail(messages.length > 0 ? `Edits thread:\n${messagesText(messages)}` : "No edit by voice yet.", lines);
+}
+
 /** The Learn view's last lines: its proposals, then its learn thread's
  *  messages. */
 export function learnText(proposals: LearnProposal[], messages: ChatLine[], lines: number): string {

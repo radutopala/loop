@@ -470,7 +470,7 @@ var deleteChannelSteps = []deleteStep{
 
 const (
 	childIDs       = `SELECT channel_id FROM channels WHERE parent_id = \?`
-	hiddenKindRe   = `\(kind IN \('learn', 'explain'\) OR kind LIKE 'plugin:_%'\)`
+	hiddenKindRe   = `\(kind IN \('learn', 'explain', 'prompt-edit'\) OR kind LIKE 'plugin:_%'\)`
 	unlistedKindRe = `\(kind = 'side' OR ` + hiddenKindRe + `\)`
 )
 

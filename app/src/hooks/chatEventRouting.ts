@@ -43,15 +43,16 @@ export function subscriptionChannels(selectedId: string | null | undefined, runn
  * ("plugin").
  */
 function isHiddenTrigger(trigger: string | undefined): boolean {
-  return trigger === "learn" || trigger === "learn-reply" || trigger === "explain" || trigger === "plugin";
+  return trigger === "learn" || trigger === "learn-reply" || trigger === "explain" || trigger === "plugin" || trigger === "prompt-edit";
 }
 
 /**
- * Whether a finished run should mark its channel unread. The learn and
- * explain threads are hidden: the user can't open them from the sidebar,
- * and a reply in the learn thread shows in the open Learn view; a pass's
- * proposals surface through the Learn badge, an explanation in the Explain
- * pane and on its turn's Explain action.
+ * Whether a finished run should mark its channel unread. The learn, explain
+ * and prompt-edit threads are hidden: the user can't open them from the
+ * sidebar, and a reply in the learn thread shows in the open Learn view; a
+ * pass's proposals surface through the Learn badge, an explanation in the
+ * Explain pane and on its turn's Explain action, an edit by voice in the
+ * composer that asked for it.
  */
 export function alertsOnRunEnd(trigger: string | undefined): boolean {
   return !isHiddenTrigger(trigger);

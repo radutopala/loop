@@ -48,6 +48,12 @@ export function micButtonTip(a: DictationAvailability, s: DictationStatus | null
   }
 }
 
+/** The edit button's tip: how an edit hold works, or why it can't start. */
+export function editButtonTip(a: DictationAvailability, s: DictationStatus | null, isMac: boolean): string {
+  if (a !== "ready") return `Edit by voice\n${micButtonTip(a, s, isMac).split("\n").slice(1).join("\n")}`;
+  return `Edit by voice\nHold Shift+${dictationKeyName(isMac)} (or this button) and say how to change the draft, or the selected part of it; release to apply it. An empty composer gets the prompt you describe. Esc cancels; Cmd/Ctrl+Z undoes.`;
+}
+
 export interface ModelDownloadDeps {
   start(): Promise<void>;
   status(): Promise<DictationStatus>;

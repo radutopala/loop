@@ -684,6 +684,22 @@ Each channel has one hidden explain thread, `explain: <channel>`, created on fir
 
 ---
 
+## Edits by voice
+
+The composer's voice edit (see [Configuration: Dictation](configuration.md#dictation)) rewrites the draft as a spoken instruction asks, in one read-only agent run.
+
+### Edits view
+
+The Edits view is the [Learn view](#learn-view) with an Edits pane instead of the Learn pane: the chat and the channel's edit chat side by side over the layout, joined by the Loop logo on their seam, which animates while an edit runs. On a canvas layout, the Edits pane docks beside the chat's tile the same way. The `edits` label in the chat pane's header, after the Learn label, opens it once the channel has had an edit; a fork or fresh side chat's header has one too, for the side chat's own edits. The label, the pane's ✕ and Escape close the view, and the Explain, Learn and Shell labels swap its pane for theirs.
+
+The pane's header says `Edits`, with `editing the draft…` while an edit runs. Below it, the edit thread's chat: for each edit, the message the composer sent (the draft, the selection when there was one, and the instruction), the run's tool calls, and the rewrite it replied with. The chat is read-only: in place of a composer, a note says how to start an edit. An edit that runs while the view is open streams into it.
+
+### How it runs
+
+Each channel has one hidden prompt-edit thread, `prompt-edit: <channel>`, created by its first edit and deleted with the channel or thread. It's left out of the sidebar, and its runs mark nothing unread and post no notification. Each edit runs there in a session of its own, on the model and effort the composer has selected, with the read-only tool set; only the edits the composer asks for run in it. Esc in the composer, or leaving the chat, stops an edit that is still running, or takes it out of the thread's queue.
+
+---
+
 ## Plugin switches
 
 Plugins may add their own switches to the composer, after the Learn and Explain switches: a round pill each with the plugin's icon, dim when off, in the accent color when on, red when the plugin reports an error, with a dashed border while it works. The tooltip names the switch and says what the plugin reports. A click asks the plugin to turn it over; the pill shows the click at once, and turns back with the error in its tooltip when the plugin refuses. See [Plugins: Composer switches](plugins.md#composer-switches).

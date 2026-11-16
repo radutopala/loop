@@ -267,7 +267,7 @@ func (s *SQLiteStore) DeleteChannelsByParentID(ctx context.Context, parentID str
 // hiddenKind is the SQL condition that a channels row is a hidden thread,
 // the query form of IsHiddenKind. A plugin's kind needs an id after the
 // prefix, hence the `_`.
-const hiddenKind = `(kind IN ('` + ChannelKindLearn + `', '` + ChannelKindExplain + `') OR kind LIKE '` + ChannelKindPluginPrefix + `_%')`
+const hiddenKind = `(kind IN ('` + ChannelKindLearn + `', '` + ChannelKindExplain + `', '` + ChannelKindPromptEdit + `') OR kind LIKE '` + ChannelKindPluginPrefix + `_%')`
 
 // unlistedKind is the SQL condition that a channels row is a hidden thread
 // or a side chat, as IsUnlistedKind.

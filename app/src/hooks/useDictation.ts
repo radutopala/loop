@@ -2,7 +2,8 @@ import { type RefObject, useCallback, useEffect, useRef, useState } from "react"
 import { GLOBAL_CONFIG_SAVED_EVENT } from "../api/configApi";
 import { type DictationStatus, fetchDictationStatus, openDictationSocket, startDictationModelDownload } from "../api/dictation";
 import { MicCapture } from "../components/chat/dictationCapture";
-import { DictationController, type DictationUiState, IDLE_DICTATION, type MicAccess } from "../components/chat/dictationController";
+import { DictationController, type DictationDeps, type DictationUiState, IDLE_DICTATION, type MicAccess } from "../components/chat/dictationController";
+import type { HoldMode } from "../components/chat/dictationHold";
 import { dictationAvailability, downloadDictationModel, MODEL_POLL_MS } from "../components/chat/dictationModel";
 
 const ERROR_SHOW_MS = 5000;
@@ -20,9 +21,11 @@ async function micAccess(ask: boolean): Promise<MicAccess> {
  * download, and a DictationController writing into the textarea through
  * setText, and send for a dictation that ends with a send phrase. The hold key is watched on the window in the capture phase so its
  * release, Esc and other keys are seen wherever focus goes; a hold only
- * begins while this composer's textarea has focus.
+ * begins while this composer's textarea has focus. With editPrompt, Shift
+ * with the hold key (or the edit button) takes the speech as an
+ * instruction that edits the draft.
  */
-export function useDictation(inputRef: RefObject<HTMLTextAreaElement | null>, setText: (text: string) => void, send?: () => void) {
+export function useDictation(inputRef: RefObject<HTMLTextAreaElement | null>, setText: (text: string) => void, send?: () => void, editPrompt?: DictationDeps["editPrompt"]) {
   const [status, setStatus] = useState<DictationStatus | null>(null);
   const [ui, setUi] = useState<DictationUiState>(IDLE_DICTATION);
   const [downloading, setDownloading] = useState(false);
@@ -33,6 +36,8 @@ export function useDictation(inputRef: RefObject<HTMLTextAreaElement | null>, se
   setTextRef.current = setText;
   const sendRef = useRef(send);
   sendRef.current = send;
+  const editRef = useRef(editPrompt);
+  editRef.current = editPrompt;
   const mounted = useRef(true);
 
   const ctrlRef = useRef<DictationController | null>(null);
@@ -63,6 +68,11 @@ export function useDictation(inputRef: RefObject<HTMLTextAreaElement | null>, se
       send: () => sendRef.current?.(),
       onState: (s) => {
         if (mounted.current) setUi(s);
+      },
+      // Read each time, so an edit hold is offered only while the composer
+      // passes editPrompt.
+      get editPrompt() {
+        return editRef.current;
       },
     });
   }
@@ -175,19 +185,20 @@ export function useDictation(inputRef: RefObject<HTMLTextAreaElement | null>, se
     }
   }, []);
 
-  /** Pointer handlers for the mic button: click to toggle, or press and hold to talk. */
-  const micButton = {
+  /** Pointer handlers for the mic (dictate) or edit button: click to
+   *  toggle, or press and hold to talk. */
+  const holdButton = (mode: HoldMode) => ({
     onPointerDown: (e: React.PointerEvent<HTMLElement>) => {
       if (e.button !== 0) return;
       // Keep focus (and the caret) in the composer.
       e.preventDefault();
       e.currentTarget.setPointerCapture?.(e.pointerId);
-      ctrl.hold.pointerDown();
+      ctrl.hold.pointerDown(mode);
     },
     onPointerUp: () => ctrl.hold.pointerUp(),
     onPointerCancel: () => ctrl.hold.pointerCancel(),
     onMouseDown: (e: React.MouseEvent) => e.preventDefault(),
-  };
+  });
 
   return {
     status,
@@ -201,6 +212,9 @@ export function useDictation(inputRef: RefObject<HTMLTextAreaElement | null>, se
       setDownloadError(null);
       ctrl.dismiss();
     },
-    micButton,
+    micButton: holdButton("dictate"),
+    editButton: holdButton("edit"),
+    canEdit: !!editPrompt,
+    undoEdit: () => ctrl.undoEdit(),
   };
 }

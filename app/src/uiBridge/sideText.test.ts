@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Explanation } from "../api/explain";
 import type { LearnProposal } from "../api/learn";
-import { explainText, learnText } from "./sideText";
+import { editsText, explainText, learnText } from "./sideText";
 
 const explanation = (e: Partial<Explanation>): Explanation => ({
   id: 1,
@@ -65,5 +65,16 @@ describe("learnText", () => {
 
   it("says when there's nothing yet", () => {
     expect(learnText([], [], 50)).toBe("No learn pass yet.");
+  });
+});
+
+describe("editsText", () => {
+  it("reads the prompt-edit thread", () => {
+    expect(editsText([{ id: 1, author: "voice edit", bot: false, content: "<instruction>\nshorter\n</instruction>" }], 2)).toBe("shorter\n</instruction>");
+    expect(editsText([{ id: 1, author: "Loop", bot: true, content: "Fix it." }], 50)).toBe("Edits thread:\nLoop: Fix it.");
+  });
+
+  it("says when there's nothing yet", () => {
+    expect(editsText([], 50)).toBe("No edit by voice yet.");
   });
 });

@@ -30,12 +30,13 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *bot.IncomingMessa
 	}
 	if !active {
 		if !o.resolveThread(ctx, msg.ChannelID) {
-			if msg.AuthorID == learnAuthorID || msg.AuthorID == explainAuthorID || msg.AuthorID == pluginAuthorID {
-				// A learn pass's, explanation's or plugin run's trigger
+			if msg.AuthorID == learnAuthorID || msg.AuthorID == explainAuthorID || msg.AuthorID == pluginAuthorID || msg.AuthorID == promptEditAuthorID {
+				// A learn pass's, explanation's, plugin run's or edit's trigger
 				// whose hidden thread was deleted meanwhile. It must not
 				// bring the thread back as a plain channel, where the run
 				// would be unrestricted.
 				o.pluginRunDone(ctx, msg, errors.New("the plugin's thread was deleted"))
+				o.promptEditDone(msg, "", errors.New("the edit's thread was deleted"))
 				o.logger.Debug("dropping the trigger", "reason", "hidden thread gone", "channel_id", msg.ChannelID, "author_id", msg.AuthorID)
 				return
 			}
@@ -370,8 +371,14 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 	// deferred to after the run saves its own.
 	o.sessionRunStarted(msg.ChannelID)
 	defer o.sessionRunDone(ctx, msg.ChannelID)
-	var runErr error
-	defer func() { o.pluginRunDone(ctx, msg, runErr) }()
+	var (
+		runErr error
+		reply  string
+	)
+	defer func() {
+		o.pluginRunDone(ctx, msg, runErr)
+		o.promptEditDone(msg, reply, runErr)
+	}()
 
 	// An explanation's or learn pass's run marks it running here and done
 	// or failed below.
@@ -434,6 +441,7 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 		return
 	}
 
+	reply = resp.Response
 	o.deliverResponse(ctx, msg, resp, recent, lastStreamedText, runID, trigger)
 	o.explainRunDone(ctx, expl, resp.Response, nil)
 	o.learnPassDone(ctx, pass, nil)
@@ -445,7 +453,8 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 // runTrigger tags a run in ch's agent.status events with what started it,
 // so the renderer can hold back the dock bounce and notifications for runs
 // the user didn't ask for: "learn" for a learn pass, "explain" for an
-// explanation, "plugin" for a plugin's agent run, "bot" when the bot
+// explanation, "plugin" for a plugin's agent run, "prompt-edit" for an
+// edit by voice, "bot" when the bot
 // itself re-entered HandleMessage (an agent posting via the send_message or
 // create_thread MCP tools), "live" for a turn a live session started by
 // itself, "learn-reply" for a user's message in a learn
@@ -458,6 +467,8 @@ func (o *Orchestrator) runTrigger(ch *db.Channel, authorID string) string {
 		return "explain"
 	case authorID == pluginAuthorID:
 		return "plugin"
+	case authorID == promptEditAuthorID:
+		return "prompt-edit"
 	case authorID == liveAuthorID:
 		return "live"
 	case o.bot.IsBotUser(authorID):

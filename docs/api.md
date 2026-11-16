@@ -1573,6 +1573,39 @@ Explain the turn that ended with bot message `message_id`. Without `force`, an e
 
 ---
 
+## Prompt edit
+
+### `POST /api/channels/{id}/prompt-edit`
+
+Rewrite a composer draft as a spoken instruction asks. The composer's voice edit mode calls it with the instruction's transcript. The edit runs in the channel's hidden prompt-edit thread, created on first use, which keeps each edit's chat (the message with the draft and instruction, the run's tool calls and its reply) to look back at; the channel's Edits view shows it. Each edit is one read-only agent run in a session of its own, in the channel's directory, on the model and effort the channel's composer has selected (its overrides, else the config's `claude_model` / `claude_effort`). The run gets the read-only tool set and the Loop MCP server alone, with no tools of its own. Its `agent.status` events carry the trigger `prompt-edit`, so its end marks nothing unread and posts no notification. The call waits for the run; when the client goes away first, the run is stopped, or leaves the thread's queue if it hasn't started.
+
+**Request:**
+```json
+{"draft": "fix the login bug", "start": 0, "end": 0, "instruction": "add that the tests must pass"}
+```
+
+`start` and `end` are the selection in the draft, in UTF-16 code units as the browser counts them. With an empty selection the whole draft is rewritten; with an empty draft the instruction is written out as a prompt.
+
+**Response (200):** the new draft, and the span in it that the edit wrote (the whole text, or the replaced selection):
+```json
+{"text": "Fix the login bug, and make sure the tests pass.", "from": 0, "to": 48}
+```
+
+**Errors:** `400` if the body isn't valid JSON or the instruction is empty. `404` if the channel doesn't exist or is hidden. `500` if the run fails. `501` if prompt edit is not configured.
+
+### `GET /api/channels/{id}/prompt-edit`
+
+The channel's hidden prompt-edit thread, whose chat holds its edits by voice. Its messages come from `GET /api/channels/{edit_channel_id}/messages` and its run status from the thread's channel events, as for any thread.
+
+**Response (200):** `edit_channel_id` is `""` before the channel's first edit:
+```json
+{"edit_channel_id": "prompt-edit-1a2b3c"}
+```
+
+**Errors:** `404` if the channel doesn't exist or is hidden. `500` if the lookup fails.
+
+---
+
 ## Tasks
 
 ### `POST /api/tasks`
@@ -3390,21 +3423,21 @@ Runs steps in a window, in order, until one fails.
 | `remove_pane` | `pane` | Closes the pane |
 | `maximize_pane` | `pane` | Makes the pane fill the tab |
 | `restore_pane` | | Puts a maximized pane back |
-| `open_side` | `view` | Opens the side view beside the chat: `learn`, `explain` or `shell`. The result's `pane` is `side`. `shell` fails while the chat's container isn't running |
+| `open_side` | `view` | Opens the side view beside the chat: `learn`, `explain`, `edits` or `shell`. The result's `pane` is `side`. `shell` fails while the chat's container isn't running |
 | `close_side` | | Closes the side view |
 | `open_file` | `path`, `line?`, `preview?` | Opens a file of the channel's roots in the editor, in a tab that stays open; with `preview: true`, in the preview tab, which the next file opened replaces |
 | `open_walkthrough` | `walkthrough_id`, `walkthrough_step?`, `autoplay_sec?` | Shows step `walkthrough_step` (from 1, default 1) of one of the channel's [walkthroughs](#walkthroughs) in the editor, opening its file. With `autoplay_sec` (1 to 600) it moves to the next step every that many seconds until the last; without, it shows the step paused. Fails when the step's file can't be opened |
 | `close_walkthrough` | | Closes the walkthrough the editor shows |
 | `show_message` | `message_id` | Scrolls the channel's chat to the message (its `#id`) and highlights it, paging back through older messages and switching to a tab with a chat pane when needed. Fails when the chat has no such message. A message link, `loop://channel/<channel-id>/<message-id>`, is `select_channel` to the channel, then `show_message` |
 | `send_input` | `pane`, `text`, `submit?` | Types into an agent terminal or the Shell view, or queues the text as a chat pane's or the Learn view's learn thread's next message |
-| `read_output` | `pane`, `lines?` | The terminal's last `lines` (default 50, at most 2000), or a chat pane's, its messages as `author: text`. On the side view: the Shell view's terminal, the Learn view's proposals and learn thread, or the Explain view's explanations |
+| `read_output` | `pane`, `lines?` | The terminal's last `lines` (default 50, at most 2000), or a chat pane's, its messages as `author: text`. On the side view: the Shell view's terminal, the Learn view's proposals and learn thread, the Edits view's edit thread, or the Explain view's explanations |
 | `wait_for` | `pane`, `match?`, `quiet_ms?`, `lines?` | Waits until the last `lines` match the regular expression `match` (multiline, [RE2 syntax](https://github.com/google/re2/wiki/Syntax), so no lookarounds or backreferences), or, without it, until the terminal is quiet for `quiet_ms` (default 2000). After a `send_input` to that pane in the same command, only output since counts. A session that ended counts as done. On a chat pane: after a `send_input` to it, until it replied and has nothing left to run (or, with `match`, until its replies since match); without one, until it's idle for `quiet_ms`. On the Explain view: until it matches, or no explanation is pending for `quiet_ms` |
 
 On a canvas tab the panes are its tiles, and `canvas` in the state is `true`. `add_pane` puts the tile beside `next_to`'s tile, or beside all the tiles, on the side `direction` and `side` give, nudged off the others; `replace_pane` keeps the tile's place and size; `maximize_pane` makes the tile fill the canvas's view.
 
 `open_mode` is for `docker-agent` (Chat Terminal) panes: `resume`, `fork` (the default) or `fresh`; and for `chat-side` panes, Chat (Resume with fork) and Chat (Fresh session): `fork` (the default) or `fresh`, `resume` being the Chat pane's. A `chat` pane asked for with `fork` or `fresh` opens as a `chat-side` pane. `item` names the playground of a `playground` pane, and `scope` (`global` or `project`) picks it when both scopes have one by that name. For a `plugin` pane, `item` names the plugin panel as `plugin/panel`, or as the plugin's id when it has one panel; it must be a panel of an installed plugin the project enables.
 
-Terminal steps (`send_input`, `read_output`, `wait_for`) work only on `docker-agent` and `docker-shell` panes, which run in containers, and on `chat` and `chat-side` panes, and on the side view (`pane: "side"`, after an `open_side`). A host shell is refused, by the daemon and again by the window. The Shell view is a shell in the chat's own container, not the host's. The Explain view takes no input. A `pane` or `next_to` of `$n` is the pane step `n` (from 1) of the same command made, so a command can add a pane and type into it: `[{"op":"add_pane","panel":"chat-side","open_mode":"fresh"},{"op":"send_input","pane":"$1","text":"hi"}]`. For a terminal step, step `n` must be an `add_pane` or `replace_pane` of one of those panels, or an `open_side`. On a chat pane, `send_input` refuses `submit: false`, empty text, and a chat waiting on an answer to a question, plan or approval card.
+Terminal steps (`send_input`, `read_output`, `wait_for`) work only on `docker-agent` and `docker-shell` panes, which run in containers, and on `chat` and `chat-side` panes, and on the side view (`pane: "side"`, after an `open_side`). A host shell is refused, by the daemon and again by the window. The Shell view is a shell in the chat's own container, not the host's. The Explain and Edits views take no input. A `pane` or `next_to` of `$n` is the pane step `n` (from 1) of the same command made, so a command can add a pane and type into it: `[{"op":"add_pane","panel":"chat-side","open_mode":"fresh"},{"op":"send_input","pane":"$1","text":"hi"}]`. For a terminal step, step `n` must be an `add_pane` or `replace_pane` of one of those panels, or an `open_side`. On a chat pane, `send_input` refuses `submit: false`, empty text, and a chat waiting on an answer to a question, plan or approval card.
 
 **Response:**
 ```json

@@ -579,6 +579,8 @@ Hold the right Option key (right Alt on Linux and Windows) in the app's composer
 
 When you stop, the whole recording (up to two minutes) is transcribed once more and replaces the live text, which was pieced together from short passes. To send by voice, list words in `dictation.send_phrases`: a dictation that ends with one of them, such as "…fix the test, send", sends the message without it. Case, accents and punctuation don't matter.
 
+To edit the draft by voice instead, hold Shift with the right Option/Alt key, or use the pencil button next to the mic at the composer's top right. What you say is an instruction, such as "make it shorter", "add that the tests must pass" or "turn this into a list". It shows above the composer as you speak and never goes into the draft. When you release, one read-only agent run applies it to the whole draft, or to the selection when there is one, and writes an empty composer's prompt from scratch. The run uses the model and effort picked in the composer. The rewritten text comes back selected. Undo, or Cmd/Ctrl+Z before you type anything else, puts the draft back. Esc drops an edit that is still running. Send phrases don't apply to edits. Each edit runs in a hidden thread of the channel's that keeps its chat: the message with the draft and the instruction, the run's tool calls and its reply. The **edits** label in the chat's header opens that chat beside yours, as the Learn view does.
+
 ```jsonc
 "dictation": {
   "enabled": true,

@@ -7,6 +7,7 @@ import type { ActiveChatState, ChatEventListener } from "../../hooks/useChatStat
 import { useContainerStats } from "../../hooks/useContainerStats";
 import { ExplainContext, useExplain } from "../../hooks/useExplain";
 import { LearnContext, useLearn } from "../../hooks/useLearn";
+import { usePromptEdits } from "../../hooks/usePromptEdits";
 import { sideChats } from "../../layouts/sideChats";
 import { useTheme } from "../../ThemeContext";
 import { useChatPaneInput } from "../../uiBridge/useChatPaneInput";
@@ -14,6 +15,7 @@ import { ChatView } from "../chat/ChatView";
 import { ExplainBadge } from "../chat/ExplainBadge";
 import { explanationPending } from "../chat/explainState";
 import { LearnBadge, usePaneHeaderSlot } from "../chat/LearnBadge";
+import { PromptEditsBadge } from "../chat/PromptEditsBadge";
 import { ShellBadge } from "../chat/ShellBadge";
 import { ContainerStatsLabel } from "../panels/ContainerStatsLabel";
 import { ChatShellPane } from "./ChatShellPane";
@@ -21,6 +23,7 @@ import { ChatSlot, createChatHost } from "./ChatSlot";
 import { ExplainPane } from "./ExplainPane";
 import { LearnPane } from "./LearnPane";
 import type { SideView } from "./LearnSplit";
+import { PromptEditsPane } from "./PromptEditsPane";
 
 interface SideChatPaneProps {
   channelId: string;
@@ -131,7 +134,8 @@ function SideChat({
   // and Learn actions, and the badges in its pane's header, open them in the
   // view the layout shows for the chat's (see SideChatView), with the side
   // chat in it. The Shell badge opens a shell in the side chat's container
-  // there. The view (Explain, Learn or Shell) is kept while it closes.
+  // there, the Edits one its edits by voice. The view (Explain, Learn, Edits
+  // or Shell) is kept while it closes.
   const [sideOpen, setSideOpen] = useState(false);
   const [sideView, setSideView] = useState<SideView>("explain");
   const show = useCallback((view: SideView) => {
@@ -141,6 +145,7 @@ function SideChat({
   const showExplain = useCallback(() => show("explain"), [show]);
   const showLearn = useCallback(() => show("learn"), [show]);
   const showShell = useCallback(() => show("shell"), [show]);
+  const showEdits = useCallback(() => show("edits"), [show]);
   // The chat and the pane beside it are each mounted once, into a host the
   // pane or the view holds (see ChatSlot).
   const [chatHost] = useState(createChatHost);
@@ -165,7 +170,8 @@ function SideChat({
   }, [chatHost, paneHost]);
   const explain = useExplain(sideChannelId, subscribeChannelEvents ? subscribe : undefined, wsOpens, showExplain);
   const learn = useLearn(sideChannelId, subscribeChannelEvents ? subscribe : undefined, subscribeChannelEvents, wsOpens, showLearn);
-  const running = sideView === "explain" ? explain.explanations.some(explanationPending) : sideView === "learn" && learn.running;
+  const promptEdits = usePromptEdits(sideChannelId, subscribeChannelEvents, wsOpens);
+  const running = sideView === "explain" ? explain.explanations.some(explanationPending) : sideView === "edits" ? promptEdits.running : sideView === "learn" && learn.running;
   useEffect(() => {
     onSideView?.(leafId, { open: sideOpen, view: sideView, running, openMode: mode, chatHost, paneHost, close });
   }, [onSideView, leafId, sideOpen, sideView, running, mode, chatHost, paneHost, close]);
@@ -175,6 +181,7 @@ function SideChat({
   const toggleExplain = viewOpen && sideView === "explain" ? close : showExplain;
   const toggleLearn = viewOpen && sideView === "learn" ? close : showLearn;
   const toggleShell = viewOpen && sideView === "shell" ? close : showShell;
+  const toggleEdits = viewOpen && sideView === "edits" ? close : showEdits;
   // The side chat runs in a container of its own channel's, not the
   // channel's the pane header polls.
   const stats = useContainerStats(sideChannelId);
@@ -189,11 +196,13 @@ function SideChat({
         {overlaid && viewSlot && createPortal(<ContainerStatsLabel entry={stats.agent} />, viewSlot)}
         <ExplainBadge leafId={leafId} explain={explain} open={viewOpen && sideView === "explain"} onToggle={toggleExplain} />
         <LearnBadge leafId={leafId} learn={learn} open={viewOpen && sideView === "learn"} onToggle={toggleLearn} />
+        <PromptEditsBadge leafId={leafId} edits={promptEdits} open={viewOpen && sideView === "edits"} onToggle={toggleEdits} />
         <ShellBadge leafId={leafId} running={chatRunning} open={viewOpen && sideView === "shell"} onToggle={toggleShell} />
         {overlaid && (
           <>
             <ExplainBadge leafId={viewSlotId} explain={explain} open={sideView === "explain"} onToggle={toggleExplain} />
             <LearnBadge leafId={viewSlotId} learn={learn} open={sideView === "learn"} onToggle={toggleLearn} />
+            <PromptEditsBadge leafId={viewSlotId} edits={promptEdits} open={sideView === "edits"} onToggle={toggleEdits} />
             <ShellBadge leafId={viewSlotId} running={chatRunning} open={sideView === "shell"} onToggle={toggleShell} />
           </>
         )}
@@ -221,6 +230,8 @@ function SideChat({
               <ExplainPane channelId={sideChannelId} explain={explain} onClose={close} />
             ) : sideView === "shell" ? (
               <ChatShellPane channelId={sideChannelId} running={chatRunning} onClose={close} />
+            ) : sideView === "edits" ? (
+              <PromptEditsPane edits={promptEdits} roots={roots} subscribeChannelEvents={subscribeChannelEvents} getChatState={getChatState} onChatStateUnmount={onChatStateUnmount} onClose={close} />
             ) : (
               <LearnPane
                 learn={learn}

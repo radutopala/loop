@@ -994,6 +994,7 @@ func (a *app) serve() error {
 	orch.SetLiveSystem(apiSrv.ForwardLiveSystem)
 	apiSrv.SetRunCanceller(orch)
 	apiSrv.SetExplainer(orch)
+	apiSrv.SetPromptEditor(orch)
 	apiSrv.SetLearnTurner(orch)
 	apiSrv.SetPlanResolver(orch)
 	apiSrv.SetSessionSwitcher(orch)

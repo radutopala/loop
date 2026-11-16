@@ -53,7 +53,7 @@ type uiRunStep struct {
 	Tab       string      `json:"tab,omitempty" jsonschema:"set_tab, rename_tab, remove_tab: a layout tab (from ui_state); create_tab: the new tab's name (default the next Layout N)"`
 	Name      string      `json:"name,omitempty" jsonschema:"rename_tab: the tab's new name"`
 	Canvas    *bool       `json:"canvas,omitempty" jsonschema:"create_tab: a canvas tab, whose panes are free-floating tiles (default false, a split tab)"`
-	Pane      string      `json:"pane,omitempty" jsonschema:"A pane id (from ui_state), a panel type for its first pane, or $n for the pane step n (from 1) of this call made (e.g. add_pane then send_input to $1); on a canvas tab the panes are its tiles. side is the side view open beside the chat (ui_state's side): read_output reads the Learn view's proposals and learn thread, the Explain view's write-ups or the Shell view's shell; send_input types into the Shell view's shell or asks the learn thread"`
+	Pane      string      `json:"pane,omitempty" jsonschema:"A pane id (from ui_state), a panel type for its first pane, or $n for the pane step n (from 1) of this call made (e.g. add_pane then send_input to $1); on a canvas tab the panes are its tiles. side is the side view open beside the chat (ui_state's side): read_output reads the Learn view's proposals and learn thread, the Explain view's write-ups, the Edits view's chat or the Shell view's shell; send_input types into the Shell view's shell or asks the learn thread"`
 	Panel     uiPanel     `json:"panel,omitempty" jsonschema:"replace_pane, add_pane: the new pane's panel"`
 	OpenMode  uiOpenMode  `json:"open_mode,omitempty" jsonschema:"replace_pane, add_pane of a docker-agent (Chat Terminal): resume the channel's session, fork it (the default) or start fresh; of a chat-side (Chat (Resume with fork) / Chat (Fresh session)): fork or fresh; a chat with fork or fresh opens a chat-side"`
 	NextTo    string      `json:"next_to,omitempty" jsonschema:"add_pane: the pane (id, panel type or $n) the new one goes beside; without it, the new pane spans the tab's edge (on a canvas, its tile goes beside all the tiles)"`
@@ -65,7 +65,7 @@ type uiRunStep struct {
 	Line      *int        `json:"line,omitempty" jsonschema:"open_file: the line to show, from 1"`
 	Preview   *bool       `json:"preview,omitempty" jsonschema:"open_file: open it in the editor's preview tab, which the next file opened replaces (default false: a tab that stays open, so files opened one after another are all shown)"`
 	MessageID *int64      `json:"message_id,omitempty" jsonschema:"show_message: a message of the open channel's chat (its #id), to scroll the chat to and highlight. A message link loop://channel/<channel-id>/<message-id> is select_channel {channel_id} then show_message {message_id}"`
-	View      uiSideView  `json:"view,omitempty" jsonschema:"open_side: the side view to open beside the chat, or swap the open one for: learn (the learn pass's proposals and thread), explain (the turns' write-ups) or shell (a shell in the chat's own container, while it runs)"`
+	View      uiSideView  `json:"view,omitempty" jsonschema:"open_side: the side view to open beside the chat, or swap the open one for: learn (the learn pass's proposals and thread), explain (the turns' write-ups), edits (the read-only chat of the composer's edits by voice) or shell (a shell in the chat's own container, while it runs)"`
 	Text      string      `json:"text,omitempty" jsonschema:"send_input: what to type, or, on a chat or chat-side pane, the message to queue"`
 	Submit    *bool       `json:"submit,omitempty" jsonschema:"send_input: whether to press enter after the text (default true)"`
 	Lines     *int        `json:"lines,omitempty" jsonschema:"read_output, wait_for: how many of the terminal's (or chat's messages') last lines (default 50, at most 2000)"`
@@ -114,7 +114,7 @@ var uiEnums = map[reflect.Type][]any{
 	reflect.TypeFor[uiDirection](): {"horizontal", "vertical"},
 	reflect.TypeFor[uiSide]():      {"before", "after"},
 	reflect.TypeFor[uiScope]():     {"global", "project"},
-	reflect.TypeFor[uiSideView]():  {"learn", "explain", "shell"},
+	reflect.TypeFor[uiSideView]():  {"learn", "explain", "edits", "shell"},
 }
 
 // uiRunSchema is ui_run's input schema: the one inferred from uiRunInput,

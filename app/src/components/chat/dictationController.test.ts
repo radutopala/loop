@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AudioCapture } from "./dictationCapture";
-import { DictationController, type DictationUiState, IDLE_DICTATION, type MicAccess } from "./dictationController";
+import { DictationController, type DictationDeps, type DictationUiState, IDLE_DICTATION, type MicAccess, type PromptEditRequest } from "./dictationController";
 import { DICTATION_HOLD_CODE, type HoldTimers } from "./dictationHold";
 import type { DictationAvailability } from "./dictationModel";
 import { FakeSocket } from "./dictationTestSocket";
@@ -26,8 +26,19 @@ class FakeCapture implements AudioCapture {
   }
 }
 
-function make(opts: { access?: MicAccess; availability?: DictationAvailability; refreshed?: DictationAvailability; text?: string; caret?: number; sendPhrases?: string[] } = {}) {
-  const composer = { text: opts.text ?? "", start: opts.caret ?? (opts.text ?? "").length, end: opts.caret ?? (opts.text ?? "").length };
+function make(
+  opts: {
+    access?: MicAccess;
+    availability?: DictationAvailability;
+    refreshed?: DictationAvailability;
+    text?: string;
+    caret?: number;
+    end?: number;
+    sendPhrases?: string[];
+    editPrompt?: DictationDeps["editPrompt"];
+  } = {},
+) {
+  const composer = { text: opts.text ?? "", start: opts.caret ?? (opts.text ?? "").length, end: opts.end ?? opts.caret ?? (opts.text ?? "").length };
   const sockets: FakeSocket[] = [];
   const captures: FakeCapture[] = [];
   const states: DictationUiState[] = [];
@@ -70,6 +81,7 @@ function make(opts: { access?: MicAccess; availability?: DictationAvailability; 
     sendPhrases: () => opts.sendPhrases ?? [],
     send: () => sent.push(composer.text),
     onState: (s) => states.push(s),
+    editPrompt: opts.editPrompt,
     timers,
   });
   const alt = { code: DICTATION_HOLD_CODE, key: "Alt" };
@@ -413,5 +425,226 @@ describe("DictationController", () => {
     expect(t.sockets[0]!.closed).toBe(true);
     expect(t.captures[0]!.stopped).toBe(true);
     expect(t.composer.text).toBe("x y");
+  });
+});
+
+/** An editPrompt whose calls a test resolves or rejects by hand. */
+function manualEdit() {
+  const calls: Array<{ req: PromptEditRequest; signal: AbortSignal; resolve: (r: { text: string; from: number; to: number }) => void; reject: (e: unknown) => void }> = [];
+  const editPrompt: DictationDeps["editPrompt"] = (req, signal) =>
+    new Promise((resolve, reject) => {
+      calls.push({ req, signal, resolve, reject });
+    });
+  return { calls, editPrompt };
+}
+
+describe("DictationController edit holds", () => {
+  const shiftAlt = { code: DICTATION_HOLD_CODE, key: "Alt", shiftKey: true };
+
+  /** Holds Shift+key, hears instruction, releases and gets the final. */
+  async function speak(t: ReturnType<typeof make>, partial: [string, string], final: string) {
+    await t.c.init();
+    t.c.keyDown(shiftAlt);
+    t.held();
+    const ws = t.sockets[t.sockets.length - 1]!;
+    ws.open();
+    ws.server({ type: "partial", committed: partial[0], tentative: partial[1] });
+    t.release();
+    await t.flush();
+    ws.server({ type: "final", text: final });
+    return ws;
+  }
+
+  it("shows the instruction without touching the composer, then applies the edit and selects it", async () => {
+    const e = manualEdit();
+    const t = make({ text: "fix the bug", caret: 4, end: 7, editPrompt: e.editPrompt });
+    await t.c.init();
+    t.c.keyDown(shiftAlt);
+    t.held();
+    expect(t.last()).toMatchObject({ phase: "recording", mode: "edit", instruction: "" });
+    const ws = t.sockets[0]!;
+    ws.open();
+    ws.server({ type: "partial", committed: "make it", tentative: "plural" });
+    expect(t.last()?.instruction).toBe("make it plural");
+    expect(t.composer).toEqual({ text: "fix the bug", start: 4, end: 7 });
+    t.release();
+    await t.flush();
+    ws.server({ type: "final", text: " make it plural " });
+    expect(t.last()).toMatchObject({ phase: "editing", instruction: "make it plural" });
+    expect(t.c.busy).toBe(true);
+    expect(e.calls[0]!.req).toEqual({ draft: "fix the bug", start: 4, end: 7, instruction: "make it plural" });
+
+    e.calls[0]!.resolve({ text: "fix the bugs", from: 4, to: 8 });
+    await t.flush();
+    expect(t.composer).toEqual({ text: "fix the bugs", start: 4, end: 8 });
+    expect(t.last()).toMatchObject({ phase: "idle", undo: true });
+    expect(t.sent).toEqual([]);
+  });
+
+  it("ignores send phrases", async () => {
+    const e = manualEdit();
+    const t = make({ text: "x", sendPhrases: ["send it"], editPrompt: e.editPrompt });
+    await speak(t, ["", ""], "shorter, send it");
+    expect(e.calls[0]!.req.instruction).toBe("shorter, send it");
+    expect(t.sent).toEqual([]);
+  });
+
+  it("undoes with Cmd/Ctrl+Z or undoEdit, until another key is typed", async () => {
+    const e = manualEdit();
+    const t = make({ text: "draft", caret: 1, editPrompt: e.editPrompt });
+    await speak(t, ["", ""], "longer");
+    e.calls[0]!.resolve({ text: "a longer draft", from: 0, to: 14 });
+    await t.flush();
+    // Modifiers alone keep the undo.
+    expect(t.c.keyDown({ code: "MetaLeft", key: "Meta", metaKey: true })).toBe(false);
+    expect(t.c.keyDown({ code: "KeyZ", key: "z", metaKey: true })).toBe(true);
+    expect(t.composer).toEqual({ text: "draft", start: 1, end: 1 });
+    expect(t.last()?.undo).toBe(false);
+    // Once undone, Cmd+Z is the textarea's again.
+    expect(t.c.keyDown({ code: "KeyZ", key: "z", metaKey: true })).toBe(false);
+
+    await speak(t, ["", ""], "again");
+    e.calls[1]!.resolve({ text: "edited", from: 0, to: 6 });
+    await t.flush();
+    t.c.undoEdit();
+    expect(t.composer.text).toBe("draft");
+
+    await speak(t, ["", ""], "third");
+    e.calls[2]!.resolve({ text: "third", from: 0, to: 5 });
+    await t.flush();
+    expect(t.c.keyDown({ code: "KeyA", key: "a" })).toBe(false);
+    expect(t.last()?.undo).toBe(false);
+    t.c.undoEdit();
+    expect(t.composer.text).toBe("third");
+  });
+
+  it("doesn't undo over a draft changed since the edit", async () => {
+    const e = manualEdit();
+    const t = make({ text: "a", editPrompt: e.editPrompt });
+    await speak(t, ["", ""], "b");
+    e.calls[0]!.resolve({ text: "b", from: 0, to: 1 });
+    await t.flush();
+    t.composer.text = "b typed";
+    t.c.undoEdit();
+    expect(t.composer.text).toBe("b typed");
+  });
+
+  it("a new hold drops the undo", async () => {
+    const e = manualEdit();
+    const t = make({ text: "a", editPrompt: e.editPrompt });
+    await speak(t, ["", ""], "b");
+    e.calls[0]!.resolve({ text: "b", from: 0, to: 1 });
+    await t.flush();
+    t.c.keyDown({ code: DICTATION_HOLD_CODE, key: "Alt" });
+    t.held();
+    expect(t.last()).toMatchObject({ mode: "dictate", undo: false });
+  });
+
+  it("Esc drops an edit under way, and its late result changes nothing", async () => {
+    const e = manualEdit();
+    const t = make({ text: "keep", editPrompt: e.editPrompt });
+    await speak(t, ["", ""], "rewrite");
+    // Other keys pass through to the read-only composer.
+    expect(t.c.keyDown({ code: "KeyA", key: "a" })).toBe(false);
+    expect(t.c.keyDown({ code: "Escape", key: "Escape" })).toBe(true);
+    expect(e.calls[0]!.signal.aborted).toBe(true);
+    expect(t.last()).toMatchObject({ phase: "idle", instruction: "" });
+    e.calls[0]!.resolve({ text: "late", from: 0, to: 4 });
+    await t.flush();
+    expect(t.composer.text).toBe("keep");
+  });
+
+  it("a rejected edit after Esc says nothing", async () => {
+    const e = manualEdit();
+    const t = make({ text: "keep", editPrompt: e.editPrompt });
+    await speak(t, ["", ""], "rewrite");
+    t.c.keyDown({ code: "Escape", key: "Escape" });
+    e.calls[0]!.reject(new Error("aborted"));
+    await t.flush();
+    expect(t.last()?.error).toBeNull();
+  });
+
+  it("reports a failed edit and leaves the draft", async () => {
+    const e = manualEdit();
+    const t = make({ text: "keep", editPrompt: e.editPrompt });
+    await speak(t, ["", ""], "rewrite");
+    e.calls[0]!.reject(new Error("rate limited"));
+    await t.flush();
+    expect(t.composer.text).toBe("keep");
+    expect(t.last()).toMatchObject({ phase: "idle", error: "Couldn't edit the prompt: rate limited" });
+
+    await speak(t, ["", ""], "again");
+    e.calls[1]!.reject("plain");
+    await t.flush();
+    expect(t.last()?.error).toBe("Couldn't edit the prompt: plain");
+  });
+
+  it("drops the result when the draft changed meanwhile", async () => {
+    const e = manualEdit();
+    const t = make({ text: "keep", editPrompt: e.editPrompt });
+    await speak(t, ["", ""], "rewrite");
+    t.composer.text = "changed";
+    e.calls[0]!.resolve({ text: "new", from: 0, to: 3 });
+    await t.flush();
+    expect(t.composer.text).toBe("changed");
+    expect(t.last()?.error).toMatch(/draft changed/);
+  });
+
+  it("does nothing for an empty instruction", async () => {
+    const e = manualEdit();
+    const t = make({ text: "keep", editPrompt: e.editPrompt });
+    await speak(t, ["", ""], "  ");
+    expect(e.calls).toHaveLength(0);
+    expect(t.last()?.phase).toBe("idle");
+  });
+
+  it("doesn't start another hold while an edit is under way", async () => {
+    const e = manualEdit();
+    const t = make({ text: "keep", editPrompt: e.editPrompt });
+    await speak(t, ["", ""], "rewrite");
+    const n = t.sockets.length;
+    // Shift+key types as usual meanwhile, and a plain hold doesn't start.
+    expect(t.c.hold.keyDown(shiftAlt)).toBe(false);
+    t.c.hold.keyDown({ code: DICTATION_HOLD_CODE, key: "Alt" });
+    t.held();
+    expect(t.sockets).toHaveLength(n);
+    expect(t.last()?.phase).toBe("editing");
+  });
+
+  it("a failed stream in an edit hold leaves the composer as it was", async () => {
+    const e = manualEdit();
+    const t = make({ text: "keep", editPrompt: e.editPrompt });
+    await t.c.init();
+    t.c.keyDown(shiftAlt);
+    t.held();
+    const ws = t.sockets[0]!;
+    ws.open();
+    ws.server({ type: "partial", committed: "words", tentative: "" });
+    ws.server({ type: "error", code: "transcribe_failed", message: "boom" });
+    expect(t.composer.text).toBe("keep");
+    expect(t.last()?.error).toBe("boom");
+  });
+
+  it("without editPrompt, Shift with the key types as usual", async () => {
+    const t = make({ text: "x" });
+    await t.c.init();
+    expect(t.c.keyDown(shiftAlt)).toBe(false);
+    expect(t.c.hold.busy).toBe(false);
+  });
+
+  it("dispose aborts an edit under way", async () => {
+    const e = manualEdit();
+    const t = make({ text: "keep", editPrompt: e.editPrompt });
+    await speak(t, ["", ""], "rewrite");
+    t.c.dispose();
+    expect(e.calls[0]!.signal.aborted).toBe(true);
+  });
+
+  it("the edit button starts an edit hold", async () => {
+    const e = manualEdit();
+    const t = make({ text: "a", editPrompt: e.editPrompt });
+    await t.c.init();
+    t.c.hold.pointerDown("edit");
+    expect(t.last()).toMatchObject({ phase: "recording", mode: "edit" });
   });
 });

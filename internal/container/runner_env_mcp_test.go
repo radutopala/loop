@@ -15,6 +15,7 @@ import (
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/explain"
 	"github.com/radutopala/loop/internal/learn"
+	"github.com/radutopala/loop/internal/promptedit"
 )
 
 func (s *RunnerSuite) TestAddAuthEnv() {
@@ -343,7 +344,7 @@ func (s *RunnerSuite) TestBuildMCPConfigWithUserServers() {
 
 func (s *RunnerSuite) TestBuildMCPConfigReadOnlyGetsLoopOnly() {
 	userServers := map[string]config.MCPServerConfig{"custom-tool": {Command: "/path/to/binary"}}
-	for _, agentID := range []string{learn.AgentID, explain.AgentID, agent.PluginAgentID("echo", "say")} {
+	for _, agentID := range []string{learn.AgentID, explain.AgentID, promptedit.AgentID, agent.PluginAgentID("echo", "say")} {
 		cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", agentID, nil, false, true, userServers)
 		require.Len(s.T(), cfg.MCPServers, 1, agentID)
 		require.Equal(s.T(), "/usr/local/bin/loop", cfg.MCPServers["loop"].Command)

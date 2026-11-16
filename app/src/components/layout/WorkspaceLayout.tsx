@@ -14,6 +14,7 @@ import { useEditorState } from "../../hooks/useEditorState";
 import { ExplainContext, useExplain } from "../../hooks/useExplain";
 import { LearnContext, useLearn } from "../../hooks/useLearn";
 import { prefersReducedMotion, usePresence } from "../../hooks/usePresence";
+import { usePromptEdits } from "../../hooks/usePromptEdits";
 import { takeStoredSession } from "../../hooks/useSessionPersistence";
 import { useWheelScrollsSideways } from "../../hooks/useWheelScrollsSideways";
 import type { LayoutType } from "../../layouts/persistence";
@@ -63,7 +64,7 @@ import type { Channel, SessionStatus } from "../../types";
 import { type AgentOpenMode, type LeafNode, type PanelType, type PaneMeta, type PaneNode, takesOpenMode } from "../../types/panels";
 import { replaceLeaf } from "../../uiBridge/paneOps";
 import { getChatInput, getTerminalInput, notifyUiChanged, registerSideReader, registerWorkspace } from "../../uiBridge/registry";
-import { explainText, learnText, SIDE_PANE } from "../../uiBridge/sideText";
+import { editsText, explainText, learnText, SIDE_PANE } from "../../uiBridge/sideText";
 import type { PaneOptions, WorkspaceController } from "../../uiBridge/types";
 import { useChatPaneInput } from "../../uiBridge/useChatPaneInput";
 import { logErr } from "../../utils/log";
@@ -74,6 +75,7 @@ import { ExplainBadge } from "../chat/ExplainBadge";
 import { explanationPending } from "../chat/explainState";
 import type { FileLinkOpenDetail } from "../chat/FileLink";
 import { LearnBadge } from "../chat/LearnBadge";
+import { PromptEditsBadge } from "../chat/PromptEditsBadge";
 import { ShellBadge } from "../chat/ShellBadge";
 import { AuditPanel } from "../panels/AuditPanel";
 import { BrowserPanel } from "../panels/BrowserPanel";
@@ -101,6 +103,7 @@ import { ExplainPane } from "./ExplainPane";
 import { HeaderBranchPicker } from "./HeaderBranchPicker";
 import { LearnPane } from "./LearnPane";
 import { LEARN_SPLIT_MS, LEARN_SPLIT_SLOT_ID, LearnSplit, type SideView } from "./LearnSplit";
+import { PromptEditsPane } from "./PromptEditsPane";
 import { SideChatPane, type SideChatView, sideChatViewSlotId } from "./SideChatPane";
 
 type AgentState = "running" | "stopped" | "none";
@@ -440,6 +443,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   const showLearn = useCallback(() => openSideRef.current("learn"), []);
   const learn = useLearn(channelId, subscribeChatEvents, subscribeChannelEvents, wsOpens, showLearn);
   const { learnChannelId } = learn;
+  // The composer's edits by voice, whose chat the Edits view shows.
+  const promptEdits = usePromptEdits(channelId, subscribeChannelEvents, wsOpens);
   // The Learn view is open (learnOpen), with the Learn pane or the Explain
   // one beside the chat (sideView, kept while it closes).
   const [learnOpen, setLearnOpen] = useState(false);
@@ -458,7 +463,11 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     () =>
       registerSideReader(channelId, {
         read: (view, lines) =>
-          view === "explain" ? explainText(explainRef.current.explanations, lines) : learnText(learnRef.current.proposals, getChatInput(channelId, SIDE_PANE)?.messages() ?? [], lines),
+          view === "explain"
+            ? explainText(explainRef.current.explanations, lines)
+            : view === "edits"
+              ? editsText(getChatInput(channelId, SIDE_PANE)?.messages() ?? [], lines)
+              : learnText(learnRef.current.proposals, getChatInput(channelId, SIDE_PANE)?.messages() ?? [], lines),
         explaining: () => explainRef.current.explanations.some(explanationPending),
       }),
     [channelId],
@@ -1339,9 +1348,11 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   const openLearn = useCallback(() => openSide("learn"), [openSide]);
   const openExplain = useCallback(() => openSide("explain"), [openSide]);
   const openShell = useCallback(() => openSide("shell"), [openSide]);
+  const openEdits = useCallback(() => openSide("edits"), [openSide]);
   const learnShown = learnOpen && sideView === "learn";
   const explainShown = learnOpen && sideView === "explain";
   const shellShown = learnOpen && sideView === "shell";
+  const editsShown = learnOpen && sideView === "edits";
   // The chat's container runs, so the Shell badge has one to open a shell in.
   const chatRunning = !!containerStats.agent;
   chatRunningRef.current = chatRunning;
@@ -1481,6 +1492,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               <ChatSlot host={chatHost} active={!learnOverlay} onAttach={placeChatHost} leafId={leaf.id} />
               <ExplainBadge leafId={leaf.id} explain={explain} open={learnDocked && explainShown} onToggle={learnDocked && explainShown ? closeLearn : openExplain} />
               <LearnBadge leafId={leaf.id} learn={learn} open={learnDocked && learnShown} onToggle={learnDocked && learnShown ? closeLearn : openLearn} />
+              <PromptEditsBadge leafId={leaf.id} edits={promptEdits} open={learnDocked && editsShown} onToggle={learnDocked && editsShown ? closeLearn : openEdits} />
               <ShellBadge leafId={leaf.id} running={chatRunning} open={learnDocked && shellShown} onToggle={learnDocked && shellShown ? closeLearn : openShell} />
             </>
           );
@@ -1690,6 +1702,9 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       explainShown,
       openShell,
       shellShown,
+      promptEdits,
+      openEdits,
+      editsShown,
       chatRunning,
       chatHost,
       placeChatHost,
@@ -1712,6 +1727,16 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       <ChatShellPane channelId={channelId} running={chatRunning} uiPane={SIDE_PANE} onClose={closeLearn} />
     ) : sideView === "explain" ? (
       <ExplainPane channelId={channelId} explain={explain} onClose={closeLearn} />
+    ) : sideView === "edits" ? (
+      <PromptEditsPane
+        uiChannelId={channelId}
+        edits={promptEdits}
+        roots={editorState.roots}
+        subscribeChannelEvents={subscribeChannelEvents}
+        getChatState={getChatState}
+        onChatStateUnmount={onChatStateUnmount}
+        onClose={closeLearn}
+      />
     ) : (
       <LearnPane
         uiChannelId={channelId}
@@ -1725,7 +1750,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       />
     );
   // The logo on the seam animates while the pane's work runs.
-  const sideRunning = sideView === "explain" ? explain.explanations.some(explanationPending) : sideView === "learn" && learn.running;
+  const sideRunning = sideView === "explain" ? explain.explanations.some(explanationPending) : sideView === "edits" ? promptEdits.running : sideView === "learn" && learn.running;
 
   return (
     <div
@@ -2235,6 +2260,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                     <ChatSlot host={chatHost} active onAttach={placeChatHost} />
                     <ExplainBadge leafId={LEARN_SPLIT_SLOT_ID} explain={explain} open={sideView === "explain"} onToggle={sideView === "explain" ? closeLearn : openExplain} />
                     <LearnBadge leafId={LEARN_SPLIT_SLOT_ID} learn={learn} open={sideView === "learn"} onToggle={sideView === "learn" ? closeLearn : openLearn} />
+                    <PromptEditsBadge leafId={LEARN_SPLIT_SLOT_ID} edits={promptEdits} open={sideView === "edits"} onToggle={sideView === "edits" ? closeLearn : openEdits} />
                     <ShellBadge leafId={LEARN_SPLIT_SLOT_ID} running={chatRunning} open={sideView === "shell"} onToggle={sideView === "shell" ? closeLearn : openShell} />
                   </>
                 }

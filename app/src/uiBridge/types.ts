@@ -169,11 +169,11 @@ export interface ChatPaneInput {
   send(text: string): Promise<void>;
 }
 
-/** What the Learn and Explain views show, as text, for steps on the side
+/** What the Learn, Explain and Edits views show, as text, for steps on the side
  *  pane. */
 export interface SideReader {
   /** The view's last lines. */
-  read(view: "learn" | "explain", lines: number): string;
+  read(view: "learn" | "explain" | "edits", lines: number): string;
   /** Whether an explanation is being written. */
   explaining(): boolean;
 }

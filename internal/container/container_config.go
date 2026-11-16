@@ -19,6 +19,7 @@ import (
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/explain"
 	"github.com/radutopala/loop/internal/learn"
+	"github.com/radutopala/loop/internal/promptedit"
 	"github.com/radutopala/loop/internal/types"
 )
 
@@ -211,10 +212,10 @@ func (r *DockerRunner) gitExcludesMount() string {
 // and any user-defined servers from the config. The built-in loop always
 // takes precedence over a user-defined server with the same name.
 func buildMCPConfig(channelID, apiURL, workDir, authorID, agentID string, mcpArgs []string, memoryEnabled, browserEnabled bool, userServers map[string]config.MCPServerConfig) mcpConfig {
-	// A learn pass, an explanation or a plugin's agent gets the built-in
+	// A learn pass, an explanation, a prompt edit or a plugin's agent gets the built-in
 	// loop server alone, not the user's servers or the browser, whose tools
 	// can change things.
-	if agentID == learn.AgentID || agentID == explain.AgentID || strings.HasPrefix(agentID, agent.PluginAgentPrefix) {
+	if agentID == learn.AgentID || agentID == explain.AgentID || agentID == promptedit.AgentID || strings.HasPrefix(agentID, agent.PluginAgentPrefix) {
 		userServers, browserEnabled = nil, false
 	}
 	servers := make(map[string]mcpServerEntry, len(userServers)+1)
