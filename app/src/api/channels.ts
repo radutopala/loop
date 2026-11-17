@@ -226,6 +226,17 @@ export async function resolvePlan(channelId: string, action: PlanResolveAction, 
   if (!res.ok) throw new Error(`Failed to resolve plan: ${res.statusText}`);
 }
 
+/**
+ * The answer sent for an AskUserQuestion card: each answered question in
+ * full with the labels picked. The agent may read it in a fresh turn that no
+ * longer has the question in context, so a short header alone would be
+ * ambiguous.
+ */
+export function formatAskAnswers(answers: { question: string; labels: string[] }[]): string {
+  if (answers.length === 0) return "No specific answers provided.";
+  return "Here are my answers:\n\n" + answers.map((a) => `Q: ${a.question}\nA: ${a.labels.join(", ")}`).join("\n\n");
+}
+
 // "skip" unparks the channel without inserting anything, so queued messages
 // run next in their own order.
 export type AskResolveAction = "answer" | "cancel" | "skip";

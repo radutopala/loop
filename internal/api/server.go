@@ -252,6 +252,7 @@ func (s *Server) SetProtectedDirs(dirs []string) {
 func (s *Server) SetEventsHub(hub *EventsHub) {
 	s.eventsHub = hub
 	hub.Observe(s.suggestions.observe)
+	hub.Observe(s.observeAttention)
 }
 
 // EventsHub returns the configured events hub, or nil if not set.
@@ -737,6 +738,7 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/backup", s.handleGetBackup)
 	mux.HandleFunc("POST /api/backup", s.handleStartBackup)
 	mux.HandleFunc("POST /api/backup/key", s.handleCreateBackupKey)
+	mux.HandleFunc("GET /api/attention", s.handleListAttention)
 	mux.HandleFunc("GET /api/gate/approvals", s.handleListGateApprovals)
 	mux.HandleFunc("POST /api/gate/approvals/{id}", s.handleResolveGateApproval)
 	mux.HandleFunc("POST /api/gate/container-approval", s.handleContainerApproval)

@@ -22,6 +22,7 @@ import {
 } from "./api/loopApi";
 import type { PRStatus } from "./api/pr";
 import horizontalLogo from "./assets/logo-horizontal.svg";
+import InboxView, { isInboxWindow } from "./components/InboxView";
 import { WorkspaceLayout, type WorkspaceLayoutRef } from "./components/layout/WorkspaceLayout";
 import { ContainersPanel, type ContainersPanelHandle } from "./components/panels/ContainersPanel";
 import { MarkdownFilePanel } from "./components/panels/FilePanel";
@@ -112,7 +113,7 @@ export default function App() {
       initialIslands={desktop?.islands ?? true}
       initialHiddenPills={desktop?.hidden_pills}
     >
-      <AppInner />
+      {isInboxWindow() ? <InboxView /> : <AppInner />}
     </ThemeProvider>
   );
 }

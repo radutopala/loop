@@ -3,8 +3,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell, systemPreferences } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, session, shell, systemPreferences, Tray } from "electron";
 import { autoUpdater } from "electron-updater";
+import { Flasher, INBOX_QUERY, INBOX_SIZE, inboxBounds, parseInboxMove, parseInboxReport, trayTitle } from "./inboxTray";
 import { allowPermissionCheck, allowPermissionRequest, isAppEntryURL } from "./mediaPermission";
 import { allowFrameNavigation } from "./pluginFrameGuard";
 
@@ -424,9 +425,16 @@ function createWindow(hash?: string): BrowserWindow {
   return win;
 }
 
+/** The app's windows, without the menu bar inbox. */
+function mainWindows(): BrowserWindow[] {
+  return BrowserWindow.getAllWindows().filter((w) => w !== inboxWin);
+}
+
 /** Returns the most recently focused window, or the first available one. */
 function getFocusedOrLastWindow(): BrowserWindow | null {
-  return BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null;
+  const focused = BrowserWindow.getFocusedWindow();
+  if (focused && focused !== inboxWin) return focused;
+  return mainWindows()[0] ?? null;
 }
 
 function navigateToChannel(channelId: string, win = getFocusedOrLastWindow()) {
@@ -683,6 +691,7 @@ app.on("ready", async () => {
   }
   createWindow(pendingChannelId || undefined);
   pendingChannelId = null;
+  if (process.platform === "darwin") setupInbox();
 
   if (!VITE_DEV_SERVER_URL) {
     setupAutoUpdater();
@@ -696,6 +705,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  quitting = true;
   const desktop = readDesktopConfig();
   if (desktop.stop_daemon_on_quit) {
     const binary = findLoopBinary();
@@ -711,7 +721,7 @@ app.on("before-quit", () => {
 });
 
 app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
+  if (mainWindows().length === 0) {
     createWindow();
   }
 });
@@ -960,3 +970,166 @@ ipcMain.handle("restart-daemon", async () => {
     binaryPath: findLoopBinary(),
   };
 });
+
+// --- Menu bar inbox ---
+//
+// A tray icon in the menu bar counts what waits on the owner across every
+// project and flashes while something holding an agent hasn't been seen.
+// Clicking it opens the inbox: the app's page in its inbox mode, in a
+// small window under the icon. Unpinned, it hides when it loses focus, like
+// a menu; pinned, it stays up on every Space until unpinned.
+
+let tray: Tray | null = null;
+let inboxWin: BrowserWindow | null = null;
+let inboxPinned = false;
+let quitting = false;
+// When the inbox last hid on blur: a click on the icon blurs the inbox
+// before the click arrives, and shouldn't then open it again.
+let inboxBlurHiddenAt = 0;
+
+const trayDir = VITE_DEV_SERVER_URL ? path.join(__dirname, "../public/tray") : path.join(__dirname, "../dist/tray");
+
+function setupInbox() {
+  const plain = nativeImage.createFromPath(path.join(trayDir, "trayTemplate.png"));
+  plain.setTemplateImage(true);
+  const alert = nativeImage.createFromPath(path.join(trayDir, "trayAlert.png"));
+  tray = new Tray(plain);
+  tray.setToolTip("Loop: nothing needs you");
+  const flasher = new Flasher((on) => tray?.setImage(on ? alert : plain), { setInterval, clearInterval: (id) => clearInterval(id as NodeJS.Timeout) });
+  // The bounds are of the icon clicked: with a menu bar on each display,
+  // tray.getBounds() may give another display's.
+  tray.on("click", (_e, bounds) => toggleInbox(bounds));
+  tray.on("right-click", (_e, bounds) => toggleInbox(bounds));
+
+  inboxWin = createInboxWindow();
+
+  ipcMain.on("inbox-report", (event, msg: unknown) => {
+    if (!inboxWin || event.sender !== inboxWin.webContents) return;
+    const report = parseInboxReport(msg);
+    if (!report || !tray) return;
+    tray.setTitle(trayTitle(report.count), { fontType: "monospacedDigit" });
+    tray.setToolTip(report.count > 0 ? `Loop: ${report.count} waiting on you` : "Loop: nothing needs you");
+    flasher.set(report.flash);
+  });
+
+  // The inbox drags itself: a drag area doesn't move this window.
+  ipcMain.on("inbox-move", (event, msg: unknown) => {
+    if (!inboxWin || event.sender !== inboxWin.webContents) return;
+    const pos = parseInboxMove(msg);
+    if (pos) inboxWin.setPosition(pos.x, pos.y);
+  });
+
+  ipcMain.on("inbox-set-pinned", (event, pinned: unknown) => {
+    if (!inboxWin || event.sender !== inboxWin.webContents) return;
+    setInboxPinned(pinned === true);
+  });
+
+  ipcMain.on("inbox-open-channel", (event, channelId: unknown) => {
+    if (!inboxWin || event.sender !== inboxWin.webContents || typeof channelId !== "string" || !channelId) return;
+    if (!inboxPinned) inboxWin.hide();
+    const win = getFocusedOrLastWindow();
+    if (win && !win.webContents.isLoading()) {
+      navigateToChannel(channelId, win);
+      return;
+    }
+    pendingChannelId = channelId;
+    if (!win) createWindow();
+  });
+
+  ipcMain.on("inbox-close", (event) => {
+    if (inboxWin && event.sender === inboxWin.webContents) inboxWin.hide();
+  });
+}
+
+function createInboxWindow(): BrowserWindow {
+  const win = new BrowserWindow({
+    width: INBOX_SIZE.width,
+    height: INBOX_SIZE.height,
+    minWidth: 300,
+    minHeight: 200,
+    show: false,
+    frame: false,
+    // A panel takes focus without making Loop the active app, which would
+    // bring the main window forward, on another display too.
+    type: "panel",
+    resizable: true,
+    movable: true,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    backgroundColor: initialBackgroundColor(),
+    webPreferences: {
+      preload: path.join(__dirname, "preload.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      // It keeps the count and the flashing current while hidden.
+      backgroundThrottling: false,
+    },
+  });
+  // Pinned or not, it shows on the Space of the display it's on, a
+  // full-screen app's too. Without skipTransformProcessType, Electron briefly
+  // switches the whole app to an accessory process, which hides the other
+  // Loop windows and the Dock icon.
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
+  if (VITE_DEV_SERVER_URL) {
+    win.loadURL(`${VITE_DEV_SERVER_URL}?${INBOX_QUERY}`);
+  } else {
+    const [key, value] = INBOX_QUERY.split("=");
+    win.loadFile(appEntryFile, { query: { [key!]: value! } });
+  }
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (isExternalURL(url)) shell.openExternal(url);
+    return { action: "deny" };
+  });
+  win.webContents.on("will-navigate", (event, url) => {
+    event.preventDefault();
+    if (isExternalURL(url)) shell.openExternal(url);
+  });
+  // The page can't tell itself: without background throttling it always
+  // reads as visible.
+  win.on("show", () => win.webContents.send("inbox-shown", true));
+  win.on("hide", () => win.webContents.send("inbox-shown", false));
+  win.on("blur", () => {
+    if (inboxPinned || !win.isVisible()) return;
+    inboxBlurHiddenAt = Date.now();
+    win.hide();
+  });
+  // Closing it (cmd+W) hides it; it lives as long as the app.
+  win.on("close", (event) => {
+    if (quitting) return;
+    event.preventDefault();
+    win.hide();
+  });
+  return win;
+}
+
+function toggleInbox(clicked?: Electron.Rectangle) {
+  const win = inboxWin;
+  if (!win || !tray) return;
+  // A click on the icon doesn't take focus from the inbox, so an open one
+  // may still be focused here, or not. A pinned one stays: the click brings
+  // it forward, and its × closes it.
+  if (win.isVisible()) {
+    if (inboxPinned) win.focus();
+    else win.hide();
+    return;
+  }
+  if (!win.isVisible() && Date.now() - inboxBlurHiddenAt < 300) return;
+  if (!inboxPinned) {
+    const trayBounds = clicked?.width ? clicked : tray.getBounds();
+    const display = screen.getDisplayNearestPoint({ x: trayBounds.x, y: trayBounds.y });
+    win.setBounds(inboxBounds(trayBounds, INBOX_SIZE, display.workArea));
+  }
+  win.show();
+  win.focus();
+}
+
+function setInboxPinned(pinned: boolean) {
+  inboxPinned = pinned;
+  const win = inboxWin;
+  if (!win) return;
+  win.setAlwaysOnTop(true, pinned ? "floating" : "pop-up-menu");
+}

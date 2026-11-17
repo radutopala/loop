@@ -483,6 +483,17 @@ declare global {
       openExternal?: (url: string) => Promise<void>;
       /** The OS microphone access state; with ask, prompts when undecided (macOS). */
       microphoneAccess?: (ask?: boolean) => Promise<string>;
+      /** Menu bar inbox: what waits on the owner, for the tray icon. */
+      inboxReport?: (report: { count: number; flash: boolean }) => void;
+      /** Menu bar inbox: pinned stays up on every Space; unpinned hides on blur. */
+      setInboxPinned?: (pinned: boolean) => void;
+      /** Menu bar inbox: opens a channel in an app window. */
+      openChannelFromInbox?: (channelId: string) => void;
+      /** Menu bar inbox: hides it. */
+      moveInbox?: (x: number, y: number) => void;
+      closeInbox?: () => void;
+      /** Menu bar inbox: called when it's shown or hidden. */
+      onInboxShown?: (callback: (shown: boolean) => void) => () => void;
     };
   }
 }

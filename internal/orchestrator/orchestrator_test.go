@@ -1169,7 +1169,18 @@ func (s *OrchestratorSuite) TestRestoreParkedChannels() {
 		{ChannelID: "ch-bad-ask", Kind: db.PausedKindAsk, Data: `not json`},
 		{ChannelID: "ch-bad-plan", Kind: db.PausedKindPlan, Data: `not json`},
 		{ChannelID: "ch-unknown", Kind: "other", Data: `{}`},
+		{ChannelID: "ch-lookup-err", Kind: db.PausedKindAsk, Data: `{"questions":[]}`},
+		{ChannelID: "ch-gone", Kind: db.PausedKindAsk, Data: `{"questions":[]}`},
+		{ChannelID: "ch-gone-plan", Kind: db.PausedKindPlan, Data: `{"plan":"# P"}`},
 	}, nil)
+	for _, id := range []string{"ch-ask", "ch-plan", "ch-bad-ask", "ch-bad-plan", "ch-unknown"} {
+		store.On("GetChannel", mock.Anything, id).Return(&db.Channel{ChannelID: id}, nil)
+	}
+	store.On("GetChannel", mock.Anything, "ch-lookup-err").Return((*db.Channel)(nil), errors.New("db busy"))
+	store.On("GetChannel", mock.Anything, "ch-gone").Return((*db.Channel)(nil), nil)
+	store.On("GetChannel", mock.Anything, "ch-gone-plan").Return((*db.Channel)(nil), nil)
+	store.On("DeletePausedChannel", mock.Anything, "ch-gone", db.PausedKindAsk).Return(nil)
+	store.On("DeletePausedChannel", mock.Anything, "ch-gone-plan", db.PausedKindPlan).Return(errors.New("db closed"))
 
 	orch.RestoreParkedChannels(context.Background())
 
@@ -1180,6 +1191,10 @@ func (s *OrchestratorSuite) TestRestoreParkedChannels() {
 	require.False(s.T(), orch.IsChannelPlanned("ch-bad-plan"))
 	require.False(s.T(), orch.IsChannelAsked("ch-unknown"))
 	require.False(s.T(), orch.IsChannelPlanned("ch-unknown"))
+	// A failed lookup keeps the park; a deleted channel's goes.
+	require.True(s.T(), orch.IsChannelAsked("ch-lookup-err"))
+	require.False(s.T(), orch.IsChannelAsked("ch-gone"))
+	require.False(s.T(), orch.IsChannelPlanned("ch-gone-plan"))
 	store.AssertExpectations(s.T())
 }
 

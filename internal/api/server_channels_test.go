@@ -252,6 +252,25 @@ func (s *ServerSuite) TestDeleteThreadSuccess() {
 	require.Equal(s.T(), "thread-1", events[0].ChannelID)
 }
 
+func (s *ServerSuite) TestDeleteThreadClearsItsParks() {
+	s.store.On("GetChannel", mock.Anything, "thread-1").Return((*db.Channel)(nil), nil)
+	s.store.On("ListHiddenThreads", mock.Anything, "thread-1").Return([]*db.Channel(nil), nil)
+	s.threads.On("DeleteThread", mock.Anything, "thread-1").Return(nil)
+	asks := new(MockAskResolver)
+	asks.On("ClearAskedChannel", "thread-1").Return()
+	plans := new(MockPlanResolver)
+	plans.On("ClearPlannedChannel", "thread-1").Return()
+	s.srv.SetAskResolver(asks)
+	s.srv.SetPlanResolver(plans)
+
+	rec := s.testRequest("DELETE", "/api/threads/thread-1", "")
+
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	// No one can answer its question or plan any more.
+	asks.AssertExpectations(s.T())
+	plans.AssertExpectations(s.T())
+}
+
 func (s *ServerSuite) TestDeleteThreadError() {
 	s.store.On("GetChannel", mock.Anything, "thread-1").Return((*db.Channel)(nil), nil)
 	s.store.On("ListHiddenThreads", mock.Anything, "thread-1").Return([]*db.Channel{{ChannelID: "learn-1"}}, nil)

@@ -30,4 +30,10 @@ contextBridge.exposeInMainWorld("loopAPI", {
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
   microphoneAccess: (ask) => ipcRenderer.invoke("microphone-access", !!ask),
   onThemeChanged: (callback) => subscribe("theme-changed", (_event, name) => callback(name)),
+  inboxReport: (report) => ipcRenderer.send("inbox-report", report),
+  setInboxPinned: (pinned) => ipcRenderer.send("inbox-set-pinned", !!pinned),
+  openChannelFromInbox: (channelId) => ipcRenderer.send("inbox-open-channel", channelId),
+  moveInbox: (x, y) => ipcRenderer.send("inbox-move", { x, y }),
+  closeInbox: () => ipcRenderer.send("inbox-close"),
+  onInboxShown: (callback) => subscribe("inbox-shown", (_event, shown) => callback(!!shown)),
 });
