@@ -355,7 +355,8 @@ func (o *Orchestrator) ClearAskedChannel(channelID string) {
 // in-memory maps at daemon startup, BEFORE the pending-message resume runs.
 // Without it a restart forgets the parked state: the card can't rehydrate
 // via the pending endpoints and the startup resume re-claims the parked
-// trigger and re-runs it past the unanswered card.
+// trigger and re-runs it past the unanswered card. The parks of channels
+// since deleted are dropped instead.
 func (o *Orchestrator) RestoreParkedChannels(ctx context.Context) {
 	parked, err := o.store.ListPausedChannels(ctx)
 	if err != nil {
@@ -363,6 +364,14 @@ func (o *Orchestrator) RestoreParkedChannels(ctx context.Context) {
 		return
 	}
 	for _, p := range parked {
+		// A channel deleted while parked has no one to answer it; its park
+		// goes. A failed lookup keeps it.
+		if ch, err := o.store.GetChannel(ctx, p.ChannelID); err == nil && ch == nil {
+			if err := o.store.DeletePausedChannel(ctx, p.ChannelID, p.Kind); err != nil {
+				o.logger.Error("dropping a deleted channel's park", "error", err, "channel_id", p.ChannelID)
+			}
+			continue
+		}
 		switch p.Kind {
 		case db.PausedKindAsk:
 			var data events.AskUserQuestionEventData

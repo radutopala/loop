@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
-import { resolveAsk, resolvePlan } from "../../api/channels";
+import { formatAskAnswers, resolveAsk, resolvePlan } from "../../api/channels";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { AgentActivityData, AskUserQuestion, ExitPlanModeData, Message, TaskItem, TimelineItem } from "../../types";
@@ -694,19 +694,16 @@ export function AskUserQuestionCard({ questions, channelId, mode, onSent }: { qu
 
   const handleSend = async () => {
     setSending(true);
-    const parts: string[] = [];
+    const answers: { question: string; labels: string[] }[] = [];
     for (let i = 0; i < questions.length; i++) {
       const q = questions[i]!;
       const sel = selectedFor(i);
       if (sel.size === 0) continue;
       const labels = [...sel].filter((l) => l !== OTHER);
       if (sel.has(OTHER)) labels.push(otherTexts.get(i)?.trim() || "(no answer)");
-      // Pair each answer with its full question. The agent may pick these up in a
-      // fresh turn (or a different worktree) where it no longer has the question
-      // in context, so the short header alone would be ambiguous.
-      parts.push(`Q: ${q.question}\nA: ${labels.join(", ")}`);
+      answers.push({ question: q.question, labels });
     }
-    const content = parts.length > 0 ? "Here are my answers:\n\n" + parts.join("\n\n") : "No specific answers provided.";
+    const content = formatAskAnswers(answers);
     try {
       await resolveAsk(channelId, "answer", content, mode);
       onSent?.();
