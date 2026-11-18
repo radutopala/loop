@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -576,6 +577,38 @@ type streamState struct {
 	// monitorUses are the Monitor tool calls whose task hasn't started yet,
 	// and monitorTasks the tasks they started, by id.
 	monitorUses, monitorTasks map[string]bool
+	// bgOutput is the output file of each background task, by id.
+	bgOutput map[string]string
+}
+
+// backgroundOutputRe finds a background task's id and output file in the
+// result of the tool call that started it: "Command running in background
+// with ID: b1. Output is being written to: /tmp/…/tasks/b1.output. …".
+var backgroundOutputRe = regexp.MustCompile(`ID: (\S+?)\. Output is being written to: (\S.*?\.output)\b`)
+
+// noteOutputPath remembers the output file a tool result names for a
+// background task. The CLI reports the task before that result, so a task
+// already reported is reported again, with its file.
+func (st *streamState) noteOutputPath(result string, cb streamCallbacks) {
+	m := backgroundOutputRe.FindStringSubmatch(result)
+	if m == nil {
+		return
+	}
+	id, path := m[1], m[2]
+	if st.bgOutput == nil {
+		st.bgOutput = map[string]string{}
+	}
+	st.bgOutput[id] = path
+	i := slices.IndexFunc(st.bg, func(t agent.BackgroundTask) bool { return t.ID == id })
+	if i < 0 || st.bg[i].OutputPath == path {
+		return
+	}
+	tasks := slices.Clone(st.bg)
+	tasks[i].OutputPath = path
+	st.bg = tasks
+	if cb.onBackgroundTasks != nil {
+		cb.onBackgroundTasks(tasks)
+	}
 }
 
 // monitorTaskType is the type a background task started by Claude's Monitor
@@ -603,11 +636,12 @@ func (st *streamState) backgroundTasks(tasks []backgroundTask) []agent.Backgroun
 		if st.monitorTasks[t.TaskID] {
 			typ = monitorTaskType
 		}
-		out = append(out, agent.BackgroundTask{ID: t.TaskID, Type: typ, Description: t.Description, StartedAt: begun})
+		out = append(out, agent.BackgroundTask{ID: t.TaskID, Type: typ, Description: t.Description, StartedAt: begun, OutputPath: st.bgOutput[t.TaskID]})
 	}
 	for _, old := range st.bg {
 		if _, ok := started[old.ID]; !ok {
 			delete(st.monitorTasks, old.ID)
+			delete(st.bgOutput, old.ID)
 		}
 	}
 	st.bgStarted = started
@@ -712,7 +746,7 @@ func (st *streamState) dispatch(line []byte, cb streamCallbacks) *claudeResponse
 				return nil
 			}
 		}
-		if cb.onToolResult == nil {
+		if cb.onToolResult == nil && cb.onBackgroundTasks == nil {
 			return nil
 		}
 		var um userMessage
@@ -724,8 +758,11 @@ func (st *streamState) dispatch(line []byte, cb streamCallbacks) *claudeResponse
 				continue
 			}
 			body := parseToolResultContent(blk.Content)
-			out, _ := truncateInline(body, toolResultMaxInline)
-			cb.onToolResult(blk.ToolUseID, out, blk.IsError)
+			st.noteOutputPath(body, cb)
+			if cb.onToolResult != nil {
+				out, _ := truncateInline(body, toolResultMaxInline)
+				cb.onToolResult(blk.ToolUseID, out, blk.IsError)
+			}
 		}
 	case "system":
 		var evt systemEvent

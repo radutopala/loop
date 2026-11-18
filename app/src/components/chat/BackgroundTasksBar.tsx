@@ -7,6 +7,7 @@ import { logErr } from "../../utils/log";
 import { elapsed } from "../../utils/workflowHelpers";
 import { HoverTip } from "./HoverTip";
 import { taskTypeLabel } from "./liveSession";
+import { tailInShell } from "./tailInShell";
 
 interface BackgroundTasksBarProps {
   channelId: string;
@@ -20,7 +21,8 @@ interface BackgroundTasksBarProps {
  * claude process runs in the background (shell commands, Claude's Monitor,
  * subagents), as MonitorsBar lists Loop's monitors: each with how long it
  * has run and, in a live session, a button to stop it. A task that ends
- * drops out.
+ * drops out. Tail follows a task's output in the chat's Shell view, which
+ * runs in the container the task writes it in.
  */
 export function BackgroundTasksBar({ channelId, tasks, stoppable }: BackgroundTasksBarProps) {
   const { colors } = useTheme();
@@ -32,6 +34,16 @@ export function BackgroundTasksBar({ channelId, tasks, stoppable }: BackgroundTa
     const timer = setInterval(() => setTick((t) => t + 1), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  const rowButton = (busy: boolean) => ({
+    padding: "1px 8px",
+    border: `1px solid ${colors.border}`,
+    borderRadius: 4,
+    background: "transparent",
+    color: colors.textMuted,
+    fontSize: 11,
+    cursor: busy ? "default" : "pointer",
+  });
 
   const stop = (id: string) => {
     setStopping((prev) => new Set(prev).add(id));
@@ -79,22 +91,18 @@ export function BackgroundTasksBar({ channelId, tasks, stoppable }: BackgroundTa
           <span data-testid="background-task-elapsed" style={{ marginLeft: "auto", fontFamily: fonts.mono, color: colors.textDim }}>
             {elapsed(t.started_at, null)}
           </span>
-          {stoppable && t.id && (
+          {t.output_path && (
             <button
-              data-testid="background-task-stop"
-              onClick={() => stop(t.id)}
-              disabled={stopping.has(t.id)}
-              title="Stop this background task"
-              style={{
-                padding: "1px 8px",
-                border: `1px solid ${colors.border}`,
-                borderRadius: 4,
-                background: "transparent",
-                color: colors.textMuted,
-                fontSize: 11,
-                cursor: stopping.has(t.id) ? "default" : "pointer",
-              }}
+              data-testid="background-task-tail"
+              onClick={() => tailInShell(channelId, t.output_path as string).catch(logErr("following the background task's output"))}
+              title={`Follow its output in the Shell view\n${t.output_path}`}
+              style={rowButton(false)}
             >
+              Tail
+            </button>
+          )}
+          {stoppable && t.id && (
+            <button data-testid="background-task-stop" onClick={() => stop(t.id)} disabled={stopping.has(t.id)} title="Stop this background task" style={rowButton(stopping.has(t.id))}>
               Stop
             </button>
           )}

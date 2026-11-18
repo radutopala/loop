@@ -82,3 +82,30 @@ Feature: Background tasks above the composer
       """
     Then I wait for "[data-testid='background-task-stop']" to be visible
     And the element "[data-testid='background-task-row']" should contain text "Agent"
+
+  @background-task-tail
+  Scenario: A background command's output can be followed in the Shell view
+    Given I set up a test channel via API for git repo "bdd-background-tasks-tail"
+    And I open the app in a browser
+    And I wait for text "bdd-background-tasks-tail" to appear
+
+    When I click on "bdd-background-tasks-tail" in the sidebar
+    And I wait for "textarea" to be visible
+    And I inject a user message with content "build in the background"
+    And I wait for text "build in the background" to appear
+    And I inject an agent.status running event
+
+    # Until the call that started it names its output file, there's nothing to tail.
+    When I inject a "agent.activity" event for the channel with data:
+      """
+      {"activity": "background_tasks", "description": "1 background task: build", "tasks": [{"id": "b1", "type": "local_bash", "description": "build", "started_at": "2026-01-02T03:04:05Z"}]}
+      """
+    Then I wait for "[data-testid='background-tasks-bar']" to be visible
+    And the element "[data-testid='background-task-tail']" should not exist
+
+    When I inject a "agent.activity" event for the channel with data:
+      """
+      {"activity": "background_tasks", "description": "1 background task: build", "tasks": [{"id": "b1", "type": "local_bash", "description": "build", "started_at": "2026-01-02T03:04:05Z", "output_path": "/tmp/claude-1000/-work/s1/tasks/b1.output"}]}
+      """
+    # Its hover names the file it follows in the chat's Shell view.
+    Then I wait for "[data-testid='background-task-tail'][title*='/tmp/claude-1000/-work/s1/tasks/b1.output']" to be visible

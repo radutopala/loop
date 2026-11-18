@@ -231,6 +231,8 @@ export interface BackgroundTask {
   type?: string;
   description?: string;
   started_at: string;
+  /** The file the task's output goes to, in the chat's container. */
+  output_path?: string;
 }
 
 export interface AskUserOption {

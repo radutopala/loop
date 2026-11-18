@@ -181,6 +181,10 @@ type BackgroundTask struct {
 	// StartedAt is when the task was first reported running. The CLI says
 	// no more: a foreground task sent to the background starts then.
 	StartedAt time.Time `json:"started_at"`
+	// OutputPath is the file the CLI writes the task's output to, where
+	// the claude process runs; "" until the tool call that started the
+	// task reports it.
+	OutputPath string `json:"output_path,omitempty"`
 }
 
 // BackgroundSummary describes background tasks in a line, e.g.
