@@ -531,6 +531,55 @@ func TestScanStreamJSONOnActivity(t *testing.T) {
 		require.Equal(t, []string{"bm1:local_bash"}, types(sets[4]), "an ended task's id is forgotten")
 	})
 
+	t.Run("a background command's output file comes from its tool result", func(t *testing.T) {
+		// The CLI's order: the set with the task, then the result of the
+		// call that started it, which names the file. b2's result comes
+		// before its task is reported; the last result names no file.
+		const out1 = "/tmp/claude-1000/-work/s1/tasks/b1.output"
+		const out2 = "/tmp/claude-1000/-work/s1/tasks/b2.output"
+		input := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{}}]}}
+{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"b1","task_type":"local_bash","description":"build"}]}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"Command running in background with ID: b1. Output is being written to: ` + out1 + `. You will be notified when it completes."}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"Command running in background with ID: b1. Output is being written to: ` + out1 + `. You will be notified when it completes."}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t2","content":[{"type":"text","text":"Command running in background with ID: b2. Output is being written to: ` + out2 + `. You will be notified when it completes."}]}]}}
+{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"b1","task_type":"local_bash"},{"task_id":"b2","task_type":"local_bash"}]}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t3","content":"ok"}]}}
+{"type":"system","subtype":"background_tasks_changed","tasks":[]}
+{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"b1","task_type":"local_bash"}]}
+{"type":"result","result":"ok"}
+`
+		var sets [][]agent.BackgroundTask
+		cb := streamCallbacks{onBackgroundTasks: func(tasks []agent.BackgroundTask) { sets = append(sets, tasks) }}
+		_, err := scanStreamJSON(strings.NewReader(input), cb)
+		require.NoError(t, err)
+		paths := func(tasks []agent.BackgroundTask) []string {
+			out := []string{}
+			for _, t := range tasks {
+				out = append(out, t.ID+":"+t.OutputPath)
+			}
+			return out
+		}
+		require.Len(t, sets, 5, "a result naming a known file again isn't reported")
+		require.Equal(t, []string{"b1:"}, paths(sets[0]), "the set reported before is left as it was")
+		require.Equal(t, []string{"b1:" + out1}, paths(sets[1]), "the set is reported again with the file")
+		require.Equal(t, sets[0][0].StartedAt, sets[1][0].StartedAt)
+		require.Equal(t, []string{"b1:" + out1, "b2:" + out2}, paths(sets[2]), "a file named before its task shows is kept for it")
+		require.Empty(t, sets[3])
+		require.Equal(t, []string{"b1:"}, paths(sets[4]), "an ended task's file is forgotten")
+	})
+
+	t.Run("output files are noted without a background listener", func(t *testing.T) {
+		input := `{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"b1"}]}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"Command running in background with ID: b1. Output is being written to: /tmp/b1.output. Done."}]}}
+{"type":"result","result":"ok"}
+`
+		var results []string
+		cb := streamCallbacks{onToolResult: func(id, out string, _ bool) { results = append(results, id) }}
+		_, err := scanStreamJSON(strings.NewReader(input), cb)
+		require.NoError(t, err)
+		require.Equal(t, []string{"t1"}, results, "tool results still reach their listener")
+	})
+
 	t.Run("a Monitor's task is retyped without a background listener", func(t *testing.T) {
 		input := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"m1","name":"Monitor","input":{}}]}}
 {"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"bm1","task_type":"local_bash"}]}
