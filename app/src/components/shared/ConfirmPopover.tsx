@@ -6,24 +6,42 @@ import { fonts } from "../../theme";
  * an arrow pointing up at it: the confirmation for a destructive click, such
  * as deleting a layout tab or a channel. It centers on the parent, or with
  * align "start" lines up with its left edge (for a parent near the window's
- * left, such as a context menu item).
+ * left, such as a context menu item). With above, it sits over the parent
+ * instead, its arrow pointing down, for a parent too near the window's bottom
+ * to show it below.
  */
-export function ConfirmPopover({ label = "Delete?", onYes, onNo, testId, align = "center" }: { label?: string; onYes: () => void; onNo: () => void; testId?: string; align?: "center" | "start" }) {
+export function ConfirmPopover({
+  label = "Delete?",
+  onYes,
+  onNo,
+  testId,
+  align = "center",
+  above = false,
+}: {
+  label?: string;
+  onYes: () => void;
+  onNo: () => void;
+  testId?: string;
+  align?: "center" | "start";
+  above?: boolean;
+}) {
   const start = align === "start";
+  const gap = start ? 6 : 10;
+  const center = start ? "" : "translateX(-50%) ";
   const { colors } = useTheme();
   const smallButton = { cursor: "pointer", padding: "1px 6px", fontSize: 9, fontFamily: fonts.sans, borderRadius: 4, lineHeight: 1.4 };
   return (
     <div
       data-confirm-popover
+      data-side={above ? "above" : "below"}
       data-testid={testId}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
       style={{
         position: "absolute",
-        top: "100%",
+        ...(above ? { bottom: "100%", marginBottom: gap } : { top: "100%", marginTop: gap }),
         left: start ? 4 : "50%",
         transform: start ? undefined : "translateX(-50%)",
-        marginTop: start ? 6 : 10,
         backgroundColor: colors.surface,
         border: `1px solid ${colors.textLight}`,
         borderRadius: 6,
@@ -40,12 +58,18 @@ export function ConfirmPopover({ label = "Delete?", onYes, onNo, testId, align =
         fontSize: 9,
       }}
     >
-      {/* Arrow pointing up */}
+      {/* Arrow pointing at the parent: up from below, down from above */}
       <svg
         width="16"
         height="9"
         viewBox="0 0 16 9"
-        style={{ position: "absolute", top: -8, left: start ? 12 : "50%", transform: start ? undefined : "translateX(-50%)", filter: "drop-shadow(0 -2px 4px rgba(0,0,0,0.3))" }}
+        style={{
+          position: "absolute",
+          ...(above ? { bottom: -8 } : { top: -8 }),
+          left: start ? 12 : "50%",
+          transform: above ? `${center}rotate(180deg)` : center.trim() || undefined,
+          filter: "drop-shadow(0 -2px 4px rgba(0,0,0,0.3))",
+        }}
       >
         <path d="M1 9 L7 2.5 Q8 1.5 9 2.5 L15 9 Z" fill={colors.surface} stroke={colors.textLight} strokeWidth="0.75" />
         <rect x="0" y="8" width="16" height="2" fill={colors.surface} />

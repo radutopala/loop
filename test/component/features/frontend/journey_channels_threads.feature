@@ -97,3 +97,26 @@ Feature: Channels & Threads Journey
     # A deleted selected channel leaves the empty view
     And I wait up to "5s" for "[data-testid='deleting-overlay']" to disappear
     And the element "textarea" should not exist
+
+  @context-menu-confirm-above
+  Scenario: A delete confirmation near the window's bottom opens above its item
+    Given I set up a test channel via API for git repo "bdd-confirm-above"
+    And I create a thread "confirm-above-thread" under the current channel via API
+    And I open the app in a browser
+    And I wait for text "confirm-above-thread" to appear
+
+    # With room below the item, the bubble opens under it.
+    When I right-click on "confirm-above-thread" in the sidebar
+    And I click on "Delete Thread" in the context menu
+    Then the element "[data-testid='context-menu-confirm'][data-side='below']" should be visible
+    When I press Escape
+
+    # A short window pushes the menu up to its bottom edge: the bubble for
+    # its last item, Delete Thread, opens above the item and stays in view.
+    When I resize the window to 1280x200
+    And I right-click on "confirm-above-thread" in the sidebar
+    And I click on "Delete Thread" in the context menu
+    Then the element "[data-testid='context-menu-confirm'][data-side='above']" should be visible
+    And the element "[data-testid='context-menu-confirm']" should fit inside the window
+    When I click on "[data-testid='context-menu-confirm'] [data-testid='confirm-no']"
+    Then the page should contain text "confirm-above-thread"
