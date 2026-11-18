@@ -198,3 +198,8 @@ export function flexPercents(flexes: number[]): number[] {
   const total = flexes.reduce((s, f) => s + f, 0);
   return flexes.map((f) => (total > 0 ? Math.round((f / total) * 100) : 0));
 }
+
+/** The panels that can't share a layout with panel: the rest of its exclusive group. */
+export function exclusiveRivals(panel: PanelType): PanelType[] {
+  return EXCLUSIVE_PANELS.find((g) => g.includes(panel))?.filter((p) => p !== panel) ?? [];
+}

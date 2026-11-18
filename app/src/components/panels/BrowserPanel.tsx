@@ -2,6 +2,7 @@ import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState }
 import { resetBrowserProfile, switchBrowserMode } from "../../api/loopApi";
 import { type TabInfo, useBrowserWs } from "../../hooks/useBrowserWs";
 import { useTheme } from "../../ThemeContext";
+import { BROWSER_OPEN_EVENT, type BrowserOpenDetail, browserOpenQueue } from "../../utils/browserOpen";
 import { storageGet, storageSet } from "../../utils/storage";
 import { ContextMenu } from "../shared/ContextMenu";
 import { type PageContextMenu, pageMenuItems } from "./browserContextMenu";
@@ -153,6 +154,23 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
     if (!started) return;
     startStreaming(1920, 1080);
   }, [started, startStreaming]);
+
+  // Links sent here from elsewhere, such as a chat link's "Open in … browser",
+  // open in tabs of their own once this pane's browser runs: those that came
+  // before it did, then each as it comes.
+  useEffect(() => {
+    if (!started) return;
+    const openWaiting = () => {
+      for (const u of browserOpenQueue.take(channelId, browserMode)) newTab(u);
+    };
+    openWaiting();
+    const onOpen = (ev: Event) => {
+      const d = (ev as CustomEvent<BrowserOpenDetail>).detail;
+      if (d?.channelId === channelId && d.mode === browserMode) openWaiting();
+    };
+    window.addEventListener(BROWSER_OPEN_EVENT, onOpen);
+    return () => window.removeEventListener(BROWSER_OPEN_EVENT, onOpen);
+  }, [started, channelId, browserMode, newTab]);
 
   // Update URL input when page info changes or active tab changes.
   // Prefer activeTab URL (always matches active tab) over url state

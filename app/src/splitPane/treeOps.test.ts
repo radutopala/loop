@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addBeside, findLeafById, flexPercents, makeLeaf, moveLeaf } from "./treeOps";
+import { addBeside, exclusiveRivals, findLeafById, flexPercents, makeLeaf, moveLeaf } from "./treeOps";
 import type { PaneNode } from "./types";
 
 describe("flexPercents", () => {
@@ -61,5 +61,15 @@ describe("moveLeaf", () => {
     expect(findLeafById(moved, "b")).toEqual({ type: "leaf", id: "b", panel: "plugin", flex: 1, plugin });
     moved = moveLeaf(moved, "c", "a", "bottom");
     expect(findLeafById(moved, "c")).toEqual({ type: "leaf", id: "c", panel: "docker-agent", flex: 1, openMode: "fork" });
+  });
+});
+
+describe("exclusiveRivals", () => {
+  it.each([
+    ["docker-browser", ["host-browser"]],
+    ["host-browser", ["docker-browser"]],
+    ["chat", []],
+  ] as const)("%s", (panel, want) => {
+    expect(exclusiveRivals(panel)).toEqual(want);
   });
 });

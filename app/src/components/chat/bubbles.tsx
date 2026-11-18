@@ -3,6 +3,7 @@ import { formatAskAnswers, resolveAsk, resolvePlan } from "../../api/channels";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { AgentActivityData, AskUserQuestion, ExitPlanModeData, Message, TaskItem, TimelineItem } from "../../types";
+import { browserOpenQueue } from "../../utils/browserOpen";
 import { writeClipboard } from "../../utils/copyToClipboard";
 import { messageLink, messageOrigin } from "../../utils/messageLinks";
 import { isPRMessage } from "../../utils/prStatus";
@@ -145,6 +146,7 @@ export function MessageBubble({
   const origin = messageOrigin(message.tags);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const [hovered, setHovered] = useState(false);
+  const channelId = useContext(ChannelContext);
   const forkButton =
     onFork && canForkMessage(message, { queued: showQueued, processing: showProcessing }) ? (
       <ForkMessageButton onFork={() => onFork(message)} visible={hovered} style={isUser ? { marginTop: 0 } : undefined} />
@@ -162,16 +164,29 @@ export function MessageBubble({
       const selectedText = sel?.toString().trim() ?? "";
       const inThisBubble = !!sel && sel.rangeCount > 0 && bubble.contains(sel.anchorNode);
       const items: MenuItem[] = [];
+      const linkHref = (e.target as Element).closest?.("a[data-copy-href]")?.getAttribute("data-copy-href");
+      if (linkHref) {
+        items.push({ label: "Copy link", onClick: () => void writeClipboard(linkHref).catch(() => {}) });
+        // A web link can open in the channel's Docker browser pane, or in the
+        // host's own browser, where a click on it opens it too.
+        if (/^https?:/i.test(linkHref)) {
+          if (channelId) items.push({ label: "Open in Docker browser", onClick: () => browserOpenQueue.request(window, channelId, "docker", linkHref) });
+          items.push({ label: "Open in Host browser", onClick: () => window.open(linkHref, "_blank", "noopener,noreferrer") });
+        }
+      }
+      // A line under the link's items sets the message's items apart.
+      const separator = items.length > 0;
       if (selectedText && inThisBubble) {
+        items.push({ label: "Copy selection", separator, onClick: () => void writeClipboard(sel.toString()).catch(() => {}) });
         items.push({ label: "Quote selection", onClick: () => onQuote({ ...message, content: selectedText }) });
       }
-      items.push({ label: "Quote reply", onClick: () => onQuote(message) });
+      items.push({ label: "Quote reply", separator: separator && items.length === 1, onClick: () => onQuote(message) });
       if (message.id > 0) {
         items.push({ label: "Copy link to message", onClick: () => void writeClipboard(messageLink(message.channel_id, message.id)).catch(() => {}) });
       }
       setCtxMenu({ x: e.clientX, y: e.clientY, items });
     },
-    [onQuote, message],
+    [onQuote, message, channelId],
   );
 
   return (
