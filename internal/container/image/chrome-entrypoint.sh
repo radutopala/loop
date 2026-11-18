@@ -58,6 +58,13 @@ socat TCP-LISTEN:9222,fork,reuseaddr,bind=0.0.0.0 TCP:127.0.0.1:9223 &
 # untrusted shader code on the CPU, and it is also what stops Chromium logging
 # its deprecation error for the automatic software-WebGL fallback.
 #
+# --user-agent is the user agent this Chromium reports with a window, without
+# the "Headless" headless mode puts in front of "Chrome": a person uses this
+# browser from Loop's browser panel, and some sites turn a HeadlessChrome away
+# even when that person answers their challenge. The version is Chromium's
+# own, reduced to its major the way Chrome reports it, and the client hints
+# already name plain Chromium on Linux.
+#
 # --disable-features turns off the two things the container advertises but
 # cannot deliver. Dawn goes looking for a Vulkan driver the moment a page asks
 # for a WebGPU adapter, finds none and logs it; the on-device model service
@@ -65,6 +72,8 @@ socat TCP-LISTEN:9222,fork,reuseaddr,bind=0.0.0.0 TCP:127.0.0.1:9223 &
 # available, and until it is asked it reports itself as downloadable. Both
 # already answered every page with "no", so nothing is lost by not offering
 # them, and the log stops filling with each refusal.
+major=$(chromium-browser --version 2>/dev/null | sed -n 's/^Chromium \([0-9][0-9]*\)\..*/\1/p')
+[ -z "$major" ] || set -- "--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/$major.0.0.0 Safari/537.36" "$@"
 exec chromium-browser \
     --no-sandbox \
     --headless=new \

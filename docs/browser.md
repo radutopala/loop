@@ -43,6 +43,7 @@ Frontend (Electron)
 
 ### Docker Mode (default)
 - Headless Chrome in a dedicated container per channel (`loop-chrome-{channelID}`)
+- Its user agent is the one Chromium reports with a window, `Chrome/<major>.0.0.0` on Linux, not `HeadlessChrome`: people use this browser from the browser panel, and some sites turn a `HeadlessChrome` away even when the person answers their challenge. The client hints already name plain Chromium on Linux
 - Container created on first browser pane open, idle-stopped after timeout
 - CDP endpoint: `ws://127.0.0.1:{hostPort}` (random mapped port)
 - All tabs shown in UI (only agent-tracked tabs)
