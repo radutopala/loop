@@ -116,11 +116,19 @@ describe("applyPR", () => {
     ["conflict", "conflict"],
     ["", undefined],
   ] as const)("%s → %s", (attention, want) => {
-    expect(applyPR({ ...channel, pr_attention: "failed" }, { pr_attention: attention }).pr_attention).toBe(want);
+    expect(applyPR({ ...channel, pr_attention: "failed" }, { pr_attention: attention, kind: "pr", number: 0 }).pr_attention).toBe(want);
   });
 
   it("sets the unresolved review threads, unset at zero", () => {
-    expect(applyPR(channel, { pr_attention: "", unresolved_threads: 2 }).unresolved_threads).toBe(2);
-    expect(applyPR({ ...channel, unresolved_threads: 2 }, { pr_attention: "" }).unresolved_threads).toBeUndefined();
+    expect(applyPR(channel, { pr_attention: "", unresolved_threads: 2, kind: "pr", number: 0 }).unresolved_threads).toBe(2);
+    expect(applyPR({ ...channel, unresolved_threads: 2 }, { pr_attention: "", kind: "pr", number: 0 }).unresolved_threads).toBeUndefined();
+  });
+
+  it("sets the PR/MR the search matches, unset once the branch has none", () => {
+    const got = applyPR(channel, { pr_attention: "", kind: "mr", number: 7, title: "Fix the thing" });
+    expect([got.pr_kind, got.pr_number, got.pr_title]).toEqual(["mr", 7, "Fix the thing"]);
+    expect(applyPR(got, { pr_attention: "", kind: "pr", number: 8 }).pr_title).toBeUndefined();
+    const gone = applyPR(got, { pr_attention: "", kind: "", number: 0 });
+    expect([gone.pr_kind, gone.pr_number, gone.pr_title]).toEqual([undefined, undefined, undefined]);
   });
 });

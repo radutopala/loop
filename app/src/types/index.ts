@@ -59,6 +59,10 @@ export interface Channel {
   pr_attention?: PRAttention;
   /** The PR/MR's unresolved review threads; unset when none. */
   unresolved_threads?: number;
+  /** The thread's PR/MR as the PR watcher last saw it: "pr" or "mr", its number and title; unset when it hasn't seen one. */
+  pr_kind?: string;
+  pr_number?: number;
+  pr_title?: string;
 }
 
 /** A plugin's badge on a sidebar row: a short label and its tooltip. */

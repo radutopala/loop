@@ -360,6 +360,15 @@ var migrations = []Migration{
 		Description: "move auto_save_on_blur and preview_tabs from desktop to editor",
 		Apply:       moveEditorPrefs,
 	},
+	{
+		// The Chrome sidecar reports the user agent its Chromium has with a
+		// window, without "Headless": people use it from the browser panel,
+		// and some sites turn a HeadlessChrome away even when the person
+		// answers their challenge. Until this refresh lands an install keeps
+		// the old chrome-entrypoint.sh.
+		Description: "refresh container/ files: Chrome sidecar without HeadlessChrome in its user agent",
+		Apply:       refreshContainerFiles,
+	},
 }
 
 // adoptProjectConfigs trusts the project config of every project checkout

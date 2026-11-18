@@ -17,7 +17,7 @@ import (
 // migration leaves every existing install on the old copy — that is exactly
 // how the golang:1.26 Dockerfile survived the Go 1.27 upgrade. Update this
 // constant in the same commit as the new migration entry.
-const versionedContainerFilesDigest = "28623f9f63873eadd138a2d9719ffa9d5d143c2661ae89d0e4a1d91564348da8"
+const versionedContainerFilesDigest = "a085890a98438635303513ceecd51d7c1352e00283aca519611711fb25b668a5"
 
 type ContainerFilesGuardSuite struct {
 	suite.Suite

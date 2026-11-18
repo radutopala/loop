@@ -84,10 +84,11 @@ func (s *Server) PRTarget(ctx context.Context, channelID string) (*prwatch.Targe
 	}
 	cfg := s.configs.merged(dir, parent)
 	t := &prwatch.Target{
-		Kind: forge.KindPR,
-		Ref:  forge.Ref{Dir: dir, Account: ghUserOf(cfg), Number: resp.PR.Number},
-		URL:  resp.PR.URL,
-		PR:   config.DefaultPRConfig(),
+		Kind:  forge.KindPR,
+		Ref:   forge.Ref{Dir: dir, Account: ghUserOf(cfg), Number: resp.PR.Number},
+		URL:   resp.PR.URL,
+		Title: resp.PR.Title,
+		PR:    config.DefaultPRConfig(),
 	}
 	if resp.PR.Kind == forge.KindMR {
 		t.Kind = forge.KindMR

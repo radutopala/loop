@@ -93,6 +93,12 @@ type channelResponse struct {
 	PRAttention string `json:"pr_attention,omitempty"`
 	// UnresolvedThreads counts the PR/MR's unresolved review threads.
 	UnresolvedThreads int `json:"unresolved_threads,omitempty"`
+	// PRKind ("pr" or "mr"), PRNumber and PRTitle are the thread's PR/MR as
+	// the PR watcher last saw it, for the sidebar's search; absent when it
+	// hasn't seen one.
+	PRKind   string `json:"pr_kind,omitempty"`
+	PRNumber int    `json:"pr_number,omitempty"`
+	PRTitle  string `json:"pr_title,omitempty"`
 }
 
 // homeDisplayPath shows dir under home as ~: "/Users/me/dev/x" → "~/dev/x".
@@ -336,6 +342,9 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 			PluginBadges:        badges[ch.ChannelID],
 			PRAttention:         prFlags[ch.ChannelID].Attention,
 			UnresolvedThreads:   prFlags[ch.ChannelID].UnresolvedThreads,
+			PRKind:              prFlags[ch.ChannelID].Kind,
+			PRNumber:            prFlags[ch.ChannelID].Number,
+			PRTitle:             prFlags[ch.ChannelID].Title,
 		})
 	}
 

@@ -80,7 +80,7 @@ Several pills that need you stack as a deck, in both tabs: the most urgent on to
 
 Clicking a row opens the session; right-clicking opens the same context menu as the tree, and hovering shows the row's details popup.
 
-Tabs at the top of the list switch between Recent and Tree (the channel tree); the open tab is stored in `localStorage` under `loop-sidebar-tab`, and it's Tree until you pick one. With nothing active in the last 48 hours there's nothing to switch to, so only the tree shows, without tabs; the task toggle stays at the right and applies to Tree. A search or the task filter that empties Recent keeps the tabs, and Recent says no sessions match. Selection mode hides the tabs and shows the tree. The search box filters Recent by name or parent names, and it's hidden in selection mode.
+Tabs at the top of the list switch between Recent and Tree (the channel tree); the open tab is stored in `localStorage` under `loop-sidebar-tab`, and it's Tree until you pick one. With nothing active in the last 48 hours there's nothing to switch to, so only the tree shows, without tabs; the task toggle stays at the right and applies to Tree. A search or the task filter that empties Recent keeps the tabs, and Recent says no sessions match. Selection mode hides the tabs and shows the tree. The search box filters Recent by the same fields as the tree, or by parent names, and it's hidden in selection mode.
 
 ---
 
@@ -90,7 +90,8 @@ The search box sits below the header and provides real-time case-insensitive fil
 
 ### Behavior
 
-- Filters top-level channels by name match
+- Matches a channel or thread by its name, description, ticket URL, branch, or its PR/MR's number (`#12`, or `!12` for a GitLab merge request) and title
+- The PR/MR is the one the [PR watcher](pr.md) last saw on the branch: Loop learns a branch's PR/MR when its Git panel or row info first looks it up, so a PR/MR it hasn't looked up yet doesn't match
 - Shows a parent channel if any of its threads match (even if the parent name does not match)
 - When the parent matches, all its threads are shown
 - When only threads match, only those matching threads are shown under the parent

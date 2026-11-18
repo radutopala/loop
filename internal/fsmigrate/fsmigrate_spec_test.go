@@ -125,6 +125,7 @@ var migrationClasses = []migrationClass{
 	{description: "refresh container/ files: latest release tag without the GitHub API"},
 	{description: "refresh container/ files: retry GitHub release lookups and downloads"},
 	{description: "move auto_save_on_blur and preview_tabs from desktop to editor"},
+	{description: "refresh container/ files: Chrome sidecar without HeadlessChrome in its user agent"},
 }
 
 // --- generated trees ---

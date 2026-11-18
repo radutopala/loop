@@ -40,10 +40,11 @@ type PRState struct {
 	Failed          []forge.FailedCheck
 	Open            bool
 	Threads         []string
+	Title           string
 	UpdatedAt       time.Time
 }
 
-const prStateColumns = `channel_id, forge, number, agent_shas, attempts, last_failed_sha, last_log_hash, auto_fix_override, merge_armed, merge_via, armed_sha, attention, watching, infra_retried_sha, reason, failed, open, threads, updated_at`
+const prStateColumns = `channel_id, forge, number, agent_shas, attempts, last_failed_sha, last_log_hash, auto_fix_override, merge_armed, merge_via, armed_sha, attention, watching, infra_retried_sha, reason, failed, open, threads, title, updated_at`
 
 // SavePRState stores st, replacing the channel's row.
 func (s *SQLiteStore) SavePRState(ctx context.Context, st *PRState) error {
@@ -52,7 +53,7 @@ func (s *SQLiteStore) SavePRState(ctx context.Context, st *PRState) error {
 		autoFix = sql.NullBool{Bool: *st.AutoFix, Valid: true}
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO pr_state (`+prStateColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO pr_state (`+prStateColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(channel_id) DO UPDATE SET
 		   forge = excluded.forge, number = excluded.number, agent_shas = excluded.agent_shas,
 		   attempts = excluded.attempts, last_failed_sha = excluded.last_failed_sha,
@@ -60,10 +61,10 @@ func (s *SQLiteStore) SavePRState(ctx context.Context, st *PRState) error {
 		   merge_armed = excluded.merge_armed, merge_via = excluded.merge_via, armed_sha = excluded.armed_sha,
 		   attention = excluded.attention, watching = excluded.watching,
 		   infra_retried_sha = excluded.infra_retried_sha, reason = excluded.reason,
-		   failed = excluded.failed, open = excluded.open, threads = excluded.threads, updated_at = excluded.updated_at`,
+		   failed = excluded.failed, open = excluded.open, threads = excluded.threads, title = excluded.title, updated_at = excluded.updated_at`,
 		st.ChannelID, st.Forge, st.Number, strings.Join(st.AgentSHAs, "\n"), st.Attempts,
 		st.LastFailedSHA, st.LastLogHash, autoFix, st.MergeArmed, st.MergeVia, st.ArmedSHA,
-		st.Attention, st.Watching, st.InfraRetriedSHA, st.Reason, failedJSON(st.Failed), st.Open, strings.Join(st.Threads, "\n"), s.nowFunc(),
+		st.Attention, st.Watching, st.InfraRetriedSHA, st.Reason, failedJSON(st.Failed), st.Open, strings.Join(st.Threads, "\n"), st.Title, s.nowFunc(),
 	)
 	return err
 }
@@ -104,7 +105,7 @@ func scanPRState(r interface{ Scan(...any) error }) (*PRState, error) {
 	var autoFix sql.NullBool
 	if err := r.Scan(&st.ChannelID, &st.Forge, &st.Number, &shas, &st.Attempts, &st.LastFailedSHA,
 		&st.LastLogHash, &autoFix, &st.MergeArmed, &st.MergeVia, &st.ArmedSHA, &st.Attention, &st.Watching,
-		&st.InfraRetriedSHA, &st.Reason, &failed, &st.Open, &threads, &st.UpdatedAt); err != nil {
+		&st.InfraRetriedSHA, &st.Reason, &failed, &st.Open, &threads, &st.Title, &st.UpdatedAt); err != nil {
 		return nil, err
 	}
 	if failed != "" {

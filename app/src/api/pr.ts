@@ -32,6 +32,7 @@ export interface PRStatus {
   kind: string;
   number: number;
   url?: string;
+  title?: string;
   head_sha: string;
   /** The branch the PR/MR merges into. */
   base_ref?: string;

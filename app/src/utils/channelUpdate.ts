@@ -75,7 +75,11 @@ export function replayChannelPatches(channels: Channel[], patches: ChannelPatch[
   };
 }
 
-/** Applies a channel.pr event to a channel: its attention and unresolved review threads, unset when none. */
-export function applyPR(c: Channel, d: Pick<PRStatus, "pr_attention" | "unresolved_threads">): Channel {
-  return { ...c, pr_attention: d.pr_attention || undefined, unresolved_threads: d.unresolved_threads || undefined };
+/**
+ * Applies a channel.pr event to a channel: its attention, unresolved review
+ * threads and the PR/MR's kind, number and title, unset when none.
+ */
+export function applyPR(c: Channel, d: Pick<PRStatus, "pr_attention" | "unresolved_threads" | "kind" | "number" | "title">): Channel {
+  const pr = d.number ? { pr_kind: d.kind, pr_number: d.number, pr_title: d.title || undefined } : { pr_kind: undefined, pr_number: undefined, pr_title: undefined };
+  return { ...c, pr_attention: d.pr_attention || undefined, unresolved_threads: d.unresolved_threads || undefined, ...pr };
 }

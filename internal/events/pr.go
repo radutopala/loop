@@ -14,11 +14,15 @@ const (
 	PRAttentionConflict = "conflict"
 )
 
-// PRFlags is what a thread's sidebar pills show of its PR/MR: its attention
-// (a PRAttention*) and its unresolved review threads.
+// PRFlags is what a thread's sidebar row knows of its PR/MR: its attention
+// (a PRAttention*) and its unresolved review threads for the pills, and its
+// kind (a forge kind), number and title for the search.
 type PRFlags struct {
 	Attention         string
 	UnresolvedThreads int
+	Kind              string
+	Number            int
+	Title             string
 }
 
 // PR reasons: why the watcher acted as it did on the head's failure.
@@ -59,6 +63,7 @@ type PREventData struct {
 	Kind              string              `json:"kind"`
 	Number            int                 `json:"number"`
 	URL               string              `json:"url,omitempty"`
+	Title             string              `json:"title,omitempty"`
 	HeadSHA           string              `json:"head_sha"`
 	BaseRef           string              `json:"base_ref,omitempty"`
 	Checks            forge.CheckSummary  `json:"checks"`

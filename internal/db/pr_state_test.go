@@ -37,7 +37,7 @@ func (s *IntegrationSuite) TestPRState() {
 		ChannelID: "ch1", Forge: "mr", Number: 7, AgentSHAs: []string{"a", "b"}, Attempts: 2,
 		LastFailedSHA: "b", LastLogHash: "h", AutoFix: &off, MergeArmed: "squash", MergeVia: "loop", ArmedSHA: "b",
 		Attention: "failed", Watching: true, InfraRetriedSHA: "a", Reason: "not_agent_commit",
-		Failed: []forge.FailedCheck{{ID: "9", Name: "lint", Group: "test", URL: "https://example.com/9", RunID: "8"}}, Open: true, Threads: []string{"T1", "T2"}, UpdatedAt: now,
+		Failed: []forge.FailedCheck{{ID: "9", Name: "lint", Group: "test", URL: "https://example.com/9", RunID: "8"}}, Open: true, Threads: []string{"T1", "T2"}, Title: "Fix the thing", UpdatedAt: now,
 	}
 	require.NoError(s.T(), store.SavePRState(ctx, full))
 
@@ -53,7 +53,7 @@ func (s *IntegrationSuite) TestPRState() {
 func (s *StoreSuite) TestPRStateErrors() {
 	ctx := context.Background()
 	boom := errors.New("boom")
-	cols := []string{"channel_id", "forge", "number", "agent_shas", "attempts", "last_failed_sha", "last_log_hash", "auto_fix_override", "merge_armed", "merge_via", "armed_sha", "attention", "watching", "infra_retried_sha", "reason", "failed", "open", "threads", "updated_at"}
+	cols := []string{"channel_id", "forge", "number", "agent_shas", "attempts", "last_failed_sha", "last_log_hash", "auto_fix_override", "merge_armed", "merge_via", "armed_sha", "attention", "watching", "infra_retried_sha", "reason", "failed", "open", "threads", "title", "updated_at"}
 	tests := []struct {
 		name string
 		scan bool
@@ -74,12 +74,12 @@ func (s *StoreSuite) TestPRStateErrors() {
 			return err
 		}},
 		{"list scan", true, func() error {
-			s.mock.ExpectQuery(`FROM pr_state\s+WHERE channel_id IN`).WillReturnRows(sqlmock.NewRows(cols).AddRow("ch", "", 0, "", 0, "", "", nil, "", "", "", "", false, "", "", "", false, "", "not a time"))
+			s.mock.ExpectQuery(`FROM pr_state\s+WHERE channel_id IN`).WillReturnRows(sqlmock.NewRows(cols).AddRow("ch", "", 0, "", 0, "", "", nil, "", "", "", "", false, "", "", "", false, "", "", "not a time"))
 			_, err := s.store.ListPRStates(ctx)
 			return err
 		}},
 		{"list rows", false, func() error {
-			s.mock.ExpectQuery(`FROM pr_state\s+WHERE channel_id IN`).WillReturnRows(sqlmock.NewRows(cols).AddRow("ch", "", 0, "", 0, "", "", nil, "", "", "", "", false, "", "", "", false, "", time.Now()).RowError(0, boom))
+			s.mock.ExpectQuery(`FROM pr_state\s+WHERE channel_id IN`).WillReturnRows(sqlmock.NewRows(cols).AddRow("ch", "", 0, "", 0, "", "", nil, "", "", "", "", false, "", "", "", false, "", "", time.Now()).RowError(0, boom))
 			_, err := s.store.ListPRStates(ctx)
 			return err
 		}},
@@ -100,8 +100,8 @@ func (s *StoreSuite) TestPRStateErrors() {
 // TestPRStateFailedUnparsable reads a stored failed list that isn't JSON as
 // no failed checks.
 func (s *StoreSuite) TestPRStateFailedUnparsable() {
-	cols := []string{"channel_id", "forge", "number", "agent_shas", "attempts", "last_failed_sha", "last_log_hash", "auto_fix_override", "merge_armed", "merge_via", "armed_sha", "attention", "watching", "infra_retried_sha", "reason", "failed", "open", "threads", "updated_at"}
-	s.mock.ExpectQuery(`FROM pr_state WHERE`).WillReturnRows(sqlmock.NewRows(cols).AddRow("ch", "", 0, "", 0, "", "", nil, "", "", "", "failed", false, "", "auto_fix_off", "{", false, "", time.Now()))
+	cols := []string{"channel_id", "forge", "number", "agent_shas", "attempts", "last_failed_sha", "last_log_hash", "auto_fix_override", "merge_armed", "merge_via", "armed_sha", "attention", "watching", "infra_retried_sha", "reason", "failed", "open", "threads", "title", "updated_at"}
+	s.mock.ExpectQuery(`FROM pr_state WHERE`).WillReturnRows(sqlmock.NewRows(cols).AddRow("ch", "", 0, "", 0, "", "", nil, "", "", "", "failed", false, "", "auto_fix_off", "{", false, "", "", time.Now()))
 	st, err := s.store.GetPRState(context.Background(), "ch")
 	require.NoError(s.T(), err)
 	require.Nil(s.T(), st.Failed)
