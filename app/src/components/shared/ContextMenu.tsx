@@ -19,6 +19,10 @@ export interface MenuItem {
   confirm?: string;
 }
 
+// CONFIRM_ROOM is the room a confirm bubble takes under its item: its 6px
+// gap, its 22px height and a margin from the window's edge.
+const CONFIRM_ROOM = 36;
+
 interface ContextMenuProps {
   x: number;
   y: number;
@@ -43,6 +47,9 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
   const [pos, setPos] = useState({ x, y });
   // Index of the item whose confirm bubble is open, -1 for none.
   const [confirmIdx, setConfirmIdx] = useState(-1);
+  // The bubble opens over its item when the window has no room under it,
+  // as for the last item of a menu opened near the window's bottom.
+  const [confirmAbove, setConfirmAbove] = useState(false);
 
   // Arrow nav walks every item: a separator only draws a line above its
   // own item, which stays actionable.
@@ -207,8 +214,9 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
               ref={(el) => {
                 itemRefs.current[i] = el;
               }}
-              onClick={() => {
+              onClick={(e) => {
                 if (item.confirm) {
+                  setConfirmAbove(e.currentTarget.getBoundingClientRect().bottom + CONFIRM_ROOM > window.innerHeight);
                   setConfirmIdx(confirmIdx === i ? -1 : i);
                   return;
                 }
@@ -246,6 +254,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
               <ConfirmPopover
                 testId="context-menu-confirm"
                 align="start"
+                above={confirmAbove}
                 label={item.confirm}
                 onYes={() => {
                   item.onClick();
