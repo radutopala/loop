@@ -46,6 +46,7 @@ import {
   canAddPanelBeside,
   collectLeaves,
   collectPanelTypes,
+  exclusiveRivals,
   findLeafById,
   hasAgentLeaf,
   leafCount,
@@ -1091,12 +1092,25 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       setLearnOpen(false);
       const panel = ce.detail.panel;
       const anchorPanel = ce.detail.anchorPanel;
+      // A pane the panel can't share the layout with, such as the other
+      // browser, gives it its place.
+      const rivals = exclusiveRivals(panel);
       // On a canvas, a tile for it goes beside the anchor's, unless there's one.
       if (layoutTypeRef.current === "canvas") {
-        setCanvasState((prev) => withPanelTile(prev ?? { type: "canvas", viewport: { x: 0, y: 0, zoom: 1 }, tiles: [] }, panel, anchorPanel, `${panel}-${Date.now()}`));
+        setCanvasState((prev) => {
+          const c = prev ?? { type: "canvas" as const, viewport: { x: 0, y: 0, zoom: 1 }, tiles: [] };
+          const rival = c.tiles.find((t) => rivals.includes(t.panel));
+          if (rival) return withTileReplaced(c, rival.id, { id: `${panel}-${Date.now()}`, panel });
+          return withPanelTile(c, panel, anchorPanel, `${panel}-${Date.now()}`);
+        });
         return;
       }
       const current = treeRef.current;
+      const rivalLeaf = current ? collectLeaves(current).find((l) => rivals.includes(l.panel)) : undefined;
+      if (rivalLeaf) {
+        setTree((prev) => (prev ? replaceLeaf(prev, rivalLeaf.id, makeLeaf(leafIdForPanel(channelId, panel), panel)) : prev));
+        return;
+      }
       const existing = current ? collectLeaves(current).find((l) => l.panel === panel) : undefined;
       if (existing) {
         // It may be in the layout yet hidden, minimized or under another

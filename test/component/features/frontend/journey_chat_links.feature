@@ -1,7 +1,8 @@
 @frontend @chat-links
 Feature: Chat Links Journey
   A link in a chat message, written bare or as markdown, shows a copy button
-  while hovered. The button copies the link's address, not its text.
+  while hovered, and right-clicking it offers Copy link. Both copy the
+  link's address, not its text.
 
   Scenario: Hovering a link in a reply offers to copy its address
     Given I set up a test channel via API for git repo "bdd-chat-links"
@@ -19,10 +20,15 @@ Feature: Chat Links Journey
 
     # A bare URL copies itself.
     When I hover over the element with text "https://example.com/bare/page"
-    And I click on "a[href='https://example.com/bare/page'] + [data-testid='link-copy']"
+    And I click on "a[href='https://example.com/bare/page'] + span [data-testid='link-copy']"
     Then the clipboard should hold "https://example.com/bare/page"
 
     # A markdown link copies its address, not its text.
     When I hover over the element with text "the docs"
-    And I click on "a[href='https://example.com/docs'] + [data-testid='link-copy']"
+    And I click on "a[href='https://example.com/docs'] + span [data-testid='link-copy']"
+    Then the clipboard should hold "https://example.com/docs"
+
+    # Right-clicking a link offers to copy its address too.
+    When I right-click on the element with text "the docs"
+    And I click on the button with text "Copy link"
     Then the clipboard should hold "https://example.com/docs"

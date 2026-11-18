@@ -2,6 +2,7 @@ import "katex/dist/katex.min.css";
 import "./math.css";
 import { useContext, useState } from "react";
 import { useTheme } from "../../ThemeContext";
+import { BARE_URL, trimUrl } from "../../utils/bareUrl";
 import { findCandidatePaths } from "../../utils/fileLinks";
 import { inAppHref } from "../../utils/messageLinks";
 import { CopyButton } from "../shared/CopyButton";
@@ -15,80 +16,61 @@ import { findMathBlock, inlineMathPattern, inlineMathTeX, isInlineMath, renderMa
 
 // Link opens a web link in a new window, and a loop://channel/ link to a
 // channel or a message in the app itself. Hovering shows a button that copies
-// the link's address (a loop:// link copies as loop://, so it can be shared).
+// the link's address (a loop:// link copies as loop://, so it can be shared);
+// data-copy-href holds that address for the bubble's right-click menu.
 function Link({ href, children }: { href: string; children: React.ReactNode }) {
   const { colors } = useTheme();
   const [hovered, setHovered] = useState(false);
   const style = { color: "#6ba3f7", textDecoration: "underline" };
   const inApp = inAppHref(href);
   return (
-    <span style={{ position: "relative" }} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+    <span onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       {inApp ? (
-        <a href={inApp} style={style}>
+        <a href={inApp} data-copy-href={href} style={style}>
           {children}
         </a>
       ) : (
-        <a href={href} target="_blank" rel="noopener noreferrer" style={style}>
+        <a href={href} data-copy-href={href} target="_blank" rel="noopener noreferrer" style={style}>
           {children}
         </a>
       )}
       {/* Floats past the link's end, over the text after it, so showing it
-          doesn't reflow the line. */}
-      <CopyButton
-        text={href}
-        visible={hovered}
-        title="Copy link"
-        testId="link-copy"
-        style={{
-          position: "absolute",
-          left: "100%",
-          top: "50%",
-          transform: "translateY(-50%)",
-          background: colors.surface,
-          border: `1px solid ${colors.border}`,
-          pointerEvents: hovered ? "auto" : "none",
-          zIndex: 1,
-        }}
-      />
+          doesn't reflow the line. It hangs off a zero-width box after the
+          link's last character: a link that wraps over several lines is one
+          box as tall as all of them, whose middle is nowhere near its end. */}
+      <span style={{ position: "relative", display: "inline-block", width: 0, height: "1em", verticalAlign: "-0.1em" }}>
+        <CopyButton
+          text={href}
+          visible={hovered}
+          title="Copy link"
+          testId="link-copy"
+          style={{
+            position: "absolute",
+            left: 0,
+            top: "50%",
+            transform: "translateY(-50%)",
+            background: colors.surface,
+            border: `1px solid ${colors.border}`,
+            pointerEvents: hovered ? "auto" : "none",
+            zIndex: 1,
+          }}
+        />
+      </span>
     </span>
   );
 }
 
-function linkifyText(text: string, keyBase: number, channelId: string): React.ReactNode[] {
-  // Collect URL and file-path matches, then merge by start position. File-path
-  // matches that overlap a URL match are dropped (URLs win — they often contain
-  // a `.ext` suffix that would otherwise be mis-detected as a path).
-  const urlRegex = /((?:https?:\/\/|loop:\/\/channel\/)[^\s<>)"']+)/g;
-  type Hit = { kind: "url"; start: number; length: number; href: string } | { kind: "path"; start: number; length: number; raw: string; line: number | null };
-  const hits: Hit[] = [];
-  for (;;) {
-    const m = urlRegex.exec(text);
-    if (!m) break;
-    hits.push({ kind: "url", start: m.index, length: m[0].length, href: m[0] });
-  }
-  if (channelId) {
-    for (const c of findCandidatePaths(text)) {
-      if (hits.some((h) => h.kind === "url" && c.start >= h.start && c.start < h.start + h.length)) continue;
-      hits.push({ kind: "path", start: c.start, length: c.length, raw: c.raw, line: c.line });
-    }
-  }
-  hits.sort((a, b) => a.start - b.start);
-
+// linkifyPaths turns the file paths in plain text into links that open the
+// file. Bare URLs never reach it: formatInline takes them as tokens first.
+function linkifyPaths(text: string, keyBase: number, channelId: string): React.ReactNode[] {
+  if (!channelId) return text ? [text] : [];
   const parts: React.ReactNode[] = [];
   let last = 0;
-  for (const h of hits) {
-    if (h.start < last) continue; // overlapping (shouldn't happen after URL filter, but be safe)
-    if (h.start > last) parts.push(text.slice(last, h.start));
-    if (h.kind === "url") {
-      parts.push(
-        <Link key={`link-${keyBase}-${parts.length}`} href={h.href}>
-          {h.href}
-        </Link>,
-      );
-    } else {
-      parts.push(<FileLink key={`file-${keyBase}-${parts.length}`} channelId={channelId} raw={h.raw} line={h.line} />);
-    }
-    last = h.start + h.length;
+  for (const c of findCandidatePaths(text)) {
+    if (c.start < last) continue;
+    if (c.start > last) parts.push(text.slice(last, c.start));
+    parts.push(<FileLink key={`file-${keyBase}-${parts.length}`} channelId={channelId} raw={c.raw} line={c.line} />);
+    last = c.start + c.length;
   }
   if (last < text.length) parts.push(text.slice(last));
   return parts;
@@ -96,9 +78,10 @@ function linkifyText(text: string, keyBase: number, channelId: string): React.Re
 
 function formatInline(text: string, s: Record<string, React.CSSProperties>, channelId: string): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
-  // Match inline code, math, bold, italic, markdown links. Math comes before
-  // bold and italic so the * in a formula isn't read as emphasis.
-  const regex = new RegExp(`(\`[^\`]+\`|${inlineMathPattern}|\\*\\*[^*]+\\*\\*|\\*[^*]+\\*|\\[[^\\]]+\\]\\([^)]+\\))`, "g");
+  // Match inline code, bare URLs, math, bold, italic, markdown links. A URL
+  // comes before emphasis so the * a console encodes "(" as stays in the
+  // link, and math before emphasis so the * in a formula isn't either.
+  const regex = new RegExp(`(\`[^\`]+\`|${BARE_URL}|${inlineMathPattern}|\\*\\*[^*]+\\*\\*|\\*[^*]+\\*|\\[[^\\]]+\\]\\([^)]+\\))`, "g");
   let lastIndex = 0;
 
   for (;;) {
@@ -106,11 +89,20 @@ function formatInline(text: string, s: Record<string, React.CSSProperties>, chan
     if (!match) break;
 
     if (match.index > lastIndex) {
-      nodes.push(...linkifyText(text.slice(lastIndex, match.index), nodes.length, channelId));
+      nodes.push(...linkifyPaths(text.slice(lastIndex, match.index), nodes.length, channelId));
     }
 
-    const token = match[0];
-    if (isInlineMath(token)) {
+    let token = match[0];
+    if (/^(?:https?|loop):/.test(token)) {
+      // The punctuation trimmed off is the sentence's: it's read again as text.
+      token = trimUrl(token);
+      regex.lastIndex = match.index + token.length;
+      nodes.push(
+        <Link key={nodes.length} href={token}>
+          {token}
+        </Link>,
+      );
+    } else if (isInlineMath(token)) {
       nodes.push(<span key={nodes.length} dangerouslySetInnerHTML={{ __html: renderMath(inlineMathTeX(token), false) }} />);
     } else if (token.startsWith("`")) {
       nodes.push(
@@ -140,7 +132,7 @@ function formatInline(text: string, s: Record<string, React.CSSProperties>, chan
   }
 
   if (lastIndex < text.length) {
-    nodes.push(...linkifyText(text.slice(lastIndex), nodes.length, channelId));
+    nodes.push(...linkifyPaths(text.slice(lastIndex), nodes.length, channelId));
   }
 
   return nodes;
