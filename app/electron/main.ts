@@ -900,6 +900,10 @@ ipcMain.handle("install-update", async () => {
       console.warn("daemon:restart before update failed:", err);
     }
   }
+  // On macOS the install closes every window before before-quit runs, so
+  // the flag goes up here: the inbox popup would otherwise take its close
+  // for a cmd+W, hide instead and so cancel the quit.
+  quitting = true;
   autoUpdater.quitAndInstall(false, true);
 });
 
