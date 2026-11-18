@@ -21,6 +21,18 @@ export function sessionName(channel: Channel): string {
   return channel.name || channel.dir_path?.split("/").pop() || channel.id;
 }
 
+/**
+ * Whether a session matches the sidebar's search, given in lower case: its
+ * name, description, ticket URL, branch, or its PR/MR's title or reference
+ * (#12, !12 for a merge request).
+ */
+export function matchesSearch(channel: Channel, query: string): boolean {
+  if (!query) return true;
+  const pr = channel.pr_number ? `${channel.pr_kind === "mr" ? "!" : "#"}${channel.pr_number}` : "";
+  const branch = channel.branch === "HEAD" ? "" : channel.branch;
+  return [sessionName(channel), channel.description, channel.ticket_url, branch, pr, channel.pr_title].some((f) => !!f && f.toLowerCase().includes(query));
+}
+
 /** Where a thread lives: its ancestors' names, outermost first. Empty for a top-level channel. */
 export function sessionContext(channel: Channel, byId: Map<string, Channel>): string {
   const names: string[] = [];

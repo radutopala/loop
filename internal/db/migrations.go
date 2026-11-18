@@ -707,6 +707,8 @@ var migrations = []migration{
 	sqlMigration(`ALTER TABLE messages ADD COLUMN add_uuid TEXT NOT NULL DEFAULT ''`),
 	// tags holds a message's key/value facts as a JSON object, or '' without any.
 	sqlMigration(`ALTER TABLE messages ADD COLUMN tags TEXT NOT NULL DEFAULT ''`),
+	// title is the PR/MR's title as its last lookup saw it.
+	sqlMigration(`ALTER TABLE pr_state ADD COLUMN title TEXT NOT NULL DEFAULT ''`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the

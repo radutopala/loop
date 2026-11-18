@@ -52,7 +52,9 @@ type Target struct {
 	Kind string // forge.KindPR or forge.KindMR
 	Ref  forge.Ref
 	URL  string
-	PR   config.PRConfig
+	// Title is the PR/MR's title, kept for the sidebar's search.
+	Title string
+	PR    config.PRConfig
 }
 
 // Store keeps each thread's CI state.
@@ -300,6 +302,7 @@ func (w *Watcher) target(ctx context.Context, st *db.PRState) (*Target, forge.Fo
 	if st.Forge != t.Kind || st.Number != t.Ref.Number {
 		*st = db.PRState{ChannelID: st.ChannelID, AgentSHAs: st.AgentSHAs, AutoFix: st.AutoFix, Forge: t.Kind, Number: t.Ref.Number}
 	}
+	st.Title = t.Title
 	return t, f, nil
 }
 
@@ -316,8 +319,11 @@ func (w *Watcher) poll(ctx context.Context, channelID string, e *entry) (bool, t
 	}
 	t, f, err := w.target(ctx, st)
 	if errors.Is(err, ErrNoPR) {
-		if st.Watching || st.Attention != "" || st.Open {
+		if st.Watching || st.Attention != "" || st.Open || st.Number != 0 {
+			// The branch has no PR/MR any more (a lookup finds merged and
+			// closed ones too), so the sidebar's search forgets it as well.
 			st.Watching, st.Attention, st.Open = false, "", false
+			st.Forge, st.Number, st.Title = "", 0, ""
 			w.save(ctx, st)
 			w.publish(e, events.PREventData{ChannelID: channelID})
 		}
@@ -649,6 +655,7 @@ func (w *Watcher) eventData(ctx context.Context, t *Target, f forge.Forge, st *d
 		Kind:              t.Kind,
 		Number:            t.Ref.Number,
 		URL:               t.URL,
+		Title:             t.Title,
 		HeadSHA:           ci.HeadSHA,
 		BaseRef:           ci.BaseRef,
 		Checks:            ci.Checks,

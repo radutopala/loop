@@ -245,14 +245,15 @@ func (s *ServerSuite) TestPRTarget() {
 	require.Nil(s.T(), t)
 	s.srv.InvalidatePRCacheForDir(dir)
 
-	gh.On("LookupPR", mock.Anything, dir, "octo", "feat-ci").Return(&githubapi.PRInfo{Number: 12, URL: "https://example.com/pr/12"}, nil).Once()
+	gh.On("LookupPR", mock.Anything, dir, "octo", "feat-ci").Return(&githubapi.PRInfo{Number: 12, URL: "https://example.com/pr/12", Title: "Fix the thing"}, nil).Once()
 	t, err = s.srv.PRTarget(ctx, "th-1")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), &prwatch.Target{
-		Kind: forge.KindPR,
-		Ref:  forge.Ref{Dir: dir, Account: "octo", Number: 12},
-		URL:  "https://example.com/pr/12",
-		PR:   config.PRConfig{AutoFix: false, MaxAttempts: 5, PollSec: 10},
+		Kind:  forge.KindPR,
+		Ref:   forge.Ref{Dir: dir, Account: "octo", Number: 12},
+		URL:   "https://example.com/pr/12",
+		Title: "Fix the thing",
+		PR:    config.PRConfig{AutoFix: false, MaxAttempts: 5, PollSec: 10},
 	}, t)
 	gh.AssertExpectations(s.T())
 
@@ -329,9 +330,9 @@ func (s *ServerSuite) TestSearchChannelsPRFlags() {
 		{name: "no watcher", ci: func() PRWatcher { return nil }, want: map[string]events.PRFlags{}},
 		{name: "flags by thread", ci: func() PRWatcher {
 			ci := new(mockPRWatcher)
-			ci.On("Flags", mock.Anything).Return(map[string]events.PRFlags{"ch-2": {Attention: "conflict", UnresolvedThreads: 2}}, nil)
+			ci.On("Flags", mock.Anything).Return(map[string]events.PRFlags{"ch-2": {Attention: "conflict", UnresolvedThreads: 2, Kind: "mr", Number: 7, Title: "Fix the thing"}}, nil)
 			return ci
-		}, want: map[string]events.PRFlags{"ch-2": {Attention: "conflict", UnresolvedThreads: 2}}},
+		}, want: map[string]events.PRFlags{"ch-2": {Attention: "conflict", UnresolvedThreads: 2, Kind: "mr", Number: 7, Title: "Fix the thing"}}},
 		{name: "lookup fails", ci: func() PRWatcher {
 			ci := new(mockPRWatcher)
 			ci.On("Flags", mock.Anything).Return(nil, errors.New("db"))
@@ -356,7 +357,7 @@ func (s *ServerSuite) TestSearchChannelsPRFlags() {
 			require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
 			got := map[string]events.PRFlags{}
 			for _, ch := range resp {
-				if fl := (events.PRFlags{Attention: ch.PRAttention, UnresolvedThreads: ch.UnresolvedThreads}); fl != (events.PRFlags{}) {
+				if fl := (events.PRFlags{Attention: ch.PRAttention, UnresolvedThreads: ch.UnresolvedThreads, Kind: ch.PRKind, Number: ch.PRNumber, Title: ch.PRTitle}); fl != (events.PRFlags{}) {
 					got[ch.ChannelID] = fl
 				}
 			}

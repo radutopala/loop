@@ -18,7 +18,7 @@ import { RenameThreadDialog } from "./RenameThreadDialog";
 import { type SectionKey, SectionTabs, SessionSections } from "./SessionSections";
 import { SidebarFooter } from "./SidebarFooter";
 import { SidebarHeader } from "./SidebarHeader";
-import { activeSessions, isTaskThread, recentSessions, sessionContext, sessionName } from "./sessions";
+import { activeSessions, isTaskThread, matchesSearch, recentSessions, sessionContext } from "./sessions";
 import { SIDEBAR_MIN_WIDTH, savedSidebarWidth } from "./sidebarWidth";
 import { TicketDialog } from "./TicketDialog";
 
@@ -502,7 +502,7 @@ export function Sidebar({
 
   // Check if a thread or any of its sub-threads match the search query.
   const threadTreeMatches = (t: Channel): boolean => {
-    if (t.name.toLowerCase().includes(query)) return true;
+    if (matchesSearch(t, query)) return true;
     const subs = threadsByParent[t.id] ?? [];
     return subs.some(threadTreeMatches);
   };
@@ -510,10 +510,8 @@ export function Sidebar({
   // When searching, show channels that match or have matching threads/sub-threads.
   const topLevel = query
     ? allTopLevel.filter((c) => {
-        const nameMatch = c.name.toLowerCase().includes(query);
         const threads = threadsByParent[c.id] ?? [];
-        const threadMatch = threads.some(threadTreeMatches);
-        return nameMatch || threadMatch;
+        return matchesSearch(c, query) || threads.some(threadTreeMatches);
       })
     : allTopLevel;
 
@@ -521,11 +519,8 @@ export function Sidebar({
   const getFilteredThreads = (parentId: string): Channel[] => {
     const threads = threadsByParent[parentId] ?? [];
     if (!query) return threads;
-    const parentMatches = allTopLevel
-      .find((c) => c.id === parentId)
-      ?.name.toLowerCase()
-      .includes(query);
-    if (parentMatches) return threads;
+    const parent = allTopLevel.find((c) => c.id === parentId);
+    if (parent && matchesSearch(parent, query)) return threads;
     return threads.filter(threadTreeMatches);
   };
 
@@ -533,7 +528,7 @@ export function Sidebar({
   // since they count as active now. Select mode is about the tree's
   // checkboxes, so it steps aside for it.
   const isUnread = (id: string) => unreadIdsRef?.current?.has(id) ?? false;
-  const matchesQuery = (c: Channel) => !query || sessionName(c).toLowerCase().includes(query) || sessionContext(c, byId).toLowerCase().includes(query);
+  const matchesQuery = (c: Channel) => matchesSearch(c, query) || sessionContext(c, byId).toLowerCase().includes(query);
   const now = Date.now();
   const active = selectMode ? [] : activeSessions(channels, isRunning, held).filter((c) => matchesQuery(c) && (!needsYou || lit(c.id)));
   for (const c of active) seenActiveAtRef.current.set(c.id, now);

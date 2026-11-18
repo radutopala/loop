@@ -124,7 +124,7 @@ func (w *Watcher) Status(ctx context.Context, channelID string) *events.PREventD
 	return &d
 }
 
-// Flags returns what each thread's sidebar pills show of its PR/MR, for the
+// Flags returns what each thread's sidebar row knows of its PR/MR, for the
 // threads with something to show.
 func (w *Watcher) Flags(ctx context.Context) (map[string]events.PRFlags, error) {
 	states, err := w.Store.ListPRStates(ctx)
@@ -133,7 +133,11 @@ func (w *Watcher) Flags(ctx context.Context) (map[string]events.PRFlags, error) 
 	}
 	out := map[string]events.PRFlags{}
 	for _, st := range states {
-		if fl := (events.PRFlags{Attention: st.Attention, UnresolvedThreads: len(st.Threads)}); fl != (events.PRFlags{}) {
+		fl := events.PRFlags{Attention: st.Attention, UnresolvedThreads: len(st.Threads)}
+		if st.Number > 0 {
+			fl.Kind, fl.Number, fl.Title = st.Forge, st.Number, st.Title
+		}
+		if fl != (events.PRFlags{}) {
 			out[st.ChannelID] = fl
 		}
 	}

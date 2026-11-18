@@ -266,6 +266,24 @@ func (s *WatcherSuite) TestConflict() {
 	}
 }
 
+// TestTitle keeps the PR/MR's title as each poll's lookup sees it.
+func (s *WatcherSuite) TestTitle() {
+	s.setup(forge.KindPR)
+	s.settings()
+	s.store.put(db.PRState{ChannelID: ch, Forge: forge.KindPR, Number: 12})
+	s.target.Title = "Fix the thing"
+	s.ci("h1", green).Once()
+	s.poll()
+	require.Equal(s.T(), "Fix the thing", s.store.get(ch).Title)
+	require.Equal(s.T(), "Fix the thing", s.lastBroadcast().Title)
+
+	// A renamed PR: the next poll follows.
+	s.target.Title = "Fix the other thing"
+	s.ci("h1", green).Once()
+	s.poll()
+	require.Equal(s.T(), "Fix the other thing", s.store.get(ch).Title)
+}
+
 // TestUnresolvedThreads counts the unresolved review threads, on both
 // forges, without alerting anyone, and forgets them once the PR/MR is merged.
 func (s *WatcherSuite) TestUnresolvedThreads() {
@@ -577,12 +595,12 @@ func (s *WatcherSuite) TestPollEnds() {
 	require.True(s.T(), s.lastBroadcast().Merged)
 	require.Nil(s.T(), s.lastBroadcast().MergeMethods, "no merge settings once merged")
 
-	// No PR: cleared once, quietly after.
-	s.store.put(db.PRState{ChannelID: ch, Watching: true})
+	// No PR: cleared once, quietly after. Its number and title go too.
+	s.store.put(db.PRState{ChannelID: ch, Forge: forge.KindPR, Number: 12, Title: "Fix the thing", Watching: true})
 	s.target = nil
 	n := len(s.broadcasts)
 	require.False(s.T(), s.poll())
-	require.False(s.T(), s.store.get(ch).Watching)
+	require.Equal(s.T(), db.PRState{ChannelID: ch}, s.store.get(ch))
 	require.Equal(s.T(), events.PREventData{ChannelID: ch}, s.lastBroadcast())
 	require.False(s.T(), s.poll())
 	require.Len(s.T(), s.broadcasts, n+1)
@@ -766,6 +784,8 @@ func (s *WatcherSuite) TestFlags() {
 	s.store.put(db.PRState{ChannelID: "c", Attention: "conflict"})
 	s.store.put(db.PRState{ChannelID: "d", Attention: "fixing", Threads: []string{"T1", "T2"}})
 	s.store.put(db.PRState{ChannelID: "e", Threads: []string{"T1"}})
+	s.store.put(db.PRState{ChannelID: "f", Forge: "mr", Number: 7, Title: "Fix the thing"})
+	s.store.put(db.PRState{ChannelID: "g", Forge: "pr", Title: "no number, nothing to show"})
 	got, err := s.w.Flags(s.ctx)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), map[string]events.PRFlags{
@@ -773,6 +793,7 @@ func (s *WatcherSuite) TestFlags() {
 		"c": {Attention: events.PRAttentionConflict},
 		"d": {Attention: events.PRAttentionFixing, UnresolvedThreads: 2},
 		"e": {UnresolvedThreads: 1},
+		"f": {Kind: "mr", Number: 7, Title: "Fix the thing"},
 	}, got)
 
 	s.store.listErr = errors.New("db")

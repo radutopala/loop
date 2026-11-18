@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Channel } from "../../types";
-import { activeSessions, isTaskThread, RECENT_WINDOW_MS, recentSessions, relativeTime, sessionContext, sessionName } from "./sessions";
+import { activeSessions, isTaskThread, matchesSearch, RECENT_WINDOW_MS, recentSessions, relativeTime, sessionContext, sessionName } from "./sessions";
 
 function ch(id: string, over: Partial<Channel> = {}): Channel {
   return {
@@ -44,6 +44,48 @@ describe("sessionName", () => {
     { name: "nothing else falls back to the id", channel: ch("a", { name: "" }), want: "a" },
   ])("$name", ({ channel, want }) => {
     expect(sessionName(channel)).toBe(want);
+  });
+});
+
+describe("matchesSearch", () => {
+  const thread = ch("t", {
+    name: "Login fix",
+    description: "Retry the token refresh",
+    ticket_url: "https://tickets.example.com/browse/ABC-42",
+    branch: "fix/login-retry",
+    pr_kind: "pr",
+    pr_number: 401,
+    pr_title: "fix(auth): retry the refresh",
+  });
+
+  it.each([
+    ["", true],
+    ["login", true],
+    ["token refresh", true],
+    ["abc-42", true],
+    ["login-retry", true],
+    ["#401", true],
+    ["401", true],
+    ["fix(auth)", true],
+    ["!401", false],
+    ["nothing", false],
+  ])("%j matches: %s", (query, want) => {
+    expect(matchesSearch(thread, query)).toBe(want);
+  });
+
+  it("writes a merge request as !N", () => {
+    const mr = ch("m", { pr_kind: "mr", pr_number: 7 });
+    expect(matchesSearch(mr, "!7")).toBe(true);
+    expect(matchesSearch(mr, "#7")).toBe(false);
+  });
+
+  it("leaves out a detached HEAD and fields that aren't set", () => {
+    expect(matchesSearch(ch("d", { name: "x", branch: "HEAD" }), "head")).toBe(false);
+    expect(matchesSearch(ch("n", { name: "x" }), "#")).toBe(false);
+  });
+
+  it("matches the name as the sidebar shows it", () => {
+    expect(matchesSearch(ch("d", { name: "", dir_path: "/src/webapp" }), "webapp")).toBe(true);
   });
 });
 

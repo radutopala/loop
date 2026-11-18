@@ -164,3 +164,33 @@ Feature: Recent sessions in the sidebar
     And I wait for text "bdd-sidebar-search" to appear
     And the element "[data-testid='sidebar-search-clear']" should not exist
     And the focus is in "input[placeholder='Search...']"
+
+  @sidebar-search-fields
+  Scenario: The search matches a session's description, ticket and branch
+    Given I set up a test channel via API for git repo "bdd-search-fields"
+    When I send a POST request to "/api/channels/{channel_id}/description" with body:
+      """
+      {"description": "Retries the token refresh"}
+      """
+    Then the response status should be 200
+    When I send a POST request to "/api/channels/{channel_id}/ticket" with body:
+      """
+      {"ticket_url": "https://example.atlassian.net/browse/PROJ-77"}
+      """
+    Then the response status should be 200
+    And I open the app in a browser
+    And I wait for text "bdd-search-fields" to appear
+
+    # None of these is in its name.
+    When I type "zz-no-match" into "input[placeholder='Search...']"
+    Then I wait up to "5s" for text "bdd-search-fields" to disappear
+    When I clear and type "token refresh" into "input[placeholder='Search...']"
+    Then I wait for text "bdd-search-fields" to appear
+    When I clear and type "zz-no-match" into "input[placeholder='Search...']"
+    Then I wait up to "5s" for text "bdd-search-fields" to disappear
+    When I clear and type "proj-77" into "input[placeholder='Search...']"
+    Then I wait for text "bdd-search-fields" to appear
+    When I clear and type "zz-no-match" into "input[placeholder='Search...']"
+    Then I wait up to "5s" for text "bdd-search-fields" to disappear
+    When I clear and type "main" into "input[placeholder='Search...']"
+    Then I wait for text "bdd-search-fields" to appear

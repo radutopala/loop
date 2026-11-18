@@ -544,6 +544,7 @@ The status of a thread's PR/MR changed: its checks, an auto-fix sent or stopped,
   "kind": "pr",
   "number": 342,
   "url": "https://github.com/example/repo/pull/342",
+  "title": "Retry the token refresh",
   "head_sha": "4f1c2d9e8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e",
     "base_ref": "main",
   "checks": {"total": 7, "passed": 6, "failed": 1, "pending": 0},
@@ -568,6 +569,7 @@ The status of a thread's PR/MR changed: its checks, an auto-fix sent or stopped,
 | `kind`             | string | `pr` (GitHub) or `mr` (GitLab) |
 | `number`           | int    | The PR number or MR IID |
 | `url`              | string | The PR/MR's web URL |
+| `title`            | string | The PR/MR's title, omitted when unknown |
 | `head_sha`         | string | The head commit the checks ran on |
 | `base_ref`         | string | The branch the PR/MR merges into, omitted when unknown |
 | `checks`           | object | `total`, `passed`, `failed` and `pending` checks; a cancelled or skipped one counts only toward `total` |
