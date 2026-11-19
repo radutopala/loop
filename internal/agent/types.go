@@ -185,6 +185,10 @@ type BackgroundTask struct {
 	// the claude process runs; "" until the tool call that started the
 	// task reports it.
 	OutputPath string `json:"output_path,omitempty"`
+	// SessionID is the Claude session that started the task. The CLI keeps
+	// every task's output under a folder named after it, so the file of a
+	// task that never reports one (a Monitor's) can still be found there.
+	SessionID string `json:"session_id,omitempty"`
 }
 
 // BackgroundSummary describes background tasks in a line, e.g.

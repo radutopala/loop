@@ -580,6 +580,21 @@ func TestScanStreamJSONOnActivity(t *testing.T) {
 		require.Equal(t, []string{"t1"}, results, "tool results still reach their listener")
 	})
 
+	t.Run("a background task names the session that started it", func(t *testing.T) {
+		input := `{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"b0"}]}
+{"type":"system","subtype":"init","session_id":"s1"}
+{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"b1"}]}
+{"type":"result","result":"ok"}
+`
+		var sets [][]agent.BackgroundTask
+		cb := streamCallbacks{onBackgroundTasks: func(tasks []agent.BackgroundTask) { sets = append(sets, tasks) }}
+		_, err := scanStreamJSON(strings.NewReader(input), cb)
+		require.NoError(t, err)
+		require.Len(t, sets, 2)
+		require.Empty(t, sets[0][0].SessionID, "no session is known before the first turn starts")
+		require.Equal(t, "s1", sets[1][0].SessionID)
+	})
+
 	t.Run("a Monitor's task is retyped without a background listener", func(t *testing.T) {
 		input := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"m1","name":"Monitor","input":{}}]}}
 {"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"bm1","task_type":"local_bash"}]}

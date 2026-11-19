@@ -233,6 +233,8 @@ export interface BackgroundTask {
   started_at: string;
   /** The file the task's output goes to, in the chat's container. */
   output_path?: string;
+  /** The Claude session that started the task. */
+  session_id?: string;
 }
 
 export interface AskUserOption {

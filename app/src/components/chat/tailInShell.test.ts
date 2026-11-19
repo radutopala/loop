@@ -3,7 +3,7 @@ import type { SessionStatus } from "../../types";
 import { registerTerminalInput, registerWorkspace } from "../../uiBridge/registry";
 import { SIDE_PANE } from "../../uiBridge/sideText";
 import type { TerminalInput, WorkspaceController } from "../../uiBridge/types";
-import { INTERRUPT_PAUSE_MS, SHELL_READY_TIMEOUT_MS, shellQuote, tailInShell } from "./tailInShell";
+import { INTERRUPT_PAUSE_MS, outputFile, SHELL_READY_TIMEOUT_MS, shellQuote, tailInShell } from "./tailInShell";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -32,6 +32,19 @@ describe("shellQuote", () => {
   });
 });
 
+describe("outputFile", () => {
+  const task = { id: "b1", started_at: "2026-01-02T03:04:05Z" };
+  it.each([
+    ["a named file", { ...task, type: "local_bash", output_path: "/tmp/a b.output" }, { word: "'/tmp/a b.output'", shown: "/tmp/a b.output" }],
+    ["a Monitor's file in its session's folder", { ...task, type: "monitor", session_id: "s1" }, { word: "/tmp/claude-*/*/'s1''/tasks/b1.output'", shown: "/tmp/claude-*/*/s1/tasks/b1.output" }],
+    ["no file for another task without one", { ...task, type: "local_bash", session_id: "s1" }, undefined],
+    ["no file for a Monitor without a session", { ...task, type: "monitor" }, undefined],
+    ["no file for a Monitor without an id", { ...task, id: "", type: "monitor", session_id: "s1" }, undefined],
+  ])("gives %s", (_name, t, want) => {
+    expect(outputFile(t)).toEqual(want);
+  });
+});
+
 describe("tailInShell", () => {
   it("opens the Shell view and tails the file after an interrupt", async () => {
     const ws = workspace();
@@ -40,7 +53,7 @@ describe("tailInShell", () => {
       // The command comes only after the pause.
       expect(sent).toEqual(["\x03"]);
     });
-    await tailInShell("c1", "/tmp/claude-1000/s/tasks/b1.output", sleep);
+    await tailInShell("c1", "'/tmp/claude-1000/s/tasks/b1.output'", sleep);
     expect(ws.openSide).toHaveBeenCalledWith("shell");
     expect(sleep).toHaveBeenCalledWith(INTERRUPT_PAUSE_MS);
     expect(sent).toEqual(["\x03", "tail -n +1 -f '/tmp/claude-1000/s/tasks/b1.output'\n"]);
@@ -60,7 +73,7 @@ describe("tailInShell", () => {
     const sleep = vi.fn(async () => {
       steps.shift()?.();
     });
-    await tailInShell("c1", "/tmp/b1.output", sleep);
+    await tailInShell("c1", "'/tmp/b1.output'", sleep);
     expect(sent).toEqual(["\x03", "tail -n +1 -f '/tmp/b1.output'\n"]);
   });
 

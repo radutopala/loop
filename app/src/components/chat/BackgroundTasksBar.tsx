@@ -7,7 +7,7 @@ import { logErr } from "../../utils/log";
 import { elapsed } from "../../utils/workflowHelpers";
 import { HoverTip } from "./HoverTip";
 import { taskTypeLabel } from "./liveSession";
-import { tailInShell } from "./tailInShell";
+import { outputFile, tailInShell } from "./tailInShell";
 
 interface BackgroundTasksBarProps {
   channelId: string;
@@ -60,54 +60,57 @@ export function BackgroundTasksBar({ channelId, tasks, stoppable }: BackgroundTa
 
   return (
     <div data-testid="background-tasks-bar" style={{ display: "flex", flexDirection: "column", gap: 4, padding: "6px 24px 0" }}>
-      {tasks.map((t, i) => (
-        <div
-          key={t.id || i}
-          data-testid="background-task-row"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            // As wide as the composer under it.
-            width: "100%",
-            maxWidth: 768,
-            margin: "0 auto",
-            boxSizing: "border-box",
-            padding: "4px 10px",
-            border: `1px solid ${colors.border}`,
-            borderRadius: 6,
-            background: colors.surface,
-            fontSize: 12,
-            color: colors.textMuted,
-          }}
-        >
-          <span style={{ color: colors.textDim }}>{taskTypeLabel(t.type)}</span>
-          {/* The whole command shows on hover, as the composer's tips do. */}
-          <HoverTip text={t.description ? `${taskTypeLabel(t.type)}\n${t.description}` : ""} shrink mono width={420}>
-            <span data-testid="background-task-description" style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: colors.text }}>
-              {t.description || "Background task"}
+      {tasks.map((t, i) => {
+        const file = outputFile(t);
+        return (
+          <div
+            key={t.id || i}
+            data-testid="background-task-row"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              // As wide as the composer under it.
+              width: "100%",
+              maxWidth: 768,
+              margin: "0 auto",
+              boxSizing: "border-box",
+              padding: "4px 10px",
+              border: `1px solid ${colors.border}`,
+              borderRadius: 6,
+              background: colors.surface,
+              fontSize: 12,
+              color: colors.textMuted,
+            }}
+          >
+            <span style={{ color: colors.textDim }}>{taskTypeLabel(t.type)}</span>
+            {/* The whole command shows on hover, as the composer's tips do. */}
+            <HoverTip text={t.description ? `${taskTypeLabel(t.type)}\n${t.description}` : ""} shrink mono width={420}>
+              <span data-testid="background-task-description" style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: colors.text }}>
+                {t.description || "Background task"}
+              </span>
+            </HoverTip>
+            <span data-testid="background-task-elapsed" style={{ marginLeft: "auto", fontFamily: fonts.mono, color: colors.textDim }}>
+              {elapsed(t.started_at, null)}
             </span>
-          </HoverTip>
-          <span data-testid="background-task-elapsed" style={{ marginLeft: "auto", fontFamily: fonts.mono, color: colors.textDim }}>
-            {elapsed(t.started_at, null)}
-          </span>
-          {t.output_path && (
-            <button
-              data-testid="background-task-tail"
-              onClick={() => tailInShell(channelId, t.output_path as string).catch(logErr("following the background task's output"))}
-              title={`Follow its output in the Shell view\n${t.output_path}`}
-              style={rowButton(false)}
-            >
-              Tail
-            </button>
-          )}
-          {stoppable && t.id && (
-            <button data-testid="background-task-stop" onClick={() => stop(t.id)} disabled={stopping.has(t.id)} title="Stop this background task" style={rowButton(stopping.has(t.id))}>
-              Stop
-            </button>
-          )}
-        </div>
-      ))}
+            {file && (
+              <button
+                data-testid="background-task-tail"
+                onClick={() => tailInShell(channelId, file.word).catch(logErr("following the background task's output"))}
+                title={`Follow its output in the Shell view\n${file.shown}`}
+                style={rowButton(false)}
+              >
+                Tail
+              </button>
+            )}
+            {stoppable && t.id && (
+              <button data-testid="background-task-stop" onClick={() => stop(t.id)} disabled={stopping.has(t.id)} title="Stop this background task" style={rowButton(stopping.has(t.id))}>
+                Stop
+              </button>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
