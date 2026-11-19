@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { checkFilesExist } from "../api/files";
-import { commandDirs, findCandidatePaths, getValidationStatus, pathInDir, requestValidation, resetFileLinkCache, retain, revalidateMissing } from "./fileLinks";
+import { commandDirs, findCandidatePaths, getValidationStatus, markdownFileTarget, pathInDir, requestValidation, resetFileLinkCache, retain, revalidateMissing } from "./fileLinks";
 
 vi.mock("../api/files", () => ({ checkFilesExist: vi.fn() }));
 
@@ -154,5 +154,25 @@ describe("revalidateMissing", () => {
     revalidateMissing("ch");
     await settle();
     expect(exists).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("markdownFileTarget", () => {
+  it.each([
+    ["an absolute path, its line from the label", "/r/internal/config.go", "internal/config.go:119", { path: "/r/internal/config.go", line: 119 }],
+    ["a relative path without a line", "src/a.ts", "a.ts", { path: "src/a.ts", line: null }],
+    ["a line suffix", "src/a.ts:12", "a.ts", { path: "src/a.ts", line: 12 }],
+    ["a line and column suffix", "src/a.ts:12:4", "a.ts", { path: "src/a.ts", line: 12 }],
+    ["a #L anchor", "src/a.ts#L7", "a.ts:9", { path: "src/a.ts", line: 7 }],
+    ["a #L range", "src/a.ts#L7-L9", "a.ts", { path: "src/a.ts", line: 7 }],
+    ["a file URL", "file:///r/a%20b.ts", "a b.ts", { path: "/r/a b.ts", line: null }],
+    ["a label with line and column", "src/a.ts", "a.ts:3:1", { path: "src/a.ts", line: 3 }],
+    ["no file for a web link", "https://example.com/a.ts", "a.ts", null],
+    ["no file for a loop link", "loop://channel/c1", "chat", null],
+    ["no file for an anchor", "#usage", "usage", null],
+    ["no file for an empty href", " ", "x", null],
+    ["no file for a malformed file URL", "file:///r/%E0", "x", null],
+  ])("gives %s", (_name, href, label, want) => {
+    expect(markdownFileTarget(href, label)).toEqual(want);
   });
 });

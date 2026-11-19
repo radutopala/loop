@@ -3,7 +3,7 @@ import "./math.css";
 import { useContext, useState } from "react";
 import { useTheme } from "../../ThemeContext";
 import { BARE_URL, trimUrl } from "../../utils/bareUrl";
-import { findCandidatePaths } from "../../utils/fileLinks";
+import { findCandidatePaths, markdownFileTarget } from "../../utils/fileLinks";
 import { inAppHref } from "../../utils/messageLinks";
 import { CopyButton } from "../shared/CopyButton";
 import { ChatComponent } from "./ChatComponent";
@@ -119,7 +119,11 @@ function formatInline(text: string, s: Record<string, React.CSSProperties>, chan
       nodes.push(<em key={nodes.length}>{formatInline(token.slice(1, -1), s, channelId)}</em>);
     } else if (token.startsWith("[")) {
       const mdMatch = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
-      if (mdMatch) {
+      // A link to a file opens it in the editor, as a path in the text does.
+      const file = mdMatch && channelId ? markdownFileTarget(mdMatch[2]!, mdMatch[1]!) : null;
+      if (mdMatch && file) {
+        nodes.push(<FileLink key={nodes.length} channelId={channelId} raw={file.path} line={file.line} label={mdMatch[1]!} />);
+      } else if (mdMatch) {
         nodes.push(
           <Link key={nodes.length} href={mdMatch[2]!}>
             {mdMatch[1]}

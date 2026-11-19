@@ -56,6 +56,41 @@ export function findCandidatePaths(text: string): ParsedCandidate[] {
   return out;
 }
 
+/** The file a markdown link's href points at, with the line it names:
+ *  path:12, path#L12 (or #L12-L20), file:///path, or, with none of those,
+ *  a label ending in :12. Null for a link with another scheme, an anchor,
+ *  or nothing. */
+export function markdownFileTarget(href: string, label: string): { path: string; line: number | null } | null {
+  let h = href.trim();
+  if (/^file:\/\//i.test(h)) {
+    try {
+      h = decodeURIComponent(h.slice("file://".length));
+    } catch {
+      return null;
+    }
+  } else if (/^[a-z][a-z0-9+.-]*:/i.test(h)) {
+    return null;
+  }
+  let line: number | null = null;
+  const anchor = h.match(/#L(\d+)(?:-L?\d+)?$/);
+  if (anchor) {
+    h = h.slice(0, anchor.index);
+    line = parseInt(anchor[1]!, 10);
+  } else {
+    const suffix = h.match(/:(\d+)(?::\d+)?$/);
+    if (suffix) {
+      h = h.slice(0, suffix.index);
+      line = parseInt(suffix[1]!, 10);
+    }
+  }
+  if (!h || h.startsWith("#")) return null;
+  if (line === null) {
+    const fromLabel = label.match(/:(\d+)(?::\d+)?$/);
+    if (fromLabel) line = parseInt(fromLabel[1]!, 10);
+  }
+  return { path: h, line };
+}
+
 // A `cd <dir>` starting a shell command: at the start, after a newline, or
 // after `&&`, `||`, `;` or `|`. The dir may be quoted.
 const CD_REGEX = /(?:^|[\n;&|(])\s*cd\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|)]+))/g;
