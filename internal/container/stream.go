@@ -636,7 +636,7 @@ func (st *streamState) backgroundTasks(tasks []backgroundTask) []agent.Backgroun
 		if st.monitorTasks[t.TaskID] {
 			typ = monitorTaskType
 		}
-		out = append(out, agent.BackgroundTask{ID: t.TaskID, Type: typ, Description: t.Description, StartedAt: begun, OutputPath: st.bgOutput[t.TaskID]})
+		out = append(out, agent.BackgroundTask{ID: t.TaskID, Type: typ, Description: t.Description, StartedAt: begun, OutputPath: st.bgOutput[t.TaskID], SessionID: st.lastSession})
 	}
 	for _, old := range st.bg {
 		if _, ok := started[old.ID]; !ok {

@@ -109,3 +109,10 @@ Feature: Background tasks above the composer
       """
     # Its hover names the file it follows in the chat's Shell view.
     Then I wait for "[data-testid='background-task-tail'][title*='/tmp/claude-1000/-work/s1/tasks/b1.output']" to be visible
+
+    # A Monitor's file is never named, so it's found in its session's folder.
+    When I inject a "agent.activity" event for the channel with data:
+      """
+      {"activity": "background_tasks", "description": "1 background task: watch CI", "tasks": [{"id": "m1", "type": "monitor", "description": "watch CI", "started_at": "2026-01-02T03:04:05Z", "session_id": "s1"}]}
+      """
+    Then I wait for "[data-testid='background-task-tail'][title*='/tmp/claude-*/*/s1/tasks/m1.output']" to be visible
