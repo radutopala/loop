@@ -32,3 +32,26 @@ Feature: Chat Links Journey
     When I right-click on the element with text "the docs"
     And I click on the button with text "Copy link"
     Then the clipboard should hold "https://example.com/docs"
+
+  @chat-file-links
+  Scenario: A markdown link to a file opens it in the editor
+    Given I set up a test channel via API for git repo "bdd-chat-file-links"
+    And I create a file "notes/linked.md" in the repo with:
+      """
+      markdownlinktarget
+      """
+    And I open the app in a browser
+    And I wait for text "bdd-chat-file-links" to appear
+
+    When I click on "bdd-chat-file-links" in the sidebar
+    And I wait for "textarea" to be visible
+    And I inject a bot message with:
+      """
+      File reply: see [notes/linked.md:1]({repo_path}/notes/linked.md) and [the docs](https://example.com/docs).
+      """
+    Then I wait for text "File reply" to appear
+    # It reads as its label and opens the file, not a browser window.
+    And I wait for "a[href='#']" to be visible
+    And the element "a[href='#']" should contain text "notes/linked.md:1"
+    When I click on "a[href='#']"
+    Then I wait for text "markdownlinktarget" to appear

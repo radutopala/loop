@@ -17,9 +17,12 @@ export interface FileLinkProps {
   /** The path to look up, when it differs from raw: raw joined to the dir
    * a shell command moved to. */
   checkPath?: string;
+  /** What the link reads, when it isn't raw and its line: a markdown
+   * link's text. */
+  label?: string;
 }
 
-export function FileLink({ channelId, raw, line, checkPath }: FileLinkProps) {
+export function FileLink({ channelId, raw, line, checkPath, label }: FileLinkProps) {
   const { colors } = useTheme();
   const path = checkPath ?? raw;
   const [status, setStatus] = useState(() => getValidationStatus(channelId, path));
@@ -37,7 +40,7 @@ export function FileLink({ channelId, raw, line, checkPath }: FileLinkProps) {
     };
   }, [channelId, path]);
 
-  const display = line ? `${raw}:${line}` : raw;
+  const display = label ?? (line ? `${raw}:${line}` : raw);
 
   if (status.kind !== "valid") {
     // Render as plain text while pending/unknown/invalid — keeps layout stable.

@@ -3502,7 +3502,7 @@ func (tc *TestContext) injectBotMessage(doc *godog.DocString) error {
 			"msg_id":       "bdd-bot-doc",
 			"author_id":    "bot",
 			"author_name":  "bot",
-			"content":      doc.Content,
+			"content":      tc.resolvePlaceholders(doc.Content),
 			"is_bot":       true,
 			"is_processed": true,
 			"priority":     0,
