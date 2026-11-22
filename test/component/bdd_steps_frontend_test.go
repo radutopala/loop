@@ -270,6 +270,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^the editor tabs overflow their strip$`, tc.assertEditorTabsOverflow)
 	ctx.Step(`^the editor tab "([^"]*)" should be in the strip's view$`, tc.assertEditorTabInView)
 	ctx.Step(`^I scroll the editor tab strip to its start$`, tc.scrollEditorTabsToStart)
+	ctx.Step(`^I scroll "([^"]*)" into view$`, tc.scrollIntoView)
 	ctx.Step(`^I record messages posted by frames$`, tc.recordFrameMessages)
 	ctx.Step(`^I delay requests matching "([^"]*)" by "([^"]*)"$`, tc.delayRequests)
 	ctx.Step(`^I record requests matching "([^"]*)"$`, tc.recordRequests)
@@ -1972,6 +1973,27 @@ func (tc *TestContext) assertEditorTabInView(path string) error {
 func (tc *TestContext) scrollEditorTabsToStart() error {
 	var ok bool
 	return chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(`(() => { const s = document.querySelector('[data-testid="editor-tabs"]'); if (s) s.scrollLeft = 0; return true; })()`, &ok))
+}
+
+// scrollIntoView scrolls the element matching selector into view and waits
+// two frames, so the scroll events have fired before the next step: a popover
+// that closes when its container scrolls would otherwise close as soon as a
+// click (which scrolls its target into view first) opens it.
+func (tc *TestContext) scrollIntoView(selector string) error {
+	var ok bool
+	js := fmt.Sprintf(`new Promise((resolve) => {
+		const el = document.querySelector(%q);
+		if (!el) return resolve(false);
+		el.scrollIntoView({ block: "nearest", inline: "nearest" });
+		requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)));
+	})`, selector)
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &ok, func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) })); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("no element matches %s", selector)
+	}
+	return nil
 }
 
 // assertCodeEditorCursorLine polls until the line holding the cursor reads text.
