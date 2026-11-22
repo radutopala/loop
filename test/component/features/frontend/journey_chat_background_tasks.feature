@@ -116,3 +116,12 @@ Feature: Background tasks above the composer
       {"activity": "background_tasks", "description": "1 background task: watch CI", "tasks": [{"id": "m1", "type": "monitor", "description": "watch CI", "started_at": "2026-01-02T03:04:05Z", "session_id": "s1"}]}
       """
     Then I wait for "[data-testid='background-task-tail'][title*='/tmp/claude-*/*/s1/tasks/m1.output']" to be visible
+
+    # A command that writes its log to a file is followed there, from the
+    # directory it cds to, and its own file after it.
+    When I inject a "agent.activity" event for the channel with data:
+      """
+      {"activity": "background_tasks", "description": "1 background task: test", "tasks": [{"id": "b2", "type": "local_bash", "description": "test", "command": "cd /work && make test > build/test.log 2>&1; echo rc=$?", "started_at": "2026-01-02T03:04:05Z", "output_path": "/tmp/claude-1000/-work/s1/tasks/b2.output"}]}
+      """
+    Then I wait for "[data-testid='background-task-tail'][title*='/work/build/test.log']" to be visible
+    And I wait for "[data-testid='background-task-tail'][title*='/tmp/claude-1000/-work/s1/tasks/b2.output']" to be visible

@@ -178,6 +178,10 @@ type BackgroundTask struct {
 	// monitor for a task Claude's Monitor tool started.
 	Type        string `json:"type,omitempty"`
 	Description string `json:"description,omitempty"`
+	// Command is the shell command a background command or a Monitor
+	// runs; "" for other tasks, and until the CLI names the tool call that
+	// started the task.
+	Command string `json:"command,omitempty"`
 	// StartedAt is when the task was first reported running. The CLI says
 	// no more: a foreground task sent to the background starts then.
 	StartedAt time.Time `json:"started_at"`

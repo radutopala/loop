@@ -7,7 +7,7 @@ import { logErr } from "../../utils/log";
 import { elapsed } from "../../utils/workflowHelpers";
 import { HoverTip } from "./HoverTip";
 import { taskTypeLabel } from "./liveSession";
-import { outputFile, tailInShell } from "./tailInShell";
+import { tailCommand, tailInShell, tailPlan } from "./tailInShell";
 
 interface BackgroundTasksBarProps {
   channelId: string;
@@ -22,11 +22,15 @@ interface BackgroundTasksBarProps {
  * subagents), as MonitorsBar lists Loop's monitors: each with how long it
  * has run and, in a live session, a button to stop it. A task that ends
  * drops out. Tail follows a task's output in the chat's Shell view, which
- * runs in the container the task writes it in.
+ * runs in the container the task writes it in: the files its command
+ * redirects its output to, and its own; see tailPlan. A Tail that fails
+ * says why in its row.
  */
 export function BackgroundTasksBar({ channelId, tasks, stoppable }: BackgroundTasksBarProps) {
   const { colors } = useTheme();
   const [stopping, setStopping] = useState<Set<string>>(new Set());
+  // Why the last Tail failed, by task id.
+  const [tailErrors, setTailErrors] = useState<Record<string, string>>({});
   const [, setTick] = useState(0);
 
   // Keeps the elapsed times current.
@@ -45,6 +49,14 @@ export function BackgroundTasksBar({ channelId, tasks, stoppable }: BackgroundTa
     cursor: busy ? "default" : "pointer",
   });
 
+  const tail = (t: BackgroundTask, line: string) => {
+    setTailErrors(({ [t.id]: _, ...rest }) => rest);
+    tailInShell(channelId, line).catch((err: unknown) => {
+      logErr("following the background task's output")(err);
+      setTailErrors((prev) => ({ ...prev, [t.id]: err instanceof Error ? err.message : String(err) }));
+    });
+  };
+
   const stop = (id: string) => {
     setStopping((prev) => new Set(prev).add(id));
     stopLiveTask(channelId, id)
@@ -61,7 +73,8 @@ export function BackgroundTasksBar({ channelId, tasks, stoppable }: BackgroundTa
   return (
     <div data-testid="background-tasks-bar" style={{ display: "flex", flexDirection: "column", gap: 4, padding: "6px 24px 0" }}>
       {tasks.map((t, i) => {
-        const file = outputFile(t);
+        const plan = tailPlan(t, tasks);
+        const tailError = tailErrors[t.id];
         return (
           <div
             key={t.id || i}
@@ -93,11 +106,16 @@ export function BackgroundTasksBar({ channelId, tasks, stoppable }: BackgroundTa
             <span data-testid="background-task-elapsed" style={{ marginLeft: "auto", fontFamily: fonts.mono, color: colors.textDim }}>
               {elapsed(t.started_at, null)}
             </span>
-            {file && (
+            {tailError && (
+              <span data-testid="background-task-tail-error" title={tailError} style={{ color: colors.error, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
+                Can't tail: {tailError}
+              </span>
+            )}
+            {plan && (
               <button
                 data-testid="background-task-tail"
-                onClick={() => tailInShell(channelId, file.word).catch(logErr("following the background task's output"))}
-                title={`Follow its output in the Shell view\n${file.shown}`}
+                onClick={() => tail(t, tailCommand(t, plan))}
+                title={`Follow its output in the Shell view\n${plan.files.map((f) => f.shown).join("\n")}`}
                 style={rowButton(false)}
               >
                 Tail

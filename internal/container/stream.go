@@ -574,9 +574,12 @@ type streamState struct {
 	bgStarted map[string]time.Time
 	// bg is the last set of background tasks reported.
 	bg []agent.BackgroundTask
-	// monitorUses are the Monitor tool calls whose task hasn't started yet,
-	// and monitorTasks the tasks they started, by id.
-	monitorUses, monitorTasks map[string]bool
+	// taskUses are the Monitor and Bash tool calls whose task hasn't
+	// started yet, by tool call id; monitorTasks the tasks Monitor calls
+	// started, and bgCommand the command each task runs, by task id.
+	taskUses     map[string]taskUse
+	monitorTasks map[string]bool
+	bgCommand    map[string]string
 	// bgOutput is the output file of each background task, by id.
 	bgOutput map[string]string
 }
@@ -636,12 +639,13 @@ func (st *streamState) backgroundTasks(tasks []backgroundTask) []agent.Backgroun
 		if st.monitorTasks[t.TaskID] {
 			typ = monitorTaskType
 		}
-		out = append(out, agent.BackgroundTask{ID: t.TaskID, Type: typ, Description: t.Description, StartedAt: begun, OutputPath: st.bgOutput[t.TaskID], SessionID: st.lastSession})
+		out = append(out, agent.BackgroundTask{ID: t.TaskID, Type: typ, Description: t.Description, Command: st.bgCommand[t.TaskID], StartedAt: begun, OutputPath: st.bgOutput[t.TaskID], SessionID: st.lastSession})
 	}
 	for _, old := range st.bg {
 		if _, ok := started[old.ID]; !ok {
 			delete(st.monitorTasks, old.ID)
 			delete(st.bgOutput, old.ID)
+			delete(st.bgCommand, old.ID)
 		}
 	}
 	st.bgStarted = started
@@ -649,36 +653,59 @@ func (st *streamState) backgroundTasks(tasks []backgroundTask) []agent.Backgroun
 	return out
 }
 
-// noteMonitors remembers msg's Monitor tool calls, so the tasks they start
-// can be told apart from other background commands.
-func (st *streamState) noteMonitors(msg *assistantMessage) {
+// taskUse is a tool call that can start a background task: whether it is
+// a Monitor's, and the command it runs.
+type taskUse struct {
+	monitor bool
+	command string
+}
+
+// noteTaskUses remembers msg's Monitor and Bash tool calls, so the tasks
+// they start can be told apart and carry their command.
+func (st *streamState) noteTaskUses(msg *assistantMessage) {
 	for _, c := range msg.Message.Content {
-		if c.Type == "tool_use" && c.Name == "Monitor" {
-			if st.monitorUses == nil {
-				st.monitorUses = map[string]bool{}
-			}
-			st.monitorUses[c.ID] = true
+		if c.Type != "tool_use" || (c.Name != "Monitor" && c.Name != "Bash") {
+			continue
 		}
+		var in struct {
+			Command string `json:"command"`
+		}
+		_ = json.Unmarshal(c.Input, &in)
+		if st.taskUses == nil {
+			st.taskUses = map[string]taskUse{}
+		}
+		st.taskUses[c.ID] = taskUse{monitor: c.Name == "Monitor", command: in.Command}
 	}
 }
 
-// startedMonitor marks the task a Monitor tool call started as a monitor.
-// The CLI reports the task in the background set just before it says which
-// call started it, so a task already there is retyped and the set reported
-// again.
-func (st *streamState) startedMonitor(evt systemEvent, cb streamCallbacks) {
-	delete(st.monitorUses, evt.ToolUseID)
-	if st.monitorTasks == nil {
-		st.monitorTasks = map[string]bool{}
+// startedTask marks the task a Monitor or Bash tool call started: a
+// Monitor's as a monitor, and either with its command. The CLI reports the
+// task in the background set just before it says which call started it, so
+// a task already there is changed and the set reported again.
+func (st *streamState) startedTask(evt systemEvent, use taskUse, cb streamCallbacks) {
+	delete(st.taskUses, evt.ToolUseID)
+	if use.monitor {
+		if st.monitorTasks == nil {
+			st.monitorTasks = map[string]bool{}
+		}
+		st.monitorTasks[evt.TaskID] = true
 	}
-	st.monitorTasks[evt.TaskID] = true
+	if use.command != "" {
+		if st.bgCommand == nil {
+			st.bgCommand = map[string]string{}
+		}
+		st.bgCommand[evt.TaskID] = use.command
+	}
 	i := slices.IndexFunc(st.bg, func(t agent.BackgroundTask) bool { return t.ID == evt.TaskID })
-	if i < 0 {
+	if i < 0 || (!use.monitor && use.command == "") {
 		return
 	}
 	// A copy: the set reported before may still be held.
 	st.bg = slices.Clone(st.bg)
-	st.bg[i].Type = monitorTaskType
+	if use.monitor {
+		st.bg[i].Type = monitorTaskType
+	}
+	st.bg[i].Command = use.command
 	if cb.onBackgroundTasks != nil {
 		cb.onBackgroundTasks(st.bg)
 	}
@@ -706,7 +733,7 @@ func (st *streamState) dispatch(line []byte, cb streamCallbacks) *claudeResponse
 			return nil
 		}
 		st.noteSession(msg.turnRef().SessionID, cb)
-		st.noteMonitors(&msg)
+		st.noteTaskUses(&msg)
 		if msg.Message.Model != "" && msg.Message.Model != st.lastModel {
 			st.lastModel = msg.Message.Model
 			if cb.onActivity != nil {
@@ -757,6 +784,9 @@ func (st *streamState) dispatch(line []byte, cb streamCallbacks) *claudeResponse
 			if blk.Type != "tool_result" {
 				continue
 			}
+			// A call that started a task has reported it by its result;
+			// any other is done.
+			delete(st.taskUses, blk.ToolUseID)
 			body := parseToolResultContent(blk.Content)
 			st.noteOutputPath(body, cb)
 			if cb.onToolResult != nil {
@@ -848,8 +878,8 @@ func (st *streamState) system(evt systemEvent, cb streamCallbacks) {
 		}
 		return
 	}
-	if evt.Subtype == "task_started" && st.monitorUses[evt.ToolUseID] {
-		st.startedMonitor(evt, cb)
+	if use, ok := st.taskUses[evt.ToolUseID]; ok && evt.Subtype == "task_started" {
+		st.startedTask(evt, use, cb)
 	}
 	if cb.onActivity == nil {
 		return
