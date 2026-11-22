@@ -3,6 +3,7 @@ import type { ReviewComment, ReviewImpact, ReviewVerdict } from "../../api/revie
 import { useTheme } from "../../ThemeContext";
 import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
+import { tildePath } from "../../utils/homePath";
 import type { FileLinkOpenDetail } from "../chat/FileLink";
 import { ContextMenu } from "../shared/ContextMenu";
 import { computeSegments, type HunkLine, highlightContent, type ParsedFile, parseUnifiedDiff } from "./DiffViewer";
@@ -19,6 +20,8 @@ interface ReviewDiffViewProps {
   /** The history ids of the latest review's runs: their agent comments are the "new" ones. */
   reviewRuns?: number[];
   worktreePath?: string;
+  /** The daemon user's home, which copied paths show as ~. */
+  homeDir?: string;
   onPushComment: (c: ReviewComment) => void | Promise<void>;
   onDiscussComment: (c: ReviewComment) => void;
   onWhyComment: (c: ReviewComment) => void | Promise<void>;
@@ -246,7 +249,19 @@ function summarize(parsed: ParsedFile, fileComments: ReviewComment[]): FileSumma
   return { path: parsed.path, additions, deletions, parsed, agentCount, ghCount };
 }
 
-export function ReviewDiffView({ channelId, rawDiff, comments, reviewRuns, worktreePath, onPushComment, onDiscussComment, onWhyComment, onAddressComment, onDeleteComment }: ReviewDiffViewProps) {
+export function ReviewDiffView({
+  channelId,
+  rawDiff,
+  comments,
+  reviewRuns,
+  worktreePath,
+  homeDir,
+  onPushComment,
+  onDiscussComment,
+  onWhyComment,
+  onAddressComment,
+  onDeleteComment,
+}: ReviewDiffViewProps) {
   const { colors } = useTheme();
   const [fileContextMenu, setFileContextMenu] = useState<{ x: number; y: number; path: string } | null>(null);
 
@@ -766,7 +781,7 @@ export function ReviewDiffView({ channelId, rawDiff, comments, reviewRuns, workt
           items={[
             { label: "Open file", onClick: () => dispatchOpenFile(channelId, fileContextMenu.path) },
             { label: "Copy relative path", onClick: () => void navigator.clipboard.writeText(fileContextMenu.path) },
-            { label: "Copy absolute path", onClick: () => void navigator.clipboard.writeText((worktreePath ?? "") + "/" + fileContextMenu.path) },
+            { label: "Copy absolute path", onClick: () => void navigator.clipboard.writeText(tildePath((worktreePath ?? "") + "/" + fileContextMenu.path, homeDir)) },
           ]}
           onClose={() => setFileContextMenu(null)}
         />

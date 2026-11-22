@@ -212,7 +212,7 @@ export function FileTreePanel({ channelId, dirPath, branch, editorState, embedde
     if (!contextMenu) return [];
     const { rootIndex: ctxRoot, relativePath: ctxRelPath } = parsePathKey(contextMenu.path);
     const ctxRootEntry = roots.find((r) => r.index === ctxRoot);
-    const absBase = ctxRootEntry?.path ?? dirPath;
+    const absBase = ctxRootEntry?.display_path ?? ctxRootEntry?.path ?? dirPath;
     const items: MenuItem[] = [];
     items.push({ label: "Copy relative path", onClick: () => navigator.clipboard.writeText(ctxRelPath) });
     items.push({ label: "Copy absolute path", onClick: () => navigator.clipboard.writeText(absBase + "/" + ctxRelPath) });

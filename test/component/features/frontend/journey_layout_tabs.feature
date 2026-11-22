@@ -32,7 +32,10 @@ Feature: Layout Tabs Journey
 
     # The strip scrolls sideways, so it must not clip the confirmation: Yes
     # is hit where it's drawn, before a click scrolls anything into view.
-    When I click on "[data-testid='layout-tab-Kanban'] button[title='Delete layout']"
+    # The popover closes when the strip scrolls, so the tab is brought into
+    # view first, not by the click.
+    When I scroll "[data-testid='layout-tab-Kanban']" into view
+    And I click on "[data-testid='layout-tab-Kanban'] button[title='Delete layout']"
     Then the element "[data-confirm-popover] [data-testid='confirm-yes']" covers the element "[data-confirm-popover] [data-testid='confirm-yes']"
     When I click on "[data-confirm-popover] [data-testid='confirm-yes']"
     Then the layout tabs should be in order "Chat,Editor,Memory,Terminal,Git,Browser Chat,Sessions,Swarm,Canvas,Playground,Workflows"
