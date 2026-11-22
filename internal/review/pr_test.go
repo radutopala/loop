@@ -29,6 +29,7 @@ type recordingRunner struct {
 
 type call struct {
 	dir  string
+	env  []string
 	name string
 	args []string
 }
@@ -38,8 +39,8 @@ type callResponse struct {
 	err error
 }
 
-func (r *recordingRunner) run(_ context.Context, dir, name string, args ...string) ([]byte, error) {
-	r.calls = append(r.calls, call{dir: dir, name: name, args: args})
+func (r *recordingRunner) run(_ context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
+	r.calls = append(r.calls, call{dir: dir, env: env, name: name, args: args})
 	key := name + " " + joinArgs(args)
 	if resp, ok := r.response[key]; ok {
 		return resp.out, resp.err
@@ -60,18 +61,18 @@ func joinArgs(args []string) string {
 
 func (s *PRSuite) TestAddRequiresInputs() {
 	g := &GitPR{Run: (&recordingRunner{}).run}
-	_, err := g.Add(context.Background(), "", 1, "ch1")
+	_, err := g.Add(context.Background(), "", "", 1, "ch1")
 	require.Error(s.T(), err)
-	_, err = g.Add(context.Background(), "/repo", 0, "ch1")
+	_, err = g.Add(context.Background(), "/repo", "", 0, "ch1")
 	require.Error(s.T(), err)
-	_, err = g.Add(context.Background(), "/repo", 1, "")
+	_, err = g.Add(context.Background(), "/repo", "", 1, "")
 	require.Error(s.T(), err)
 }
 
 func (s *PRSuite) TestAddHappyPath() {
 	rr := &recordingRunner{}
 	g := &GitPR{Run: rr.run}
-	path, err := g.Add(context.Background(), "/repo", 42, "ch1")
+	path, err := g.Add(context.Background(), "/repo", "", 42, "ch1")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), filepath.Join("/repo", ".worktrees", "pr-42-ch1"), path)
 	require.Len(s.T(), rr.calls, 2)
@@ -80,9 +81,55 @@ func (s *PRSuite) TestAddHappyPath() {
 	require.Equal(s.T(), []string{"worktree", "add", "--detach", filepath.Join("/repo", ".worktrees", "pr-42-ch1"), "FETCH_HEAD"}, rr.calls[1].args)
 }
 
+// TestFetchesRunAsTheGHUser checks every fetch from origin carries the
+// gh user's token env, and the local git commands carry none.
+func (s *PRSuite) TestFetchesRunAsTheGHUser() {
+	token := func(_ context.Context, workdir, ghUser string) ([]string, error) {
+		return []string{"GH_TOKEN=tok-" + ghUser + "@" + workdir}, nil
+	}
+	tests := []struct {
+		name    string
+		do      func(g *GitPR) error
+		fetchIn string
+	}{
+		{"add", func(g *GitPR) error {
+			_, err := g.Add(context.Background(), "/repo", "bot", 3, "ch1")
+			return err
+		}, "/repo"},
+		{"refresh", func(g *GitPR) error {
+			return g.Refresh(context.Background(), "/repo", "bot", "/wt", 3, "")
+		}, "/wt"},
+		{"diff", func(g *GitPR) error {
+			_, err := g.Diff(context.Background(), "/repo", "bot", "/wt", "main", nil)
+			return err
+		}, "/repo"},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			rr := &recordingRunner{}
+			require.NoError(s.T(), tc.do(&GitPR{Run: rr.run, Token: token}))
+			require.Equal(s.T(), "fetch", rr.calls[0].args[0])
+			require.Equal(s.T(), []string{"GH_TOKEN=tok-bot@" + tc.fetchIn}, rr.calls[0].env)
+			for _, c := range rr.calls[1:] {
+				require.Nil(s.T(), c.env, c.args)
+			}
+		})
+	}
+}
+
+func (s *PRSuite) TestFetchTokenError() {
+	rr := &recordingRunner{}
+	g := &GitPR{Run: rr.run, Token: func(context.Context, string, string) ([]string, error) {
+		return nil, errors.New("no such account")
+	}}
+	_, err := g.Add(context.Background(), "/repo", "bot", 3, "ch1")
+	require.ErrorContains(s.T(), err, "git fetch refs/pull/3/head: no such account")
+	require.Empty(s.T(), rr.calls)
+}
+
 func (s *PRSuite) TestAddNamesTheWorktreeAfterTheChannel() {
 	g := &GitPR{Run: (&recordingRunner{}).run}
-	path, err := g.Add(context.Background(), "/repo", 5, "C0AB12:1771.5")
+	path, err := g.Add(context.Background(), "/repo", "", 5, "C0AB12:1771.5")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), filepath.Join("/repo", ".worktrees", "pr-5-C0AB12-1771-5"), path)
 }
@@ -94,7 +141,7 @@ func (s *PRSuite) TestAddFetchError() {
 		},
 	}
 	g := &GitPR{Run: rr.run}
-	_, err := g.Add(context.Background(), "/repo", 7, "ch1")
+	_, err := g.Add(context.Background(), "/repo", "", 7, "ch1")
 	require.ErrorContains(s.T(), err, "network down")
 }
 
@@ -109,7 +156,7 @@ func (s *PRSuite) TestAddWorktreeAlreadyExistsIsOK() {
 		},
 	}
 	g := &GitPR{Run: rr.run}
-	path, err := g.Add(context.Background(), "/repo", 9, "ch1")
+	path, err := g.Add(context.Background(), "/repo", "", 9, "ch1")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), target, path)
 	// The existing worktree is moved to the head just fetched.
@@ -133,7 +180,7 @@ func (s *PRSuite) TestAddWorktreeAlreadyExistsRefreshFails() {
 		},
 	}
 	g := &GitPR{Run: rr.run}
-	_, err := g.Add(context.Background(), "/repo", 9, "ch1")
+	_, err := g.Add(context.Background(), "/repo", "", 9, "ch1")
 	require.ErrorContains(s.T(), err, "git checkout: error: local changes would be overwritten")
 }
 
@@ -148,21 +195,21 @@ func (s *PRSuite) TestAddWorktreeOtherErrorPropagates() {
 		},
 	}
 	g := &GitPR{Run: rr.run}
-	_, err := g.Add(context.Background(), "/repo", 9, "ch1")
+	_, err := g.Add(context.Background(), "/repo", "", 9, "ch1")
 	require.ErrorContains(s.T(), err, "bad object")
 }
 
 func (s *PRSuite) TestRefreshRequiresInputs() {
 	g := &GitPR{Run: (&recordingRunner{}).run}
-	require.Error(s.T(), g.Refresh(context.Background(), "", "/wt", 1, ""))
-	require.Error(s.T(), g.Refresh(context.Background(), "/repo", "", 1, ""))
-	require.Error(s.T(), g.Refresh(context.Background(), "/repo", "/wt", 0, ""))
+	require.Error(s.T(), g.Refresh(context.Background(), "", "", "/wt", 1, ""))
+	require.Error(s.T(), g.Refresh(context.Background(), "/repo", "", "", 1, ""))
+	require.Error(s.T(), g.Refresh(context.Background(), "/repo", "", "/wt", 0, ""))
 }
 
 func (s *PRSuite) TestRefreshHappyPath() {
 	rr := &recordingRunner{}
 	g := &GitPR{Run: rr.run}
-	require.NoError(s.T(), g.Refresh(context.Background(), "/repo", "/wt", 7, ""))
+	require.NoError(s.T(), g.Refresh(context.Background(), "/repo", "", "/wt", 7, ""))
 	require.Len(s.T(), rr.calls, 2)
 	require.Equal(s.T(), "/wt", rr.calls[0].dir)
 	require.Equal(s.T(), []string{"fetch", "origin", "refs/pull/7/head"}, rr.calls[0].args)
@@ -173,7 +220,7 @@ func (s *PRSuite) TestRefreshHappyPath() {
 func (s *PRSuite) TestRefreshPinned() {
 	rr := &recordingRunner{}
 	g := &GitPR{Run: rr.run}
-	require.NoError(s.T(), g.Refresh(context.Background(), "/repo", "/wt", 7, "abc123"))
+	require.NoError(s.T(), g.Refresh(context.Background(), "/repo", "", "/wt", 7, "abc123"))
 	require.Len(s.T(), rr.calls, 2)
 	require.Equal(s.T(), []string{"fetch", "origin", "refs/pull/7/head"}, rr.calls[0].args)
 	require.Equal(s.T(), []string{"checkout", "--detach", "abc123"}, rr.calls[1].args)
@@ -186,7 +233,7 @@ func (s *PRSuite) TestRefreshFetchError() {
 		},
 	}
 	g := &GitPR{Run: rr.run}
-	require.ErrorContains(s.T(), g.Refresh(context.Background(), "/repo", "/wt", 7, ""), "net down")
+	require.ErrorContains(s.T(), g.Refresh(context.Background(), "/repo", "", "/wt", 7, ""), "net down")
 }
 
 func (s *PRSuite) TestRefreshCheckoutError() {
@@ -196,16 +243,16 @@ func (s *PRSuite) TestRefreshCheckoutError() {
 		},
 	}
 	g := &GitPR{Run: rr.run}
-	require.ErrorContains(s.T(), g.Refresh(context.Background(), "/repo", "/wt", 7, ""), "conflict")
+	require.ErrorContains(s.T(), g.Refresh(context.Background(), "/repo", "", "/wt", 7, ""), "conflict")
 }
 
 func (s *PRSuite) TestDiffRequiresInputs() {
 	g := &GitPR{Run: (&recordingRunner{}).run}
-	_, err := g.Diff(context.Background(), "", "/wt", "main", nil)
+	_, err := g.Diff(context.Background(), "", "", "/wt", "main", nil)
 	require.Error(s.T(), err)
-	_, err = g.Diff(context.Background(), "/repo", "", "main", nil)
+	_, err = g.Diff(context.Background(), "/repo", "", "", "main", nil)
 	require.Error(s.T(), err)
-	_, err = g.Diff(context.Background(), "/repo", "/wt", "", nil)
+	_, err = g.Diff(context.Background(), "/repo", "", "/wt", "", nil)
 	require.Error(s.T(), err)
 }
 
@@ -216,7 +263,7 @@ func (s *PRSuite) TestDiffHappyPath() {
 		},
 	}
 	g := &GitPR{Run: rr.run}
-	out, err := g.Diff(context.Background(), "/repo", "/repo/.worktrees/pr-1", "main", nil)
+	out, err := g.Diff(context.Background(), "/repo", "", "/repo/.worktrees/pr-1", "main", nil)
 	require.NoError(s.T(), err)
 	require.Contains(s.T(), string(out), "diff --git")
 	require.Len(s.T(), rr.calls, 2)
@@ -233,7 +280,7 @@ func (s *PRSuite) TestDiffFetchError() {
 		},
 	}
 	g := &GitPR{Run: rr.run}
-	_, err := g.Diff(context.Background(), "/repo", "/wt", "main", nil)
+	_, err := g.Diff(context.Background(), "/repo", "", "/wt", "main", nil)
 	require.ErrorContains(s.T(), err, "bad ref")
 }
 
@@ -244,7 +291,7 @@ func (s *PRSuite) TestDiffDiffError() {
 		},
 	}
 	g := &GitPR{Run: rr.run}
-	_, err := g.Diff(context.Background(), "/repo", "/wt", "main", nil)
+	_, err := g.Diff(context.Background(), "/repo", "", "/wt", "main", nil)
 	require.ErrorContains(s.T(), err, "bad object")
 }
 
@@ -261,7 +308,7 @@ func (s *PRSuite) TestDiffWidensContextForFarComments() {
 		},
 	}
 	g := &GitPR{Run: rr.run}
-	out, err := g.Diff(context.Background(), "/repo", "/wt", "main", []*Comment{
+	out, err := g.Diff(context.Background(), "/repo", "", "/wt", "main", []*Comment{
 		{Path: "foo.go", Line: 102, Side: "RIGHT"},
 	})
 	require.NoError(s.T(), err)
@@ -283,7 +330,7 @@ func (s *PRSuite) TestDiffSkipsWidenWhenDefaultCovers() {
 		},
 	}
 	g := &GitPR{Run: rr.run}
-	out, err := g.Diff(context.Background(), "/repo", "/wt", "main", []*Comment{
+	out, err := g.Diff(context.Background(), "/repo", "", "/wt", "main", []*Comment{
 		{Path: "foo.go", Line: 12, Side: "RIGHT"},
 	})
 	require.NoError(s.T(), err)
@@ -303,7 +350,7 @@ func (s *PRSuite) TestDiffIgnoresCommentsOnUnchangedFiles() {
 		},
 	}
 	g := &GitPR{Run: rr.run}
-	_, err := g.Diff(context.Background(), "/repo", "/wt", "main", []*Comment{
+	_, err := g.Diff(context.Background(), "/repo", "", "/wt", "main", []*Comment{
 		{Path: "unrelated.go", Line: 999, Side: "RIGHT"},
 	})
 	require.NoError(s.T(), err)
@@ -321,7 +368,7 @@ func (s *PRSuite) TestDiffWidensForLeftSideComment() {
 		},
 	}
 	g := &GitPR{Run: rr.run}
-	out, err := g.Diff(context.Background(), "/repo", "/wt", "main", []*Comment{
+	out, err := g.Diff(context.Background(), "/repo", "", "/wt", "main", []*Comment{
 		{Path: "foo.go", Line: 21, Side: "LEFT"},
 	})
 	require.NoError(s.T(), err)
@@ -336,7 +383,7 @@ func (s *PRSuite) TestDiffSkinnyPassError() {
 		},
 	}
 	g := &GitPR{Run: rr.run}
-	_, err := g.Diff(context.Background(), "/repo", "/wt", "main", []*Comment{
+	_, err := g.Diff(context.Background(), "/repo", "", "/wt", "main", []*Comment{
 		{Path: "foo.go", Line: 1, Side: "RIGHT"},
 	})
 	require.ErrorContains(s.T(), err, "u0 boom")

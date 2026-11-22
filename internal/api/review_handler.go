@@ -285,7 +285,7 @@ func (s *reviewService) finishLoad(ctx context.Context, l *reviewLoad) (*review.
 
 	// Check out the PR head locally first so the diff (and the review
 	// agent) can read the actual files in their post-merge form.
-	worktreePath, err := s.worktree.Add(ctx, dirPath, prNumber, channelID)
+	worktreePath, err := s.worktree.Add(ctx, dirPath, ghUser, prNumber, channelID)
 	if err != nil {
 		return fail(err)
 	}
@@ -317,7 +317,7 @@ func (s *reviewService) finishLoad(ctx context.Context, l *reviewLoad) (*review.
 	restored := s.restoreFindings(ctx, historyDir, prNumber)
 	comments := mergeReviewComments(restored, ghComments)
 
-	diff, err := s.worktree.Diff(ctx, dirPath, worktreePath, pr.BaseRef, comments)
+	diff, err := s.worktree.Diff(ctx, dirPath, ghUser, worktreePath, pr.BaseRef, comments)
 	if err != nil {
 		return failCheckout(err)
 	}

@@ -11,10 +11,13 @@ import (
 	"strings"
 )
 
-// CommandRunner executes a command in a given directory and returns the
-// combined output. Mirrors the worktree.CommandRunner signature so the
-// existing worktree.ExecCommandRunner can be reused as the default impl.
-type CommandRunner func(ctx context.Context, dir, name string, args ...string) ([]byte, error)
+// CommandRunner executes a command in a given directory, with env added
+// to its environment, and returns the combined output.
+type CommandRunner func(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error)
+
+// TokenEnv returns the environment that authenticates gh, and git's gh
+// credential helper, as ghUser: nil for "", the active account.
+type TokenEnv func(ctx context.Context, workdir, ghUser string) ([]string, error)
 
 // PR adds and removes a git worktree that checks out a pull request's
 // head commit in detached HEAD mode. Detached avoids polluting the
@@ -23,9 +26,9 @@ type CommandRunner func(ctx context.Context, dir, name string, args ...string) (
 // merge-base unified patch between origin/<baseRef> and the worktree's
 // HEAD — the same view GitHub shows on the PR.
 type PR interface {
-	Add(ctx context.Context, parentDir string, prNum int, channelID string) (worktreePath string, err error)
-	Refresh(ctx context.Context, parentDir, worktreePath string, prNum int, sha string) error
-	Diff(ctx context.Context, parentDir, worktreePath, baseRef string, comments []*Comment) ([]byte, error)
+	Add(ctx context.Context, parentDir, ghUser string, prNum int, channelID string) (worktreePath string, err error)
+	Refresh(ctx context.Context, parentDir, ghUser, worktreePath string, prNum int, sha string) error
+	Diff(ctx context.Context, parentDir, ghUser, worktreePath, baseRef string, comments []*Comment) ([]byte, error)
 	Remove(ctx context.Context, parentDir, worktreePath string) error
 	ResolveScope(ctx context.Context, worktreePath, baseRef string, want Scope, lastHead string) (ScopeResult, error)
 	UpdateBase(ctx context.Context, dir, baseRef string, checkedOut bool) (BaseUpdate, error)
@@ -37,8 +40,28 @@ type PR interface {
 var unsafeDirChars = regexp.MustCompile(`[^A-Za-z0-9_-]`)
 
 // GitPR is the default PR implementation backed by shelling out to git.
+// The fetches from origin run as the channel's gh account (ghUser) through
+// Token, the account the PR list comes from: git's gh credential helper
+// would otherwise use whichever account is active. A nil Token fetches
+// with the ambient credentials.
 type GitPR struct {
-	Run CommandRunner
+	Run   CommandRunner
+	Token TokenEnv
+}
+
+// fetch runs `git fetch origin <ref>` in dir as ghUser.
+func (g *GitPR) fetch(ctx context.Context, dir, ghUser, ref string) error {
+	var env []string
+	if g.Token != nil {
+		var err error
+		if env, err = g.Token(ctx, dir, ghUser); err != nil {
+			return fmt.Errorf("git fetch %s: %w", ref, err)
+		}
+	}
+	if out, err := g.Run(ctx, dir, env, "git", "fetch", "origin", ref); err != nil {
+		return fmt.Errorf("git fetch %s: %s", ref, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // Add fetches the PR head from origin (refs/pull/<n>/head) and creates a
@@ -47,26 +70,25 @@ type GitPR struct {
 // without one's close removing the other's checkout or one's fix commits
 // landing in the other's. Idempotent: if the worktree already exists, it is
 // moved to the fetched head (see Refresh) and its path returned.
-func (g *GitPR) Add(ctx context.Context, parentDir string, prNum int, channelID string) (string, error) {
+func (g *GitPR) Add(ctx context.Context, parentDir, ghUser string, prNum int, channelID string) (string, error) {
 	if parentDir == "" || prNum <= 0 || channelID == "" {
 		return "", fmt.Errorf("parentDir, prNum and channelID are required")
 	}
 	worktreePath := filepath.Join(parentDir, ".worktrees", fmt.Sprintf("pr-%d-%s", prNum, unsafeDirChars.ReplaceAllString(channelID, "-")))
 
 	// git fetch origin refs/pull/<n>/head — pulls the latest PR head into FETCH_HEAD.
-	fetchSpec := fmt.Sprintf("refs/pull/%d/head", prNum)
-	if out, err := g.Run(ctx, parentDir, "git", "fetch", "origin", fetchSpec); err != nil {
-		return "", fmt.Errorf("git fetch %s: %s", fetchSpec, strings.TrimSpace(string(out)))
+	if err := g.fetch(ctx, parentDir, ghUser, fmt.Sprintf("refs/pull/%d/head", prNum)); err != nil {
+		return "", err
 	}
 
 	// Create the worktree in detached HEAD at the freshly-fetched commit.
-	out, err := g.Run(ctx, parentDir, "git", "worktree", "add", "--detach", worktreePath, "FETCH_HEAD")
+	out, err := g.Run(ctx, parentDir, nil, "git", "worktree", "add", "--detach", worktreePath, "FETCH_HEAD")
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
 		// "already exists" is fine — caller may be re-loading the same PR,
 		// whose head may have moved since the worktree was made.
 		if strings.Contains(msg, "already exists") {
-			if err := g.Refresh(ctx, parentDir, worktreePath, prNum, ""); err != nil {
+			if err := g.Refresh(ctx, parentDir, ghUser, worktreePath, prNum, ""); err != nil {
 				return "", err
 			}
 			return worktreePath, nil
@@ -89,15 +111,14 @@ func (g *GitPR) Add(ctx context.Context, parentDir string, prNum int, channelID 
 //
 // A non-empty sha checks out that commit of the PR instead of its head,
 // so a pinned review stays where it started.
-func (g *GitPR) Refresh(ctx context.Context, parentDir, worktreePath string, prNum int, sha string) error {
+func (g *GitPR) Refresh(ctx context.Context, parentDir, ghUser, worktreePath string, prNum int, sha string) error {
 	if parentDir == "" || worktreePath == "" || prNum <= 0 {
 		return fmt.Errorf("parentDir, worktreePath, and prNum are required")
 	}
-	fetchSpec := fmt.Sprintf("refs/pull/%d/head", prNum)
-	if out, err := g.Run(ctx, worktreePath, "git", "fetch", "origin", fetchSpec); err != nil {
-		return fmt.Errorf("git fetch %s: %s", fetchSpec, strings.TrimSpace(string(out)))
+	if err := g.fetch(ctx, worktreePath, ghUser, fmt.Sprintf("refs/pull/%d/head", prNum)); err != nil {
+		return err
 	}
-	if out, err := g.Run(ctx, worktreePath, "git", "checkout", "--detach", cmp.Or(sha, "FETCH_HEAD")); err != nil {
+	if out, err := g.Run(ctx, worktreePath, nil, "git", "checkout", "--detach", cmp.Or(sha, "FETCH_HEAD")); err != nil {
 		return fmt.Errorf("git checkout: %s", strings.TrimSpace(string(out)))
 	}
 	return nil
@@ -116,18 +137,18 @@ func (g *GitPR) Refresh(ctx context.Context, parentDir, worktreePath string, prN
 // comment to the nearest change, and use that as the final `-U`. With
 // no comments — or when default -U=3 already covers them — we skip the
 // pre-pass and run the standard `git diff`.
-func (g *GitPR) Diff(ctx context.Context, parentDir, worktreePath, baseRef string, comments []*Comment) ([]byte, error) {
+func (g *GitPR) Diff(ctx context.Context, parentDir, ghUser, worktreePath, baseRef string, comments []*Comment) ([]byte, error) {
 	if parentDir == "" || worktreePath == "" || baseRef == "" {
 		return nil, fmt.Errorf("parentDir, worktreePath, and baseRef are required")
 	}
-	if out, err := g.Run(ctx, parentDir, "git", "fetch", "origin", baseRef); err != nil {
-		return nil, fmt.Errorf("git fetch %s: %s", baseRef, strings.TrimSpace(string(out)))
+	if err := g.fetch(ctx, parentDir, ghUser, baseRef); err != nil {
+		return nil, err
 	}
 	baseSpec := fmt.Sprintf("origin/%s...HEAD", baseRef)
 
 	needed := 0
 	if len(comments) > 0 {
-		skinny, err := g.Run(ctx, worktreePath, "git", "diff", "--no-ext-diff", "--no-textconv", "-U0", baseSpec)
+		skinny, err := g.Run(ctx, worktreePath, nil, "git", "diff", "--no-ext-diff", "--no-textconv", "-U0", baseSpec)
 		if err != nil {
 			return nil, fmt.Errorf("git diff -U0: %s", strings.TrimSpace(string(skinny)))
 		}
@@ -140,7 +161,7 @@ func (g *GitPR) Diff(ctx context.Context, parentDir, worktreePath, baseRef strin
 		args = append(args, fmt.Sprintf("-U%d", needed))
 	}
 	args = append(args, baseSpec)
-	out, err := g.Run(ctx, worktreePath, "git", args...)
+	out, err := g.Run(ctx, worktreePath, nil, "git", args...)
 	if err != nil {
 		return nil, fmt.Errorf("git diff: %s", strings.TrimSpace(string(out)))
 	}
@@ -292,7 +313,7 @@ func (g *GitPR) Remove(ctx context.Context, parentDir, worktreePath string) erro
 	if parentDir == "" || worktreePath == "" {
 		return fmt.Errorf("parentDir and worktreePath are required")
 	}
-	out, err := g.Run(ctx, parentDir, "git", "worktree", "remove", "--force", worktreePath)
+	out, err := g.Run(ctx, parentDir, nil, "git", "worktree", "remove", "--force", worktreePath)
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
 		// If the worktree was already removed (e.g. user deleted the dir
@@ -302,7 +323,7 @@ func (g *GitPR) Remove(ctx context.Context, parentDir, worktreePath string) erro
 			return fmt.Errorf("git worktree remove: %s", msg)
 		}
 	}
-	if out, err := g.Run(ctx, parentDir, "git", "worktree", "prune"); err != nil {
+	if out, err := g.Run(ctx, parentDir, nil, "git", "worktree", "prune"); err != nil {
 		return fmt.Errorf("git worktree prune: %s", strings.TrimSpace(string(out)))
 	}
 	return nil

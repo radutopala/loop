@@ -115,7 +115,7 @@ func (s *BaseSuite) TestUpdateBaseRealGit() {
 	git("update-ref", "refs/remotes/origin/main", upstream)
 	git("reset", "-q", "--hard", stale)
 
-	g := &GitPR{Run: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+	g := &GitPR{Run: func(ctx context.Context, dir string, _ []string, name string, args ...string) ([]byte, error) {
 		cmd := exec.CommandContext(ctx, name, args...)
 		cmd.Dir = dir
 		return cmd.CombinedOutput()

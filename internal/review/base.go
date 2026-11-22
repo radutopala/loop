@@ -41,10 +41,10 @@ func (g *GitPR) UpdateBase(ctx context.Context, dir, baseRef string, checkedOut 
 	if local == upstream {
 		return BaseUpdate{}, nil
 	}
-	if _, err := g.Run(ctx, dir, "git", "merge-base", "--is-ancestor", local, upstream); err != nil {
+	if _, err := g.Run(ctx, dir, nil, "git", "merge-base", "--is-ancestor", local, upstream); err != nil {
 		return BaseUpdate{Skipped: baseRef + " isn't behind origin/" + baseRef}, nil
 	}
-	out, err := g.Run(ctx, dir, "git", "worktree", "list", "--porcelain")
+	out, err := g.Run(ctx, dir, nil, "git", "worktree", "list", "--porcelain")
 	if err != nil {
 		return BaseUpdate{}, fmt.Errorf("git worktree list: %s", strings.TrimSpace(string(out)))
 	}
@@ -52,7 +52,7 @@ func (g *GitPR) UpdateBase(ctx context.Context, dir, baseRef string, checkedOut 
 	if wt == "" {
 		// The old value makes the move a compare-and-swap, so a commit
 		// landing on the branch meanwhile isn't lost.
-		if out, err := g.Run(ctx, dir, "git", "update-ref", branch, upstream, local); err != nil {
+		if out, err := g.Run(ctx, dir, nil, "git", "update-ref", branch, upstream, local); err != nil {
 			return BaseUpdate{}, fmt.Errorf("git update-ref %s: %s", branch, strings.TrimSpace(string(out)))
 		}
 		return BaseUpdate{Updated: true}, nil
@@ -60,14 +60,14 @@ func (g *GitPR) UpdateBase(ctx context.Context, dir, baseRef string, checkedOut 
 	if !checkedOut {
 		return BaseUpdate{Skipped: baseRef + " is checked out at " + wt + " and review.update_base is off"}, nil
 	}
-	status, err := g.Run(ctx, wt, "git", "status", "--porcelain", "--untracked-files=no")
+	status, err := g.Run(ctx, wt, nil, "git", "status", "--porcelain", "--untracked-files=no")
 	if err != nil {
 		return BaseUpdate{}, fmt.Errorf("git status in %s: %s", wt, strings.TrimSpace(string(status)))
 	}
 	if len(bytes.TrimSpace(status)) > 0 {
 		return BaseUpdate{Skipped: baseRef + " is checked out at " + wt + " with uncommitted changes"}, nil
 	}
-	if out, err := g.Run(ctx, wt, "git", "merge", "--ff-only", remote); err != nil {
+	if out, err := g.Run(ctx, wt, nil, "git", "merge", "--ff-only", remote); err != nil {
 		return BaseUpdate{}, fmt.Errorf("git merge --ff-only in %s: %s", wt, strings.TrimSpace(string(out)))
 	}
 	return BaseUpdate{Updated: true}, nil
@@ -75,7 +75,7 @@ func (g *GitPR) UpdateBase(ctx context.Context, dir, baseRef string, checkedOut 
 
 // revParse resolves ref to its commit in dir.
 func (g *GitPR) revParse(ctx context.Context, dir, ref string) (string, error) {
-	out, err := g.Run(ctx, dir, "git", "rev-parse", "--verify", "--quiet", ref+"^{commit}")
+	out, err := g.Run(ctx, dir, nil, "git", "rev-parse", "--verify", "--quiet", ref+"^{commit}")
 	sha := strings.TrimSpace(string(out))
 	if err != nil || sha == "" {
 		return "", fmt.Errorf("%s doesn't resolve", ref)
