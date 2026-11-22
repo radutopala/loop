@@ -745,7 +745,7 @@ func (a *app) serve() error {
 		api.WithGitHubLookup(ghClient),
 		api.WithGitLabLookup(glClient),
 		api.WithTunnel(tunnel.NewManager(filepath.Join(cfg.LoopDir, "bin"), logger)),
-		api.WithReview(ghClient, review.NewStore(), &review.GitPR{Run: review.CommandRunner(worktree.ExecCommandRunnerWithEnv(hostProxyEnv))}),
+		api.WithReview(ghClient, review.NewStore(), &review.GitPR{Run: worktree.ExecCommandRunnerWithEnv(hostProxyEnv), Token: ghClient.TokenEnv}),
 		api.WithReviewAgent(&review.Runner{Agent: runner}, "", reviewPrompt),
 		// Ceilings for the daemon-side review run, the dedup pass and the
 		// verification after it. Together they stay below the CLI's `loop

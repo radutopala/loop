@@ -25,7 +25,7 @@ func (c *Client) clock() time.Time {
 // Status returns the PR's head, a summary of its checks and whether it can
 // merge.
 func (c *Client) Status(ctx context.Context, ref forge.Ref) (*forge.Status, error) {
-	env, err := c.tokenEnv(ctx, ref.Dir, ref.Account)
+	env, err := c.TokenEnv(ctx, ref.Dir, ref.Account)
 	if err != nil {
 		return nil, err
 	}
@@ -136,7 +136,7 @@ var actionsJobRE = regexp.MustCompile(`/actions/runs/(\d+)(?:/job/(\d+))?`)
 // FailedChecks returns the PR's failed checks. gh exits non-zero when a
 // check failed, so its output is read whatever the exit.
 func (c *Client) FailedChecks(ctx context.Context, ref forge.Ref) ([]forge.FailedCheck, error) {
-	env, err := c.tokenEnv(ctx, ref.Dir, ref.Account)
+	env, err := c.TokenEnv(ctx, ref.Dir, ref.Account)
 	if err != nil {
 		return nil, err
 	}
@@ -184,7 +184,7 @@ func (c *Client) Log(ctx context.Context, ref forge.Ref, fc forge.FailedCheck) (
 	default:
 		return "", nil
 	}
-	env, err := c.tokenEnv(ctx, ref.Dir, ref.Account)
+	env, err := c.TokenEnv(ctx, ref.Dir, ref.Account)
 	if err != nil {
 		return "", err
 	}
@@ -212,7 +212,7 @@ const unresolvedThreadsQuery = `query($owner: String!, $name: String!, $number: 
 // UnresolvedThreads returns the ids of the PR's unresolved review threads,
 // among its first 100.
 func (c *Client) UnresolvedThreads(ctx context.Context, ref forge.Ref) ([]string, error) {
-	env, err := c.tokenEnv(ctx, ref.Dir, ref.Account)
+	env, err := c.TokenEnv(ctx, ref.Dir, ref.Account)
 	if err != nil {
 		return nil, err
 	}
@@ -250,7 +250,7 @@ const mergeSettingsQuery = `query($owner: String!, $name: String!) {
 // merge methods, reused for ten minutes.
 func (c *Client) MergeSettings(ctx context.Context, ref forge.Ref) (forge.MergeSettings, error) {
 	return c.settings.Get(ref.Dir+"\x00"+ref.Account, c.clock(), func() (forge.MergeSettings, error) {
-		env, err := c.tokenEnv(ctx, ref.Dir, ref.Account)
+		env, err := c.TokenEnv(ctx, ref.Dir, ref.Account)
 		if err != nil {
 			return forge.MergeSettings{}, err
 		}
@@ -302,7 +302,7 @@ func (c *Client) Merge(ctx context.Context, ref forge.Ref, method string) error 
 
 // run runs a gh command as ref's account, for its error only.
 func (c *Client) run(ctx context.Context, ref forge.Ref, args ...string) error {
-	env, err := c.tokenEnv(ctx, ref.Dir, ref.Account)
+	env, err := c.TokenEnv(ctx, ref.Dir, ref.Account)
 	if err != nil {
 		return err
 	}

@@ -94,18 +94,18 @@ type mockPR struct {
 	mock.Mock
 }
 
-func (m *mockPR) Add(ctx context.Context, parentDir string, prNum int, channelID string) (string, error) {
-	args := m.Called(ctx, parentDir, prNum, channelID)
+func (m *mockPR) Add(ctx context.Context, parentDir, ghUser string, prNum int, channelID string) (string, error) {
+	args := m.Called(ctx, parentDir, ghUser, prNum, channelID)
 	return args.String(0), args.Error(1)
 }
 
-func (m *mockPR) Refresh(ctx context.Context, parentDir, worktreePath string, prNum int, sha string) error {
-	args := m.Called(ctx, parentDir, worktreePath, prNum, sha)
+func (m *mockPR) Refresh(ctx context.Context, parentDir, ghUser, worktreePath string, prNum int, sha string) error {
+	args := m.Called(ctx, parentDir, ghUser, worktreePath, prNum, sha)
 	return args.Error(0)
 }
 
-func (m *mockPR) Diff(ctx context.Context, parentDir, worktreePath, baseRef string, comments []*review.Comment) ([]byte, error) {
-	args := m.Called(ctx, parentDir, worktreePath, baseRef, comments)
+func (m *mockPR) Diff(ctx context.Context, parentDir, ghUser, worktreePath, baseRef string, comments []*review.Comment) ([]byte, error) {
+	args := m.Called(ctx, parentDir, ghUser, worktreePath, baseRef, comments)
 	b, _ := args.Get(0).([]byte)
 	return b, args.Error(1)
 }
@@ -347,7 +347,7 @@ func (s *ReviewHandlerSuite) TestLoadWorktreeError() {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
 	s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 7).Return(&githubapi.PRInfo{Number: 7, BaseRef: "main"}, nil)
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("abc", nil)
-	s.wt.On("Add", mock.Anything, "/repo", 7, mock.Anything).Return("", errors.New("git failed"))
+	s.wt.On("Add", mock.Anything, "/repo", "", 7, mock.Anything).Return("", errors.New("git failed"))
 	w := s.postJSON("/api/channels/ch1/review/load", map[string]any{"pr_number": 7})
 	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
 }
@@ -361,10 +361,10 @@ func (s *ReviewHandlerSuite) TestLoadDiffError() {
 			s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
 			s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 7).Return(&githubapi.PRInfo{Number: 7, BaseRef: "main"}, nil)
 			s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("abc", nil)
-			s.wt.On("Add", mock.Anything, "/repo", 7, mock.Anything).Return("/repo/.worktrees/pr-7", nil)
+			s.wt.On("Add", mock.Anything, "/repo", "", 7, mock.Anything).Return("/repo/.worktrees/pr-7", nil)
 			// Comment fetch happens before Diff so its mock has to be in place.
 			s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return((*githubapi.RepoSlug)(nil), errors.New("no slug"))
-			s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return(nil, errors.New("diff failed"))
+			s.wt.On("Diff", mock.Anything, "/repo", "", "/repo/.worktrees/pr-7", "main", mock.Anything).Return(nil, errors.New("diff failed"))
 			s.wt.On("Remove", mock.Anything, "/repo", "/repo/.worktrees/pr-7").Return(removeErr).Once()
 			w := s.postJSON("/api/channels/ch1/review/load", map[string]any{"pr_number": 7})
 			require.Equal(s.T(), http.StatusInternalServerError, w.Code)
@@ -374,13 +374,31 @@ func (s *ReviewHandlerSuite) TestLoadDiffError() {
 	}
 }
 
+// A PR load fetches as the channel's gh account, the one the PR list came
+// from, not whichever account gh has active.
+func (s *ReviewHandlerSuite) TestLoadFetchesAsConfiguredGHUser() {
+	s.srv.configs.load = func() (*config.Config, error) {
+		return &config.Config{GitHub: config.GitHubConfig{GHUser: "alice"}, Review: config.ReviewConfig{Enabled: true}}, nil
+	}
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
+	pr := &githubapi.PRInfo{Number: 7, BaseRef: "main", State: "OPEN"}
+	s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "alice", 7).Return(pr, nil)
+	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "alice", 7).Return("deadbeef", nil)
+	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "alice").Return((*githubapi.RepoSlug)(nil), errors.New("no slug"))
+	s.wt.On("Add", mock.Anything, "/repo", "alice", 7, mock.Anything).Return("/repo/.worktrees/pr-7", nil).Once()
+	s.wt.On("Diff", mock.Anything, "/repo", "alice", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("diff"), nil).Once()
+	w := s.postJSON("/api/channels/ch1/review/load", map[string]any{"pr_number": 7})
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	s.wt.AssertExpectations(s.T())
+}
+
 func (s *ReviewHandlerSuite) TestLoadHappyPath() {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
 	pr := &githubapi.PRInfo{Number: 7, URL: "https://github.com/x/y/pull/7", HeadRef: "feat-x", BaseRef: "main", State: "OPEN"}
 	s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 7).Return(pr, nil)
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("deadbeef", nil)
-	s.wt.On("Add", mock.Anything, "/repo", 7, mock.Anything).Return("/repo/.worktrees/pr-7", nil)
-	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("diff text"), nil)
+	s.wt.On("Add", mock.Anything, "/repo", "", 7, mock.Anything).Return("/repo/.worktrees/pr-7", nil)
+	s.wt.On("Diff", mock.Anything, "/repo", "", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("diff text"), nil)
 	// No pre-existing GH comments — slug fetch fails so the best-effort
 	// path short-circuits and Load still succeeds.
 	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return((*githubapi.RepoSlug)(nil), errors.New("no slug"))
@@ -420,8 +438,8 @@ func (s *ReviewHandlerSuite) TestLoadKeepsChoices() {
 			s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 7).Return(&githubapi.PRInfo{Number: 7, BaseRef: "main"}, nil)
 			s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("deadbeef", nil)
 			s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return((*githubapi.RepoSlug)(nil), errors.New("no slug"))
-			s.wt.On("Add", mock.Anything, "/repo", 7, mock.Anything).Return("/repo/.worktrees/pr-7", nil)
-			diff := s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("diff"), nil)
+			s.wt.On("Add", mock.Anything, "/repo", "", 7, mock.Anything).Return("/repo/.worktrees/pr-7", nil)
+			diff := s.wt.On("Diff", mock.Anything, "/repo", "", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("diff"), nil)
 			if tc.midLoad {
 				diff.Run(func(mock.Arguments) {
 					require.Equal(s.T(), "high", s.rs.Get("ch1").Effort)
@@ -445,8 +463,8 @@ func (s *ReviewHandlerSuite) TestLoadSeedsGitHubComments() {
 	pr := &githubapi.PRInfo{Number: 7, BaseRef: "main"}
 	s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 7).Return(pr, nil)
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("deadbeef", nil)
-	s.wt.On("Add", mock.Anything, "/repo", 7, mock.Anything).Return("/repo/.worktrees/pr-7", nil)
-	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("diff"), nil)
+	s.wt.On("Add", mock.Anything, "/repo", "", 7, mock.Anything).Return("/repo/.worktrees/pr-7", nil)
+	s.wt.On("Diff", mock.Anything, "/repo", "", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("diff"), nil)
 	slug := &githubapi.RepoSlug{Owner: "acme", Name: "widgets"}
 	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return(slug, nil)
 	s.gh.On("FetchPRReviewComments", mock.Anything, "/repo", "", *slug, 7).Return([]githubapi.PRReviewComment{
@@ -476,8 +494,8 @@ func (s *ReviewHandlerSuite) TestLoadCommentFetchFailureIsNonFatal() {
 	pr := &githubapi.PRInfo{Number: 7, BaseRef: "main"}
 	s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 7).Return(pr, nil)
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("deadbeef", nil)
-	s.wt.On("Add", mock.Anything, "/repo", 7, mock.Anything).Return("/repo/.worktrees/pr-7", nil)
-	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("d"), nil)
+	s.wt.On("Add", mock.Anything, "/repo", "", 7, mock.Anything).Return("/repo/.worktrees/pr-7", nil)
+	s.wt.On("Diff", mock.Anything, "/repo", "", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("d"), nil)
 	slug := &githubapi.RepoSlug{Owner: "o", Name: "n"}
 	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return(slug, nil)
 	s.gh.On("FetchPRReviewComments", mock.Anything, "/repo", "", *slug, 7).
@@ -567,8 +585,8 @@ func (s *ReviewHandlerSuite) TestLoadRemovesPreviousWorktreeOnOverwrite() {
 	pr := &githubapi.PRInfo{Number: 200, BaseRef: "main", State: "OPEN"}
 	s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 200).Return(pr, nil)
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 200).Return("sha", nil)
-	s.wt.On("Add", mock.Anything, "/repo", 200, mock.Anything).Return("/repo/.worktrees/pr-200", nil)
-	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-200", "main", mock.Anything).Return([]byte("d"), nil)
+	s.wt.On("Add", mock.Anything, "/repo", "", 200, mock.Anything).Return("/repo/.worktrees/pr-200", nil)
+	s.wt.On("Diff", mock.Anything, "/repo", "", "/repo/.worktrees/pr-200", "main", mock.Anything).Return([]byte("d"), nil)
 	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return((*githubapi.RepoSlug)(nil), errors.New("no slug"))
 
 	w := s.postJSON("/api/channels/ch1/review/load", map[string]any{"pr_number": 200})
@@ -589,8 +607,8 @@ func (s *ReviewHandlerSuite) TestLoadPreviousWorktreeRemoveErrorIsNonFatal() {
 	pr := &githubapi.PRInfo{Number: 200, BaseRef: "main"}
 	s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 200).Return(pr, nil)
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 200).Return("sha", nil)
-	s.wt.On("Add", mock.Anything, "/repo", 200, mock.Anything).Return("/repo/.worktrees/pr-200", nil)
-	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-200", "main", mock.Anything).Return([]byte("d"), nil)
+	s.wt.On("Add", mock.Anything, "/repo", "", 200, mock.Anything).Return("/repo/.worktrees/pr-200", nil)
+	s.wt.On("Diff", mock.Anything, "/repo", "", "/repo/.worktrees/pr-200", "main", mock.Anything).Return([]byte("d"), nil)
 	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return((*githubapi.RepoSlug)(nil), errors.New("no slug"))
 
 	w := s.postJSON("/api/channels/ch1/review/load", map[string]any{"pr_number": 200})
@@ -605,8 +623,8 @@ func (s *ReviewHandlerSuite) TestLoadLoopDirFallback() {
 	pr := &githubapi.PRInfo{Number: 7, BaseRef: "main"}
 	s.gh.On("FetchPRByNumber", mock.Anything, "/loop/ch1/work", "", 7).Return(pr, nil)
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/loop/ch1/work", "", 7).Return("abc", nil)
-	s.wt.On("Add", mock.Anything, "/loop/ch1/work", 7, mock.Anything).Return("/loop/ch1/work/.worktrees/pr-7", nil)
-	s.wt.On("Diff", mock.Anything, "/loop/ch1/work", "/loop/ch1/work/.worktrees/pr-7", "main", mock.Anything).Return([]byte("d"), nil)
+	s.wt.On("Add", mock.Anything, "/loop/ch1/work", "", 7, mock.Anything).Return("/loop/ch1/work/.worktrees/pr-7", nil)
+	s.wt.On("Diff", mock.Anything, "/loop/ch1/work", "", "/loop/ch1/work/.worktrees/pr-7", "main", mock.Anything).Return([]byte("d"), nil)
 	s.gh.On("FetchRepoSlug", mock.Anything, "/loop/ch1/work", "").Return((*githubapi.RepoSlug)(nil), errors.New("no slug"))
 	w := s.postJSON("/api/channels/ch1/review/load", map[string]any{"pr_number": 7})
 	require.Equal(s.T(), http.StatusOK, w.Code)
@@ -735,8 +753,8 @@ func (s *ReviewHandlerSuite) TestSyncLoopDirFallback() {
 	})
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1"}, nil)
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/loop/ch1/work", "", 7).Return("new", nil)
-	s.wt.On("Refresh", mock.Anything, "/loop/ch1/work", "/loop/ch1/work/.worktrees/pr-7", 7, "").Return(nil)
-	s.wt.On("Diff", mock.Anything, "/loop/ch1/work", "/loop/ch1/work/.worktrees/pr-7", "main", mock.Anything).Return([]byte("d"), nil)
+	s.wt.On("Refresh", mock.Anything, "/loop/ch1/work", "", "/loop/ch1/work/.worktrees/pr-7", 7, "").Return(nil)
+	s.wt.On("Diff", mock.Anything, "/loop/ch1/work", "", "/loop/ch1/work/.worktrees/pr-7", "main", mock.Anything).Return([]byte("d"), nil)
 	s.gh.On("FetchRepoSlug", mock.Anything, "/loop/ch1/work", "").Return((*githubapi.RepoSlug)(nil), errors.New("no slug"))
 
 	w := httptest.NewRecorder()
@@ -775,8 +793,8 @@ func (s *ReviewHandlerSuite) TestSyncPinned() {
 			} else {
 				s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("new", nil)
 			}
-			s.wt.On("Refresh", mock.Anything, "/repo", "/repo/.worktrees/pr-7", 7, pin).Return(nil)
-			s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("d"), nil)
+			s.wt.On("Refresh", mock.Anything, "/repo", "", "/repo/.worktrees/pr-7", 7, pin).Return(nil)
+			s.wt.On("Diff", mock.Anything, "/repo", "", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("d"), nil)
 			s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return((*githubapi.RepoSlug)(nil), errors.New("no slug"))
 
 			w := httptest.NewRecorder()
@@ -801,7 +819,7 @@ func (s *ReviewHandlerSuite) TestSyncHeadFetchError() {
 func (s *ReviewHandlerSuite) TestSyncRefreshError() {
 	s.wireSyncSession()
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("new", nil)
-	s.wt.On("Refresh", mock.Anything, "/repo", "/repo/.worktrees/pr-7", 7, "").Return(errors.New("checkout failed"))
+	s.wt.On("Refresh", mock.Anything, "/repo", "", "/repo/.worktrees/pr-7", 7, "").Return(errors.New("checkout failed"))
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/sync", nil))
 	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
@@ -810,11 +828,11 @@ func (s *ReviewHandlerSuite) TestSyncRefreshError() {
 func (s *ReviewHandlerSuite) TestSyncDiffError() {
 	s.wireSyncSession()
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("new", nil)
-	s.wt.On("Refresh", mock.Anything, "/repo", "/repo/.worktrees/pr-7", 7, "").Return(nil)
+	s.wt.On("Refresh", mock.Anything, "/repo", "", "/repo/.worktrees/pr-7", 7, "").Return(nil)
 	// Comment fetch runs before Diff during Sync — short-circuit it via
 	// slug failure so the diff-error branch is the one we exercise.
 	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return((*githubapi.RepoSlug)(nil), errors.New("no slug"))
-	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return(([]byte)(nil), errors.New("diff blew up"))
+	s.wt.On("Diff", mock.Anything, "/repo", "", "/repo/.worktrees/pr-7", "main", mock.Anything).Return(([]byte)(nil), errors.New("diff blew up"))
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/sync", nil))
 	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
@@ -825,8 +843,8 @@ func (s *ReviewHandlerSuite) TestSyncDiffError() {
 func (s *ReviewHandlerSuite) TestSyncHappyPath() {
 	s.wireSyncSession()
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("new-sha", nil)
-	s.wt.On("Refresh", mock.Anything, "/repo", "/repo/.worktrees/pr-7", 7, "").Return(nil)
-	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("new-diff"), nil)
+	s.wt.On("Refresh", mock.Anything, "/repo", "", "/repo/.worktrees/pr-7", 7, "").Return(nil)
+	s.wt.On("Diff", mock.Anything, "/repo", "", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("new-diff"), nil)
 	slug := &githubapi.RepoSlug{Owner: "o", Name: "n"}
 	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return(slug, nil)
 	s.gh.On("FetchPRReviewComments", mock.Anything, "/repo", "", *slug, 7).Return([]githubapi.PRReviewComment{
@@ -1840,12 +1858,12 @@ func (s *ReviewHandlerSuite) wireReadySession() {
 // explicit expectations before the handler invocation.
 func (s *ReviewHandlerSuite) wireRefreshMocks(dirPath, worktreePath string, prNum int, baseRef string, diff []byte) {
 	s.gh.On("FetchPRHeadSHA", mock.Anything, dirPath, mock.Anything, prNum).Return("abc", nil).Maybe()
-	s.wt.On("Refresh", mock.Anything, dirPath, worktreePath, prNum, "").Return(nil).Maybe()
+	s.wt.On("Refresh", mock.Anything, dirPath, "", worktreePath, prNum, "").Return(nil).Maybe()
 	// FetchRepoSlug returning an error short-circuits the GH comment fetch
 	// inside fetchExistingReviewComments, so no FetchPRReviewComments mock
 	// is needed. Best-effort behavior matches production.
 	s.gh.On("FetchRepoSlug", mock.Anything, dirPath, mock.Anything).Return((*githubapi.RepoSlug)(nil), errors.New("slug skipped")).Maybe()
-	s.wt.On("Diff", mock.Anything, dirPath, worktreePath, baseRef, mock.Anything).Return(diff, nil).Maybe()
+	s.wt.On("Diff", mock.Anything, dirPath, "", worktreePath, baseRef, mock.Anything).Return(diff, nil).Maybe()
 }
 
 func (s *ReviewHandlerSuite) TestRunReviewStoreNotConfigured() {
@@ -2428,6 +2446,9 @@ func (s *ReviewHandlerSuite) TestRunPromptIncludesConfiguredGHUser() {
 	s.srv.configs.load = func() (*config.Config, error) {
 		return &config.Config{GitHub: config.GitHubConfig{GHUser: "alice"}, Review: config.ReviewConfig{Enabled: true}}, nil
 	}
+	// The refresh fetches as the configured account too.
+	s.wt.On("Refresh", mock.Anything, "/repo", "alice", "/repo/.worktrees/pr-7", 7, "").Return(nil).Once()
+	s.wt.On("Diff", mock.Anything, "/repo", "alice", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("diff --git a/x b/x"), nil).Once()
 	runner := &mockReviewRunner{done: make(chan struct{})}
 	s.srv.review.setAgent(runner, "", "")
 
@@ -2435,6 +2456,8 @@ func (s *ReviewHandlerSuite) TestRunPromptIncludesConfiguredGHUser() {
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
 	require.Equal(s.T(), http.StatusAccepted, w.Code)
 	<-runner.done
+	s.wt.AssertCalled(s.T(), "Refresh", mock.Anything, "/repo", "alice", "/repo/.worktrees/pr-7", 7, "")
+	s.wt.AssertCalled(s.T(), "Diff", mock.Anything, "/repo", "alice", "/repo/.worktrees/pr-7", "main", mock.Anything)
 	require.Contains(s.T(), runner.lastSys, "GitHub CLI account: alice")
 	require.Contains(s.T(), runner.lastSys, "gh auth switch -u alice")
 }
@@ -2456,13 +2479,13 @@ func (s *ReviewHandlerSuite) TestRunPromptLeavesOutExistingComments() {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil).Maybe()
 	// Refresh re-fetches GH comments before kicking off the agent.
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", mock.Anything, 7).Return("abc", nil).Maybe()
-	s.wt.On("Refresh", mock.Anything, "/repo", "/repo/.worktrees/pr-7", 7, "").Return(nil).Maybe()
+	s.wt.On("Refresh", mock.Anything, "/repo", "", "/repo/.worktrees/pr-7", 7, "").Return(nil).Maybe()
 	slug := &githubapi.RepoSlug{Owner: "o", Name: "r"}
 	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", mock.Anything).Return(slug, nil).Maybe()
 	s.gh.On("FetchPRReviewComments", mock.Anything, "/repo", mock.Anything, *slug, 7).Return([]githubapi.PRReviewComment{
 		{ID: 1, Path: "a.go", Line: 5, Side: "RIGHT", Body: "nit body", Author: "bob"},
 	}, nil).Maybe()
-	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("diff"), nil).Maybe()
+	s.wt.On("Diff", mock.Anything, "/repo", "", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("diff"), nil).Maybe()
 	runner := &mockReviewRunner{done: make(chan struct{})}
 	s.srv.review.setAgent(runner, "", "")
 
@@ -2619,7 +2642,7 @@ func (s *ReviewHandlerSuite) TestRunRediffsOnCommentOutsideHunk() {
 	})
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil).Maybe()
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", mock.Anything, 7).Return("abc", nil).Maybe()
-	s.wt.On("Refresh", mock.Anything, "/repo", "/repo/.worktrees/pr-7", 7, "").Return(nil).Maybe()
+	s.wt.On("Refresh", mock.Anything, "/repo", "", "/repo/.worktrees/pr-7", 7, "").Return(nil).Maybe()
 	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", mock.Anything).Return((*githubapi.RepoSlug)(nil), errors.New("slug skipped")).Maybe()
 
 	hub := NewEventsHub(slog.Default())
@@ -2639,8 +2662,8 @@ func (s *ReviewHandlerSuite) TestRunRediffsOnCommentOutsideHunk() {
 	// Diff call (re-diff after the agent's out-of-hunk comment) returns
 	// widened bytes, triggering the one broadcast we assert on.
 	widened := []byte("diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n@@ -1,50 +1,50 @@\n widened\n")
-	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return(seedDiff, nil).Once()
-	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return(widened, nil).Once()
+	s.wt.On("Diff", mock.Anything, "/repo", "", "/repo/.worktrees/pr-7", "main", mock.Anything).Return(seedDiff, nil).Once()
+	s.wt.On("Diff", mock.Anything, "/repo", "", "/repo/.worktrees/pr-7", "main", mock.Anything).Return(widened, nil).Once()
 
 	runner := &mockReviewRunner{done: make(chan struct{})}
 	runner.runFn = func() (*agent.AgentResponse, error) {
@@ -2864,10 +2887,10 @@ func (s *ReviewHandlerSuite) TestRunRefreshBroadcastsWhenDiffChanges() {
 	})
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil).Maybe()
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", mock.Anything, 7).Return("new", nil).Maybe()
-	s.wt.On("Refresh", mock.Anything, "/repo", "/repo/.worktrees/pr-7", 7, "").Return(nil).Maybe()
+	s.wt.On("Refresh", mock.Anything, "/repo", "", "/repo/.worktrees/pr-7", 7, "").Return(nil).Maybe()
 	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", mock.Anything).Return((*githubapi.RepoSlug)(nil), errors.New("slug skipped")).Maybe()
 	// Refresh's Diff returns bytes different from sess.RawDiff → broadcast.
-	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("NEW"), nil).Maybe()
+	s.wt.On("Diff", mock.Anything, "/repo", "", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("NEW"), nil).Maybe()
 
 	hub := NewEventsHub(slog.Default())
 	var diffEvents []Event
@@ -2958,8 +2981,9 @@ func (s *ReviewHandlerSuite) TestMaybeRediffGuards() {
 			WorktreePath: "/wt",
 			RawDiff:      raw,
 		})
+		s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil).Maybe()
 		wt := newMockPR()
-		wt.On("Diff", mock.Anything, "/repo", "/wt", "main", mock.Anything).Return([]byte(nil), errors.New("boom"))
+		wt.On("Diff", mock.Anything, "/repo", "", "/wt", "main", mock.Anything).Return([]byte(nil), errors.New("boom"))
 		s.srv.review.setBackends(s.gh, s.rs, wt)
 		s.srv.logger = logger
 		s.srv.review.maybeRediffForComment("ch1", "/wt", "/repo", c)
@@ -2975,8 +2999,12 @@ func (s *ReviewHandlerSuite) TestMaybeRediffGuards() {
 			WorktreePath: "/wt",
 			RawDiff:      raw,
 		})
+		// The re-diff's base fetch runs as the channel's gh account.
+		s.srv.configs.load = func() (*config.Config, error) {
+			return &config.Config{GitHub: config.GitHubConfig{GHUser: "alice"}}, nil
+		}
 		wt := newMockPR()
-		wt.On("Diff", mock.Anything, "/repo", "/wt", "main", mock.Anything).Return([]byte(raw), nil)
+		wt.On("Diff", mock.Anything, "/repo", "alice", "/wt", "main", mock.Anything).Return([]byte(raw), nil).Once()
 		s.srv.review.setBackends(s.gh, s.rs, wt)
 		hub := NewEventsHub(logger)
 		var events []Event
@@ -2984,6 +3012,7 @@ func (s *ReviewHandlerSuite) TestMaybeRediffGuards() {
 		s.srv.SetEventsHub(hub)
 		s.srv.review.maybeRediffForComment("ch1", "/wt", "/repo", c)
 		require.Empty(s.T(), events)
+		wt.AssertExpectations(s.T())
 		s.rs.Delete("ch1")
 	})
 }

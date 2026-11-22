@@ -41,7 +41,7 @@ func (s *ReviewHandlerSuite) stubLoadPR(release <-chan struct{}) {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
 	s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 7).Run(func(mock.Arguments) { <-release }).Return(&githubapi.PRInfo{Number: 7, BaseRef: "main"}, nil)
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("abc", nil)
-	s.wt.On("Add", mock.Anything, "/repo", 7, mock.Anything).Return("/repo/.worktrees/pr-7", nil)
+	s.wt.On("Add", mock.Anything, "/repo", "", 7, mock.Anything).Return("/repo/.worktrees/pr-7", nil)
 	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return((*githubapi.RepoSlug)(nil), errors.New("no slug"))
 }
 
@@ -52,7 +52,7 @@ func (s *ReviewHandlerSuite) TestLoadBackground() {
 	got := s.statusEvents()
 	release := make(chan struct{})
 	s.stubLoadPR(release)
-	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("diff text"), nil)
+	s.wt.On("Diff", mock.Anything, "/repo", "", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("diff text"), nil)
 
 	w := s.loadBackground()
 	require.Equal(s.T(), http.StatusAccepted, w.Code, w.Body.String())
@@ -128,7 +128,7 @@ func (s *ReviewHandlerSuite) TestLoadBackgroundClosed() {
 				s.gh.ExpectedCalls = nil
 				s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 7).Run(func(mock.Arguments) { <-fetch }).Return(nil, errors.New("context canceled"))
 			}
-			s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Run(func(mock.Arguments) { <-diff }).Return([]byte("d"), nil)
+			s.wt.On("Diff", mock.Anything, "/repo", "", "/repo/.worktrees/pr-7", "main", mock.Anything).Run(func(mock.Arguments) { <-diff }).Return([]byte("d"), nil)
 			removed := make(chan struct{})
 			s.wt.On("Remove", mock.Anything, "/repo", "/repo/.worktrees/pr-7").Run(func(mock.Arguments) { close(removed) }).Return(tc.removeErr)
 

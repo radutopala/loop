@@ -55,17 +55,17 @@ func (g *GitPR) ResolveScope(ctx context.Context, worktreePath, baseRef string, 
 	if lastHead == "" {
 		return full("no earlier review of this PR")
 	}
-	out, err := g.Run(ctx, worktreePath, "git", "rev-parse", "HEAD")
+	out, err := g.Run(ctx, worktreePath, nil, "git", "rev-parse", "HEAD")
 	if err != nil {
 		return ScopeResult{}, fmt.Errorf("git rev-parse HEAD: %s", strings.TrimSpace(string(out)))
 	}
 	if strings.TrimSpace(string(out)) == lastHead {
 		return full("no new commits since the last review")
 	}
-	if _, err := g.Run(ctx, worktreePath, "git", "cat-file", "-e", lastHead+"^{commit}"); err != nil {
+	if _, err := g.Run(ctx, worktreePath, nil, "git", "cat-file", "-e", lastHead+"^{commit}"); err != nil {
 		return full("the last reviewed commit is gone")
 	}
-	_, err = g.Run(ctx, worktreePath, "git", "merge-base", "--is-ancestor", lastHead, "HEAD")
+	_, err = g.Run(ctx, worktreePath, nil, "git", "merge-base", "--is-ancestor", lastHead, "HEAD")
 	rebased := err != nil
 
 	prLines, files, err := g.numstat(ctx, worktreePath, fmt.Sprintf("origin/%s...HEAD", baseRef))
@@ -99,7 +99,7 @@ func (g *GitPR) ResolveScope(ctx context.Context, worktreePath, baseRef string, 
 // touched, with no lines. Renames are off, so a renamed file is listed
 // under its new path.
 func (g *GitPR) numstat(ctx context.Context, worktreePath string, args ...string) (int, []string, error) {
-	out, err := g.Run(ctx, worktreePath, "git", append([]string{"diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--numstat"}, args...)...)
+	out, err := g.Run(ctx, worktreePath, nil, "git", append([]string{"diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--numstat"}, args...)...)
 	if err != nil {
 		return 0, nil, fmt.Errorf("git diff --numstat: %s", strings.TrimSpace(string(out)))
 	}

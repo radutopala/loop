@@ -233,8 +233,8 @@ func (s *ReviewHandlerSuite) TestLoadRestoresFindings() {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
 	s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 7).Return(&githubapi.PRInfo{Number: 7, BaseRef: "main"}, nil)
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("abc", nil)
-	s.wt.On("Add", mock.Anything, "/repo", 7, mock.Anything).Return("/repo/.worktrees/pr-7", nil)
-	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("diff"), nil)
+	s.wt.On("Add", mock.Anything, "/repo", "", 7, mock.Anything).Return("/repo/.worktrees/pr-7", nil)
+	s.wt.On("Diff", mock.Anything, "/repo", "", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("diff"), nil)
 	slug := &githubapi.RepoSlug{Owner: "o", Name: "r"}
 	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return(slug, nil)
 	s.gh.On("FetchPRReviewComments", mock.Anything, "/repo", "", *slug, 7).Return([]githubapi.PRReviewComment{
@@ -290,8 +290,8 @@ func (s *ReviewHandlerSuite) TestLoadRestoreFailureLoadsWithout() {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
 	s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 7).Return(&githubapi.PRInfo{Number: 7, BaseRef: "main"}, nil)
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("abc", nil)
-	s.wt.On("Add", mock.Anything, "/repo", 7, mock.Anything).Return("/repo/.worktrees/pr-7", nil)
-	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("diff"), nil)
+	s.wt.On("Add", mock.Anything, "/repo", "", 7, mock.Anything).Return("/repo/.worktrees/pr-7", nil)
+	s.wt.On("Diff", mock.Anything, "/repo", "", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("diff"), nil)
 	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return((*githubapi.RepoSlug)(nil), errors.New("no slug"))
 	ms := s.withHistory()
 	ms.On("ListReviewFindings", mock.Anything, "/repo", 7).Return(nil, errors.New("db down"))
@@ -529,8 +529,8 @@ func (s *ReviewHandlerSuite) TestRestoreReviewSessions() {
 	s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 7).Return(&githubapi.PRInfo{Number: 7, BaseRef: "main"}, nil)
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("abc", nil)
 	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return((*githubapi.RepoSlug)(nil), errors.New("no slug"))
-	s.wt.On("Add", mock.Anything, "/repo", 7, "ch1").Return("/repo/.worktrees/pr-7", nil)
-	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("diff"), nil)
+	s.wt.On("Add", mock.Anything, "/repo", "", 7, "ch1").Return("/repo/.worktrees/pr-7", nil)
+	s.wt.On("Diff", mock.Anything, "/repo", "", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("diff"), nil)
 	ms := s.withHistory()
 	ms.On("ListReviewSessions", mock.Anything).Return([]*db.ReviewSession{
 		{ChannelID: "busy", PRNumber: 3},

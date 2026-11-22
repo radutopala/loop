@@ -80,9 +80,9 @@ func (s *ReviewStartSuite) head() {
 func (s *ReviewStartSuite) loadMocks() {
 	s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 7).Return(&githubapi.PRInfo{Number: 7, BaseRef: "main"}, nil)
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("abc", nil)
-	s.wt.On("Add", mock.Anything, "/repo", 7, "ch1").Return("/repo/.worktrees/pr-7-ch1", nil)
+	s.wt.On("Add", mock.Anything, "/repo", "", 7, "ch1").Return("/repo/.worktrees/pr-7-ch1", nil)
 	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return((*githubapi.RepoSlug)(nil), errors.New("no slug"))
-	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7-ch1", "main", mock.Anything).Return([]byte("diff"), nil)
+	s.wt.On("Diff", mock.Anything, "/repo", "", "/repo/.worktrees/pr-7-ch1", "main", mock.Anything).Return([]byte("diff"), nil)
 }
 
 func (s *ReviewStartSuite) TestNotConfigured() {

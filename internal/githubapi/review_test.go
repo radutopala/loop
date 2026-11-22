@@ -376,7 +376,7 @@ func (r *endpointRunner) Run(_ context.Context, workdir string, env []string, ar
 		}
 		return nil, errors.New("unstubbed endpoint: " + args[1])
 	}
-	// Token lookup falls through with empty success so tokenEnv returns nil env.
+	// Token lookup falls through with empty success so TokenEnv returns nil env.
 	return nil, nil
 }
 

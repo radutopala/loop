@@ -53,14 +53,14 @@ func ExecCommandRunner(ctx context.Context, dir, name string, args ...string) ([
 
 // ExecCommandRunnerWithEnv is ExecCommandRunner with extraEnv's variables
 // added to every command, read per call — the daemon's proxy for the
-// commands that fetch from a remote.
-func ExecCommandRunnerWithEnv(extraEnv func() []string) CommandRunner {
-	return func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+// commands that fetch from a remote — and then the call's own env.
+func ExecCommandRunnerWithEnv(extraEnv func() []string) func(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
+	return func(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
 		cmd := execCommand(ctx, dir, name, args...)
 		if cmd.Env == nil {
 			cmd.Env = os.Environ()
 		}
-		cmd.Env = append(cmd.Env, extraEnv()...)
+		cmd.Env = append(append(cmd.Env, extraEnv()...), env...)
 		return cmd.CombinedOutput()
 	}
 }

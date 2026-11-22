@@ -117,14 +117,14 @@ func (s *reviewService) refreshReviewSession(ctx context.Context, channelID, dir
 			return nil, err
 		}
 	}
-	if err := s.worktree.Refresh(ctx, dirPath, sess.WorktreePath, prNum, pin); err != nil {
+	if err := s.worktree.Refresh(ctx, dirPath, ghUser, sess.WorktreePath, prNum, pin); err != nil {
 		return nil, err
 	}
 	ghComments := s.fetchExistingReviewComments(ctx, dirPath, ghUser, prNum)
 
 	merged := mergeReviewComments(sess.Comments, ghComments)
 
-	diff, err := s.worktree.Diff(ctx, dirPath, sess.WorktreePath, sess.PR.BaseRef, merged)
+	diff, err := s.worktree.Diff(ctx, dirPath, ghUser, sess.WorktreePath, sess.PR.BaseRef, merged)
 	if err != nil {
 		return nil, err
 	}
@@ -595,7 +595,9 @@ func (s *reviewService) maybeRediffForComment(channelID, worktreePath, parentDir
 	if !review.ShouldRediff([]byte(sess.RawDiff), c.Path, c.Line, c.Side) {
 		return
 	}
-	out, err := s.worktree.Diff(context.Background(), parentDirPath, worktreePath, sess.PR.BaseRef, sess.Comments)
+	ctx := context.Background()
+	ghUser := s.deps.configs.ghUser(s.reviewRunDirs(ctx, channelID))
+	out, err := s.worktree.Diff(ctx, parentDirPath, ghUser, worktreePath, sess.PR.BaseRef, sess.Comments)
 	if err != nil {
 		if s.deps.logger != nil {
 			s.deps.logger.Warn("review re-diff failed", "channel_id", channelID, "error", err)

@@ -124,7 +124,7 @@ func (c *Client) LookupPR(ctx context.Context, workdir, ghUser, branch string) (
 		return nil, nil
 	}
 
-	env, err := c.tokenEnv(ctx, workdir, ghUser)
+	env, err := c.TokenEnv(ctx, workdir, ghUser)
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +180,7 @@ func (c *Client) FetchPRByNumber(ctx context.Context, workdir, ghUser string, nu
 	if workdir == "" || number <= 0 {
 		return nil, nil
 	}
-	env, err := c.tokenEnv(ctx, workdir, ghUser)
+	env, err := c.TokenEnv(ctx, workdir, ghUser)
 	if err != nil {
 		return nil, err
 	}
@@ -233,7 +233,7 @@ func (c *Client) FetchRepoSlug(ctx context.Context, workdir, ghUser string) (*Re
 	if workdir == "" {
 		return nil, fmt.Errorf("workdir is required")
 	}
-	env, err := c.tokenEnv(ctx, workdir, ghUser)
+	env, err := c.TokenEnv(ctx, workdir, ghUser)
 	if err != nil {
 		return nil, err
 	}
@@ -275,7 +275,7 @@ func (c *Client) PostPRComment(ctx context.Context, workdir, ghUser string, slug
 	if side == "" {
 		side = "RIGHT"
 	}
-	env, err := c.tokenEnv(ctx, workdir, ghUser)
+	env, err := c.TokenEnv(ctx, workdir, ghUser)
 	if err != nil {
 		return 0, err
 	}
@@ -369,7 +369,7 @@ func (c *Client) DeletePRReviewComment(ctx context.Context, workdir, ghUser stri
 	if workdir == "" || commentID <= 0 || slug.Owner == "" || slug.Name == "" {
 		return fmt.Errorf("workdir, slug, and commentID are required")
 	}
-	env, err := c.tokenEnv(ctx, workdir, ghUser)
+	env, err := c.TokenEnv(ctx, workdir, ghUser)
 	if err != nil {
 		return err
 	}
@@ -394,7 +394,7 @@ func (c *Client) ApprovePR(ctx context.Context, workdir, ghUser string, slug Rep
 	if workdir == "" || prNum <= 0 || commitID == "" || slug.Owner == "" || slug.Name == "" {
 		return fmt.Errorf("workdir, slug, prNum and commitID are required")
 	}
-	env, err := c.tokenEnv(ctx, workdir, ghUser)
+	env, err := c.TokenEnv(ctx, workdir, ghUser)
 	if err != nil {
 		return err
 	}
@@ -416,7 +416,7 @@ func (c *Client) ListOpenPRs(ctx context.Context, workdir, ghUser string) ([]PRI
 	if workdir == "" {
 		return nil, fmt.Errorf("workdir is required")
 	}
-	env, err := c.tokenEnv(ctx, workdir, ghUser)
+	env, err := c.TokenEnv(ctx, workdir, ghUser)
 	if err != nil {
 		return nil, err
 	}
@@ -464,7 +464,7 @@ func (c *Client) CheckoutPR(ctx context.Context, workdir, ghUser string, number 
 	if workdir == "" || number <= 0 {
 		return fmt.Errorf("workdir and PR number are required")
 	}
-	env, err := c.tokenEnv(ctx, workdir, ghUser)
+	env, err := c.TokenEnv(ctx, workdir, ghUser)
 	if err != nil {
 		return err
 	}
@@ -542,7 +542,7 @@ func (c *Client) FetchPRReviewComments(ctx context.Context, workdir, ghUser stri
 	if workdir == "" || prNum <= 0 || slug.Owner == "" || slug.Name == "" {
 		return nil, fmt.Errorf("workdir, slug, and prNum are required")
 	}
-	env, err := c.tokenEnv(ctx, workdir, ghUser)
+	env, err := c.TokenEnv(ctx, workdir, ghUser)
 	if err != nil {
 		return nil, err
 	}
@@ -637,7 +637,7 @@ func (c *Client) FetchPRHeadSHA(ctx context.Context, workdir, ghUser string, num
 	if workdir == "" || number <= 0 {
 		return "", fmt.Errorf("workdir and number are required")
 	}
-	env, err := c.tokenEnv(ctx, workdir, ghUser)
+	env, err := c.TokenEnv(ctx, workdir, ghUser)
 	if err != nil {
 		return "", err
 	}
@@ -659,9 +659,9 @@ func (c *Client) FetchPRHeadSHA(ctx context.Context, workdir, ghUser string, num
 	return raw.HeadRefOid, nil
 }
 
-// tokenEnv resolves the GH_TOKEN env override for the configured ghUser.
+// TokenEnv resolves the GH_TOKEN env override for the configured ghUser.
 // Empty ghUser → no override (gh uses its currently-active account).
-func (c *Client) tokenEnv(ctx context.Context, workdir, ghUser string) ([]string, error) {
+func (c *Client) TokenEnv(ctx context.Context, workdir, ghUser string) ([]string, error) {
 	if ghUser == "" {
 		return nil, nil
 	}
