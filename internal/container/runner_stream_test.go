@@ -531,6 +531,41 @@ func TestScanStreamJSONOnActivity(t *testing.T) {
 		require.Equal(t, []string{"bm1:local_bash"}, types(sets[4]), "an ended task's id is forgotten")
 	})
 
+	t.Run("a background task carries the command its call runs", func(t *testing.T) {
+		// b1's set comes before its task_started; b2's after. The Read
+		// call starts no task, and the Bash call t3 is done by its result,
+		// so a task_started naming it later is ignored.
+		input := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"make test > /tmp/t.log 2>&1","run_in_background":true}},{"type":"tool_use","id":"m1","name":"Monitor","input":{"command":"tail -f /tmp/x"}},{"type":"tool_use","id":"r1","name":"Read","input":{"file_path":"/x"}},{"type":"tool_use","id":"t3","name":"Bash","input":{"command":"ls"}}]}}
+{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"b1","task_type":"local_bash"}]}
+{"type":"system","subtype":"task_started","task_id":"b1","tool_use_id":"t1","task_type":"local_bash"}
+{"type":"system","subtype":"task_started","task_id":"b2","tool_use_id":"m1","task_type":"local_bash"}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t3","content":"ok"}]}}
+{"type":"system","subtype":"task_started","task_id":"b3","tool_use_id":"t3","task_type":"local_bash"}
+{"type":"system","subtype":"task_started","task_id":"b4","tool_use_id":"r1","task_type":"local_bash"}
+{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"b1","task_type":"local_bash"},{"task_id":"b2","task_type":"local_bash"},{"task_id":"b3","task_type":"local_bash"}]}
+{"type":"system","subtype":"background_tasks_changed","tasks":[]}
+{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"b1","task_type":"local_bash"}]}
+{"type":"result","result":"ok"}
+`
+		var sets [][]agent.BackgroundTask
+		cb := streamCallbacks{onBackgroundTasks: func(tasks []agent.BackgroundTask) { sets = append(sets, tasks) }}
+		_, err := scanStreamJSON(strings.NewReader(input), cb)
+		require.NoError(t, err)
+		commands := func(tasks []agent.BackgroundTask) []string {
+			out := []string{}
+			for _, t := range tasks {
+				out = append(out, t.ID+":"+t.Type+":"+t.Command)
+			}
+			return out
+		}
+		require.Len(t, sets, 5)
+		require.Equal(t, []string{"b1:local_bash:"}, commands(sets[0]), "the set reported before is left as it was")
+		require.Equal(t, []string{"b1:local_bash:make test > /tmp/t.log 2>&1"}, commands(sets[1]), "the set is reported again with the command")
+		require.Equal(t, []string{"b1:local_bash:make test > /tmp/t.log 2>&1", "b2:monitor:tail -f /tmp/x", "b3:local_bash:"}, commands(sets[2]))
+		require.Empty(t, sets[3])
+		require.Equal(t, []string{"b1:local_bash:"}, commands(sets[4]), "an ended task's command is forgotten")
+	})
+
 	t.Run("a background command's output file comes from its tool result", func(t *testing.T) {
 		// The CLI's order: the set with the task, then the result of the
 		// call that started it, which names the file. b2's result comes

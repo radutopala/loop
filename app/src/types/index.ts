@@ -230,6 +230,8 @@ export interface BackgroundTask {
   id: string;
   type?: string;
   description?: string;
+  /** The shell command a background command or a Monitor runs. */
+  command?: string;
   started_at: string;
   /** The file the task's output goes to, in the chat's container. */
   output_path?: string;
