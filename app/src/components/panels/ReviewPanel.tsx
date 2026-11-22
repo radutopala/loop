@@ -506,6 +506,8 @@ export function moreMenuItems(a: {
 
 interface ReviewPanelProps {
   channelId: string;
+  /** The daemon user's home, which copied paths show as ~. */
+  homeDir?: string;
   /** The project's review.max_iterations: the passes input's starting value. */
   defaultMaxIter?: number;
   subscribeChatEvents?: (listener: ChatEventListener) => () => void;
@@ -552,6 +554,7 @@ function statusLabel(status: ReviewStatus): string {
 
 export function ReviewPanel({
   channelId,
+  homeDir,
   defaultMaxIter = DEFAULT_REVIEW_MAX_ITER,
   subscribeChatEvents,
   registerReviewView,
@@ -2039,6 +2042,7 @@ export function ReviewPanel({
               comments={threadedComments}
               reviewRuns={session.review_runs}
               worktreePath={session.worktree_path}
+              homeDir={homeDir}
               onPushComment={onPushOne}
               onDiscussComment={onDiscussOne}
               onWhyComment={onWhyOne}

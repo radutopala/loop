@@ -8,6 +8,7 @@ import { useTheme } from "../../ThemeContext";
 import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
 import type { AgentStatusData, WSEvent } from "../../types";
+import { tildePath } from "../../utils/homePath";
 import { logErr } from "../../utils/log";
 import { prKind, prRef, prState, prSummary } from "../../utils/prState";
 import { prTabBadge } from "../../utils/prStatus";
@@ -47,6 +48,8 @@ function saveWidth(w: number) {
 interface GitPanelProps {
   channelId: string | null;
   dirPath?: string;
+  /** The daemon user's home, which copied paths show as ~. */
+  homeDir?: string;
   branch?: string;
   maximized?: boolean;
   sidebarOpen?: boolean;
@@ -82,6 +85,7 @@ function buildHeaderBtnStyle(colors: ColorPalette): React.CSSProperties {
 export function GitPanel({
   channelId,
   dirPath,
+  homeDir,
   branch,
   maximized,
   sidebarOpen,
@@ -648,7 +652,7 @@ export function GitPanel({
             ]
           : []),
         { label: "Copy relative path", onClick: () => navigator.clipboard.writeText(fileContextMenu.path) },
-        { label: "Copy absolute path", onClick: () => navigator.clipboard.writeText((dirPath || "") + "/" + fileContextMenu.path) },
+        { label: "Copy absolute path", onClick: () => navigator.clipboard.writeText(tildePath((dirPath || "") + "/" + fileContextMenu.path, homeDir)) },
       ]}
       onClose={() => setFileContextMenu(null)}
     />

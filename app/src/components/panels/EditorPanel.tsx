@@ -287,7 +287,7 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
       },
     });
     items.push({ label: "Copy relative path", separator: true, onClick: () => void navigator.clipboard.writeText(relativePath) });
-    items.push({ label: "Copy absolute path", onClick: () => void navigator.clipboard.writeText(absolutePath(tab)) });
+    items.push({ label: "Copy absolute path", onClick: () => void navigator.clipboard.writeText(displayPath(tab)) });
     return items;
   };
 

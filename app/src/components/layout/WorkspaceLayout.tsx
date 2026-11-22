@@ -68,6 +68,7 @@ import { getChatInput, getTerminalInput, notifyUiChanged, registerSideReader, re
 import { editsText, explainText, learnText, SIDE_PANE } from "../../uiBridge/sideText";
 import type { PaneOptions, WorkspaceController } from "../../uiBridge/types";
 import { useChatPaneInput } from "../../uiBridge/useChatPaneInput";
+import { homeOf } from "../../utils/homePath";
 import { logErr } from "../../utils/log";
 import { storageSetJSON } from "../../utils/storage";
 import { ChatComponentFull, ComponentFocusContext, type ShownComponent } from "../chat/ChatComponent";
@@ -1269,6 +1270,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   }, [channelId, activeName]);
 
   const dirPath = channel.dir_path || "";
+  const homeDir = homeOf(channel.dir_path, channel.display_path);
   const branch = channel.branch || "";
   const hiddenPanels = useMemo<PanelType[] | undefined>(() => {
     const hidden: PanelType[] = [];
@@ -1562,6 +1564,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               key={`layout-git-${channelId}`}
               channelId={channelId}
               dirPath={dirPath}
+              homeDir={homeDir}
               branch={branch}
               embedded
               leafId={leaf.id}
@@ -1672,6 +1675,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             <ReviewPanel
               key={`layout-review-${channelId}`}
               channelId={channelId}
+              homeDir={homeDir}
               defaultMaxIter={channel.review_max_iterations}
               subscribeChatEvents={subscribeChatEvents}
               registerReviewView={registerReviewView}
