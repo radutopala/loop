@@ -446,20 +446,22 @@ describe("withUpdatedComment", () => {
 });
 
 describe("withVerdictState", () => {
-  it("takes the threads, the reviewed and approved heads and the review's runs, and keeps the rest", () => {
+  it("takes the head, the threads, the reviewed and approved heads and the review's runs, and keeps the rest", () => {
     const held = session({
       status: "reviewing",
       raw_diff: "diff",
       comments: [comment("a")],
+      head_sha: "old",
       reviewed_sha: "old",
       approved_sha: "old",
       threads: { "1": { status: "open" } },
       review_id: "r0",
       review_runs: [3],
     });
-    const fresh = session({ status: "ready", comments: [], reviewed_sha: "abc", threads: { "1": { status: "addressed" } }, review_id: "r1", review_runs: [4, 5] });
+    const fresh = session({ status: "ready", comments: [], head_sha: "new", reviewed_sha: "abc", threads: { "1": { status: "addressed" } }, review_id: "r1", review_runs: [4, 5] });
     expect(withVerdictState(held, fresh)).toEqual({
       ...held,
+      head_sha: "new",
       reviewed_sha: "abc",
       approved_sha: undefined,
       threads: { "1": { status: "addressed" } },

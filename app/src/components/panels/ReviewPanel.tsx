@@ -251,6 +251,8 @@ export function withVerdictState(session: ReviewSession | null, fresh: ReviewSes
   if (!session) return session;
   return {
     ...session,
+    // A run moves the checkout to the PR's latest head first.
+    head_sha: fresh.head_sha,
     threads: fresh.threads,
     reviewed_sha: fresh.reviewed_sha,
     approved_sha: fresh.approved_sha,
