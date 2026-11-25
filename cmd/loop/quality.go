@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -103,12 +105,12 @@ type citationReport struct {
 	Note string `json:"note,omitempty"`
 }
 
-// resolveQualityConfig maps the merged global → project config for dirPath
-// into the engine and rules configs. A config that fails to load leaves
-// its layer out, with a warning on stderr (a missing global config is
-// silent): a broken project config falls
-// back to the global one, a broken global one to the defaults. A non-zero
-// maxFiles (the --max-files flag) wins over the config.
+// resolveQualityConfig maps the merged global → [parent →] project config
+// for dirPath (see qualityProjectDirs) into the engine and rules configs.
+// A config that fails to load leaves its layer out, with a warning on
+// stderr (a missing global config is silent): a broken project config
+// falls back to the global one, a broken global one to the defaults. A
+// non-zero maxFiles (the --max-files flag) wins over the config.
 func (a *app) resolveQualityConfig(stderr io.Writer, dirPath string, maxFiles int) (engine.Config, rules.Config) {
 	global, err := a.configReload()
 	if err != nil {
@@ -118,7 +120,13 @@ func (a *app) resolveQualityConfig(stderr io.Writer, dirPath string, maxFiles in
 		}
 		global = &config.Config{}
 	}
-	merged, err := config.LoadProjectConfig(dirPath, global)
+	projectDir, parentDir := qualityProjectDirs(dirPath)
+	var merged *config.Config
+	if parentDir != "" {
+		merged, err = config.LoadWorktreeProjectConfig(projectDir, parentDir, global)
+	} else {
+		merged, err = config.LoadProjectConfig(projectDir, global)
+	}
 	if err != nil {
 		fmt.Fprintf(stderr, "warning: ignoring the project config: %v\n", err)
 		merged = global
@@ -136,6 +144,37 @@ func (a *app) resolveQualityConfig(stderr io.Writer, dirPath string, maxFiles in
 		rulesCfg = *rc
 	}
 	return engCfg, rulesCfg
+}
+
+// qualityProjectDirs picks the project config dirs for a CLI scan of
+// dirPath, matching how the daemon layers a channel's config. The project
+// dir is the nearest dir from dirPath up to its checkout's root that has
+// a .loop/config.json, else the checkout root. In a linked worktree, the
+// same dir in the main checkout is the parent layer. Outside a checkout,
+// dirPath is the project dir and there is no parent.
+func qualityProjectDirs(dirPath string) (projectDir, parentDir string) {
+	if abs, err := filepath.Abs(dirPath); err == nil {
+		dirPath = abs
+	}
+	repo, ok := graph.FindRepo(dirPath)
+	if !ok {
+		return dirPath, ""
+	}
+	projectDir = repo.Root
+	for d := dirPath; ; d = filepath.Dir(d) {
+		if _, err := os.Stat(filepath.Join(d, ".loop", "config.json")); err == nil {
+			projectDir = d
+			break
+		}
+		if d == repo.Root {
+			break
+		}
+	}
+	if main := repo.MainRoot(); main != repo.Root {
+		rel, _ := filepath.Rel(repo.Root, projectDir)
+		parentDir = filepath.Join(main, rel)
+	}
+	return projectDir, parentDir
 }
 
 func (a *app) runQualityScan(ctx context.Context, out, stderr io.Writer, p parser.Parser, maxFiles int, dirPath string, jsonOut bool) error {

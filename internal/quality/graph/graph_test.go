@@ -390,6 +390,13 @@ func (s *GraphSuite) TestIsTestPath() {
 		{"internal/foo/testdata/gen.go", true},
 		{"testdata/fixture.ts", true},
 		{"internal/mytestdata/x.go", false},
+		{"internal/api/openapi.spec.go", false},
+		{"internal/api/x.test.go", false},
+		{"pkg/__tests__/helper.go", false},
+		{"app/src/x_test.go.ts", false},
+		{"app/src/mod.test.mjs", true},
+		{"app/testdata/page.html", true},
+		{"docs/guide.spec.md", false},
 	}
 	for _, tc := range tests {
 		s.Run(tc.path, func() {

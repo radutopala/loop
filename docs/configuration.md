@@ -635,7 +635,7 @@ Scans are manual: panel "Scan now" button, `loop quality:scan`, or the `quality_
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `quality.max_files` | `int` | `25000` | Hard cap on scannable files after exclusions. Over the cap returns a structured `RepoTooLarge` error; no partial scan is produced. |
-| `quality.exclude_paths` | `string[]` | `[]` | Doublestar globs appended to the built-in defaults (`.git/`, `node_modules/`, `dist/`, `build/`, `target/`, `vendor/`, `*.min.js`, `*.generated.go`) and the repo's `.gitignore` files (the root one and nested ones, with git's anchoring, negation and precedence). |
+| `quality.exclude_paths` | `string[]` | `[]` | Doublestar globs appended to the built-in defaults (`.git/` and a `.git` file, `node_modules/`, `dist/`, `build/`, `target/`, `vendor/`, `*.min.js`, `*.generated.go`) and git's ignore files: the repo's `.git/info/exclude` and every `.gitignore` from the repo root down, including those above a scanned subdirectory, with git's anchoring, negation and precedence. `core.excludesFile` is not read. |
 | `quality.complexity.cyclomatic_t` | `int` | `10` | Soft threshold for McCabe cyclomatic complexity. Above T the dimension scores `T/raw` (0.50 at 2T, 0.10 at 10T, asymptotic to 0). `0` disables the dimension. |
 | `quality.complexity.cognitive_t` | `int` | `15` | Soft threshold for Sonar cognitive load. Same `T/raw` curve. |
 | `quality.complexity.nesting_t` | `int` | `4` | Soft threshold for max nesting depth. |
@@ -643,7 +643,7 @@ Scans are manual: panel "Scan now" button, `loop quality:scan`, or the `quality_
 | `quality.complexity.loc_t` | `int` | `60` | Soft threshold for function LOC. |
 | `quality.clones.min_loc` | `int` | `5` | Minimum function LOC to be considered for clone clustering. Below this, functions are skipped to avoid trivial getter/setter clusters. |
 | `quality.clones.max_distance` | `int` | `3` | Max SimHash Hamming distance between two functions in the same cluster. `0` requires exact-shape duplicates; `64` clusters anything. |
-| `quality.clones.include_tests` | `bool` | `false` | Count functions in test files (`*_test.go`, `*.test.*`, `*.spec.*`, `__tests__/`, `testdata/`) as clone candidates. Off by default so table-driven tests don't dominate `duplication_ceiling`. |
+| `quality.clones.include_tests` | `bool` | `false` | Count functions in test files (Go `*_test.go`; JS/TS `*.test.*`, `*.spec.*`, `__tests__/`; any file under `testdata/`) as clone candidates. Off by default so table-driven tests don't dominate `duplication_ceiling`. |
 | `quality.rules.<name>.enabled` | `bool` | `true` | Per-rule on/off. Built-in rules: `no_import_cycles`, `signal_floor`, `parse_fail`, `complexity_ceiling`, `complexity_score_floor`, `duplication_ceiling`. |
 | `quality.rules.signal_floor.threshold` | `float` | `5000` | Lower bound on `quality_signal` (0–10000). Below this, the rule fails. |
 | `quality.rules.parse_fail.threshold` | `float` | `0.01` | Maximum fraction of files allowed to fail to parse (0.01 = 1%). |

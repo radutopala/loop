@@ -233,6 +233,78 @@ func (s *MainSuite) TestResolveQualityConfigLayers() {
 	}
 }
 
+// writeQualityTree materialises relative-path → contents under root.
+func (s *MainSuite) writeQualityTree(root string, files map[string]string) {
+	for rel, contents := range files {
+		full := filepath.Join(root, filepath.FromSlash(rel))
+		require.NoError(s.T(), os.MkdirAll(filepath.Dir(full), 0o755))
+		require.NoError(s.T(), os.WriteFile(full, []byte(contents), 0o600))
+	}
+}
+
+func (s *MainSuite) TestQualityProjectDirs() {
+	top := s.T().TempDir()
+	s.writeQualityTree(top, map[string]string{
+		"main/.git/HEAD":                   "",
+		"main/.git/worktrees/wt/commondir": "../..\n",
+		"main/.loop/config.json":           "{}",
+		"main/internal/x.go":               "",
+		"main/svc/.loop/config.json":       "{}",
+		"main/svc/pkg/x.go":                "",
+		"wt/.git":                          "gitdir: ../main/.git/worktrees/wt\n",
+		"wt/internal/x.go":                 "",
+		"wt/svc/.loop/config.json":         "{}",
+		"wt/svc/pkg/x.go":                  "",
+		"plain/x.go":                       "",
+	})
+	at := func(rel string) string {
+		if rel == "" {
+			return ""
+		}
+		return filepath.Join(top, filepath.FromSlash(rel))
+	}
+	tests := []struct {
+		name        string
+		dir         string
+		wantProject string
+		wantParent  string
+	}{
+		{"checkout root", "main", "main", ""},
+		{"subdir walks up to the checkout's config", "main/internal", "main", ""},
+		{"nearest config wins", "main/svc/pkg", "main/svc", ""},
+		{"worktree layers the main checkout", "wt", "wt", "main"},
+		{"worktree subdir", "wt/internal", "wt", "main"},
+		{"worktree subproject maps to the same dir in main", "wt/svc/pkg", "wt/svc", "main/svc"},
+		{"outside a checkout", "plain", "plain", ""},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			project, parent := qualityProjectDirs(at(tc.dir))
+			require.Equal(s.T(), at(tc.wantProject), project)
+			require.Equal(s.T(), at(tc.wantParent), parent)
+		})
+	}
+}
+
+// TestResolveQualityConfigInWorktree checks that a worktree without its
+// own project config gets the main checkout's, as a daemon scan does.
+func (s *MainSuite) TestResolveQualityConfigInWorktree() {
+	top := s.T().TempDir()
+	s.writeQualityTree(top, map[string]string{
+		"main/.git/HEAD":                   "",
+		"main/.git/worktrees/wt/commondir": "../..\n",
+		"main/.loop/config.json":           `{"quality": {"exclude_paths": ["gen/"], "max_files": 9}}`,
+		"wt/.git":                          "gitdir: ../main/.git/worktrees/wt\n",
+		"wt/internal/x.go":                 "",
+	})
+	s.app.configReload = func() (*config.Config, error) { return &config.Config{}, nil }
+	var stderr bytes.Buffer
+	engCfg, _ := s.app.resolveQualityConfig(&stderr, filepath.Join(top, "wt", "internal"), 0)
+	require.Empty(s.T(), stderr.String())
+	require.Equal(s.T(), 9, engCfg.MaxFiles)
+	require.Equal(s.T(), []string{"gen/"}, engCfg.ExcludePaths)
+}
+
 func (s *MainSuite) TestQualityScanGetwdError() {
 	s.app.sys = errSystem{base: osutil.RealSystem{}, getwdErr: errors.New("boom")}
 	p := s.realParser()

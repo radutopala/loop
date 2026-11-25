@@ -18,9 +18,11 @@ const DefaultMaxFiles = 25_000
 // DefaultExcludePatterns drop the directories and file shapes that never
 // belong in a structural metric: VCS metadata, dependency caches, build
 // outputs, vendored deps, minified bundles, generated code. Trailing "/"
-// marks a pattern as directory-only and prunes the subtree.
+// marks a pattern as directory-only and prunes the subtree; the plain
+// ".git" is a linked worktree's or submodule's .git file.
 var DefaultExcludePatterns = []string{
 	".git/",
+	".git",
 	".worktrees/",
 	"node_modules/",
 	"dist/",
@@ -61,33 +63,47 @@ func (e *RepoTooLargeError) Error() string {
 // error paths deterministically.
 type walkFunc func(root string, fn fs.WalkDirFunc) error
 
+// enumFS is the filesystem Enumerate reads. Production uses the os
+// package; tests swap single fields.
+type enumFS struct {
+	walk     walkFunc
+	readFile readFileFunc
+	stat     statFunc
+	abs      func(path string) (string, error)
+}
+
+func osEnumFS() enumFS {
+	return enumFS{walk: filepath.WalkDir, readFile: os.ReadFile, stat: os.Stat, abs: filepath.Abs}
+}
+
 // Enumerate walks rootDir and returns slash-separated relative paths the
 // engine should hand to the parser, applying the exclusion layers and the
 // file-count cap. Exclusion layers: built-in defaults and
-// opts.ExtraExcludePatterns, then the repo's .gitignore files (the root
-// one and nested ones, with git's anchoring, negation and precedence).
-// Scan order is deterministic (filepath.WalkDir).
+// opts.ExtraExcludePatterns, then git's: the repo's info/exclude and
+// every .gitignore from the repo root down (including those above rootDir
+// when it is a subdirectory), with git's anchoring, negation and
+// precedence. The user's global excludes file (core.excludesFile) is not
+// read. Scan order is deterministic (filepath.WalkDir).
 func Enumerate(rootDir string, opts EnumerateOptions) ([]string, error) {
-	return enumerate(filepath.WalkDir, os.ReadFile, rootDir, opts)
+	return enumerate(osEnumFS(), rootDir, opts)
 }
 
-func enumerate(walk walkFunc, readFile readFileFunc, rootDir string, opts EnumerateOptions) ([]string, error) {
+func enumerate(fsys enumFS, rootDir string, opts EnumerateOptions) ([]string, error) {
 	limit := opts.MaxFiles
 	if limit == 0 {
 		limit = DefaultMaxFiles
 	}
 
-	rootRules, err := loadGitignore(readFile, filepath.Join(rootDir, ".gitignore"))
-	if err != nil {
-		return nil, err
-	}
-	ignores := gitignoreSet{"": rootRules}
+	// Ignore rules are keyed by their dir relative to the repo root, and
+	// base is rootDir's place under it, so a scan of a subdirectory still
+	// gets the .gitignore files above it.
+	ignores, base := seedGitignores(fsys, rootDir)
 	patterns := make([]string, 0, len(DefaultExcludePatterns)+len(opts.ExtraExcludePatterns))
 	patterns = append(patterns, DefaultExcludePatterns...)
 	patterns = append(patterns, opts.ExtraExcludePatterns...)
 
 	var files []string
-	err = walk(rootDir, func(path string, d fs.DirEntry, walkErr error) error {
+	err := fsys.walk(rootDir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -100,17 +116,15 @@ func enumerate(walk walkFunc, readFile readFileFunc, rootDir string, opts Enumer
 		}
 		rel = filepath.ToSlash(rel)
 		isDir := d.IsDir()
-		if matchExcluded(rel, isDir, patterns) || ignores.ignored(rel, isDir) {
+		if matchExcluded(rel, isDir, patterns) || ignores.ignored(base+rel, isDir) {
 			if isDir {
 				return fs.SkipDir
 			}
 			return nil
 		}
 		if isDir {
-			// An unreadable nested .gitignore is skipped, as git does,
-			// rather than failing the whole scan.
-			if nested, err := loadGitignore(readFile, filepath.Join(path, ".gitignore")); err == nil && len(nested) > 0 {
-				ignores[rel+"/"] = nested
+			if nested := loadGitignore(fsys.readFile, filepath.Join(path, ".gitignore")); len(nested) > 0 {
+				ignores[base+rel+"/"] = nested
 			}
 			return nil
 		}
@@ -125,6 +139,42 @@ func enumerate(walk walkFunc, readFile readFileFunc, rootDir string, opts Enumer
 		return nil, &RepoTooLargeError{FileCount: len(files), Limit: limit}
 	}
 	return files, nil
+}
+
+// seedGitignores loads the rules that apply before the walk starts: the
+// repo's info/exclude (lowest precedence) and the .gitignore of each dir
+// from the repo root down to rootDir. Outside a repo, only rootDir's own
+// .gitignore applies. base is rootDir relative to the repo root, slash
+// terminated, or "" when rootDir is the root.
+func seedGitignores(fsys enumFS, rootDir string) (gitignoreSet, string) {
+	ignores := gitignoreSet{}
+	abs, err := fsys.abs(rootDir)
+	if err != nil {
+		abs = rootDir
+	}
+	repo, ok := findRepo(fsys.stat, fsys.readFile, abs)
+	if !ok {
+		ignores[""] = loadGitignore(fsys.readFile, filepath.Join(rootDir, ".gitignore"))
+		return ignores, ""
+	}
+	var rootRules []gitignoreRule
+	if repo.CommonDir != "" {
+		rootRules = loadGitignore(fsys.readFile, filepath.Join(repo.CommonDir, "info", "exclude"))
+	}
+	ignores[""] = append(rootRules, loadGitignore(fsys.readFile, filepath.Join(repo.Root, ".gitignore"))...)
+
+	rel := strings.TrimLeft(filepath.ToSlash(strings.TrimPrefix(abs, repo.Root)), "/")
+	if rel == "" {
+		return ignores, ""
+	}
+	prefix := ""
+	for seg := range strings.SplitSeq(rel, "/") {
+		prefix += seg + "/"
+		if rules := loadGitignore(fsys.readFile, filepath.Join(repo.Root, filepath.FromSlash(prefix), ".gitignore")); len(rules) > 0 {
+			ignores[prefix] = rules
+		}
+	}
+	return ignores, prefix
 }
 
 // matchExcluded reports whether rel matches one of the engine's own

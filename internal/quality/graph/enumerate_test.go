@@ -330,6 +330,44 @@ func (s *EnumerateSuite) TestEnumerateGitignoreSemantics() {
 			},
 			want: []string{".gitignore", "generated/keep.go", "other/generated.go"},
 		},
+		{
+			name: "leading spaces are part of the pattern",
+			files: map[string]string{
+				".gitignore": "  foo.go\n",
+				"foo.go":     "",
+				"  foo.go":   "",
+			},
+			want: []string{".gitignore", "foo.go"},
+		},
+		{
+			name: "an escaped trailing space is kept",
+			files: map[string]string{
+				".gitignore": "bar\\ \nbaz   \n",
+				"bar" + " ":  "", // the file name ends in a space
+				"bar":        "",
+				"baz":        "",
+			},
+			want: []string{".gitignore", "bar"},
+		},
+		{
+			name: "braces are literal",
+			files: map[string]string{
+				".gitignore": "*.{js,ts}\n",
+				"a.js":       "",
+				"b.ts":       "",
+				"x.{js,ts}":  "",
+			},
+			want: []string{".gitignore", "a.js", "b.ts"},
+		},
+		{
+			name: "CRLF line endings",
+			files: map[string]string{
+				".gitignore": "*.log\r\n",
+				"a.log":      "",
+				"a.go":       "",
+			},
+			want: []string{".gitignore", "a.go"},
+		},
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
@@ -348,14 +386,82 @@ func (s *EnumerateSuite) TestEnumerateSkipsUnreadableNestedGitignore() {
 	s.writeTree(root, map[string]string{
 		"sub/file.go": "package sub",
 	})
-	files, err := enumerate(filepath.WalkDir, func(name string) ([]byte, error) {
+	fsys := osEnumFS()
+	fsys.readFile = func(name string) ([]byte, error) {
 		if filepath.Base(filepath.Dir(name)) == "sub" {
 			return nil, errors.New("permission denied")
 		}
 		return nil, fs.ErrNotExist
-	}, root, EnumerateOptions{})
+	}
+	files, err := enumerate(fsys, root, EnumerateOptions{})
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), []string{"sub/file.go"}, files)
+}
+
+// TestEnumerateSkipsUnreadableRootGitignore checks that the root
+// .gitignore is skipped like a nested one when it can't be read.
+func (s *EnumerateSuite) TestEnumerateSkipsUnreadableRootGitignore() {
+	root := s.T().TempDir()
+	s.writeTree(root, map[string]string{"a.go": ""})
+	fsys := osEnumFS()
+	fsys.readFile = func(string) ([]byte, error) { return nil, errors.New("read boom") }
+	files, err := enumerate(fsys, root, EnumerateOptions{})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"a.go"}, files)
+}
+
+// TestEnumerateAppliesRepoIgnoresAboveRoot scans a subdirectory of a repo
+// and checks that info/exclude and the .gitignore files above it apply.
+func (s *EnumerateSuite) TestEnumerateAppliesRepoIgnoresAboveRoot() {
+	repo := s.T().TempDir()
+	s.writeTree(repo, map[string]string{
+		".git/info/exclude":           "*.local\n",
+		".gitignore":                  "*.pb.go\n/internal/api/gen/\n!keep.local\n",
+		"internal/.gitignore":         "*.tmp\n",
+		"internal/api/a.go":           "",
+		"internal/api/a.pb.go":        "",
+		"internal/api/b.tmp":          "",
+		"internal/api/c.local":        "",
+		"internal/api/keep.local":     "",
+		"internal/api/gen/x.go":       "",
+		"internal/api/sub/gen/y.go":   "",
+		"internal/api/sub/.gitignore": "/z.go\n",
+		"internal/api/sub/z.go":       "",
+	})
+	files, err := Enumerate(filepath.Join(repo, "internal", "api"), EnumerateOptions{})
+	require.NoError(s.T(), err)
+	sort.Strings(files)
+	require.Equal(s.T(), []string{"a.go", "keep.local", "sub/.gitignore", "sub/gen/y.go"}, files)
+}
+
+// TestEnumerateReadsWorktreeCommonExclude scans a linked worktree, whose
+// info/exclude lives in the main checkout's .git dir.
+func (s *EnumerateSuite) TestEnumerateReadsWorktreeCommonExclude() {
+	top := s.T().TempDir()
+	s.writeTree(top, map[string]string{
+		"main/.git/info/exclude":           "*.local\n",
+		"main/.git/worktrees/wt/commondir": "../..\n",
+		"wt/.git":                          "gitdir: ../main/.git/worktrees/wt\n",
+		"wt/a.go":                          "",
+		"wt/b.local":                       "",
+	})
+	files, err := Enumerate(filepath.Join(top, "wt"), EnumerateOptions{})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"a.go"}, files)
+}
+
+// TestEnumerateFallsBackWhenAbsFails checks that an unresolvable root is
+// scanned as given, with only its own .gitignore.
+func (s *EnumerateSuite) TestEnumerateFallsBackWhenAbsFails() {
+	root := s.T().TempDir()
+	s.writeTree(root, map[string]string{".gitignore": "*.log\n", "a.go": "", "b.log": ""})
+	fsys := osEnumFS()
+	fsys.abs = func(string) (string, error) { return "", errors.New("no cwd") }
+	fsys.stat = func(string) (fs.FileInfo, error) { return nil, fs.ErrNotExist }
+	files, err := enumerate(fsys, root, EnumerateOptions{})
+	require.NoError(s.T(), err)
+	sort.Strings(files)
+	require.Equal(s.T(), []string{".gitignore", "a.go"}, files)
 }
 
 // --- Walk error paths (injected) ---
@@ -367,27 +473,25 @@ func (s *EnumerateSuite) TestEnumerateNonexistentRoot() {
 
 func (s *EnumerateSuite) TestEnumeratePropagatesWalkError() {
 	bang := errors.New("walk boom")
-	_, err := enumerate(func(_ string, fn fs.WalkDirFunc) error {
+	fsys := osEnumFS()
+	fsys.walk = func(_ string, fn fs.WalkDirFunc) error {
 		return fn("/root", nil, bang)
-	}, missingFileReader, "/root", EnumerateOptions{})
+	}
+	fsys.readFile = missingFileReader
+	_, err := enumerate(fsys, "/root", EnumerateOptions{})
 	require.ErrorIs(s.T(), err, bang)
 }
 
 func (s *EnumerateSuite) TestEnumeratePropagatesRelError() {
 	// filepath.Rel errors when basepath is absolute and path is relative
 	// (or vice-versa). Inject a walk that yields such a pair.
-	_, err := enumerate(func(_ string, fn fs.WalkDirFunc) error {
+	fsys := osEnumFS()
+	fsys.walk = func(_ string, fn fs.WalkDirFunc) error {
 		return fn("relative-path", fakeDir{name: "relative-path"}, nil)
-	}, missingFileReader, "/abs/root", EnumerateOptions{})
+	}
+	fsys.readFile = missingFileReader
+	_, err := enumerate(fsys, "/abs/root", EnumerateOptions{})
 	require.Error(s.T(), err)
-}
-
-func (s *EnumerateSuite) TestEnumeratePropagatesGitignoreReadError() {
-	bang := errors.New("read boom")
-	_, err := enumerate(filepath.WalkDir, func(_ string) ([]byte, error) {
-		return nil, bang
-	}, s.T().TempDir(), EnumerateOptions{})
-	require.ErrorIs(s.T(), err, bang)
 }
 
 // --- parser and matcher direct cases ---
@@ -398,7 +502,37 @@ func (s *EnumerateSuite) TestParseGitignore() {
 		{pattern: "*.log"},
 		{pattern: "keep.log", negate: true},
 		{pattern: "a/b", anchored: true},
-	}, parseGitignore("/build/\n*.log\n!keep.log\na/b\n/\n!\n#c\n"))
+	}, parseGitignore("/build/\n*.log\n!keep.log\na/b\n/\n!\n#c\n   \n"))
+}
+
+func (s *EnumerateSuite) TestTrimTrailingSpaces() {
+	tests := []struct{ in, want string }{
+		{"foo", "foo"},
+		{"foo   ", "foo"},
+		{`foo\ `, `foo\ `},
+		{`foo\  `, `foo\ `},
+		{`foo\\ `, `foo\\`},
+		{"  foo", "  foo"},
+	}
+	for _, tc := range tests {
+		s.Run(tc.in, func() {
+			require.Equal(s.T(), tc.want, trimTrailingSpaces(tc.in))
+		})
+	}
+}
+
+func (s *EnumerateSuite) TestEscapeBraces() {
+	tests := []struct{ in, want string }{
+		{"*.go", "*.go"},
+		{"*.{js,ts}", `*.\{js,ts\}`},
+		{`a\{b}`, `a\{b\}`},
+		{`x{\`, `x\{\`},
+	}
+	for _, tc := range tests {
+		s.Run(tc.in, func() {
+			require.Equal(s.T(), tc.want, escapeBraces(tc.in))
+		})
+	}
 }
 
 func (s *EnumerateSuite) TestMatchExcluded() {

@@ -225,23 +225,36 @@ func resolveImport(impPath, fromPath, fromLang string, index map[string]int, dir
 	return best, best >= 0
 }
 
-// IsTestPath reports whether the slash-separated path p is a test file by
-// its language's naming convention: Go's *_test.go, JS/TS *.test.* and
-// *.spec.* files, and anything under a __tests__ or Go testdata dir.
+// jsExts are the JS/TS source extensions whose test naming conventions
+// IsTestPath applies.
+var jsExts = map[string]bool{
+	".js": true, ".jsx": true, ".mjs": true, ".cjs": true,
+	".ts": true, ".tsx": true, ".mts": true, ".cts": true,
+}
+
+// IsTestPath reports whether the slash-separated path p is a test file.
+// Each naming convention applies to its own language: Go's *_test.go, and
+// JS/TS *.test.*, *.spec.* and files under a __tests__ dir. Anything
+// under a testdata dir counts whatever its language, since it holds
+// fixtures (Go tooling skips the dir).
 func IsTestPath(p string) bool {
+	if underDir(p, "testdata") {
+		return true
+	}
 	base := path.Base(p)
-	if strings.HasSuffix(base, "_test.go") {
-		return true
-	}
-	if strings.Contains(base, ".test.") || strings.Contains(base, ".spec.") {
-		return true
-	}
-	for _, dir := range []string{"__tests__", "testdata"} {
-		if strings.HasPrefix(p, dir+"/") || strings.Contains(p, "/"+dir+"/") {
-			return true
-		}
+	ext := path.Ext(base)
+	switch {
+	case ext == ".go":
+		return strings.HasSuffix(base, "_test.go")
+	case jsExts[ext]:
+		return strings.Contains(base, ".test.") || strings.Contains(base, ".spec.") || underDir(p, "__tests__")
 	}
 	return false
+}
+
+// underDir reports whether p sits below a directory named dir.
+func underDir(p, dir string) bool {
+	return strings.HasPrefix(p, dir+"/") || strings.Contains(p, "/"+dir+"/")
 }
 
 // buildDirIndex maps each unique directory of a scanned file to the

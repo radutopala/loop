@@ -1,8 +1,6 @@
 package graph
 
 import (
-	"errors"
-	"io/fs"
 	"path"
 	"strings"
 
@@ -52,27 +50,26 @@ func (r gitignoreRule) matches(rel string, isDir bool) bool {
 	return ok
 }
 
-// loadGitignore reads and parses one .gitignore file. A missing file is
-// not an error.
-func loadGitignore(readFile readFileFunc, gitignorePath string) ([]gitignoreRule, error) {
+// loadGitignore reads and parses one ignore file. A missing or unreadable
+// file has no rules: the scan goes on without it, wherever it sits,
+// rather than failing.
+func loadGitignore(readFile readFileFunc, gitignorePath string) []gitignoreRule {
 	data, err := readFile(gitignorePath)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	}
 	if err != nil {
-		return nil, err
+		return nil
 	}
-	return parseGitignore(string(data)), nil
+	return parseGitignore(string(data))
 }
 
 // parseGitignore parses a .gitignore body into rules, in file order.
 // Blank and comment lines are skipped; a backslash before a leading "#"
 // or "!" makes it literal. Other backslash escapes stay in the pattern
-// for the glob matcher.
+// for the glob matcher. As in git, leading spaces are part of the
+// pattern and trailing ones are dropped unless escaped ("foo\ ").
 func parseGitignore(content string) []gitignoreRule {
 	var rules []gitignoreRule
 	for raw := range strings.SplitSeq(content, "\n") {
-		line := strings.TrimSpace(raw)
+		line := trimTrailingSpaces(strings.TrimSuffix(raw, "\r"))
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
@@ -92,10 +89,47 @@ func parseGitignore(content string) []gitignoreRule {
 		if line == "" {
 			continue
 		}
-		r.pattern = line
+		r.pattern = escapeBraces(line)
 		rules = append(rules, r)
 	}
 	return rules
+}
+
+// trimTrailingSpaces drops trailing spaces, stopping at one escaped with
+// a backslash.
+func trimTrailingSpaces(s string) string {
+	for strings.HasSuffix(s, " ") {
+		trimmed := s[:len(s)-1]
+		if backslashes := len(trimmed) - len(strings.TrimRight(trimmed, `\`)); backslashes%2 == 1 {
+			return s
+		}
+		s = trimmed
+	}
+	return s
+}
+
+// escapeBraces makes "{" and "}" literal. Git's wildmatch has no brace
+// alternation, but doublestar would read "*.{js,ts}" as two patterns.
+// Characters already escaped with a backslash are copied as they are.
+func escapeBraces(p string) string {
+	if !strings.ContainsAny(p, "{}") {
+		return p
+	}
+	var b strings.Builder
+	for i := 0; i < len(p); i++ {
+		switch c := p[i]; {
+		case c == '\\' && i+1 < len(p):
+			b.WriteByte(c)
+			i++
+			b.WriteByte(p[i])
+		case c == '{' || c == '}':
+			b.WriteByte('\\')
+			b.WriteByte(c)
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
 }
 
 // gitignoreSet holds the rules of every .gitignore found so far, keyed by
