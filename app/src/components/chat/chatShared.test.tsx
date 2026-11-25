@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { checkFilesExist } from "../../api/files";
-import { darkColors, fonts } from "../../theme";
+import { darkColors, fonts, lightColors } from "../../theme";
 import { resetFileLinkCache } from "../../utils/fileLinks";
 import { buildActivityStyle, buildMessageStyles, FILE_PATH_TOOLS, renderInputWithLinks } from "./chatShared";
 
@@ -34,6 +34,11 @@ describe("buildMessageStyles", () => {
     expect(s.blockquote?.borderLeft).toBe(`3px solid ${darkColors.border}`);
     expect(s.tableHeaderCell?.backgroundColor).toBe(darkColors.surface);
     expect(s.tableCell?.border).toBe(`1px solid ${darkColors.border}`);
+  });
+
+  it("caches styles per palette reference", () => {
+    expect(buildMessageStyles(darkColors)).toBe(buildMessageStyles(darkColors));
+    expect(buildMessageStyles(darkColors)).not.toBe(buildMessageStyles(lightColors));
   });
 });
 

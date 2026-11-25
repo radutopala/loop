@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { formatAskAnswers, resolveAsk, resolvePlan } from "../../api/channels";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
@@ -32,7 +32,7 @@ export function CompactingMarker() {
   );
 }
 
-export function ToolRunBlock({
+export const ToolRunBlock = memo(function ToolRunBlock({
   items,
   resultsByToolUseID,
   skippedToolResultIDs,
@@ -112,9 +112,9 @@ export function ToolRunBlock({
       )}
     </div>
   );
-}
+});
 
-export function MessageBubble({
+export const MessageBubble = memo(function MessageBubble({
   message,
   showProcessing,
   showQueued,
@@ -315,7 +315,7 @@ export function MessageBubble({
       </div>
     </div>
   );
-}
+});
 
 // MessageDbId shows the message's row id in the database next to its time;
 // clicking it copies a link to the message. A live message the backend didn't

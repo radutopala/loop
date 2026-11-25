@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { fetchComposerHistory, resolveAsk, resolvePlan } from "../../api/channels";
 import { fetchShortcuts, type PromptShortcut } from "../../api/configApi";
 import { type FileSearchResult, type RootEntry, searchFiles } from "../../api/files";
@@ -293,10 +293,15 @@ export function ChatInput({
   suggestion,
 }: ChatInputProps) {
   const { colors } = useTheme();
-  const styles = buildInputStyles(colors);
-  const modeStyles = buildModeStyles(colors);
-  const commandStyles = buildCommandStyles(colors);
-  const mentionStyles = buildMentionStyles(colors);
+  const { styles, modeStyles, commandStyles, mentionStyles } = useMemo(
+    () => ({
+      styles: buildInputStyles(colors),
+      modeStyles: buildModeStyles(colors),
+      commandStyles: buildCommandStyles(colors),
+      mentionStyles: buildMentionStyles(colors),
+    }),
+    [colors],
+  );
   const [text, setText] = useState(() => draftText.get(channelId) ?? "");
   // A restored draft isn't typing; only a change to the text is.
   const typedFrom = useRef(text);
