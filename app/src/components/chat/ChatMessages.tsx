@@ -325,8 +325,9 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
       ),
     [visibleAllItems, isRunning, effectiveProcessingMsgId],
   );
-  // Pre-group and filter tool runs so historical ToolRunBlock `items` arrays
-  // keep stable references across streaming token updates.
+  // Pre-group and filter tool runs so streaming tokens and activity updates
+  // reuse the same groups. Tool events rebuild them; ToolRunBlock then skips
+  // the runs whose items and results are unchanged (see sameToolRun).
   const renderedGroups = useMemo(
     () =>
       groupTimelineItems(visibleAllItems, queuedMsgIdSet).map((g) =>

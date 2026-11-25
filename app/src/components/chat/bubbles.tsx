@@ -20,6 +20,7 @@ import { LearnTurnButton } from "./LearnTurnButton";
 import { MessageOrigin } from "./MessageOrigin";
 import { MarkdownContent } from "./markdown";
 import { formatMessageTimestamp } from "./timestamps";
+import { useCurrentDay } from "./useCurrentDay";
 
 export function CompactingMarker() {
   const { colors } = useTheme();
@@ -32,17 +33,33 @@ export function CompactingMarker() {
   );
 }
 
-export const ToolRunBlock = memo(function ToolRunBlock({
-  items,
-  resultsByToolUseID,
-  skippedToolResultIDs,
-  isActive,
-}: {
+type ToolRunBlockProps = {
   items: TimelineItem[];
   resultsByToolUseID: Map<string, { text: string; is_error: boolean; truncated: boolean }>;
   skippedToolResultIDs: Set<string>;
   isActive: boolean;
-}) {
+};
+
+// sameToolRun lets a tool run skip re-rendering when another run changes. The
+// chat rebuilds its items array and the result map and set on every tool
+// event, so the run compares its own items by reference and only the results
+// of its own tool calls by content.
+export function sameToolRun(prev: ToolRunBlockProps, next: ToolRunBlockProps): boolean {
+  if (prev.isActive !== next.isActive || prev.items.length !== next.items.length) return false;
+  for (let i = 0; i < next.items.length; i++) {
+    const it = next.items[i]!;
+    if (it !== prev.items[i]) return false;
+    if ((it.kind !== "tool_use" && it.kind !== "tool_result") || !it.tool_use_id) continue;
+    const id = it.tool_use_id;
+    if (prev.skippedToolResultIDs.has(id) !== next.skippedToolResultIDs.has(id)) return false;
+    const a = prev.resultsByToolUseID.get(id);
+    const b = next.resultsByToolUseID.get(id);
+    if (a?.text !== b?.text || a?.is_error !== b?.is_error || a?.truncated !== b?.truncated) return false;
+  }
+  return true;
+}
+
+export const ToolRunBlock = memo(function ToolRunBlock({ items, resultsByToolUseID, skippedToolResultIDs, isActive }: ToolRunBlockProps) {
   const { colors } = useTheme();
   const [expanded, setExpanded] = useState(isActive);
   const wasActiveRef = useRef(isActive);
@@ -112,7 +129,7 @@ export const ToolRunBlock = memo(function ToolRunBlock({
       )}
     </div>
   );
-});
+}, sameToolRun);
 
 export const MessageBubble = memo(function MessageBubble({
   message,
@@ -142,7 +159,8 @@ export const MessageBubble = memo(function MessageBubble({
   const { colors } = useTheme();
   const styles = buildMessageStyles(colors);
   const isUser = !message.is_bot;
-  const time = formatMessageTimestamp(message.created_at);
+  // Compared against the current day, which re-renders the bubble at midnight.
+  const time = formatMessageTimestamp(message.created_at, new Date(useCurrentDay()));
   const origin = messageOrigin(message.tags);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const [hovered, setHovered] = useState(false);

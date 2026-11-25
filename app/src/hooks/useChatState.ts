@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchQueuedMessages } from "../api/channels";
 import type {
   AgentActivityData,
@@ -496,9 +496,14 @@ export function useChatState(channelId: string | null, initialRunningBot?: boole
 
   // Derive the flat Message[] view used by the queued-popup and processing-label
   // logic. Includes both the persisted timeline messages and any live-tail ones.
-  const messages: Message[] = [];
-  for (const it of items) if (it.kind === "message") messages.push(it.data);
-  for (const it of liveTail) if (it.kind === "message") messages.push(it.data);
+  // Memoized so streaming tokens don't hand ChatMessages a new array and re-run
+  // its scroll and visibility effects.
+  const messages = useMemo(() => {
+    const out: Message[] = [];
+    for (const it of items) if (it.kind === "message") out.push(it.data);
+    for (const it of liveTail) if (it.kind === "message") out.push(it.data);
+    return out;
+  }, [items, liveTail]);
 
   return {
     items,

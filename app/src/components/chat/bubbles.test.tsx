@@ -15,6 +15,7 @@ import {
   MessageBubble,
   renderTimelineItem,
   StreamingBubble,
+  sameToolRun,
   TaskChecklist,
   ThinkingBubble,
   ToolActivityIndicator,
@@ -146,6 +147,47 @@ describe("ToolRunBlock", () => {
     expect(screen.queryByText("pondering")).toBeNull();
     rerender(<ToolRunBlock {...props} isActive />);
     expect(screen.getByText("pondering")).toBeTruthy();
+  });
+});
+
+describe("sameToolRun", () => {
+  const use: TimelineItem = { kind: "tool_use", position: 1, id: 1, tool_use_id: "t1", tool_name: "Bash", tool_input: "ls" };
+  const result: TimelineItem = { kind: "tool_result", position: 2, id: 2, tool_use_id: "t1", text: "out" };
+  const bare: TimelineItem = { kind: "tool_use", position: 3, id: 3, tool_use_id: "", tool_name: "Bash", tool_input: "pwd" };
+  const thought: TimelineItem = { kind: "thinking", position: 4, id: 4, text: "hm" };
+  const res = (over: Partial<Result> = {}): Result => ({ text: "out", is_error: false, truncated: false, ...over });
+  const props = (over: Partial<Parameters<typeof sameToolRun>[0]> = {}) => ({
+    items: [use, result, bare, thought],
+    resultsByToolUseID: new Map([
+      ["t1", res()],
+      ["other", res()],
+    ]),
+    skippedToolResultIDs: new Set(["t1"]),
+    isActive: false,
+    ...over,
+  });
+
+  it.each([
+    { name: "rebuilt arrays and maps with the same contents", next: props(), same: true },
+    {
+      name: "another run's result changed",
+      next: props({
+        resultsByToolUseID: new Map([
+          ["t1", res()],
+          ["other", res({ text: "new" })],
+        ]),
+      }),
+      same: true,
+    },
+    { name: "active flag flipped", next: props({ isActive: true }), same: false },
+    { name: "item appended", next: props({ items: [use, result, bare, thought, thought] }), same: false },
+    { name: "item replaced", next: props({ items: [{ ...use }, result, bare, thought] }), same: false },
+    { name: "own result skipped no more", next: props({ skippedToolResultIDs: new Set() }), same: false },
+    { name: "own result text changed", next: props({ resultsByToolUseID: new Map([["t1", res({ text: "new" })]]) }), same: false },
+    { name: "own result errored", next: props({ resultsByToolUseID: new Map([["t1", res({ is_error: true })]]) }), same: false },
+    { name: "own result truncated", next: props({ resultsByToolUseID: new Map([["t1", res({ truncated: true })]]) }), same: false },
+  ])("$name: same=$same", ({ next, same }) => {
+    expect(sameToolRun(props(), next)).toBe(same);
   });
 });
 

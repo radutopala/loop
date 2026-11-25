@@ -7,6 +7,19 @@ import { resolveGateApproval } from "../../api/loopApi";
 import type { ChatState } from "../../hooks/useChatState";
 import type { Message, TimelineItem } from "../../types";
 import { ChatMessages, type ChatMessagesHandle, type ChatMessagesProps } from "./ChatMessages";
+import { renderInputWithLinks } from "./chatShared";
+import { formatMessageTimestamp } from "./timestamps";
+
+// Pass-through spies that count renders: a bubble formats its timestamp and a
+// tool call renders its input on every render.
+vi.mock("./timestamps", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./timestamps")>();
+  return { ...actual, formatMessageTimestamp: vi.fn(actual.formatMessageTimestamp) };
+});
+vi.mock("./chatShared", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./chatShared")>();
+  return { ...actual, renderInputWithLinks: vi.fn(actual.renderInputWithLinks) };
+});
 
 vi.mock("../../api/channels", () => ({
   formatAskAnswers: vi.fn(() => ""),
@@ -684,5 +697,35 @@ describe("ChatMessages quote banner", () => {
     const { unmount } = renderMessages(chatState({ items: [item(msg(1, "u1"))] }));
     unmount();
     expect(env.cancelFrame).not.toHaveBeenCalled();
+  });
+});
+
+describe("ChatMessages re-rendering", () => {
+  const bubbleRenders = (createdAt: string) => vi.mocked(formatMessageTimestamp).mock.calls.filter(([v]) => v === createdAt).length;
+  const toolRenders = (input: string) => vi.mocked(renderInputWithLinks).mock.calls.filter(([v]) => v === input).length;
+
+  it("leaves past bubbles and tool runs alone on streaming tokens, activity and later tool events", async () => {
+    installBrowser();
+    const user = userEvent.setup();
+    const u1 = msg(1, "u1", { created_at: "2026-01-01T09:00:00Z" });
+    const items = [item(u1), toolUse(2, "Grep", "g1", "u1"), thinking(3, "ponder", "u1"), item(msg(4, "b4", { is_bot: true, trigger_msg_id: "u1" }))];
+    const state = chatState({ items, isRunning: true });
+    const { rerender } = renderMessages(state);
+    // The run is no longer the trailing group, so it starts collapsed.
+    await user.click(screen.getByText("2 steps"));
+    const bubbles = bubbleRenders(u1.created_at);
+    const tools = toolRenders("input of Grep");
+    expect(bubbles).toBeGreaterThan(0);
+    expect(tools).toBeGreaterThan(0);
+
+    rerender(<ChatMessages channelId="ch-1" chatState={{ ...state, streamingContent: "tok" }} />);
+    rerender(<ChatMessages channelId="ch-1" chatState={{ ...state, streamingContent: "tok tok", agentActivity: { activity: "model" } }} />);
+    const liveTail = [toolUse(5, "Glob", "g2")];
+    rerender(<ChatMessages channelId="ch-1" chatState={{ ...state, liveTail }} />);
+    rerender(<ChatMessages channelId="ch-1" chatState={{ ...state, liveTail: [...liveTail, toolResult(6, "found", "g2")] }} />);
+
+    expect(screen.getByText("Glob")).toBeTruthy();
+    expect(bubbleRenders(u1.created_at)).toBe(bubbles);
+    expect(toolRenders("input of Grep")).toBe(tools);
   });
 });
