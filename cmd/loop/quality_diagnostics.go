@@ -32,15 +32,15 @@ func (a *app) newQualityCyclesCmd() *cobra.Command {
 	return a.newScanThenEmitCmd("cycles [path]",
 		"List import cycles (strongly connected components > 1)",
 		"emit machine-readable JSON",
-		func(ctx context.Context, out, stderr io.Writer, p parser.Parser, cfg engine.Config, root string, jsonOut bool) error {
-			return a.runQualityCycles(ctx, out, stderr, p, cfg, root, jsonOut)
+		func(ctx context.Context, out, stderr io.Writer, p parser.Parser, maxFiles int, root string, jsonOut bool) error {
+			return a.runQualityCycles(ctx, out, stderr, p, maxFiles, root, jsonOut)
 		})
 }
 
 // newScanThenEmitCmd is the shared command shape for one-shot scan
 // subcommands (cycles, c4) — they all parse [path], init the parser,
 // scan, then hand the cached graph to a per-command emitter.
-func (a *app) newScanThenEmitCmd(use, short, jsonHelp string, run func(ctx context.Context, out, stderr io.Writer, p parser.Parser, cfg engine.Config, root string, jsonOut bool) error) *cobra.Command {
+func (a *app) newScanThenEmitCmd(use, short, jsonHelp string, run func(ctx context.Context, out, stderr io.Writer, p parser.Parser, maxFiles int, root string, jsonOut bool) error) *cobra.Command {
 	var jsonOut bool
 	var maxFiles int
 	cmd := &cobra.Command{
@@ -56,7 +56,7 @@ func (a *app) newScanThenEmitCmd(use, short, jsonHelp string, run func(ctx conte
 			if err != nil {
 				return fmt.Errorf("init parser: %w", err)
 			}
-			return run(c.Context(), c.OutOrStdout(), c.ErrOrStderr(), p, engine.Config{MaxFiles: maxFiles}, root, jsonOut)
+			return run(c.Context(), c.OutOrStdout(), c.ErrOrStderr(), p, maxFiles, root, jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, jsonHelp)
@@ -71,8 +71,8 @@ type cyclesReport struct {
 	TotalNodesInCycles int        `json:"total_nodes_in_cycles"`
 }
 
-func (a *app) runQualityCycles(ctx context.Context, out, stderr io.Writer, p parser.Parser, cfg engine.Config, dirPath string, jsonOut bool) error {
-	g, resolved, err := a.scanForGraph(ctx, stderr, p, cfg, dirPath)
+func (a *app) runQualityCycles(ctx context.Context, out, stderr io.Writer, p parser.Parser, maxFiles int, dirPath string, jsonOut bool) error {
+	g, resolved, _, err := a.scanForGraph(ctx, stderr, p, maxFiles, dirPath)
 	if err != nil {
 		return err
 	}
@@ -135,7 +135,7 @@ Pass an array for batched mutations.`,
 			if err != nil {
 				return fmt.Errorf("reading mutations: %w", err)
 			}
-			return a.runQualityWhatif(c.Context(), c.OutOrStdout(), c.ErrOrStderr(), p, engine.Config{MaxFiles: maxFiles}, root, muts, jsonOut)
+			return a.runQualityWhatif(c.Context(), c.OutOrStdout(), c.ErrOrStderr(), p, maxFiles, root, muts, jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit machine-readable JSON")
@@ -167,12 +167,12 @@ func (a *app) readMutations(stdin io.Reader, source string) ([]whatif.Mutation, 
 	return []whatif.Mutation{single}, nil
 }
 
-func (a *app) runQualityWhatif(ctx context.Context, out, stderr io.Writer, p parser.Parser, cfg engine.Config, dirPath string, muts []whatif.Mutation, jsonOut bool) error {
-	g, _, err := a.scanForGraph(ctx, stderr, p, cfg, dirPath)
+func (a *app) runQualityWhatif(ctx context.Context, out, stderr io.Writer, p parser.Parser, maxFiles int, dirPath string, muts []whatif.Mutation, jsonOut bool) error {
+	g, _, metricsCfg, err := a.scanForGraph(ctx, stderr, p, maxFiles, dirPath)
 	if err != nil {
 		return err
 	}
-	res, err := whatif.Simulate(g, muts)
+	res, err := whatif.SimulateWith(g, muts, metricsCfg)
 	if err != nil {
 		return fmt.Errorf("simulate: %w", err)
 	}
@@ -274,13 +274,13 @@ func (a *app) newQualityC4Cmd() *cobra.Command {
 	return a.newScanThenEmitCmd("c4 [path]",
 		"Emit a C4 component diagram (Mermaid) for the workspace",
 		"emit machine-readable JSON wrapping the Mermaid block",
-		func(ctx context.Context, out, stderr io.Writer, p parser.Parser, cfg engine.Config, root string, jsonOut bool) error {
-			return a.runQualityC4(ctx, out, stderr, p, cfg, root, jsonOut)
+		func(ctx context.Context, out, stderr io.Writer, p parser.Parser, maxFiles int, root string, jsonOut bool) error {
+			return a.runQualityC4(ctx, out, stderr, p, maxFiles, root, jsonOut)
 		})
 }
 
-func (a *app) runQualityC4(ctx context.Context, out, stderr io.Writer, p parser.Parser, cfg engine.Config, dirPath string, jsonOut bool) error {
-	g, _, err := a.scanForGraph(ctx, stderr, p, cfg, dirPath)
+func (a *app) runQualityC4(ctx context.Context, out, stderr io.Writer, p parser.Parser, maxFiles int, dirPath string, jsonOut bool) error {
+	g, _, _, err := a.scanForGraph(ctx, stderr, p, maxFiles, dirPath)
 	if err != nil {
 		return err
 	}
@@ -295,26 +295,28 @@ func (a *app) runQualityC4(ctx context.Context, out, stderr io.Writer, p parser.
 }
 
 // scanForGraph runs an ephemeral scan keyed on "cli" and returns the
-// cached graph. Shared by the cycles, whatif, and c4 subcommands so the
-// scan-then-read pattern stays consistent.
-func (a *app) scanForGraph(ctx context.Context, stderr io.Writer, p parser.Parser, cfg engine.Config, dirPath string) (*graph.Graph, string, error) {
+// cached graph, the resolved dir and the metrics config the scan used.
+// Shared by the cycles, whatif, and c4 subcommands so the scan-then-read
+// pattern stays consistent.
+func (a *app) scanForGraph(ctx context.Context, stderr io.Writer, p parser.Parser, maxFiles int, dirPath string) (*graph.Graph, string, metrics.Config, error) {
 	if dirPath == "" {
 		wd, err := a.sys.Getwd()
 		if err != nil {
-			return nil, "", fmt.Errorf("resolving working directory: %w", err)
+			return nil, "", metrics.Config{}, fmt.Errorf("resolving working directory: %w", err)
 		}
 		dirPath = wd
 	}
+	engCfg, _ := a.resolveQualityConfig(stderr, dirPath, maxFiles)
 	cache := graph.NewCache()
-	eng := engine.New(p, noopStore{}, cache, engine.OSFileSystem{}, cfg, nil, nil)
+	eng := engine.New(p, noopStore{}, cache, engine.OSFileSystem{}, engCfg, nil, nil)
 	if _, err := eng.Scan(ctx, "cli", "main", dirPath, ""); err != nil {
 		var tooLarge *graph.RepoTooLargeError
 		if errors.As(err, &tooLarge) {
 			fmt.Fprintf(stderr, "repo too large to scan (%d files; limit %d). Add patterns to quality.exclude_paths or raise quality.max_files.\n", tooLarge.FileCount, tooLarge.Limit)
-			return nil, dirPath, err
+			return nil, dirPath, metrics.Config{}, err
 		}
-		return nil, dirPath, fmt.Errorf("scan: %w", err)
+		return nil, dirPath, metrics.Config{}, fmt.Errorf("scan: %w", err)
 	}
 	g, _ := cache.Get("cli")
-	return g, dirPath, nil
+	return g, dirPath, engCfg.Metrics, nil
 }

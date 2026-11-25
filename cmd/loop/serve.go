@@ -1242,9 +1242,10 @@ func buildMetricsConfig(qc config.QualityConfig) metrics.Config {
 	if qc.Clones.MinLOC > 0 {
 		cfg.Clones.MinLOC = qc.Clones.MinLOC
 	}
-	if qc.Clones.MaxDistance > 0 {
-		cfg.Clones.MaxDistance = qc.Clones.MaxDistance
+	if d := qc.Clones.MaxDistance; d != nil && *d >= 0 {
+		cfg.Clones.MaxDistance = *d
 	}
+	cfg.Clones.IncludeTests = qc.Clones.IncludeTests
 	return cfg
 }
 

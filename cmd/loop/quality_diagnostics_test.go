@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +14,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/radutopala/loop/internal/quality/engine"
 	"github.com/radutopala/loop/internal/quality/evolution"
 	"github.com/radutopala/loop/internal/quality/parser"
 	"github.com/radutopala/loop/internal/quality/whatif"
@@ -75,7 +76,7 @@ func (s *MainSuite) TestQualityCyclesScanError() {
 	bogus := filepath.Join(s.T().TempDir(), "definitely-missing")
 	p := s.realParser()
 	var stdout, stderr bytes.Buffer
-	err := s.app.runQualityCycles(context.Background(), &stdout, &stderr, p, engine.Config{}, bogus, false)
+	err := s.app.runQualityCycles(context.Background(), &stdout, &stderr, p, 0, bogus, false)
 	require.Error(s.T(), err)
 }
 
@@ -86,7 +87,7 @@ func (s *MainSuite) TestQualityCyclesRendersFoundCycle() {
 
 	p := s.realParser()
 	var stdout, stderr bytes.Buffer
-	require.NoError(s.T(), s.app.runQualityCycles(context.Background(), &stdout, &stderr, p, engine.Config{}, dir, false))
+	require.NoError(s.T(), s.app.runQualityCycles(context.Background(), &stdout, &stderr, p, 0, dir, false))
 	out := stdout.String()
 	if strings.Contains(out, "Found") {
 		require.Contains(s.T(), out, "cycle")
@@ -133,10 +134,45 @@ func (s *MainSuite) TestQualityWhatifHumanOutput() {
 	p := s.realParser()
 	muts := []whatif.Mutation{{Op: whatif.OpDelete, Path: "a.go"}}
 	var stdout, stderr bytes.Buffer
-	require.NoError(s.T(), s.app.runQualityWhatif(context.Background(), &stdout, &stderr, p, engine.Config{}, dir, muts, false))
+	require.NoError(s.T(), s.app.runQualityWhatif(context.Background(), &stdout, &stderr, p, 0, dir, muts, false))
 	out := stdout.String()
 	require.Contains(s.T(), out, "Signal:")
 	require.Contains(s.T(), out, "Predicted metrics:")
+}
+
+// TestQualityWhatifUsesProjectMetricsConfig checks that whatif simulates
+// with the merged metrics config: its baseline matches quality:scan's
+// signal under a project config that changes the clones metric, and
+// differs from the default-config baseline.
+func (s *MainSuite) TestQualityWhatifUsesProjectMetricsConfig() {
+	dir := s.T().TempDir()
+	body := "\tx := 0\n\tfor i := 0; i < n; i++ {\n\t\tif i%2 == 0 {\n\t\t\tx += i\n\t\t} else {\n\t\t\tx -= i\n\t\t}\n\t}\n\treturn x\n"
+	for i, name := range []string{"a", "b", "c"} {
+		src := fmt.Sprintf("package a\n\nfunc F%d(n int) int {\n%s}\n", i, body)
+		require.NoError(s.T(), os.WriteFile(filepath.Join(dir, name+".go"), []byte(src), 0o600))
+	}
+	p := s.realParser()
+	muts := []whatif.Mutation{{Op: whatif.OpDelete, Path: "c.go"}}
+
+	g, _, defaults, err := s.app.scanForGraph(context.Background(), io.Discard, p, 0, dir)
+	require.NoError(s.T(), err)
+	defaultRes, err := whatif.SimulateWith(g, muts, defaults)
+	require.NoError(s.T(), err)
+
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(dir, ".loop"), 0o755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, ".loop", "config.json"), []byte(`{"quality": {"clones": {"min_loc": 1000}}}`), 0o600))
+
+	var scanOut, whatifOut bytes.Buffer
+	require.NoError(s.T(), s.app.runQualityScan(context.Background(), &scanOut, io.Discard, p, 0, dir, true))
+	var rep scanReport
+	require.NoError(s.T(), json.Unmarshal(scanOut.Bytes(), &rep))
+
+	require.NoError(s.T(), s.app.runQualityWhatif(context.Background(), &whatifOut, io.Discard, p, 0, dir, muts, true))
+	var res whatif.Result
+	require.NoError(s.T(), json.Unmarshal(whatifOut.Bytes(), &res))
+
+	require.Equal(s.T(), rep.Signal, res.BaselineSignal)
+	require.NotEqual(s.T(), defaultRes.BaselineSignal, res.BaselineSignal)
 }
 
 func (s *MainSuite) TestQualityWhatifCommandHappyPath() {
@@ -157,7 +193,7 @@ func (s *MainSuite) TestQualityWhatifJSONOutput() {
 	p := s.realParser()
 	muts := []whatif.Mutation{{Op: whatif.OpDelete, Path: "a.go"}}
 	var stdout, stderr bytes.Buffer
-	require.NoError(s.T(), s.app.runQualityWhatif(context.Background(), &stdout, &stderr, p, engine.Config{}, dir, muts, true))
+	require.NoError(s.T(), s.app.runQualityWhatif(context.Background(), &stdout, &stderr, p, 0, dir, muts, true))
 	var got map[string]any
 	require.NoError(s.T(), json.Unmarshal(stdout.Bytes(), &got))
 	require.Contains(s.T(), got, "predicted_signal")
@@ -168,7 +204,7 @@ func (s *MainSuite) TestQualityWhatifSimulateError() {
 	p := s.realParser()
 	muts := []whatif.Mutation{{Op: whatif.OpDelete, Path: "missing.go"}}
 	var stdout, stderr bytes.Buffer
-	err := s.app.runQualityWhatif(context.Background(), &stdout, &stderr, p, engine.Config{}, dir, muts, false)
+	err := s.app.runQualityWhatif(context.Background(), &stdout, &stderr, p, 0, dir, muts, false)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "simulate")
 }
@@ -178,7 +214,7 @@ func (s *MainSuite) TestQualityWhatifScanError() {
 	p := s.realParser()
 	muts := []whatif.Mutation{{Op: whatif.OpDelete, Path: "a.go"}}
 	var stdout, stderr bytes.Buffer
-	err := s.app.runQualityWhatif(context.Background(), &stdout, &stderr, p, engine.Config{}, bogus, muts, false)
+	err := s.app.runQualityWhatif(context.Background(), &stdout, &stderr, p, 0, bogus, muts, false)
 	require.Error(s.T(), err)
 }
 
@@ -366,7 +402,7 @@ func (s *MainSuite) TestQualityC4ScanError() {
 	bogus := filepath.Join(s.T().TempDir(), "definitely-missing")
 	p := s.realParser()
 	var stdout, stderr bytes.Buffer
-	err := s.app.runQualityC4(context.Background(), &stdout, &stderr, p, engine.Config{}, bogus, false)
+	err := s.app.runQualityC4(context.Background(), &stdout, &stderr, p, 0, bogus, false)
 	require.Error(s.T(), err)
 }
 
@@ -376,7 +412,7 @@ func (s *MainSuite) TestScanForGraphGetwdError() {
 	s.app.sys = errSystem{base: s.app.sys, getwdErr: errors.New("boom")}
 	p := s.realParser()
 	var stderr bytes.Buffer
-	_, _, err := s.app.scanForGraph(context.Background(), &stderr, p, engine.Config{}, "")
+	_, _, _, err := s.app.scanForGraph(context.Background(), &stderr, p, 0, "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "resolving working directory")
 }
@@ -387,7 +423,7 @@ func (s *MainSuite) TestScanForGraphRepoTooLarge() {
 	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "b.go"), []byte("package a\n"), 0o600))
 	p := s.realParser()
 	var stderr bytes.Buffer
-	_, _, err := s.app.scanForGraph(context.Background(), &stderr, p, engine.Config{MaxFiles: 1}, dir)
+	_, _, _, err := s.app.scanForGraph(context.Background(), &stderr, p, 1, dir)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), stderr.String(), "repo too large")
 }
@@ -396,7 +432,7 @@ func (s *MainSuite) TestScanForGraphSuccess() {
 	dir := s.writeTinyGoRepo()
 	p := s.realParser()
 	var stderr bytes.Buffer
-	g, resolved, err := s.app.scanForGraph(context.Background(), &stderr, p, engine.Config{}, dir)
+	g, resolved, _, err := s.app.scanForGraph(context.Background(), &stderr, p, 0, dir)
 	require.NoError(s.T(), err)
 	require.NotNil(s.T(), g)
 	require.Equal(s.T(), dir, resolved)
@@ -407,7 +443,7 @@ func (s *MainSuite) TestScanForGraphEmptyDirPathUsesGetwd() {
 	s.app.sys = errSystem{base: s.app.sys, getwdReturn: dir}
 	p := s.realParser()
 	var stderr bytes.Buffer
-	g, resolved, err := s.app.scanForGraph(context.Background(), &stderr, p, engine.Config{}, "")
+	g, resolved, _, err := s.app.scanForGraph(context.Background(), &stderr, p, 0, "")
 	require.NoError(s.T(), err)
 	require.NotNil(s.T(), g)
 	require.Equal(s.T(), dir, resolved)

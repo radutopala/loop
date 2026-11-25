@@ -385,6 +385,7 @@ var mergeFields = []mergeField{
 	{path: "quality.complexity.loc_t", kind: mergeReplace, field: func(c *Config) any { return &c.Quality.Complexity.LOCT }, global: `1`, project: `2`, worktree: `3`},
 	{path: "quality.clones.min_loc", kind: mergeReplace, field: func(c *Config) any { return &c.Quality.Clones.MinLOC }, global: `1`, project: `2`, worktree: `3`},
 	{path: "quality.clones.max_distance", kind: mergeReplace, field: func(c *Config) any { return &c.Quality.Clones.MaxDistance }, global: `1`, project: `2`, worktree: `3`},
+	{path: "quality.clones.include_tests", kind: mergeReplace, field: func(c *Config) any { return &c.Quality.Clones.IncludeTests }, global: `true`, project: `false`, worktree: `true`},
 	{path: "permissions.owners.users", kind: mergeCustom, field: func(c *Config) any { return &c.Permissions },
 		global:  `{"owners": {"users": ["g"], "roles": ["g"]}, "members": {"users": ["g"], "roles": ["g"]}}`,
 		project: `["p"]`, worktree: `["w"]`,

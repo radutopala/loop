@@ -5,12 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/osutil"
 	"github.com/radutopala/loop/internal/quality/engine"
 	"github.com/radutopala/loop/internal/quality/metrics"
@@ -74,7 +77,7 @@ func (s *MainSuite) TestQualityScanHumanOutput() {
 	p := s.realParser()
 
 	var stdout, stderr bytes.Buffer
-	require.NoError(s.T(), s.app.runQualityScan(context.Background(), &stdout, &stderr, p, engine.Config{}, dir, false))
+	require.NoError(s.T(), s.app.runQualityScan(context.Background(), &stdout, &stderr, p, 0, dir, false))
 
 	out := stdout.String()
 	require.Contains(s.T(), out, "quality_signal:")
@@ -89,7 +92,7 @@ func (s *MainSuite) TestQualityScanJSONOutput() {
 	p := s.realParser()
 
 	var stdout, stderr bytes.Buffer
-	require.NoError(s.T(), s.app.runQualityScan(context.Background(), &stdout, &stderr, p, engine.Config{}, dir, true))
+	require.NoError(s.T(), s.app.runQualityScan(context.Background(), &stdout, &stderr, p, 0, dir, true))
 
 	var rep scanReport
 	require.NoError(s.T(), json.Unmarshal(stdout.Bytes(), &rep))
@@ -108,18 +111,205 @@ func (s *MainSuite) TestQualityScanDefaultsToCwd() {
 
 	p := s.realParser()
 	var stdout, stderr bytes.Buffer
-	require.NoError(s.T(), s.app.runQualityScan(context.Background(), &stdout, &stderr, p, engine.Config{}, "", true))
+	require.NoError(s.T(), s.app.runQualityScan(context.Background(), &stdout, &stderr, p, 0, "", true))
 
 	var rep scanReport
 	require.NoError(s.T(), json.Unmarshal(stdout.Bytes(), &rep))
 	require.GreaterOrEqual(s.T(), rep.FileCount, 1)
 }
 
+func (s *MainSuite) TestQualityScanHonorsProjectAndGlobalConfig() {
+	dir := s.writeTinyGoRepo()
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(dir, "gen"), 0o755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "gen", "skip.go"), []byte("package gen\n"), 0o600))
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(dir, ".loop"), 0o755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, ".loop", "config.json"), []byte(`{
+		"quality": {
+			"exclude_paths": ["gen/"],
+			"rules": {
+				"signal_floor": { "enabled": true, "threshold": 10001 }
+			}
+		}
+	}`), 0o600))
+
+	p := s.realParser()
+	var stdout, stderr bytes.Buffer
+	require.NoError(s.T(), s.app.runQualityScan(context.Background(), &stdout, &stderr, p, 0, dir, true))
+
+	var rep scanReport
+	require.NoError(s.T(), json.Unmarshal(stdout.Bytes(), &rep))
+	require.Equal(s.T(), 2, rep.FileCount)
+	require.Len(s.T(), rep.Rules.Failed, 1)
+	require.Equal(s.T(), rules.SignalFloor, rep.Rules.Failed[0].Name)
+}
+
+func (s *MainSuite) TestResolveQualityConfigLayers() {
+	global := &config.Config{Quality: config.QualityConfig{
+		MaxFiles:     7,
+		ExcludePaths: []string{"vendor/"},
+		Clones:       config.QualityClonesConfig{IncludeTests: true},
+	}}
+	okGlobal := func() (*config.Config, error) { return global, nil }
+	noGlobal := func() (*config.Config, error) { return nil, errors.New("no global") }
+	tests := []struct {
+		name             string
+		reload           func() (*config.Config, error)
+		project          string
+		maxFiles         int
+		wantMaxFiles     int
+		wantExclude      []string
+		wantIncludeTests bool
+		wantWarnings     []string
+	}{
+		{
+			name:             "project overrides the global config",
+			reload:           okGlobal,
+			project:          `{"quality": {"exclude_paths": ["gen/"], "clones": {"include_tests": false}}}`,
+			wantMaxFiles:     7,
+			wantExclude:      []string{"gen/"},
+			wantIncludeTests: false,
+		},
+		{
+			name:             "no project config keeps the global one",
+			reload:           okGlobal,
+			wantMaxFiles:     7,
+			wantExclude:      []string{"vendor/"},
+			wantIncludeTests: true,
+		},
+		{
+			name:             "broken project config falls back to the global one",
+			reload:           okGlobal,
+			project:          "{ not hjson [",
+			wantMaxFiles:     7,
+			wantExclude:      []string{"vendor/"},
+			wantIncludeTests: true,
+			wantWarnings:     []string{"warning: ignoring the project config"},
+		},
+		{
+			name: "missing global config is silent",
+			reload: func() (*config.Config, error) {
+				return nil, fmt.Errorf("reading config file: %w", fs.ErrNotExist)
+			},
+			project:     `{"quality": {"exclude_paths": ["gen/"]}}`,
+			wantExclude: []string{"gen/"},
+		},
+		{
+			name:         "broken global config keeps the project layer",
+			reload:       noGlobal,
+			project:      `{"quality": {"exclude_paths": ["gen/"]}}`,
+			wantExclude:  []string{"gen/"},
+			wantWarnings: []string{"warning: ignoring the global config: no global"},
+		},
+		{
+			name:         "both broken fall back to the defaults, flag wins",
+			reload:       noGlobal,
+			project:      "{ not hjson [",
+			maxFiles:     42,
+			wantMaxFiles: 42,
+			wantWarnings: []string{"ignoring the global config", "ignoring the project config"},
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			dir := s.T().TempDir()
+			if tc.project != "" {
+				require.NoError(s.T(), os.MkdirAll(filepath.Join(dir, ".loop"), 0o755))
+				require.NoError(s.T(), os.WriteFile(filepath.Join(dir, ".loop", "config.json"), []byte(tc.project), 0o600))
+			}
+			s.app.configReload = tc.reload
+			var stderr bytes.Buffer
+			engCfg, rulesCfg := s.app.resolveQualityConfig(&stderr, dir, tc.maxFiles)
+			require.Equal(s.T(), tc.wantMaxFiles, engCfg.MaxFiles)
+			require.Equal(s.T(), tc.wantExclude, engCfg.ExcludePaths)
+			require.Equal(s.T(), tc.wantIncludeTests, engCfg.Metrics.Clones.IncludeTests)
+			require.Equal(s.T(), rules.DefaultConfig(), rulesCfg)
+			if tc.wantWarnings == nil {
+				require.Empty(s.T(), stderr.String())
+			}
+			for _, w := range tc.wantWarnings {
+				require.Contains(s.T(), stderr.String(), w)
+			}
+		})
+	}
+}
+
+// writeQualityTree materialises relative-path → contents under root.
+func (s *MainSuite) writeQualityTree(root string, files map[string]string) {
+	for rel, contents := range files {
+		full := filepath.Join(root, filepath.FromSlash(rel))
+		require.NoError(s.T(), os.MkdirAll(filepath.Dir(full), 0o755))
+		require.NoError(s.T(), os.WriteFile(full, []byte(contents), 0o600))
+	}
+}
+
+func (s *MainSuite) TestQualityProjectDirs() {
+	top := s.T().TempDir()
+	s.writeQualityTree(top, map[string]string{
+		"main/.git/HEAD":                   "",
+		"main/.git/worktrees/wt/commondir": "../..\n",
+		"main/.loop/config.json":           "{}",
+		"main/internal/x.go":               "",
+		"main/svc/.loop/config.json":       "{}",
+		"main/svc/pkg/x.go":                "",
+		"wt/.git":                          "gitdir: ../main/.git/worktrees/wt\n",
+		"wt/internal/x.go":                 "",
+		"wt/svc/.loop/config.json":         "{}",
+		"wt/svc/pkg/x.go":                  "",
+		"plain/x.go":                       "",
+	})
+	at := func(rel string) string {
+		if rel == "" {
+			return ""
+		}
+		return filepath.Join(top, filepath.FromSlash(rel))
+	}
+	tests := []struct {
+		name        string
+		dir         string
+		wantProject string
+		wantParent  string
+	}{
+		{"checkout root", "main", "main", ""},
+		{"subdir walks up to the checkout's config", "main/internal", "main", ""},
+		{"nearest config wins", "main/svc/pkg", "main/svc", ""},
+		{"worktree layers the main checkout", "wt", "wt", "main"},
+		{"worktree subdir", "wt/internal", "wt", "main"},
+		{"worktree subproject maps to the same dir in main", "wt/svc/pkg", "wt/svc", "main/svc"},
+		{"outside a checkout", "plain", "plain", ""},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			project, parent := qualityProjectDirs(at(tc.dir))
+			require.Equal(s.T(), at(tc.wantProject), project)
+			require.Equal(s.T(), at(tc.wantParent), parent)
+		})
+	}
+}
+
+// TestResolveQualityConfigInWorktree checks that a worktree without its
+// own project config gets the main checkout's, as a daemon scan does.
+func (s *MainSuite) TestResolveQualityConfigInWorktree() {
+	top := s.T().TempDir()
+	s.writeQualityTree(top, map[string]string{
+		"main/.git/HEAD":                   "",
+		"main/.git/worktrees/wt/commondir": "../..\n",
+		"main/.loop/config.json":           `{"quality": {"exclude_paths": ["gen/"], "max_files": 9}}`,
+		"wt/.git":                          "gitdir: ../main/.git/worktrees/wt\n",
+		"wt/internal/x.go":                 "",
+	})
+	s.app.configReload = func() (*config.Config, error) { return &config.Config{}, nil }
+	var stderr bytes.Buffer
+	engCfg, _ := s.app.resolveQualityConfig(&stderr, filepath.Join(top, "wt", "internal"), 0)
+	require.Empty(s.T(), stderr.String())
+	require.Equal(s.T(), 9, engCfg.MaxFiles)
+	require.Equal(s.T(), []string{"gen/"}, engCfg.ExcludePaths)
+}
+
 func (s *MainSuite) TestQualityScanGetwdError() {
 	s.app.sys = errSystem{base: osutil.RealSystem{}, getwdErr: errors.New("boom")}
 	p := s.realParser()
 	var stdout, stderr bytes.Buffer
-	err := s.app.runQualityScan(context.Background(), &stdout, &stderr, p, engine.Config{}, "", false)
+	err := s.app.runQualityScan(context.Background(), &stdout, &stderr, p, 0, "", false)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "resolving working directory")
 }
@@ -128,7 +318,7 @@ func (s *MainSuite) TestQualityScanScanError() {
 	bogus := filepath.Join(s.T().TempDir(), "definitely-missing")
 	p := s.realParser()
 	var stdout, stderr bytes.Buffer
-	err := s.app.runQualityScan(context.Background(), &stdout, &stderr, p, engine.Config{}, bogus, false)
+	err := s.app.runQualityScan(context.Background(), &stdout, &stderr, p, 0, bogus, false)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "scan:")
 }
@@ -141,7 +331,7 @@ func (s *MainSuite) TestQualityScanRepoTooLarge() {
 
 	p := s.realParser()
 	var stdout, stderr bytes.Buffer
-	err := s.app.runQualityScan(context.Background(), &stdout, &stderr, p, engine.Config{MaxFiles: 1}, dir, false)
+	err := s.app.runQualityScan(context.Background(), &stdout, &stderr, p, 1, dir, false)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), stderr.String(), "repo too large to scan")
 }

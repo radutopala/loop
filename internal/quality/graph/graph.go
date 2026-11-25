@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"math"
 	"path"
 	"sort"
 	"strings"
@@ -186,10 +187,24 @@ func resolveImport(impPath, fromPath, fromLang string, index map[string]int, dir
 		return -1, false
 	}
 
+	// Several entries can match, so the pick is ranked and ties go to the
+	// lowest index; the edge doesn't depend on map order. A package dir
+	// match prefers the longest dir (internal/api over api for an import
+	// ending in /internal/api); a file match prefers the shortest path
+	// (src/util.ts over packages/foo/src/util.ts for "src/util").
+	best, bestRank := -1, math.MinInt
+	pick := func(idx, rank int) {
+		if rank > bestRank || (rank == bestRank && idx < best) {
+			best, bestRank = idx, rank
+		}
+	}
 	for dir, idx := range dirIndex {
 		if dir == imp || strings.HasSuffix(imp, "/"+dir) {
-			return idx, true
+			pick(idx, len(dir))
 		}
+	}
+	if best >= 0 {
+		return best, true
 	}
 
 	for p, idx := range index {
@@ -197,32 +212,75 @@ func resolveImport(impPath, fromPath, fromLang string, index map[string]int, dir
 		// remaining cases here are tail-suffix matches without and with
 		// a tacked-on extension.
 		if strings.HasSuffix(p, "/"+imp) {
-			return idx, true
+			pick(idx, -len(p))
+			continue
 		}
 		for _, ext := range candidateExts {
 			if p == imp+ext || strings.HasSuffix(p, "/"+imp+ext) {
-				return idx, true
+				pick(idx, -len(p))
+				break
 			}
 		}
 	}
-	return -1, false
+	return best, best >= 0
+}
+
+// jsExts are the JS/TS source extensions whose test naming conventions
+// IsTestPath applies.
+var jsExts = map[string]bool{
+	".js": true, ".jsx": true, ".mjs": true, ".cjs": true,
+	".ts": true, ".tsx": true, ".mts": true, ".cts": true,
+}
+
+// IsTestPath reports whether the slash-separated path p is a test file.
+// Each naming convention applies to its own language: Go's *_test.go, and
+// JS/TS *.test.*, *.spec.* and files under a __tests__ dir. Anything
+// under a testdata dir counts whatever its language, since it holds
+// fixtures (Go tooling skips the dir).
+func IsTestPath(p string) bool {
+	if underDir(p, "testdata") {
+		return true
+	}
+	base := path.Base(p)
+	ext := path.Ext(base)
+	switch {
+	case ext == ".go":
+		return strings.HasSuffix(base, "_test.go")
+	case jsExts[ext]:
+		return strings.Contains(base, ".test.") || strings.Contains(base, ".spec.") || underDir(p, "__tests__")
+	}
+	return false
+}
+
+// underDir reports whether p sits below a directory named dir.
+func underDir(p, dir string) bool {
+	return strings.HasPrefix(p, dir+"/") || strings.Contains(p, "/"+dir+"/")
 }
 
 // buildDirIndex maps each unique directory of a scanned file to the
-// lowest-indexed file in that directory. Used by resolveImport to back
-// Go-style package imports (which name a directory, not a file).
+// lowest-indexed non-test file in that directory (falling back to test
+// files only when a directory has no production files). Used by
+// resolveImport to back Go-style package imports (which name a directory,
+// not a file), so an import of ".../internal/plugin" resolves to a
+// production file rather than an external *_test.go file whose own
+// subpackage imports would fabricate a cycle.
 // "Lowest index" is deterministic because the input is pre-sorted.
 func buildDirIndex(sorted []*parser.FileFacts) map[string]int {
 	out := make(map[string]int)
-	for i, f := range sorted {
-		dir := path.Dir(f.Path)
-		if dir == "." || dir == "/" {
-			continue
+	for pass := range 2 {
+		for i, f := range sorted {
+			dir := path.Dir(f.Path)
+			if dir == "." || dir == "/" {
+				continue
+			}
+			if _, exists := out[dir]; exists {
+				continue
+			}
+			if pass == 0 && IsTestPath(f.Path) {
+				continue
+			}
+			out[dir] = i
 		}
-		if _, exists := out[dir]; exists {
-			continue
-		}
-		out[dir] = i
 	}
 	return out
 }

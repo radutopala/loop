@@ -240,6 +240,58 @@ func (s *GraphSuite) TestResolveImportParentRelativeSuccess() {
 	require.Equal(s.T(), 4, idx)
 }
 
+// TestResolveImportPicksStableMatch checks that, when several entries
+// match, the longest dir or the shortest file wins and ties go to the
+// lowest index, on every run whatever the map order.
+func (s *GraphSuite) TestResolveImportPicksStableMatch() {
+	tests := []struct {
+		name     string
+		imp      string
+		fromLang string
+		index    map[string]int
+		dirIndex map[string]int
+		want     int
+	}{
+		{
+			name:     "longest dir suffix",
+			imp:      "github.com/x/internal/api",
+			fromLang: "go",
+			dirIndex: map[string]int{"api": 1, "internal/api": 2, "x/internal/api": 3, "other": 4},
+			want:     3,
+		},
+		{
+			name:     "exact file beats a deeper suffix",
+			imp:      "lib/util",
+			fromLang: "typescript",
+			index:    map[string]int{"lib/util.ts": 4, "src/lib/util.ts": 2, "a/b/lib/util": 5},
+			want:     4,
+		},
+		{
+			name:     "shortest file suffix",
+			imp:      "lib/util",
+			fromLang: "typescript",
+			index:    map[string]int{"packages/foo/lib/util.ts": 1, "src/lib/util.ts": 6},
+			want:     6,
+		},
+		{
+			name:     "tie goes to the lowest index",
+			imp:      "x",
+			fromLang: "typescript",
+			index:    map[string]int{"a/x.ts": 3, "b/x.ts": 1, "c/x.ts": 2},
+			want:     1,
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			for range 20 {
+				idx, ok := resolveImport(tc.imp, "from.ts", tc.fromLang, tc.index, tc.dirIndex)
+				require.True(s.T(), ok)
+				require.Equal(s.T(), tc.want, idx)
+			}
+		})
+	}
+}
+
 func (s *GraphSuite) TestResolveImportNoMatchReturnsFalse() {
 	idx, ok := resolveImport("does-not-exist", "from.go", "", map[string]int{"foo.go": 0}, nil)
 	require.False(s.T(), ok)
@@ -286,6 +338,20 @@ func (s *GraphSuite) TestBuildDirIndexKeepsLowestIndexPerDirectory() {
 	require.Equal(s.T(), 0, dirIdx["internal/api"])
 }
 
+func (s *GraphSuite) TestBuildDirIndexPrefersNonTestFile() {
+	// Even when integration_test.go sorts before manifest.go, the
+	// directory representative must be manifest.go so external test
+	// imports don't create false cycles. Test-only dirs still resolve.
+	sorted := []*parser.FileFacts{
+		{Path: "internal/plugin/integration_test.go"},
+		{Path: "internal/plugin/manifest.go"},
+		{Path: "internal/testonly/only_test.go"},
+	}
+	dirIdx := buildDirIndex(sorted)
+	require.Equal(s.T(), 1, dirIdx["internal/plugin"])
+	require.Equal(s.T(), 2, dirIdx["internal/testonly"])
+}
+
 func (s *GraphSuite) TestResolveImportDirectoryExactMatch() {
 	// Covers the "dir == imp" branch in the directory-suffix scan. Use
 	// a TS importer so the Go-stdlib guard doesn't reject the bare
@@ -304,4 +370,37 @@ func (s *GraphSuite) TestResolveImportFileSuffixWithExtension() {
 		map[string]int{"src/util.go": 7}, nil)
 	require.True(s.T(), ok)
 	require.Equal(s.T(), 7, idx)
+}
+
+func (s *GraphSuite) TestIsTestPath() {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"internal/api/server_test.go", true},
+		{"server_test.go", true},
+		{"internal/api/server.go", false},
+		{"internal/api/testdata.go", false},
+		{"app/src/utils/format.test.ts", true},
+		{"app/src/Chat.spec.tsx", true},
+		{"app/src/utils/format.ts", false},
+		{"app/src/__tests__/helpers.ts", true},
+		{"__tests__/setup.js", true},
+		{"app/src/my__tests__dir/x.ts", false},
+		{"internal/foo/testdata/gen.go", true},
+		{"testdata/fixture.ts", true},
+		{"internal/mytestdata/x.go", false},
+		{"internal/api/openapi.spec.go", false},
+		{"internal/api/x.test.go", false},
+		{"pkg/__tests__/helper.go", false},
+		{"app/src/x_test.go.ts", false},
+		{"app/src/mod.test.mjs", true},
+		{"app/testdata/page.html", true},
+		{"docs/guide.spec.md", false},
+	}
+	for _, tc := range tests {
+		s.Run(tc.path, func() {
+			require.Equal(s.T(), tc.want, IsTestPath(tc.path))
+		})
+	}
 }

@@ -6,10 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/quality/engine"
 	"github.com/radutopala/loop/internal/quality/graph"
 	"github.com/radutopala/loop/internal/quality/metrics"
@@ -42,7 +46,7 @@ func (a *app) newQualityScanCmd() *cobra.Command {
 		Use:   "scan [path]",
 		Short: "Scan a workspace and print the quality signal",
 		Long: `Scan walks the given directory (default: current working dir),
-parses supported source files, computes the 5 structural metrics, and
+parses supported source files, computes the 6 structural metrics, and
 prints the aggregated quality_signal plus per-rule pass/fail.
 
 Exit code is always 0 unless the engine crashes. Rule status is data:
@@ -57,7 +61,7 @@ Exit code is always 0 unless the engine crashes. Rule status is data:
 			if err != nil {
 				return fmt.Errorf("init parser: %w", err)
 			}
-			return a.runQualityScan(c.Context(), c.OutOrStdout(), c.ErrOrStderr(), p, engine.Config{MaxFiles: maxFiles}, root, jsonOut)
+			return a.runQualityScan(c.Context(), c.OutOrStdout(), c.ErrOrStderr(), p, maxFiles, root, jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit machine-readable JSON instead of the human summary")
@@ -101,7 +105,79 @@ type citationReport struct {
 	Note string `json:"note,omitempty"`
 }
 
-func (a *app) runQualityScan(ctx context.Context, out, stderr io.Writer, p parser.Parser, cfg engine.Config, dirPath string, jsonOut bool) error {
+// resolveQualityConfig maps the merged global → [parent →] project config
+// for dirPath (see qualityProjectDirs) into the engine and rules configs.
+// A config that fails to load leaves its layer out, with a warning on
+// stderr (a missing global config is silent): a broken project config
+// falls back to the global one, a broken global one to the defaults. A
+// non-zero maxFiles (the --max-files flag) wins over the config.
+func (a *app) resolveQualityConfig(stderr io.Writer, dirPath string, maxFiles int) (engine.Config, rules.Config) {
+	global, err := a.configReload()
+	if err != nil {
+		// No global config is the normal case outside a Loop install.
+		if !errors.Is(err, fs.ErrNotExist) {
+			fmt.Fprintf(stderr, "warning: ignoring the global config: %v\n", err)
+		}
+		global = &config.Config{}
+	}
+	projectDir, parentDir := qualityProjectDirs(dirPath)
+	var merged *config.Config
+	if parentDir != "" {
+		merged, err = config.LoadWorktreeProjectConfig(projectDir, parentDir, global)
+	} else {
+		merged, err = config.LoadProjectConfig(projectDir, global)
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "warning: ignoring the project config: %v\n", err)
+		merged = global
+	}
+	engCfg := engine.Config{
+		MaxFiles:     merged.Quality.MaxFiles,
+		ExcludePaths: merged.Quality.ExcludePaths,
+		Metrics:      buildMetricsConfig(merged.Quality),
+	}
+	if maxFiles != 0 {
+		engCfg.MaxFiles = maxFiles
+	}
+	rulesCfg := rules.DefaultConfig()
+	if rc := buildRulesConfig(merged.Quality.Rules); rc != nil {
+		rulesCfg = *rc
+	}
+	return engCfg, rulesCfg
+}
+
+// qualityProjectDirs picks the project config dirs for a CLI scan of
+// dirPath, matching how the daemon layers a channel's config. The project
+// dir is the nearest dir from dirPath up to its checkout's root that has
+// a .loop/config.json, else the checkout root. In a linked worktree, the
+// same dir in the main checkout is the parent layer. Outside a checkout,
+// dirPath is the project dir and there is no parent.
+func qualityProjectDirs(dirPath string) (projectDir, parentDir string) {
+	if abs, err := filepath.Abs(dirPath); err == nil {
+		dirPath = abs
+	}
+	repo, ok := graph.FindRepo(dirPath)
+	if !ok {
+		return dirPath, ""
+	}
+	projectDir = repo.Root
+	for d := dirPath; ; d = filepath.Dir(d) {
+		if _, err := os.Stat(filepath.Join(d, ".loop", "config.json")); err == nil {
+			projectDir = d
+			break
+		}
+		if d == repo.Root {
+			break
+		}
+	}
+	if main := repo.MainRoot(); main != repo.Root {
+		rel, _ := filepath.Rel(repo.Root, projectDir)
+		parentDir = filepath.Join(main, rel)
+	}
+	return projectDir, parentDir
+}
+
+func (a *app) runQualityScan(ctx context.Context, out, stderr io.Writer, p parser.Parser, maxFiles int, dirPath string, jsonOut bool) error {
 	if dirPath == "" {
 		wd, err := a.sys.Getwd()
 		if err != nil {
@@ -110,8 +186,9 @@ func (a *app) runQualityScan(ctx context.Context, out, stderr io.Writer, p parse
 		dirPath = wd
 	}
 
+	engCfg, rulesCfg := a.resolveQualityConfig(stderr, dirPath, maxFiles)
 	cache := graph.NewCache()
-	eng := engine.New(p, noopStore{}, cache, engine.OSFileSystem{}, cfg, nil, nil)
+	eng := engine.New(p, noopStore{}, cache, engine.OSFileSystem{}, engCfg, nil, nil)
 	res, err := eng.Scan(ctx, "cli", "main", dirPath, "")
 	if err != nil {
 		var tooLarge *graph.RepoTooLargeError
@@ -123,7 +200,7 @@ func (a *app) runQualityScan(ctx context.Context, out, stderr io.Writer, p parse
 	}
 
 	g, _ := cache.Get("cli")
-	ruleResults := rules.Run(rules.DefaultConfig(), g, res.Signal)
+	ruleResults := rules.Run(rulesCfg, g, res.Signal)
 
 	report := buildScanReport(dirPath, res, ruleResults)
 	if jsonOut {

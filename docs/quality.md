@@ -56,8 +56,9 @@ Quality is driven by `quality.*` keys in `~/.loop/config.json` and per-project `
     "loc_t":        60
   },
   "clones": {                          // SimHash clone detector
-    "min_loc":      5,                 // skip functions smaller than this
-    "max_distance": 3                  // 0 = exact, up to 64
+    "min_loc":       5,                // skip functions smaller than this
+    "max_distance":  3,                // 0 = exact, up to 64
+    "include_tests": false             // count test files' functions too
   },
   "rules": {
     "signal_floor":            { "enabled": true, "threshold": 5000 },
@@ -70,7 +71,17 @@ Quality is driven by `quality.*` keys in `~/.loop/config.json` and per-project `
 }
 ```
 
-Built-in path exclusions (always applied): `.git/`, `node_modules/`, `dist/`, `build/`, `target/`, `vendor/`, `*.min.js`, `*.generated.go` (see `internal/quality/graph/enumerate.go`). The repo's `.gitignore` is layered on top, then `quality.exclude_paths` is appended.
+Built-in path exclusions (always applied): `.git/` (and a worktree's `.git` file), `node_modules/`, `dist/`, `build/`, `target/`, `vendor/`, `*.min.js`, `*.generated.go` (see `internal/quality/graph/enumerate.go`). `quality.exclude_paths` is appended to them. Git's ignore files are layered on top: the repo's `.git/info/exclude` (shared by its worktrees), then every `.gitignore` from the repo root down. That includes the ones above the scanned directory when you scan a subdirectory. They follow git's rules:
+- a pattern with a leading or middle `/` is anchored to its file's directory;
+- a bare name matches files and directories at any depth below it;
+- `!` re-includes, and a deeper file or later line wins;
+- `dir/**` matches only what's inside `dir`;
+- braces are literal characters, as in git;
+- leading spaces are part of a pattern, and trailing ones are dropped unless escaped (`foo\ `).
+
+A `.gitignore` that can't be read is skipped, wherever it is. Your global excludes file (`core.excludesFile`) is not read.
+
+The clone detector leaves test files out unless `quality.clones.include_tests` is set: Go `*_test.go`; JS/TS `*.test.*`, `*.spec.*` and files under a `__tests__/` dir; and any file under a `testdata/` dir, since those hold fixtures. Each file-name rule applies only to its own language, so `openapi.spec.go` is not a test file. Table-driven tests repeat their shape on purpose, and would otherwise dominate `duplication_ceiling`.
 
 Config changes drop the engine's parser/graph cache for the affected channel but do **not** auto-trigger a rescan — the panel keeps rendering the previous snapshot until the next manual scan rebuilds with the new config.
 
@@ -150,7 +161,7 @@ loop quality:evolution [path] [--since-months N] [--max-commits N] [--json]
 loop quality:c4        [path]                    [--max-files <n>] [--json]
 ```
 
-All subcommands run a one-shot scan of `[path]` (defaults to CWD). `--json` emits the same payload as the matching MCP tool / HTTP endpoint. Exit code 0 unless the engine itself crashes — rule pass/fail (for `scan`) is data in the output.
+All subcommands run a one-shot scan of `[path]` (defaults to CWD) with the global `quality` config merged with the project config, layered as a daemon scan does it. The project config is the nearest `.loop/config.json` from `[path]` up to its checkout's root, or the checkout root's own config. In a linked worktree, the main checkout's config is layered under the worktree's. `--max-files` overrides `quality.max_files`. A config that fails to load is skipped with a warning on stderr. `--json` emits the same payload as the matching MCP tool / HTTP endpoint. Exit code 0 unless the engine itself crashes — rule pass/fail (for `scan`) is data in the output.
 
 - **`scan`** — full scan; prints the signal + metric breakdown.
 - **`cycles`** — lists Tarjan SCCs > 1 file.
@@ -252,8 +263,8 @@ internal/quality/
 ├── parser/                 # tree-sitter wrapper + .scm queries (go/ts/js)
 │   └── queries/
 ├── graph/                  # file enumeration, .gitignore, dependency graph + cache
-├── metrics/                # 5 metrics + signal aggregation + tile attribution
-├── rules/                  # 3 built-in rules + per-rule config
+├── metrics/                # 6 metrics + signal aggregation + tile attribution
+├── rules/                  # 6 built-in rules + per-rule config
 ├── snapshot/               # SQL-backed persistence (sql_store.go)
 ├── whatif/                 # shadow-graph mutation simulator + predicted Δ signal
 ├── evolution/              # git-log coupling / churn / bus-factor analysis

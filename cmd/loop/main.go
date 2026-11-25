@@ -113,6 +113,7 @@ type app struct {
 
 	// Config & DB
 	configLoad     func() (*config.Config, error)
+	configReload   func() (*config.Config, error)
 	newSQLiteStore func(string) (db.Store, error)
 	fsMigrateRun   func(ctx context.Context, sqlDB *sql.DB, c *fsmigrate.Ctx) error
 
@@ -228,7 +229,8 @@ func newApp() *app {
 		date:                 date,
 
 		// Config & DB
-		configLoad: config.Load,
+		configLoad:   config.Load,
+		configReload: config.Reload,
 		newSQLiteStore: func(path string) (db.Store, error) {
 			return db.NewSQLiteStore(path)
 		},

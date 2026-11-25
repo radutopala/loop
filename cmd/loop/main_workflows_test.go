@@ -222,10 +222,29 @@ func (s *MainSuite) TestQualityMetricsLoaderReturnsDefaults() {
 	require.Equal(s.T(), 3, got.Clones.MaxDistance)
 }
 
+func (s *MainSuite) TestBuildMetricsConfigMaxDistance() {
+	tests := []struct {
+		name string
+		set  *int
+		want int
+	}{
+		{"unset uses the default", nil, 3},
+		{"explicit zero means exact matches", new(0), 0},
+		{"explicit value", new(7), 7},
+		{"negative is ignored", new(-1), 3},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			got := buildMetricsConfig(config.QualityConfig{Clones: config.QualityClonesConfig{MaxDistance: tc.set}})
+			require.Equal(s.T(), tc.want, got.Clones.MaxDistance)
+		})
+	}
+}
+
 func (s *MainSuite) TestQualityMetricsLoaderFallsBackToInitialOnReloadError() {
 	cfg := &config.Config{Quality: config.QualityConfig{
 		Complexity: config.QualityComplexityConfig{CyclomaticT: 9},
-		Clones:     config.QualityClonesConfig{MaxDistance: 2},
+		Clones:     config.QualityClonesConfig{MaxDistance: new(2), IncludeTests: true},
 	}}
 	reload := func() (*config.Config, error) { return nil, errors.New("disk gone") }
 
@@ -233,6 +252,7 @@ func (s *MainSuite) TestQualityMetricsLoaderFallsBackToInitialOnReloadError() {
 	got := loader("", "")
 	require.Equal(s.T(), 9, got.Complexity.CyclomaticT)
 	require.Equal(s.T(), 2, got.Clones.MaxDistance)
+	require.True(s.T(), got.Clones.IncludeTests)
 }
 
 func (s *MainSuite) TestQualityMetricsLoaderFallsBackOnMergeError() {

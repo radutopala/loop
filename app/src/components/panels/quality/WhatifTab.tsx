@@ -27,9 +27,8 @@ export function WhatifTab({ target, loading, error, result, colors, fontSizes }:
   return (
     <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 12 }}>
       <SectionHelp colors={colors}>
-        Simulates a mutation against a clone of the in-memory graph and recomputes all five metrics on the shadow. The real graph isn&apos;t touched. Use it to A/B refactor candidates before
-        committing — positive <b>delta</b> means the change improves the signal; the per-metric breakdown shows which dimensions move. Predictions are exact for this snapshot, not closed-form
-        approximations.
+        Simulates a mutation against a clone of the in-memory graph and recomputes all six metrics on the shadow. The real graph isn&apos;t touched. Use it to A/B refactor candidates before committing
+        — positive <b>delta</b> means the change improves the signal; the per-metric breakdown shows which dimensions move. Predictions are exact for this snapshot, not closed-form approximations.
       </SectionHelp>
       <div style={{ fontSize: 11, color: colors.textDim, textTransform: "uppercase", letterSpacing: 0.5 }}>Mutation</div>
       <div style={{ fontFamily: fonts.mono, fontSize: 12, color: colors.textLight, wordBreak: "break-all" }}>delete {target}</div>

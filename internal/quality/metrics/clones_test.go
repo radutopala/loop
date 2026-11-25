@@ -79,6 +79,39 @@ func (s *ClonesSuite) TestDistinctFunctionsDoNotCluster() {
 	require.Equal(s.T(), 1.0, r.Score)
 }
 
+func (s *ClonesSuite) TestTestFilesSkippedUnlessIncluded() {
+	body := func() *parser.FunctionBody {
+		return &parser.FunctionBody{LOC: 10, Shingles: []uint64{0xAAAA, 0xBBBB, 0xCCCC, 0xDDDD, 0xEEEE, 0xFFFF}}
+	}
+	g := graph.Build([]*parser.FileFacts{
+		{Path: "a.go", Functions: []parser.Function{{Name: "F", Body: body()}}},
+		{Path: "a_test.go", Functions: []parser.Function{{Name: "TestF1", Body: body()}, {Name: "TestF2", Body: body()}}},
+		{Path: "ui/view.test.ts", Functions: []parser.Function{{Name: "case", Body: body()}}},
+	})
+	tests := []struct {
+		name         string
+		includeTests bool
+		wantTotalLOC int
+		wantMembers  int
+	}{
+		{name: "tests left out by default", wantTotalLOC: 10},
+		{name: "tests counted when included", includeTests: true, wantTotalLOC: 40, wantMembers: 4},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			cfg := DefaultClonesConfig()
+			cfg.IncludeTests = tc.includeTests
+			d := ComputeClones(g, cfg).Detail.(ClonesDetail)
+			require.Equal(s.T(), tc.wantTotalLOC, d.TotalLOC)
+			members := 0
+			for _, cl := range d.Clusters {
+				members += len(cl.Members)
+			}
+			require.Equal(s.T(), tc.wantMembers, members)
+		})
+	}
+}
+
 func (s *ClonesSuite) TestMaxDistanceTuning() {
 	// Two functions whose shingles differ by ~1 bit per shingle. With
 	// MaxDistance=3 they cluster; with MaxDistance=0 they don't.

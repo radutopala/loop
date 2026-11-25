@@ -113,10 +113,12 @@ type jsonQualityComplexityConfig struct {
 
 // jsonQualityClonesConfig is the JSON representation of the
 // clone-detector block. MaxDistance is a pointer so 0 (exact match)
-// stays distinguishable from "not configured".
+// stays distinguishable from "not configured", and IncludeTests so a
+// project can turn it back off.
 type jsonQualityClonesConfig struct {
-	MinLOC      *int `json:"min_loc"`
-	MaxDistance *int `json:"max_distance"`
+	MinLOC       *int  `json:"min_loc"`
+	MaxDistance  *int  `json:"max_distance"`
+	IncludeTests *bool `json:"include_tests"`
 }
 
 // jsonQualityRuleConfig is the JSON representation of one rule's overrides.
@@ -572,8 +574,9 @@ func (l *Loader) parse() (*Config, error) {
 		}
 		if jc.Quality.Clones != nil {
 			cfg.Quality.Clones = QualityClonesConfig{
-				MinLOC:      ptrDefault(jc.Quality.Clones.MinLOC, 0),
-				MaxDistance: ptrDefault(jc.Quality.Clones.MaxDistance, 0),
+				MinLOC:       ptrDefault(jc.Quality.Clones.MinLOC, 0),
+				MaxDistance:  jc.Quality.Clones.MaxDistance,
+				IncludeTests: ptrDefault(jc.Quality.Clones.IncludeTests, false),
 			}
 		}
 	}
