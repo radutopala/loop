@@ -55,8 +55,9 @@ func (s *ConfigSuite) TestQualityComplexityAndClonesBlock() {
 					"loc_t":        80
 				},
 				"clones": {
-					"min_loc":      8,
-					"max_distance": 2
+					"min_loc":       8,
+					"max_distance":  2,
+					"include_tests": true
 				}
 			}
 		}`), nil
@@ -70,7 +71,8 @@ func (s *ConfigSuite) TestQualityComplexityAndClonesBlock() {
 	require.Equal(s.T(), 6, cfg.Quality.Complexity.ParamsT)
 	require.Equal(s.T(), 80, cfg.Quality.Complexity.LOCT)
 	require.Equal(s.T(), 8, cfg.Quality.Clones.MinLOC)
-	require.Equal(s.T(), 2, cfg.Quality.Clones.MaxDistance)
+	require.Equal(s.T(), new(2), cfg.Quality.Clones.MaxDistance)
+	require.True(s.T(), cfg.Quality.Clones.IncludeTests)
 }
 
 func (s *ConfigSuite) TestQualityComplexityAndClonesAbsentLeavesZero() {

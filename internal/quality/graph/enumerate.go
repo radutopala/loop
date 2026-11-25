@@ -63,9 +63,10 @@ type walkFunc func(root string, fn fs.WalkDirFunc) error
 
 // Enumerate walks rootDir and returns slash-separated relative paths the
 // engine should hand to the parser, applying the exclusion layers and the
-// file-count cap. Exclusion layers, in order: built-in defaults,
-// rootDir/.gitignore (if present), opts.ExtraExcludePatterns. Scan order
-// is deterministic (filepath.WalkDir).
+// file-count cap. Exclusion layers: built-in defaults and
+// opts.ExtraExcludePatterns, then the repo's .gitignore files (the root
+// one and nested ones, with git's anchoring, negation and precedence).
+// Scan order is deterministic (filepath.WalkDir).
 func Enumerate(rootDir string, opts EnumerateOptions) ([]string, error) {
 	return enumerate(filepath.WalkDir, os.ReadFile, rootDir, opts)
 }
@@ -76,14 +77,13 @@ func enumerate(walk walkFunc, readFile readFileFunc, rootDir string, opts Enumer
 		limit = DefaultMaxFiles
 	}
 
-	gitignorePatterns, err := loadGitignorePatterns(readFile, filepath.Join(rootDir, ".gitignore"))
+	rootRules, err := loadGitignore(readFile, filepath.Join(rootDir, ".gitignore"))
 	if err != nil {
 		return nil, err
 	}
-
-	patterns := make([]string, 0, len(DefaultExcludePatterns)+len(gitignorePatterns)+len(opts.ExtraExcludePatterns))
+	ignores := gitignoreSet{"": rootRules}
+	patterns := make([]string, 0, len(DefaultExcludePatterns)+len(opts.ExtraExcludePatterns))
 	patterns = append(patterns, DefaultExcludePatterns...)
-	patterns = append(patterns, gitignorePatterns...)
 	patterns = append(patterns, opts.ExtraExcludePatterns...)
 
 	var files []string
@@ -99,16 +99,22 @@ func enumerate(walk walkFunc, readFile readFileFunc, rootDir string, opts Enumer
 			return err
 		}
 		rel = filepath.ToSlash(rel)
-		match, dirSkip := matchExcluded(rel, d.IsDir(), patterns)
-		if match {
-			if dirSkip {
+		isDir := d.IsDir()
+		if matchExcluded(rel, isDir, patterns) || ignores.ignored(rel, isDir) {
+			if isDir {
 				return fs.SkipDir
 			}
 			return nil
 		}
-		if !d.IsDir() {
-			files = append(files, rel)
+		if isDir {
+			// An unreadable nested .gitignore is skipped, as git does,
+			// rather than failing the whole scan.
+			if nested, err := loadGitignore(readFile, filepath.Join(path, ".gitignore")); err == nil && len(nested) > 0 {
+				ignores[rel+"/"] = nested
+			}
+			return nil
 		}
+		files = append(files, rel)
 		return nil
 	})
 	if err != nil {
@@ -121,31 +127,35 @@ func enumerate(walk walkFunc, readFile readFileFunc, rootDir string, opts Enumer
 	return files, nil
 }
 
-func matchExcluded(rel string, isDir bool, patterns []string) (matched, dirSkip bool) {
+// matchExcluded reports whether rel matches one of the engine's own
+// exclusion patterns (DefaultExcludePatterns, quality.exclude_paths).
+func matchExcluded(rel string, isDir bool, patterns []string) bool {
 	base := filepath.Base(rel)
-	for _, pat := range patterns {
-		if strings.HasSuffix(pat, "/") {
-			if !isDir {
-				continue
-			}
-			name := strings.TrimSuffix(pat, "/")
-			if base == name {
-				return true, true
-			}
-			if ok, _ := doublestar.Match(name, rel); ok {
-				return true, true
-			}
-			continue
-		}
-		if isDir {
-			continue
-		}
-		if ok, _ := doublestar.Match(pat, rel); ok {
-			return true, false
-		}
-		if ok, _ := doublestar.Match(pat, base); ok {
-			return true, false
+	for _, p := range patterns {
+		if matchPattern(rel, base, isDir, p) {
+			return true
 		}
 	}
-	return false, false
+	return false
+}
+
+func matchPattern(rel, base string, isDir bool, pat string) bool {
+	if name, ok := strings.CutSuffix(pat, "/"); ok {
+		if !isDir {
+			return false
+		}
+		if base == name {
+			return true
+		}
+		ok, _ := doublestar.Match(name, rel)
+		return ok
+	}
+	if isDir {
+		return false
+	}
+	if ok, _ := doublestar.Match(pat, rel); ok {
+		return true
+	}
+	ok, _ := doublestar.Match(pat, base)
+	return ok
 }

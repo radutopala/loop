@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/quality/engine"
 	"github.com/radutopala/loop/internal/quality/graph"
 	"github.com/radutopala/loop/internal/quality/metrics"
@@ -42,7 +44,7 @@ func (a *app) newQualityScanCmd() *cobra.Command {
 		Use:   "scan [path]",
 		Short: "Scan a workspace and print the quality signal",
 		Long: `Scan walks the given directory (default: current working dir),
-parses supported source files, computes the 5 structural metrics, and
+parses supported source files, computes the 6 structural metrics, and
 prints the aggregated quality_signal plus per-rule pass/fail.
 
 Exit code is always 0 unless the engine crashes. Rule status is data:
@@ -57,7 +59,7 @@ Exit code is always 0 unless the engine crashes. Rule status is data:
 			if err != nil {
 				return fmt.Errorf("init parser: %w", err)
 			}
-			return a.runQualityScan(c.Context(), c.OutOrStdout(), c.ErrOrStderr(), p, engine.Config{MaxFiles: maxFiles}, root, jsonOut)
+			return a.runQualityScan(c.Context(), c.OutOrStdout(), c.ErrOrStderr(), p, maxFiles, root, jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit machine-readable JSON instead of the human summary")
@@ -101,7 +103,42 @@ type citationReport struct {
 	Note string `json:"note,omitempty"`
 }
 
-func (a *app) runQualityScan(ctx context.Context, out, stderr io.Writer, p parser.Parser, cfg engine.Config, dirPath string, jsonOut bool) error {
+// resolveQualityConfig maps the merged global → project config for dirPath
+// into the engine and rules configs. A config that fails to load leaves
+// its layer out, with a warning on stderr (a missing global config is
+// silent): a broken project config falls
+// back to the global one, a broken global one to the defaults. A non-zero
+// maxFiles (the --max-files flag) wins over the config.
+func (a *app) resolveQualityConfig(stderr io.Writer, dirPath string, maxFiles int) (engine.Config, rules.Config) {
+	global, err := a.configReload()
+	if err != nil {
+		// No global config is the normal case outside a Loop install.
+		if !errors.Is(err, fs.ErrNotExist) {
+			fmt.Fprintf(stderr, "warning: ignoring the global config: %v\n", err)
+		}
+		global = &config.Config{}
+	}
+	merged, err := config.LoadProjectConfig(dirPath, global)
+	if err != nil {
+		fmt.Fprintf(stderr, "warning: ignoring the project config: %v\n", err)
+		merged = global
+	}
+	engCfg := engine.Config{
+		MaxFiles:     merged.Quality.MaxFiles,
+		ExcludePaths: merged.Quality.ExcludePaths,
+		Metrics:      buildMetricsConfig(merged.Quality),
+	}
+	if maxFiles != 0 {
+		engCfg.MaxFiles = maxFiles
+	}
+	rulesCfg := rules.DefaultConfig()
+	if rc := buildRulesConfig(merged.Quality.Rules); rc != nil {
+		rulesCfg = *rc
+	}
+	return engCfg, rulesCfg
+}
+
+func (a *app) runQualityScan(ctx context.Context, out, stderr io.Writer, p parser.Parser, maxFiles int, dirPath string, jsonOut bool) error {
 	if dirPath == "" {
 		wd, err := a.sys.Getwd()
 		if err != nil {
@@ -110,8 +147,9 @@ func (a *app) runQualityScan(ctx context.Context, out, stderr io.Writer, p parse
 		dirPath = wd
 	}
 
+	engCfg, rulesCfg := a.resolveQualityConfig(stderr, dirPath, maxFiles)
 	cache := graph.NewCache()
-	eng := engine.New(p, noopStore{}, cache, engine.OSFileSystem{}, cfg, nil, nil)
+	eng := engine.New(p, noopStore{}, cache, engine.OSFileSystem{}, engCfg, nil, nil)
 	res, err := eng.Scan(ctx, "cli", "main", dirPath, "")
 	if err != nil {
 		var tooLarge *graph.RepoTooLargeError
@@ -123,7 +161,7 @@ func (a *app) runQualityScan(ctx context.Context, out, stderr io.Writer, p parse
 	}
 
 	g, _ := cache.Get("cli")
-	ruleResults := rules.Run(rules.DefaultConfig(), g, res.Signal)
+	ruleResults := rules.Run(rulesCfg, g, res.Signal)
 
 	report := buildScanReport(dirPath, res, ruleResults)
 	if jsonOut {

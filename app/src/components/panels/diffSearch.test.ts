@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { ParsedFile } from "./DiffViewer";
 import { fuzzyScore, lineAddr, matchesInLine, parseQuery, searchContent, searchParsedFiles, searchPaths } from "./diffSearch";
+import type { ParsedFile } from "./diffTypes";
 
 describe("fuzzyScore", () => {
   it("returns null when the query is not a subsequence", () => {

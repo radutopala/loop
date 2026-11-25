@@ -56,8 +56,9 @@ Quality is driven by `quality.*` keys in `~/.loop/config.json` and per-project `
     "loc_t":        60
   },
   "clones": {                          // SimHash clone detector
-    "min_loc":      5,                 // skip functions smaller than this
-    "max_distance": 3                  // 0 = exact, up to 64
+    "min_loc":       5,                // skip functions smaller than this
+    "max_distance":  3,                // 0 = exact, up to 64
+    "include_tests": false             // count test files' functions too
   },
   "rules": {
     "signal_floor":            { "enabled": true, "threshold": 5000 },
@@ -70,7 +71,9 @@ Quality is driven by `quality.*` keys in `~/.loop/config.json` and per-project `
 }
 ```
 
-Built-in path exclusions (always applied): `.git/`, `node_modules/`, `dist/`, `build/`, `target/`, `vendor/`, `*.min.js`, `*.generated.go` (see `internal/quality/graph/enumerate.go`). The repo's `.gitignore` is layered on top, then `quality.exclude_paths` is appended.
+Built-in path exclusions (always applied): `.git/`, `node_modules/`, `dist/`, `build/`, `target/`, `vendor/`, `*.min.js`, `*.generated.go` (see `internal/quality/graph/enumerate.go`). `quality.exclude_paths` is appended to them. The repo's `.gitignore` files are layered on top, the root one and those in subdirectories, with git's rules: a pattern with a leading or middle `/` is anchored to its file's directory, a bare name matches files and directories at any depth below it, `!` re-includes, and a deeper file or later line wins. An unreadable nested `.gitignore` is skipped.
+
+The clone detector leaves test files out unless `quality.clones.include_tests` is set: Go `*_test.go`, JS/TS `*.test.*` and `*.spec.*`, and anything under a `__tests__/` or Go `testdata/` dir. Table-driven tests repeat their shape on purpose, and would otherwise dominate `duplication_ceiling`.
 
 Config changes drop the engine's parser/graph cache for the affected channel but do **not** auto-trigger a rescan — the panel keeps rendering the previous snapshot until the next manual scan rebuilds with the new config.
 
@@ -150,7 +153,7 @@ loop quality:evolution [path] [--since-months N] [--max-commits N] [--json]
 loop quality:c4        [path]                    [--max-files <n>] [--json]
 ```
 
-All subcommands run a one-shot scan of `[path]` (defaults to CWD). `--json` emits the same payload as the matching MCP tool / HTTP endpoint. Exit code 0 unless the engine itself crashes — rule pass/fail (for `scan`) is data in the output.
+All subcommands run a one-shot scan of `[path]` (defaults to CWD) with the global `quality` config merged with `[path]`'s own `.loop/config.json`; `--max-files` overrides `quality.max_files`. A config that fails to load is skipped with a warning on stderr. Unlike a daemon scan of a worktree thread, the CLI doesn't layer the parent repo's project config. `--json` emits the same payload as the matching MCP tool / HTTP endpoint. Exit code 0 unless the engine itself crashes — rule pass/fail (for `scan`) is data in the output.
 
 - **`scan`** — full scan; prints the signal + metric breakdown.
 - **`cycles`** — lists Tarjan SCCs > 1 file.
@@ -252,8 +255,8 @@ internal/quality/
 ├── parser/                 # tree-sitter wrapper + .scm queries (go/ts/js)
 │   └── queries/
 ├── graph/                  # file enumeration, .gitignore, dependency graph + cache
-├── metrics/                # 5 metrics + signal aggregation + tile attribution
-├── rules/                  # 3 built-in rules + per-rule config
+├── metrics/                # 6 metrics + signal aggregation + tile attribution
+├── rules/                  # 6 built-in rules + per-rule config
 ├── snapshot/               # SQL-backed persistence (sql_store.go)
 ├── whatif/                 # shadow-graph mutation simulator + predicted Δ signal
 ├── evolution/              # git-log coupling / churn / bus-factor analysis

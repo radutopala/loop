@@ -1,5 +1,5 @@
 import type { DiffFile } from "../../api/loopApi";
-import type { ParsedFile } from "./DiffViewer";
+import type { ParsedFile } from "./diffTypes";
 
 // ── Fuzzy path matching ───────────────────────────────────────────────────
 //

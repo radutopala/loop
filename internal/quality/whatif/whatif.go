@@ -2,7 +2,7 @@
 // quality_signal without touching the cached graph. The caller hands us
 // a list of mutations (delete a file, move a file between modules,
 // split a file into N parts); we project the graph into a path-based
-// shadow form, apply the mutations, reassemble, recompute all 5
+// shadow form, apply the mutations, reassemble, recompute all 6
 // metrics, and return the baseline-vs-predicted breakdown plus the
 // signed delta.
 //
@@ -310,6 +310,11 @@ func synthSplitPath(orig string, i int) string {
 	base := path.Base(orig)
 	ext := path.Ext(base)
 	stem := strings.TrimSuffix(base, ext)
+	// Go test files keep their _test suffix last, so each part is still a
+	// test file to the metrics (foo_test.go → foo.part1_test.go).
+	if goStem, ok := strings.CutSuffix(base, "_test.go"); ok {
+		stem, ext = goStem, "_test.go"
+	}
 	if dir == "." {
 		return fmt.Sprintf("%s.part%d%s", stem, i, ext)
 	}

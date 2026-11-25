@@ -364,12 +364,12 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 			name:        "QualityClones/SingleFieldOverride",
 			projectJSON: `{"quality": {"clones": {"max_distance": 1}}}`,
 			mainCfg: &Config{Quality: QualityConfig{Clones: QualityClonesConfig{
-				MinLOC: 10, MaxDistance: 3,
+				MinLOC: 10, MaxDistance: new(3),
 			}}},
 			assert: func(merged, main *Config) {
-				require.Equal(s.T(), 1, merged.Quality.Clones.MaxDistance)
+				require.Equal(s.T(), new(1), merged.Quality.Clones.MaxDistance)
 				require.Equal(s.T(), 10, merged.Quality.Clones.MinLOC)
-				require.Equal(s.T(), 3, main.Quality.Clones.MaxDistance)
+				require.Equal(s.T(), new(3), main.Quality.Clones.MaxDistance)
 			},
 		},
 		{
@@ -377,17 +377,39 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 			projectJSON: `{"quality": {"clones": {"min_loc": 7, "max_distance": 2}}}`,
 			mainCfg:     &Config{Quality: QualityConfig{}},
 			assert: func(merged, _ *Config) {
-				require.Equal(s.T(), QualityClonesConfig{MinLOC: 7, MaxDistance: 2}, merged.Quality.Clones)
+				require.Equal(s.T(), QualityClonesConfig{MinLOC: 7, MaxDistance: new(2)}, merged.Quality.Clones)
+			},
+		},
+		{
+			name:        "QualityClones/ExplicitZeroMaxDistance",
+			projectJSON: `{"quality": {"clones": {"max_distance": 0}}}`,
+			mainCfg: &Config{Quality: QualityConfig{Clones: QualityClonesConfig{
+				MaxDistance: new(3),
+			}}},
+			assert: func(merged, main *Config) {
+				require.Equal(s.T(), new(0), merged.Quality.Clones.MaxDistance)
+				require.Equal(s.T(), new(3), main.Quality.Clones.MaxDistance)
+			},
+		},
+		{
+			name:        "QualityClones/IncludeTestsTurnedOff",
+			projectJSON: `{"quality": {"clones": {"include_tests": false}}}`,
+			mainCfg: &Config{Quality: QualityConfig{Clones: QualityClonesConfig{
+				MinLOC: 10, IncludeTests: true,
+			}}},
+			assert: func(merged, main *Config) {
+				require.Equal(s.T(), QualityClonesConfig{MinLOC: 10}, merged.Quality.Clones)
+				require.True(s.T(), main.Quality.Clones.IncludeTests)
 			},
 		},
 		{
 			name:        "QualityClones/AbsentKeepsGlobal",
 			projectJSON: `{"quality": {}}`,
 			mainCfg: &Config{Quality: QualityConfig{Clones: QualityClonesConfig{
-				MinLOC: 10, MaxDistance: 3,
+				MinLOC: 10, MaxDistance: new(3),
 			}}},
 			assert: func(merged, _ *Config) {
-				require.Equal(s.T(), QualityClonesConfig{MinLOC: 10, MaxDistance: 3}, merged.Quality.Clones)
+				require.Equal(s.T(), QualityClonesConfig{MinLOC: 10, MaxDistance: new(3)}, merged.Quality.Clones)
 			},
 		},
 		{

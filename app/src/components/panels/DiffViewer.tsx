@@ -5,30 +5,11 @@ import { useTheme } from "../../ThemeContext";
 import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
 import { lineAddr, matchesInLine, parseQuery, searchContent, searchPaths } from "./diffSearch";
+import type { HunkLine, ParsedFile, ParsedHunk } from "./diffTypes";
 
 // ── Types ──
 
-export interface ParsedHunk {
-  header: string;
-  lines: HunkLine[];
-}
-
-export interface HunkLine {
-  type: "add" | "del" | "ctx";
-  content: string;
-  oldNum: number | null;
-  newNum: number | null;
-}
-
-export interface ParsedFile {
-  path: string;
-  hunks: ParsedHunk[];
-  // Set when the diff was parsed in uncommitted mode so the file list can
-  // disambiguate a partially-staged path that appears twice (once staged,
-  // once unstaged). Undefined for branch-to-branch diffs where the
-  // distinction does not apply.
-  status?: DiffFileStatus;
-}
+export type { HunkLine, ParsedFile, ParsedHunk } from "./diffTypes";
 
 /** Stable identifier that pairs a file with its status — used as the key
  * for expandedFiles and to look up the matching ParsedFile. Two rows for

@@ -616,13 +616,14 @@ type QualityComplexityConfig struct {
 }
 
 // QualityClonesConfig mirrors metrics.ClonesConfig in the project-config
-// layer. MinLOC zero falls back to default; MaxDistance zero is treated
-// as "exact match only" (legitimate config), so a separate explicit-set
-// signal is unnecessary — the json layer uses pointers to disambiguate
-// "absent" from "0".
+// layer. MinLOC zero falls back to the default. MaxDistance is a pointer
+// because 0 is a legitimate setting (exact-shape duplicates only); nil
+// means not configured, which falls back to the default.
 type QualityClonesConfig struct {
 	MinLOC      int
-	MaxDistance int
+	MaxDistance *int
+	// IncludeTests counts test files' functions as clone candidates.
+	IncludeTests bool
 }
 
 // QualityRuleConfig is the project-config override for one built-in rule.

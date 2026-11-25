@@ -25,6 +25,12 @@ type ClonesConfig struct {
 	// MaxDistance is the max hamming distance between two SimHash
 	// fingerprints in the same cluster. 0 = exact, 64 = anything.
 	MaxDistance int
+
+	// IncludeTests counts functions in test files (graph.IsTestPath) as
+	// clone candidates. Off by default: table-driven tests repeat their
+	// shape on purpose, and would drown out duplication in the code they
+	// test.
+	IncludeTests bool
 }
 
 // DefaultClonesConfig returns the production knobs.
@@ -98,7 +104,7 @@ func ComputeClones(g *graph.Graph, cfg ClonesConfig) Result {
 		return Result{Name: ClonesName, Raw: 0, Score: 1.0, Detail: ClonesDetail{}}
 	}
 
-	candidates := collectCloneCandidates(g, cfg.MinLOC)
+	candidates := collectCloneCandidates(g, cfg)
 	if len(candidates) == 0 {
 		return Result{Name: ClonesName, Raw: 0, Score: 1.0, Detail: ClonesDetail{}}
 	}
@@ -172,11 +178,14 @@ type cloneCandidate struct {
 	fp        uint64
 }
 
-func collectCloneCandidates(g *graph.Graph, minLOC int) []cloneCandidate {
+func collectCloneCandidates(g *graph.Graph, cfg ClonesConfig) []cloneCandidate {
 	var out []cloneCandidate
 	for _, n := range g.Nodes {
+		if !cfg.IncludeTests && graph.IsTestPath(n.Path) {
+			continue
+		}
 		for _, f := range n.Functions {
-			if f.Body == nil || f.Body.LOC < minLOC {
+			if f.Body == nil || f.Body.LOC < cfg.MinLOC {
 				continue
 			}
 			if len(f.Body.Shingles) == 0 {

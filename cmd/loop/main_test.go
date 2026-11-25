@@ -482,6 +482,7 @@ func TestMainSuite(t *testing.T) {
 
 func (s *MainSuite) SetupTest() {
 	s.app = newApp()
+	s.app.configReload = func() (*config.Config, error) { return &config.Config{}, nil }
 	s.app.loadProjectMemoryPaths = func(_ string) []string { return nil }
 	// serve points these at the configured proxy; keep the process-wide
 	// defaults out of it.

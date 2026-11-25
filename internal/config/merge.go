@@ -453,7 +453,10 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 				merged.Quality.Clones.MinLOC = *pc.Quality.Clones.MinLOC
 			}
 			if pc.Quality.Clones.MaxDistance != nil {
-				merged.Quality.Clones.MaxDistance = *pc.Quality.Clones.MaxDistance
+				merged.Quality.Clones.MaxDistance = new(*pc.Quality.Clones.MaxDistance)
+			}
+			if pc.Quality.Clones.IncludeTests != nil {
+				merged.Quality.Clones.IncludeTests = *pc.Quality.Clones.IncludeTests
 			}
 		}
 	}

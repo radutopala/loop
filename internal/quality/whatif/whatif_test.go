@@ -244,6 +244,8 @@ func (s *WhatifSuite) TestSynthSplitPathRootFile() {
 
 func (s *WhatifSuite) TestSynthSplitPathNestedFile() {
 	require.Equal(s.T(), "internal/api/handler.part3.go", synthSplitPath("internal/api/handler.go", 3))
+	require.Equal(s.T(), "internal/api/handler.part1_test.go", synthSplitPath("internal/api/handler_test.go", 1))
+	require.Equal(s.T(), "main.part2_test.go", synthSplitPath("main_test.go", 2))
 }
 
 func (s *WhatifSuite) TestHasNodeReturnsFalseForMissing() {
