@@ -8,8 +8,16 @@ import { FileLink } from "./FileLink";
 // resolve the current channel without prop drilling through every helper.
 export const ChannelContext = createContext<string>("");
 
-export function buildMessageStyles(colors: ColorPalette): Record<string, React.CSSProperties> {
-  return {
+// One styles object is shared by every caller with the same palette, so it is
+// read-only: an in-place edit would restyle every message.
+export type MessageStyles = Readonly<Record<string, Readonly<React.CSSProperties>>>;
+
+const messageStylesCache = new WeakMap<ColorPalette, MessageStyles>();
+
+export function buildMessageStyles(colors: ColorPalette): MessageStyles {
+  const cached = messageStylesCache.get(colors);
+  if (cached) return cached;
+  const styles: Record<string, React.CSSProperties> = {
     messages: {
       flex: 1,
       overflowY: "auto",
@@ -122,6 +130,8 @@ export function buildMessageStyles(colors: ColorPalette): Record<string, React.C
       verticalAlign: "top" as const,
     },
   };
+  messageStylesCache.set(colors, styles);
+  return styles;
 }
 
 export function buildActivityStyle(colors: ColorPalette): React.CSSProperties {

@@ -109,33 +109,37 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
   // Pair tool_use with its tool_result by tool_use_id so the renderer can
   // collapse them into a single pill with output. Skip pairing when the
   // tool_use_id is empty (live events without a stable id).
-  const allItems: TimelineItem[] = orderTimelineItems([...items, ...liveTail], new Set(backendQueue.filter((m) => m.adding).map((m) => m.msg_id)));
-  const resultsByToolUseID = new Map<string, { text: string; is_error: boolean; truncated: boolean }>();
-  for (const it of allItems) {
-    if (it.kind === "tool_result" && it.tool_use_id) {
-      resultsByToolUseID.set(it.tool_use_id, { text: it.text, is_error: it.is_error ?? false, truncated: it.truncated ?? false });
+  const allItems: TimelineItem[] = useMemo(() => orderTimelineItems([...items, ...liveTail], new Set(backendQueue.filter((m) => m.adding).map((m) => m.msg_id))), [items, liveTail, backendQueue]);
+  const { resultsByToolUseID, skippedToolResultIDs } = useMemo(() => {
+    const results = new Map<string, { text: string; is_error: boolean; truncated: boolean }>();
+    for (const it of allItems) {
+      if (it.kind === "tool_result" && it.tool_use_id) {
+        results.set(it.tool_use_id, { text: it.text, is_error: it.is_error ?? false, truncated: it.truncated ?? false });
+      }
     }
-  }
-  const skippedToolResultIDs = new Set<string>();
-  for (const it of allItems) {
-    if (it.kind === "tool_use" && it.tool_use_id && resultsByToolUseID.has(it.tool_use_id)) {
-      skippedToolResultIDs.add(it.tool_use_id);
+    const skipped = new Set<string>();
+    for (const it of allItems) {
+      if (it.kind === "tool_use" && it.tool_use_id && results.has(it.tool_use_id)) {
+        skipped.add(it.tool_use_id);
+      }
     }
-  }
+    return { resultsByToolUseID: results, skippedToolResultIDs: skipped };
+  }, [allItems]);
   // While compacting is actively in progress the bottom "Compacting context..."
   // indicator is showing — suppress the trailing in-timeline "Compacted context"
   // marker so we don't render the past-tense stamp before the action finishes.
   // Once agentActivity transitions away (to "model" etc.) the marker reappears.
-  let suppressedCompactingId: number | null = null;
-  if (isRunning && agentActivity?.activity === "compacting") {
+  const isCompacting = isRunning && agentActivity?.activity === "compacting";
+  const visibleAllItems = useMemo(() => {
+    if (!isCompacting) return allItems;
     for (let i = allItems.length - 1; i >= 0; i--) {
       if (allItems[i]!.kind === "compacting") {
-        suppressedCompactingId = allItems[i]!.id;
-        break;
+        const suppressedId = allItems[i]!.id;
+        return allItems.filter((it) => !(it.kind === "compacting" && it.id === suppressedId));
       }
     }
-  }
-  const visibleAllItems = suppressedCompactingId !== null ? allItems.filter((it) => !(it.kind === "compacting" && it.id === suppressedCompactingId)) : allItems;
+    return allItems;
+  }, [allItems, isCompacting]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
@@ -294,26 +298,47 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
   //     we filter it out for the "waiting behind" list.
   // Fallback: before the run's agent.status arrives, the row it claimed.
   const effectiveProcessingMsgId = processingMsgIdOf(processingMsgId, isRunning, backendQueue);
-  // Messages waiting behind the currently-processing one; deletable from the popup.
-  const queuedMessages = backendQueue.filter((m) => m.msg_id !== effectiveProcessingMsgId);
-
-  // Queue position labels ("1/3" etc.) keyed by msg_id. Backend order is
-  // already (priority DESC, id ASC), so positions are simply 1-indexed. Rows
-  // added to the running turn aren't waiting their turn and get no position.
-  const waiting = queuedMessages.filter((m) => !m.adding);
-  const queuePositionByMsgId = new Map<string, string>();
-  waiting.forEach((m, idx) => {
-    queuePositionByMsgId.set(m.msg_id, `${idx + 1}/${waiting.length}`);
-  });
-  const addingMsgIdSet = new Set(queuedMessages.filter((m) => m.adding).map((m) => m.msg_id));
-  // Set of msg_ids the backend considers queued. Used to drive the per-bubble
-  // "queued" label so it stays synced with the popup even when the locally
-  // loaded message's is_processed field is stale.
-  const queuedMsgIdSet = new Set(queuedMessages.map((m) => m.msg_id));
+  const { queuedMessages, queuePositionByMsgId, addingMsgIdSet, queuedMsgIdSet } = useMemo(() => {
+    // Messages waiting behind the currently-processing one; deletable from the popup.
+    const queued = backendQueue.filter((m) => m.msg_id !== effectiveProcessingMsgId);
+    // Queue position labels ("1/3" etc.) keyed by msg_id. Backend order is
+    // already (priority DESC, id ASC), so positions are simply 1-indexed. Rows
+    // added to the running turn aren't waiting their turn and get no position.
+    const waiting = queued.filter((m) => !m.adding);
+    const positions = new Map<string, string>();
+    waiting.forEach((m, idx) => {
+      positions.set(m.msg_id, `${idx + 1}/${waiting.length}`);
+    });
+    const adding = new Set(queued.filter((m) => m.adding).map((m) => m.msg_id));
+    // Set of msg_ids the backend considers queued. Used to drive the per-bubble
+    // "queued" label so it stays synced with the popup even when the locally
+    // loaded message's is_processed field is stale.
+    const queuedIds = new Set(queued.map((m) => m.msg_id));
+    return { queuedMessages: queued, queuePositionByMsgId: positions, addingMsgIdSet: adding, queuedMsgIdSet: queuedIds };
+  }, [backendQueue, effectiveProcessingMsgId]);
   // The bot messages that end a finished turn carry its Explain action.
-  const turnEnds = turnEndMsgIds(
-    visibleAllItems.flatMap((it) => (it.kind === "message" ? [it.data] : [])),
-    isRunning ? effectiveProcessingMsgId : null,
+  const turnEnds = useMemo(
+    () =>
+      turnEndMsgIds(
+        visibleAllItems.flatMap((it) => (it.kind === "message" ? [it.data] : [])),
+        isRunning ? effectiveProcessingMsgId : null,
+      ),
+    [visibleAllItems, isRunning, effectiveProcessingMsgId],
+  );
+  // Pre-group and filter tool runs so streaming tokens and activity updates
+  // reuse the same groups. Tool events rebuild them; ToolRunBlock then skips
+  // the runs whose items and results are unchanged (see sameToolRun).
+  const renderedGroups = useMemo(
+    () =>
+      groupTimelineItems(visibleAllItems, queuedMsgIdSet).map((g) =>
+        g.kind === "message"
+          ? g
+          : {
+              ...g,
+              visible: g.items.filter((it) => !(it.kind === "tool_result" && it.tool_use_id && skippedToolResultIDs.has(it.tool_use_id))),
+            },
+      ),
+    [visibleAllItems, queuedMsgIdSet, skippedToolResultIDs],
   );
 
   // Track the viewport status (above / visible / below) of every user
@@ -430,35 +455,38 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
               {loading ? "Loading..." : "Load older messages"}
             </button>
           )}
-          {(() => {
-            const groups = groupTimelineItems(visibleAllItems, queuedMsgIdSet);
-            const lastIdx = groups.length - 1;
-            return groups.map((g, idx) => {
-              if (g.kind === "message") {
-                const msg = g.data.data;
-                return (
-                  <MessageBubble
-                    key={`m-${msg.msg_id}`}
-                    message={msg}
-                    showProcessing={isRunning && !msg.is_bot && msg.msg_id === effectiveProcessingMsgId}
-                    showQueued={!msg.is_bot && queuedMsgIdSet.has(msg.msg_id)}
-                    queuePosition={queuePositionByMsgId.get(msg.msg_id)}
-                    adding={addingMsgIdSet.has(msg.msg_id)}
-                    highlighted={msg.id === highlightedMsgId}
-                    onQuote={onQuote}
-                    turnEnd={turnEnds.has(msg.msg_id)}
-                    onFork={onFork}
-                  />
-                );
-              }
-              const visible = g.items.filter((it) => !(it.kind === "tool_result" && it.tool_use_id && skippedToolResultIDs.has(it.tool_use_id)));
-              if (visible.length === 0) return null;
-              if (visible.length === 1) {
-                return <div key={`g-${g.items[0]!.id}`}>{renderTimelineItem(visible[0]!, resultsByToolUseID, skippedToolResultIDs)}</div>;
-              }
-              return <ToolRunBlock key={`g-${g.items[0]!.id}`} items={visible} resultsByToolUseID={resultsByToolUseID} skippedToolResultIDs={skippedToolResultIDs} isActive={idx === lastIdx} />;
-            });
-          })()}
+          {renderedGroups.map((g, idx) => {
+            if (g.kind === "message") {
+              const msg = g.data.data;
+              return (
+                <MessageBubble
+                  key={`m-${msg.msg_id}`}
+                  message={msg}
+                  showProcessing={isRunning && !msg.is_bot && msg.msg_id === effectiveProcessingMsgId}
+                  showQueued={!msg.is_bot && queuedMsgIdSet.has(msg.msg_id)}
+                  queuePosition={queuePositionByMsgId.get(msg.msg_id)}
+                  adding={addingMsgIdSet.has(msg.msg_id)}
+                  highlighted={msg.id === highlightedMsgId}
+                  onQuote={onQuote}
+                  turnEnd={turnEnds.has(msg.msg_id)}
+                  onFork={onFork}
+                />
+              );
+            }
+            if (g.visible.length === 0) return null;
+            if (g.visible.length === 1) {
+              return <div key={`g-${g.items[0]!.id}`}>{renderTimelineItem(g.visible[0]!, resultsByToolUseID, skippedToolResultIDs)}</div>;
+            }
+            return (
+              <ToolRunBlock
+                key={`g-${g.items[0]!.id}`}
+                items={g.visible}
+                resultsByToolUseID={resultsByToolUseID}
+                skippedToolResultIDs={skippedToolResultIDs}
+                isActive={idx === renderedGroups.length - 1}
+              />
+            );
+          })}
           {isRunning && agentActivity && <AgentActivityIndicator activity={agentActivity} />}
           {chatGateApproval && (
             <ApprovalCard

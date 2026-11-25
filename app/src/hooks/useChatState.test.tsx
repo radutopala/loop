@@ -188,6 +188,17 @@ describe("useChatState", () => {
   });
 
   describe("message events", () => {
+    it("keeps the same messages array while a reply streams", async () => {
+      const { result, send } = await ready();
+      const before = result.current.messages;
+      send(ev("message.streaming", { content: "hel" }));
+      expect(result.current.messages).toBe(before);
+      const { id: _id, created_at: _c, channel_id: _ch, ...data } = message("b1", { is_bot: true });
+      send(ev("message.created", data));
+      expect(result.current.messages).not.toBe(before);
+      expect(result.current.messages.map((m) => m.msg_id)).toContain("b1");
+    });
+
     it("streams a bot reply until the message lands", async () => {
       const { result, send } = await ready();
       send(ev("message.streaming", { content: "hel" }));
