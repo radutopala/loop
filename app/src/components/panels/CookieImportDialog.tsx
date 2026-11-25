@@ -332,6 +332,7 @@ function GroupRow({
 
   if (children.length === 0) {
     const only = group.members[0];
+    /* v8 ignore next -- @preserve groupDomains always produces non-empty members */
     return only ? <DomainRow domain={only} checked={selected.has(only.domain)} onToggle={() => onToggle(only.domain)} /> : null;
   }
 

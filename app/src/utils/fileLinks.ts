@@ -33,6 +33,8 @@ export interface ParsedCandidate {
 //   - Two-segment minimum prevents matching common URLs ("foo.com")
 //   - Limit chars to filename-safe set (no spaces / quotes / parens)
 //   - Trailing punctuation (".", ",", ")", "]", "'", '"', ";", ":") is excluded
+//   - A match never starts right after `/`, `.` or a word char, so a path
+//     inside a URL (https://host/a/b.txt) isn't taken
 const PATH_REGEX = /(?<![\w./])((?:\/|(?:[\w.\-+@]+\/)+)[\w.\-+@]+(?:\/[\w.\-+@]+)*\.[a-zA-Z0-9]{1,8})(?::(\d+))?(?![\w/])/g;
 
 export function findCandidatePaths(text: string): ParsedCandidate[] {
@@ -42,9 +44,8 @@ export function findCandidatePaths(text: string): ParsedCandidate[] {
   for (;;) {
     const m = PATH_REGEX.exec(text);
     if (!m) break;
-    const raw = m[1] ?? "";
-    if (!raw) continue;
-    if (looksLikeUrl(text, m.index)) continue;
+    // Group 1 is required by the regex, so it's always a non-empty match.
+    const raw = m[1]!;
     const lineStr = m[2];
     out.push({
       raw,
@@ -104,7 +105,8 @@ export function commandDirs(command: string): { end: number; dir: string }[] {
   for (;;) {
     const m = CD_REGEX.exec(command);
     if (!m) break;
-    const arg = (m[1] ?? m[2] ?? m[3] ?? "").replace(/\/+$/, "");
+    // One of the three alternatives always matches.
+    const arg = (m[1] ?? m[2] ?? m[3])!.replace(/\/+$/, "");
     const prev = out[out.length - 1]?.dir;
     const dir = arg.startsWith("/") ? arg : prev && arg && !arg.startsWith("~") && !arg.startsWith("$") ? joinPath(prev, arg) : null;
     if (dir) out.push({ end: m.index + m[0].length, dir });
@@ -130,13 +132,6 @@ function joinPath(dir: string, rel: string): string {
     } else parts.push(seg);
   }
   return parts.join("/") || "/";
-}
-
-// Skip http(s)://example.com/file.ext and similar URL patterns.
-function looksLikeUrl(text: string, idx: number): boolean {
-  if (idx < 3) return false;
-  const before = text.slice(Math.max(0, idx - 8), idx);
-  return /https?:\/\/$/.test(before) || /file:\/\/$/.test(before);
 }
 
 // ── Per-channel validation cache ──

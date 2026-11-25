@@ -54,10 +54,10 @@ export function SidebarWorktreeButton({
   // Measured before paint. Only top and left are taken: the menu's own height
   // is capped to the window already, and a maxHeight here would change what
   // the resize observer measures next.
+  // Only called while the menu is open, so both elements are mounted.
   const place = useCallback(() => {
-    const button = buttonRef.current;
-    const menu = menuRef.current;
-    if (!button || !menu) return;
+    const button = buttonRef.current!;
+    const menu = menuRef.current!;
     const { top, left } = placeMenu(button.getBoundingClientRect(), { width: menu.offsetWidth, height: menu.offsetHeight }, { width: window.innerWidth, height: window.innerHeight });
     setCoords((c) => (c.top === top && c.left === left ? c : { top, left }));
   }, []);
@@ -74,7 +74,7 @@ export function SidebarWorktreeButton({
     window.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", place);
     const observer = new ResizeObserver(place);
-    if (menuRef.current) observer.observe(menuRef.current);
+    observer.observe(menuRef.current!);
     return () => {
       window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", place);
@@ -250,7 +250,7 @@ export function SidebarWorktreeButton({
             {hasWorktrees && (
               <WorktreeRows
                 testId="sidebar-worktree-worktrees"
-                worktrees={branchInfo?.worktrees ?? []}
+                worktrees={branchInfo!.worktrees}
                 search={search}
                 onSelectThread={onSelectThread}
                 onImport={onImportWorktree && ((path) => onImportWorktree(channelId, path))}

@@ -45,5 +45,8 @@ describe("followTooltip", () => {
     expect(followTooltip({ ...DEFAULT_EDITOR_CONFIG, follow_active_file_from: "global" }, { on: false, source: "channel" })).toBe(
       "Follow active file: off\nThe tree stays where it is as tabs change\nSet here, for this channel only; the global config (editor.follow_active_file) has it on",
     );
+    expect(followTooltip({ ...DEFAULT_EDITOR_CONFIG, follow_active_file: false }, { on: true, source: "channel" })).toBe(
+      "Follow active file: on\nThe tree opens and scrolls to the file of the active tab\nSet here, for this channel only; the default (editor.follow_active_file) has it off",
+    );
   });
 });

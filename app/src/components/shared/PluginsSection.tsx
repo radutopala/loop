@@ -122,12 +122,11 @@ function InstallFlow({ colors, initialImage, dev: initialDev, onDone, onCancel }
     }
   };
 
-  const install = async () => {
-    if (!candidate) return;
+  const install = async (c: PluginCandidate) => {
     setBusy(true);
     setError(null);
     try {
-      await installPlugin(candidate, candidate.capabilities);
+      await installPlugin(c, c.capabilities);
       setCandidate(null);
       setImage(initialImage);
       setDev(initialDev);
@@ -157,7 +156,7 @@ function InstallFlow({ colors, initialImage, dev: initialDev, onDone, onCancel }
         ))}
         {error && <div style={{ color: colors.error, marginTop: 8 }}>{error}</div>}
         <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-          <button data-testid="plugin-approve" onClick={install} disabled={busy} style={buttonStyle(colors, { disabled: busy })}>
+          <button data-testid="plugin-approve" onClick={() => install(candidate)} disabled={busy} style={buttonStyle(colors, { disabled: busy })}>
             {busy ? "Installing…" : candidate.previous_version ? "Approve and upgrade" : "Approve and install"}
           </button>
           <button

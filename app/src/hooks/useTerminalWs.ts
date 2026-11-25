@@ -60,7 +60,8 @@ export function useTerminalWs({
 
   // Use a ref for send to break the circular dependency between
   // handleMessage (needs onSessionFailed) and send (needs handleMessage).
-  const sendRef = useRef<(data: string) => void>(() => {});
+  // It's set below on every render, before anything can call it.
+  const sendRef = useRef<(data: string) => void>(null!);
   /** Guards against infinite retry loops: only retry once after a failed attach. */
   const retriedRef = useRef(false);
 

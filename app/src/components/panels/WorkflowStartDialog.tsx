@@ -152,7 +152,7 @@ export function WorkflowStartDialog({ show, startInputs, selectedStartDef, color
               minHeight: 220,
               resize: "vertical",
               background: colors.bg,
-              border: `1px solid ${saveError ? (colors.error ?? "#ef4444") : colors.border}`,
+              border: `1px solid ${saveError ? colors.error : colors.border}`,
               borderRadius: 6,
               color: colors.textLight,
               fontFamily: fonts.mono,
@@ -162,7 +162,7 @@ export function WorkflowStartDialog({ show, startInputs, selectedStartDef, color
               outline: "none",
             }}
           />
-          {saveError && <div style={{ fontSize: 11.5, color: colors.error ?? "#ef4444", marginTop: 6, whiteSpace: "pre-wrap" }}>{saveError}</div>}
+          {saveError && <div style={{ fontSize: 11.5, color: colors.error, marginTop: 6, whiteSpace: "pre-wrap" }}>{saveError}</div>}
         </div>
 
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>

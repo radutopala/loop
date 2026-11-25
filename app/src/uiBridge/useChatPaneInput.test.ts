@@ -1,7 +1,10 @@
+// @vitest-environment jsdom
+import { renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatState } from "../hooks/useChatState";
 import type { Message } from "../types";
-import { chatPaneInput } from "./useChatPaneInput";
+import { getChatInput } from "./registry";
+import { chatPaneInput, useChatPaneInput } from "./useChatPaneInput";
 
 const sendMessage = vi.fn(async (..._args: unknown[]) => {});
 vi.mock("../api/channels", () => ({ sendMessage: (...args: unknown[]) => sendMessage(...args) }));
@@ -61,5 +64,27 @@ describe("chatPaneInput", () => {
     state.mode = "plan";
     await input().send("go");
     expect(sendMessage).toHaveBeenCalledWith("side-1", "go", "plan");
+  });
+});
+
+describe("useChatPaneInput", () => {
+  it.each([
+    ["no channel", null, "chat-0", "c1"],
+    ["no pane", "c1", undefined, "c1"],
+    ["no chat channel", "c1", "chat-0", null],
+  ])("registers nothing with %s", (_name, channelId, paneId, chatChannelId) => {
+    renderHook(() => useChatPaneInput(channelId, paneId, chatChannelId, state));
+    expect(getChatInput("c1", "chat-0")).toBeUndefined();
+  });
+
+  it("registers the pane's chat with its latest state until unmounted", () => {
+    const hook = renderHook(({ s }) => useChatPaneInput("c1", "chat-0", "side-1", s), { initialProps: { s: state } });
+    const registered = getChatInput("c1", "chat-0");
+    expect(registered?.busy()).toBe(false);
+    hook.rerender({ s: { ...state, isRunning: true } });
+    expect(getChatInput("c1", "chat-0")).toBe(registered);
+    expect(registered?.busy()).toBe(true);
+    hook.unmount();
+    expect(getChatInput("c1", "chat-0")).toBeUndefined();
   });
 });

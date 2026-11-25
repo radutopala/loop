@@ -62,12 +62,12 @@ function Link({ href, children }: { href: string; children: React.ReactNode }) {
 
 // linkifyPaths turns the file paths in plain text into links that open the
 // file. Bare URLs never reach it: formatInline takes them as tokens first.
+// text is never empty, and the candidate paths never overlap.
 function linkifyPaths(text: string, keyBase: number, channelId: string): React.ReactNode[] {
-  if (!channelId) return text ? [text] : [];
+  if (!channelId) return [text];
   const parts: React.ReactNode[] = [];
   let last = 0;
   for (const c of findCandidatePaths(text)) {
-    if (c.start < last) continue;
     if (c.start > last) parts.push(text.slice(last, c.start));
     parts.push(<FileLink key={`file-${keyBase}-${parts.length}`} channelId={channelId} raw={c.raw} line={c.line} />);
     last = c.start + c.length;
@@ -117,16 +117,19 @@ function formatInline(text: string, s: Record<string, React.CSSProperties>, chan
       nodes.push(<strong key={nodes.length}>{formatInline(token.slice(2, -2), s, channelId)}</strong>);
     } else if (token.startsWith("*")) {
       nodes.push(<em key={nodes.length}>{formatInline(token.slice(1, -1), s, channelId)}</em>);
-    } else if (token.startsWith("[")) {
-      const mdMatch = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+    } else {
+      // All that's left is a markdown link, [label](href).
+      const m = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/)!;
+      const label = m[1]!;
+      const href = m[2]!;
       // A link to a file opens it in the editor, as a path in the text does.
-      const file = mdMatch && channelId ? markdownFileTarget(mdMatch[2]!, mdMatch[1]!) : null;
-      if (mdMatch && file) {
-        nodes.push(<FileLink key={nodes.length} channelId={channelId} raw={file.path} line={file.line} label={mdMatch[1]!} />);
-      } else if (mdMatch) {
+      const file = channelId ? markdownFileTarget(href, label) : null;
+      if (file) {
+        nodes.push(<FileLink key={nodes.length} channelId={channelId} raw={file.path} line={file.line} label={label} />);
+      } else {
         nodes.push(
-          <Link key={nodes.length} href={mdMatch[2]!}>
-            {mdMatch[1]}
+          <Link key={nodes.length} href={href}>
+            {label}
           </Link>,
         );
       }
@@ -306,7 +309,7 @@ function parseMarkdown(text: string, s: Record<string, React.CSSProperties>, cha
   let i = 0;
 
   while (i < lines.length) {
-    const line = lines[i] ?? "";
+    const line = lines[i]!;
 
     // Fenced block: a chat component once it's closed, else code.
     const fence = readFence(lines, i);
@@ -340,8 +343,8 @@ function parseMarkdown(text: string, s: Record<string, React.CSSProperties>, cha
     // Blockquote: collect consecutive `> ` lines.
     if (line.startsWith("> ") || line === ">") {
       const quoteLines: string[] = [];
-      while (i < lines.length && ((lines[i] ?? "").startsWith("> ") || (lines[i] ?? "") === ">")) {
-        const ql = lines[i] ?? "";
+      while (i < lines.length && (lines[i]!.startsWith("> ") || lines[i] === ">")) {
+        const ql = lines[i]!;
         quoteLines.push(ql === ">" ? "" : ql.slice(2));
         i++;
       }

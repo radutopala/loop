@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { ScheduledTask, TaskRunLog, WorkflowDef } from "../../api/loopApi";
 import { createTask, deleteTask, fetchTaskRuns, fetchTasks, fetchWorkflows, runTaskNow, updateTask } from "../../api/loopApi";
 import { fetchPluginList, PLUGINS_CHANGED, type PluginList, type PluginSchedule, setPluginScheduleEntry } from "../../api/plugins";
@@ -25,7 +25,6 @@ export function TasksPanel({ channelId, allowWorktree, allowPlugins, onSelectCha
   const [listWidth, setListWidth] = useState(340);
   const [showCreate, setShowCreate] = useState(false);
   const [editing, setEditing] = useState(false);
-  const draggingRef = useRef(false);
 
   // Workflow definitions (loaded once for both create and edit forms).
   const [workflows, setWorkflows] = useState<WorkflowDef[]>([]);
@@ -131,7 +130,7 @@ export function TasksPanel({ channelId, allowWorktree, allowPlugins, onSelectCha
   const newPlugin = pluginOptions.find((o) => o.key === newPluginAction);
   // A plugin action's task follows its project config entry, so changes to
   // it go there.
-  const pluginOptionOf = (task: ScheduledTask | null) => (task?.plugin_id ? pluginOptions.find((o) => o.key === `${task.plugin_id}/${task.plugin_action}`) : undefined);
+  const pluginOptionOf = (task: ScheduledTask) => (task.plugin_id ? pluginOptions.find((o) => o.key === `${task.plugin_id}/${task.plugin_action}`) : undefined);
   const [pluginError, setPluginError] = useState<string | null>(null);
   const writePluginEntry = async (o: PluginTaskOption, entry: PluginSchedule | undefined): Promise<boolean> => {
     setPluginError(null);
@@ -148,14 +147,15 @@ export function TasksPanel({ channelId, allowWorktree, allowPlugins, onSelectCha
   const handleCreate = useCallback(async () => {
     setCreateError(null);
     if (newMode === "plugin") {
-      if (!newPlugin) return;
+      // Create stays disabled in plugin mode until an action is picked.
+      const plugin = newPlugin!;
       try {
-        await setPluginScheduleEntry(newPlugin.plugin.id, newPlugin.action, pluginTaskEntry(newPlugin, newType, newSchedule), channelId);
+        await setPluginScheduleEntry(plugin.plugin.id, plugin.action, pluginTaskEntry(plugin, newType, newSchedule), channelId);
         // The config entry holds only the schedule; how the task runs is
         // the task's own, set on it once the entry made it.
         const opts = pluginRunOptions(newWorktree, newOriginBranch, newUpdateBeforeRun, newAutoDelete);
         if (opts) {
-          const made = (await fetchTasks(channelId)).find((t) => t.plugin_id === newPlugin.plugin.id && t.plugin_action === newPlugin.action);
+          const made = (await fetchTasks(channelId)).find((t) => t.plugin_id === plugin.plugin.id && t.plugin_action === plugin.action);
           if (made) await updateTask(made.id, opts);
         }
         setShowCreate(false);
@@ -199,43 +199,38 @@ export function TasksPanel({ channelId, allowWorktree, allowPlugins, onSelectCha
     }
   }, [channelId, newSchedule, newType, newMode, newPlugin, newPrompt, newWorkflowName, newWorkflowInputs, newBashScript, newWorktree, newOriginBranch, newUpdateBeforeRun, newAutoDelete, loadTasks]);
 
-  const handleToggle = useCallback(
-    async (task: ScheduledTask) => {
-      const o = pluginOptionOf(task);
-      if (o) {
-        await writePluginEntry(o, pluginTaskEntry(o, task.type, task.schedule, !task.enabled));
-        return;
-      }
-      try {
-        await updateTask(task.id, { enabled: !task.enabled });
-        loadTasks();
-      } catch {
-        /* ignore */
-      }
-    },
-    [loadTasks],
-  );
+  const handleToggle = async (task: ScheduledTask) => {
+    const o = pluginOptionOf(task);
+    if (o) {
+      await writePluginEntry(o, pluginTaskEntry(o, task.type, task.schedule, !task.enabled));
+      return;
+    }
+    try {
+      await updateTask(task.id, { enabled: !task.enabled });
+      loadTasks();
+    } catch {
+      /* ignore */
+    }
+  };
 
-  const handleDelete = useCallback(
-    async (taskId: number) => {
-      // The project's own entry made the task: removing it deletes the task
-      // for good. One the global config makes comes back, so it's only
-      // deleted here.
-      const o = pluginOptionOf(tasks.find((t) => t.id === taskId) ?? null);
-      if (o?.state.own && !o.plugin.global_schedules?.[o.action]) {
-        if ((await writePluginEntry(o, undefined)) && selectedId === taskId) setSelectedId(null);
-        return;
-      }
-      try {
-        await deleteTask(taskId);
-        if (selectedId === taskId) setSelectedId(null);
-        loadTasks();
-      } catch {
-        /* ignore */
-      }
-    },
-    [selectedId, loadTasks, tasks],
-  );
+  // Deletes the selected task, the only one the panel deletes.
+  const handleDelete = async (task: ScheduledTask) => {
+    // The project's own entry made the task: removing it deletes the task
+    // for good. One the global config makes comes back, so it's only
+    // deleted here.
+    const o = pluginOptionOf(task);
+    if (o?.state.own && !o.plugin.global_schedules?.[o.action]) {
+      if (await writePluginEntry(o, undefined)) setSelectedId(null);
+      return;
+    }
+    try {
+      await deleteTask(task.id);
+      setSelectedId(null);
+      loadTasks();
+    } catch {
+      /* ignore */
+    }
+  };
 
   const handleRunNow = useCallback(
     async (taskId: number) => {
@@ -276,15 +271,14 @@ export function TasksPanel({ channelId, allowWorktree, allowPlugins, onSelectCha
     setEditing(true);
   }, []);
 
-  const handleSaveEdit = useCallback(async () => {
-    if (selectedId == null) return;
-    const task = tasks.find((t) => t.id === selectedId) ?? null;
-    if (task?.plugin_id) {
+  // Saves the edit form onto task, the selected one.
+  const handleSaveEdit = async (task: ScheduledTask) => {
+    if (task.plugin_id) {
       const opts = pluginRunOptions(editWorktree, editOriginBranch, editUpdateBeforeRun, editAutoDelete) ?? { worktree: false, origin_branch: "", update_before_run: false, auto_delete_sec: 0 };
       const o = pluginOptionOf(task);
       if (o) {
         try {
-          await updateTask(selectedId, opts);
+          await updateTask(task.id, opts);
         } catch (e) {
           setPluginError(e instanceof Error ? e.message : String(e));
           return;
@@ -293,7 +287,7 @@ export function TasksPanel({ channelId, allowWorktree, allowPlugins, onSelectCha
         return;
       }
       try {
-        await updateTask(selectedId, { schedule: editSchedule, type: editType, ...opts });
+        await updateTask(task.id, { schedule: editSchedule, type: editType, ...opts });
         setEditing(false);
         loadTasks();
       } catch {
@@ -302,7 +296,7 @@ export function TasksPanel({ channelId, allowWorktree, allowPlugins, onSelectCha
       return;
     }
     try {
-      await updateTask(selectedId, {
+      await updateTask(task.id, {
         schedule: editType === "manual" ? "" : editSchedule,
         type: editType,
         prompt: editMode === "prompt" ? editPrompt : "",
@@ -319,32 +313,14 @@ export function TasksPanel({ channelId, allowWorktree, allowPlugins, onSelectCha
     } catch {
       /* ignore */
     }
-  }, [
-    selectedId,
-    tasks,
-    editSchedule,
-    editType,
-    editMode,
-    editPrompt,
-    editWorkflowName,
-    editWorkflowInputs,
-    editBashScript,
-    editWorktree,
-    editOriginBranch,
-    editUpdateBeforeRun,
-    editAutoDelete,
-    loadTasks,
-  ]);
+  };
 
   // Resizable divider
   const onMouseDown = useCallback(() => {
-    draggingRef.current = true;
     const onMove = (e: MouseEvent) => {
-      if (!draggingRef.current) return;
       setListWidth((prev) => Math.max(200, Math.min(500, prev + e.movementX)));
     };
     const onUp = () => {
-      draggingRef.current = false;
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
@@ -839,7 +815,7 @@ export function TasksPanel({ channelId, allowWorktree, allowPlugins, onSelectCha
             <button onClick={() => setEditing(false)} style={btnSecondaryStyle}>
               Cancel
             </button>
-            <button data-testid="task-edit-save" onClick={handleSaveEdit} style={btnStyle}>
+            <button data-testid="task-edit-save" onClick={() => handleSaveEdit(selectedTask)} style={btnStyle}>
               Save
             </button>
           </div>
@@ -869,7 +845,7 @@ export function TasksPanel({ channelId, allowWorktree, allowPlugins, onSelectCha
             {selectedTask.worktree && <span style={{ fontSize: 11, color: colors.textDim, border: `1px solid ${colors.border}`, borderRadius: 3, padding: "0 4px" }}>worktree</span>}
             <div style={{ flex: 1 }} />
             {selectedTask.running && selectedTask.thread_id ? (
-              <button onClick={() => onSelectChannel?.(selectedTask.thread_id!)} style={{ ...btnStyle, background: colors.warning ?? "#eab308" }}>
+              <button onClick={() => onSelectChannel?.(selectedTask.thread_id!)} style={{ ...btnStyle, background: colors.warning }}>
                 Running...
               </button>
             ) : (
@@ -877,13 +853,13 @@ export function TasksPanel({ channelId, allowWorktree, allowPlugins, onSelectCha
                 {selectedTask.running ? "Running..." : runningNow ? "Starting..." : "\u25B6 Run Now"}
               </button>
             )}
-            <button onClick={() => handleToggle(selectedTask)} style={{ ...btnSecondaryStyle, color: selectedTask.enabled ? (colors.warning ?? "#eab308") : colors.active }}>
+            <button onClick={() => handleToggle(selectedTask)} style={{ ...btnSecondaryStyle, color: selectedTask.enabled ? colors.warning : colors.active }}>
               {selectedTask.enabled ? "Disable" : "Enable"}
             </button>
             <button onClick={() => startEdit(selectedTask)} style={btnSecondaryStyle}>
               Edit
             </button>
-            <button onClick={() => handleDelete(selectedTask.id)} style={{ ...btnSecondaryStyle, color: colors.error ?? "#ef4444", borderColor: colors.error ?? "#ef4444" }}>
+            <button onClick={() => handleDelete(selectedTask)} style={{ ...btnSecondaryStyle, color: colors.error, borderColor: colors.error }}>
               Delete
             </button>
           </div>
@@ -951,14 +927,14 @@ export function TasksPanel({ channelId, allowWorktree, allowPlugins, onSelectCha
                       width: 8,
                       height: 8,
                       borderRadius: "50%",
-                      background: run.status === "success" ? colors.active : run.status === "failed" ? (colors.error ?? "#ef4444") : (colors.warning ?? "#eab308"),
+                      background: run.status === "success" ? colors.active : run.status === "failed" ? colors.error : colors.warning,
                       flexShrink: 0,
                     }}
                   />
                   <span style={{ color: colors.text }}>{run.status}</span>
                   <span style={{ color: colors.textDim, fontSize: 11, marginLeft: "auto" }}>{timeAgo(run.started_at)}</span>
                 </div>
-                {run.error_text && <div style={{ color: colors.error ?? "#ef4444", fontSize: 11, paddingLeft: 14 }}>{run.error_text}</div>}
+                {run.error_text && <div style={{ color: colors.error, fontSize: 11, paddingLeft: 14 }}>{run.error_text}</div>}
                 {run.response_text && (
                   <div
                     style={{

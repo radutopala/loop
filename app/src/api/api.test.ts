@@ -113,6 +113,19 @@ describe("refreshApiToken", () => {
     const api = await load();
     await expect(api.refreshApiToken()).resolves.toBe("");
   });
+
+  it("is empty when the desktop app has no token file yet", async () => {
+    vi.stubGlobal("window", { location: { hash: "" }, loopAPI: { getApiUrl: async () => "http://api", getApiToken: async () => null } });
+    const api = await load();
+    await expect(api.refreshApiToken()).resolves.toBe("");
+  });
+
+  it("reads the tab's token when the desktop bridge can't give one", async () => {
+    stubBrowser("", { "loop-api-token": "tab" });
+    vi.stubGlobal("window", { location: { hash: "" }, loopAPI: { getApiUrl: async () => "http://api" } });
+    const api = await load();
+    await expect(api.refreshApiToken()).resolves.toBe("tab");
+  });
 });
 
 describe("apiFetch", () => {
@@ -467,5 +480,70 @@ describe("contentCapBase", () => {
 describe("encodePathSegments", () => {
   it("encodes each segment and keeps the slashes", () => {
     return load().then((api) => expect(api.encodePathSegments("a b/#1/c?.png")).toBe("a%20b/%231/c%3F.png"));
+  });
+});
+
+describe("initApiUrl", () => {
+  it("takes the desktop app's URL and token", async () => {
+    stubDesktop(["tok"]);
+    const api = await load();
+    await api.initApiUrl();
+    expect(api.getApiUrl()).toBe("http://api");
+    expect(api.getWsUrl()).toBe("ws://api");
+    expect(api.getApiToken()).toBe("tok");
+  });
+
+  it("probes the candidates in a browser and keeps the first that answers", async () => {
+    stubBrowser("", { "loop-api-token": "t" });
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.startsWith("http://ui/")) return new Response("", { status: 404 });
+      if (url.startsWith("http://host.docker.internal:8222/")) throw new Error("refused");
+      return new Response("ok");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const api = await load();
+    await api.initApiUrl();
+    expect(fetchMock.mock.calls.map((c) => c[0])).toEqual(["http://ui/api/health", "http://host.docker.internal:8222/api/health", "http://localhost:8222/api/health"]);
+    expect(api.getApiUrl()).toBe("http://localhost:8222");
+    expect(api.getApiToken()).toBe("t");
+  });
+
+  it("stops at the same origin when it answers", async () => {
+    stubBrowser();
+    const fetchMock = vi.fn(async () => new Response("ok"));
+    vi.stubGlobal("fetch", fetchMock);
+    const api = await load();
+    await api.initApiUrl();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(api.getApiUrl()).toBe("http://ui");
+    expect(api.getWsUrl()).toBe("ws://ui");
+  });
+
+  it("keeps the default URL when no candidate answers", async () => {
+    stubBrowser();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("refused");
+      }),
+    );
+    const api = await load();
+    await api.initApiUrl();
+    expect(api.getApiUrl()).toBe("http://localhost:8222");
+  });
+});
+
+describe("isDaemonHealthy", () => {
+  it.each([
+    ["an ok health check", async () => new Response("ok"), true],
+    ["an error status", async () => new Response("", { status: 503 }), false],
+    ["a failed request", async () => Promise.reject(new Error("refused")), false],
+  ])("is %s", async (_name, impl, want) => {
+    stubBrowser();
+    const fetchMock = vi.fn<(url: string) => Promise<Response>>(impl);
+    vi.stubGlobal("fetch", fetchMock);
+    const api = await load();
+    await expect(api.isDaemonHealthy()).resolves.toBe(want);
+    expect(fetchMock.mock.calls[0]![0]).toBe("http://localhost:8222/api/health");
   });
 });

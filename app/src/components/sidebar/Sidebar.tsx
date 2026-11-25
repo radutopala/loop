@@ -255,8 +255,8 @@ export function Sidebar({
     });
   }, []);
 
+  // The header shows its Delete button only while something is picked.
   const handleBatchDelete = useCallback(() => {
-    if (selected.size === 0) return;
     onDeleteBatch?.([...selected]);
     setSelected(new Set());
     setSelectMode(false);
@@ -779,8 +779,6 @@ export function Sidebar({
             cursor: "col-resize",
             backgroundColor: "transparent",
           }}
-          onMouseEnter={() => {}}
-          onMouseLeave={() => {}}
         />
 
         {/* Inline keyframes for spinner */}

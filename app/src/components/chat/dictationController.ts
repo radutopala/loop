@@ -308,8 +308,8 @@ export class DictationController {
       return;
     }
     this.holding = false;
-    const stream = this.stream;
-    if (!stream) return;
+    // A hold under way always has its stream: reset clears both together.
+    const stream = this.stream!;
     this.set({ phase: "transcribing", level: 0 });
     const cap = this.capture;
     this.capture = null;
@@ -335,25 +335,26 @@ export class DictationController {
     this.pending = [];
   }
 
+  // The stream reports only while its session runs, and base is set for as
+  // long as it does.
   private partial(committed: string, tentative: string): void {
-    if (!this.base) return;
     this.committed = committed;
     if (this.mode === "edit") {
       this.set({ instruction: previewDictation({ text: "", start: 0, end: 0 }, committed, tentative).text });
       return;
     }
-    const p = previewDictation(this.base, committed, tentative);
+    const p = previewDictation(this.base!, committed, tentative);
     this.d.write(p.text, p.tentativeFrom, p.to);
   }
 
   private final(text: string): void {
-    if (!this.base) return;
+    const base = this.base!;
     if (this.mode === "edit") {
-      void this.edit(this.base, text.trim());
+      void this.edit(base, text.trim());
       return;
     }
     const rest = stripSendPhrase(text, this.d.sendPhrases());
-    const out = spliceDictation(this.base, rest ?? text);
+    const out = spliceDictation(base, rest ?? text);
     this.d.write(out.text, out.to, out.to);
     if (rest !== null) this.d.send();
   }
@@ -396,9 +397,10 @@ export class DictationController {
     }
   }
 
+  /** Called only while a session runs, so base is set. */
   private restore(): void {
-    const b = this.base;
-    if (b) this.d.write(b.text, b.start, b.end);
+    const b = this.base!;
+    this.d.write(b.text, b.start, b.end);
   }
 
   private reset(): void {

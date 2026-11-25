@@ -127,4 +127,19 @@ describe("useContentSearch", () => {
     });
     expect(result.current).toEqual({ state: "searching" });
   });
+
+  it("drops a failure of a search the query moved on from", async () => {
+    let reject: (err: unknown) => void = () => {};
+    grepFiles.mockReturnValueOnce(new Promise((_, r) => (reject = r))).mockReturnValueOnce(new Promise(() => {}));
+    const { result, rerender } = renderSearch({ q: "ab" });
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+    rerender({ q: "abc" });
+    await act(async () => {
+      reject(new Error("late"));
+      await vi.runAllTimersAsync();
+    });
+    expect(result.current).toEqual({ state: "searching" });
+  });
 });

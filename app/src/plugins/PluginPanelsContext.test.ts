@@ -1,7 +1,28 @@
-import { describe, expect, it } from "vitest";
-import type { PluginInfo } from "../api/plugins";
+// @vitest-environment jsdom
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import { createElement } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fetchPlugins, PLUGINS_CHANGED, type PluginInfo } from "../api/plugins";
+import { useEventStream } from "../hooks/useEventStream";
+import type { WSEvent } from "../types";
 import type { PaneNode } from "../types/panels";
-import { findPluginCard, findPluginPanel, pluginPaneKey, pluginPaneOptions, shownPluginPanes } from "./PluginPanelsContext";
+import {
+  findPluginCard,
+  findPluginPanel,
+  PluginPanelsProvider,
+  pluginPaneKey,
+  pluginPaneOptions,
+  shownPluginPanes,
+  useInstalledPlugins,
+  usePluginPanels,
+  usePluginPanelsValue,
+} from "./PluginPanelsContext";
+
+vi.mock("../api/plugins", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api/plugins")>()), fetchPlugins: vi.fn() }));
+vi.mock("../hooks/useEventStream", () => ({ useEventStream: vi.fn() }));
+
+const fetchMock = vi.mocked(fetchPlugins);
+const streamMock = vi.mocked(useEventStream);
 
 const quiz = { id: "quiz", label: "Quiz", entry: "quiz/index.html", singleton: true };
 const score = { id: "score", entry: "ui/score.html" };
@@ -91,4 +112,96 @@ describe("findPluginCard", () => {
 
 it("pluginPaneKey", () => {
   expect(pluginPaneKey({ id: "a", panel: "b" })).toBe("a/b");
+});
+
+describe("usePluginPanels", () => {
+  afterEach(cleanup);
+
+  it("reads an empty value outside a provider", () => {
+    const { result } = renderHook(() => usePluginPanels());
+    expect(result.current.plugins).toEqual([]);
+    expect([...result.current.shown]).toEqual([]);
+  });
+
+  it("reads the provider's value", () => {
+    const value = { plugins, shown: new Set(["cogtest/quiz"]) };
+    const { result } = renderHook(() => usePluginPanels(), { wrapper: ({ children }) => createElement(PluginPanelsProvider, { value }, children) });
+    expect(result.current).toBe(value);
+  });
+});
+
+describe("usePluginPanelsValue", () => {
+  afterEach(cleanup);
+
+  it("keeps the value for a new set of the same panes and makes a new one when they change", () => {
+    const { result, rerender } = renderHook(({ shown }) => usePluginPanelsValue(plugins, shown), { initialProps: { shown: new Set(["b", "a"]) } });
+    const first = result.current;
+    expect(first.plugins).toBe(plugins);
+    rerender({ shown: new Set(["a", "b"]) });
+    expect(result.current).toBe(first);
+    rerender({ shown: new Set(["a"]) });
+    expect(result.current).not.toBe(first);
+    expect([...result.current.shown]).toEqual(["a"]);
+  });
+});
+
+describe("useInstalledPlugins", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  const lastOnEvent = () => streamMock.mock.calls.at(-1)![0].onEvent;
+
+  it("lists the channel's plugins and follows the stream of its channel", async () => {
+    fetchMock.mockResolvedValue(plugins);
+    const { result } = renderHook(() => useInstalledPlugins("ch1"));
+    expect(result.current).toBeNull();
+    await waitFor(() => expect(result.current).toBe(plugins));
+    expect(fetchMock).toHaveBeenCalledWith("ch1");
+    expect(streamMock).toHaveBeenLastCalledWith(expect.objectContaining({ channelId: "ch1" }));
+  });
+
+  it("lists them again on a plugins.changed event and on the window event, not on other events", async () => {
+    fetchMock.mockResolvedValue(plugins);
+    renderHook(() => useInstalledPlugins(null));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    act(() => lastOnEvent()({ type: "agent.status", data: {} } as WSEvent));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    act(() => lastOnEvent()({ type: "plugins.changed", data: {} } as WSEvent));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    act(() => {
+      window.dispatchEvent(new Event(PLUGINS_CHANGED));
+    });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(fetchMock).toHaveBeenLastCalledWith(null);
+  });
+
+  it("lists none when listing fails", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    fetchMock.mockRejectedValue(new Error("down"));
+    const { result } = renderHook(() => useInstalledPlugins("ch1"));
+    await waitFor(() => expect(result.current).toEqual([]));
+    expect(console.warn).toHaveBeenCalledWith("[loop] listing plugins:", expect.any(Error));
+  });
+
+  it("drops what a channel it left answers", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    let ok!: (p: PluginInfo[]) => void;
+    let fail!: (e: Error) => void;
+    fetchMock.mockReturnValueOnce(new Promise((r) => (ok = r))).mockReturnValueOnce(new Promise((_, r) => (fail = r)));
+    fetchMock.mockResolvedValue([cogtest]);
+    const { result, rerender } = renderHook(({ id }) => useInstalledPlugins(id), { initialProps: { id: "a" } });
+    rerender({ id: "b" });
+    rerender({ id: "c" });
+    await waitFor(() => expect(result.current).toEqual([cogtest]));
+    await act(async () => {
+      ok(plugins);
+      fail(new Error("late"));
+    });
+    expect(result.current).toEqual([cogtest]);
+  });
 });

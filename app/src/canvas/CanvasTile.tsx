@@ -61,7 +61,8 @@ export function CanvasTile({
   useEffect(() => {
     if (!showAddMenu) return;
     const handler = (e: MouseEvent) => {
-      if (addMenuRef.current && !addMenuRef.current.contains(e.target as Node)) setShowAddMenu(false);
+      // The menu renders inside the element addMenuRef holds.
+      if (!(addMenuRef.current as HTMLDivElement).contains(e.target as Node)) setShowAddMenu(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -71,8 +72,8 @@ export function CanvasTile({
   // portal from outside the canvas, so React events from it never reach the
   // tile.
   useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
+    // Set by the time effects run: the tile always renders it.
+    const el = containerRef.current as HTMLDivElement;
     const onMouseDown = () => onBringToFront(tile.id);
     el.addEventListener("mousedown", onMouseDown);
     return () => el.removeEventListener("mousedown", onMouseDown);
@@ -242,11 +243,10 @@ export function CanvasTile({
                     key={opt.key}
                     disabled={disabled}
                     onClick={(e) => {
+                      // A disabled button gets no click.
                       e.stopPropagation();
-                      if (!disabled) {
-                        onAddTile(opt.panel, { x: tile.x + tile.width + 20, y: tile.y }, opt.meta);
-                        setShowAddMenu(false);
-                      }
+                      onAddTile(opt.panel, { x: tile.x + tile.width + 20, y: tile.y }, opt.meta);
+                      setShowAddMenu(false);
                     }}
                     style={{
                       display: "block",
@@ -262,7 +262,8 @@ export function CanvasTile({
                       borderRadius: 3,
                     }}
                     onMouseEnter={(e) => {
-                      if (!disabled) e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)";
+                      // A disabled button gets no mouseenter.
+                      e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)";
                     }}
                     onMouseLeave={(e) => {
                       e.currentTarget.style.backgroundColor = "transparent";

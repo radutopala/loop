@@ -44,7 +44,7 @@ export function splitTableRow(line: string): string[] {
 
 /** startsTable reports whether a table begins at lines[i] (header + separator). */
 export function startsTable(lines: string[], i: number): boolean {
-  return isTableRow(lines[i] ?? "") && i + 1 < lines.length && isTableSeparator(lines[i + 1] ?? "");
+  return isTableRow(lines[i] ?? "") && i + 1 < lines.length && isTableSeparator(lines[i + 1]!);
 }
 
 /**
@@ -53,12 +53,12 @@ export function startsTable(lines: string[], i: number): boolean {
  */
 export function parseTableBlock(lines: string[], i: number): TableBlock {
   const start = i;
-  const headers = splitTableRow(lines[i] ?? "");
-  const aligns = parseTableAligns(lines[i + 1] ?? "");
+  const headers = splitTableRow(lines[i]!);
+  const aligns = parseTableAligns(lines[i + 1]!);
   let next = i + 2;
   const rows: string[][] = [];
-  while (next < lines.length && isTableRow(lines[next] ?? "")) {
-    rows.push(splitTableRow(lines[next] ?? ""));
+  while (next < lines.length && isTableRow(lines[next]!)) {
+    rows.push(splitTableRow(lines[next]!));
     next++;
   }
   return { headers, aligns, rows, source: lines.slice(start, next).join("\n"), next };
@@ -79,9 +79,10 @@ export function plainCell(text: string): string {
     if (token.startsWith("`")) return token.slice(1, -1);
     if (token.startsWith("**")) return token.slice(2, -2);
     if (token.startsWith("*")) return token.slice(1, -1);
-    const link = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
-    if (!link) return token;
-    const [, label = "", url = ""] = link;
+    // Only the link alternative of inlineTokens is left, so this matches.
+    const link = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/)!;
+    const label = link[1]!;
+    const url = link[2]!;
     return label === url ? label : `${label} (${url})`;
   });
 }
@@ -111,8 +112,9 @@ export function inlineToHTML(text: string): string {
     } else if (token.startsWith("*")) {
       out += `<em>${linkifyHTML(token.slice(1, -1))}</em>`;
     } else {
-      const link = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
-      out += link ? `<a href="${escapeHTML(link[2] ?? "")}">${escapeHTML(link[1] ?? "")}</a>` : linkifyHTML(token);
+      // Only the link alternative of inlineTokens is left, so this matches.
+      const link = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/)!;
+      out += `<a href="${escapeHTML(link[2]!)}">${escapeHTML(link[1]!)}</a>`;
     }
     last = match.index + token.length;
   }

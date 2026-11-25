@@ -23,6 +23,7 @@ const schema: ConfigSchema = {
         properties: {
           command: { type: "string" },
           env: { type: "object", additionalProperties: { type: "object", properties: { secret_ref: { type: "string" } } } },
+          hooks: { type: "array", items: { type: "object", properties: { on_event: { type: "string" } } } },
         },
       },
     },
@@ -56,6 +57,7 @@ describe("searchSettings", () => {
     { name: "case-insensitive", query: "HOST_PATH", want: { Workspace: ["mounts[].host_path"] } },
     { name: "keys in list entries, nested", query: "read_only", want: { Workspace: ["mounts[].options.read_only"] } },
     { name: "keys in map entries, nested", query: "secret", want: { MCP: ["mcp_servers.*.env.*.secret_ref"] } },
+    { name: "keys in a list inside map entries", query: "on_event", want: { MCP: ["mcp_servers.*.hooks[].on_event"] } },
     { name: "section name only", query: "daemon", want: { Daemon: [] } },
     { name: "no match", query: "nothing here", want: {} },
   ])("$name", ({ query, want }) => {

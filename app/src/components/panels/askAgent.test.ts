@@ -1,6 +1,10 @@
-import { describe, expect, it } from "vitest";
-import type { ChatPaneInput } from "../../uiBridge/types";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { sendMessage } from "../../api/channels";
+import { registerChatInput, registerWorkspace } from "../../uiBridge/registry";
+import type { ChatPaneInput, WorkspaceController } from "../../uiBridge/types";
 import { type AskDeps, askAgent, askMessage, MAX_ASK_CHARS } from "./askAgent";
+
+vi.mock("../../api/channels", () => ({ sendMessage: vi.fn(async () => {}) }));
 
 describe("askMessage", () => {
   it("asks about the lines, quoting them", () => {
@@ -55,5 +59,51 @@ describe("askAgent", () => {
     deps.hasChat = false;
     await askAgent("c1", "Explain a.go:1", deps);
     expect(deps.sent).toEqual(["c1 Explain a.go:1"]);
+  });
+});
+
+describe("askAgent with the app's deps", () => {
+  const unregister: (() => void)[] = [];
+  afterEach(() => {
+    for (const u of unregister.splice(0)) u();
+    vi.mocked(sendMessage).mockClear();
+  });
+
+  // workspace registers a workspace for channelId whose view shows panes.
+  function workspace(channelId: string, panes: { id: string; panel: string }[]) {
+    const view = () => ({ tab: "main", tabs: ["main"], canvas: false, panes });
+    unregister.push(registerWorkspace(channelId, { view } as unknown as WorkspaceController));
+  }
+
+  it("sends through the workspace's chat pane composer", async () => {
+    const chatSent: string[] = [];
+    workspace("c1", [
+      { id: "p1", panel: "editor" },
+      { id: "p2", panel: "chat" },
+    ]);
+    unregister.push(
+      registerChatInput("c1", "p2", {
+        busy: () => false,
+        blocked: () => null,
+        messages: () => [],
+        send: async (text) => {
+          chatSent.push(text);
+        },
+      }),
+    );
+    await askAgent("c1", "Explain a.go:1");
+    expect(chatSent).toEqual(["Explain a.go:1"]);
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("sends to the channel when the workspace shows no chat pane", async () => {
+    workspace("c2", [{ id: "p1", panel: "editor" }]);
+    await askAgent("c2", "Explain b.go:2");
+    expect(sendMessage).toHaveBeenCalledWith("c2", "Explain b.go:2");
+  });
+
+  it("sends to the channel without a workspace", async () => {
+    await askAgent("c3", "Explain c.go:3");
+    expect(sendMessage).toHaveBeenCalledWith("c3", "Explain c.go:3");
   });
 });

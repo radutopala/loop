@@ -1,6 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
-import { getChatInput, getTerminalInput, getWorkspace, notifyUiChanged, registerChatInput, registerTerminalInput, registerWorkspace, subscribeUiChanged } from "./registry";
-import type { ChatPaneInput, TerminalInput, WorkspaceController } from "./types";
+import {
+  getChatInput,
+  getSideReader,
+  getTerminalInput,
+  getWorkspace,
+  notifyUiChanged,
+  registerChatInput,
+  registerSideReader,
+  registerTerminalInput,
+  registerWorkspace,
+  subscribeUiChanged,
+} from "./registry";
+import type { ChatPaneInput, SideReader, TerminalInput, WorkspaceController } from "./types";
 
 const workspace = () => ({}) as WorkspaceController;
 const terminal = () => ({}) as TerminalInput;
@@ -54,5 +65,17 @@ describe("registry", () => {
     expect(getTerminalInput("c1", "chat-side-0")).toBeUndefined();
     unregister();
     expect(getChatInput("c1", "chat-side-0")).toBeUndefined();
+  });
+
+  it("registers a channel's side reader", () => {
+    const old = {} as SideReader;
+    const unregisterOld = registerSideReader("c1", old);
+    const r = {} as SideReader;
+    const unregister = registerSideReader("c1", r);
+    unregisterOld();
+    expect(getSideReader("c1")).toBe(r);
+    expect(getSideReader("c2")).toBeUndefined();
+    unregister();
+    expect(getSideReader("c1")).toBeUndefined();
   });
 });

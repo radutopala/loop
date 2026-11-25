@@ -1,5 +1,7 @@
+// @vitest-environment jsdom
 import { getChunks } from "@codemirror/merge";
 import { EditorState } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { compareChunkButton, compareExtension, minimalChange } from "./editorCompare";
 
@@ -13,6 +15,16 @@ describe("compareExtension", () => {
     const [chunk, ...rest] = getChunks(state)?.chunks ?? [];
     expect(rest).toHaveLength(0);
     expect(chunk && state.doc.sliceString(chunk.fromB, chunk.toB)).toBe("mine\n");
+  });
+
+  it.each([
+    ["disk", ["Keep mine", "Use disk"]],
+    ["head", ["Keep", "Revert"]],
+  ] as const)("puts the %s labels on each changed chunk", (source, labels) => {
+    const view = new EditorView({ doc: "one\nmine\nthree\n", extensions: compareExtension("one\ntwo\nthree\n", source), parent: document.body });
+    const buttons = Array.from(view.dom.querySelectorAll<HTMLButtonElement>("[data-testid^=compare-]"), (b) => b.textContent);
+    expect(buttons.sort()).toEqual([...labels].sort());
+    view.destroy();
   });
 
   it("finds no changes when the texts match", () => {

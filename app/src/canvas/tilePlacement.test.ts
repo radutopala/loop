@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { findNonOverlappingPosition, freshTileId, withPanelTile, withTileBeside, withTileReplaced } from "./tilePlacement";
-import type { CanvasNode, CanvasTile } from "./types";
+import { type CanvasNode, type CanvasTile, isCanvasNode } from "./types";
 
 function tile(id: string, panel: CanvasTile["panel"], x: number, y: number, w = 500, h = 400, zIndex = 1): CanvasTile {
   return { id, panel, x, y, width: w, height: h, zIndex };
@@ -15,8 +15,13 @@ describe("findNonOverlappingPosition", () => {
     expect(findNonOverlappingPosition(0, 0, 100, 100, [])).toEqual({ x: 0, y: 0 });
   });
 
-  it("moves right of the rightmost tile, else below them all", () => {
+  it("moves right of the rightmost tile", () => {
     expect(findNonOverlappingPosition(0, 0, 100, 100, [tile("a", "chat", 0, 0, 200, 200)])).toEqual({ x: 220, y: 0 });
+    expect(findNonOverlappingPosition(0, 0, 100, 100, [tile("a", "chat", 0, 0, 200, 200), tile("b", "git", 150, 500, 600, 100)])).toEqual({ x: 770, y: 0 });
+  });
+
+  it("moves right of the origin when every tile is left of it", () => {
+    expect(findNonOverlappingPosition(-150, 0, 100, 100, [tile("a", "chat", -300, 0, 200, 200)])).toEqual({ x: 20, y: 0 });
   });
 });
 
@@ -80,5 +85,12 @@ describe("freshTileId", () => {
   it("counts up past the ids the canvas has", () => {
     expect(freshTileId(canvas([]), "notes", 7)).toBe("notes-7");
     expect(freshTileId(canvas([tile("notes-7", "notes", 0, 0), tile("notes-8", "notes", 0, 0)]), "notes", 7)).toBe("notes-9");
+  });
+});
+
+describe("isCanvasNode", () => {
+  it("tells a canvas from a pane tree", () => {
+    expect(isCanvasNode(canvas([]))).toBe(true);
+    expect(isCanvasNode({ type: "leaf", id: "chat", panel: "chat", flex: 1 })).toBe(false);
   });
 });

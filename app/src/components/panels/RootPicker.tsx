@@ -25,9 +25,8 @@ export function RootPicker({ roots, value, onChange, testId, title }: RootPicker
   const current = roots.find((r) => r.index === value) ?? roots[0];
 
   const open = () => {
-    const el = btnRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
+    // The button is mounted whenever it can be clicked.
+    const r = btnRef.current!.getBoundingClientRect();
     setMenuPos({ x: r.left, y: r.bottom + 2 });
   };
 

@@ -1301,3 +1301,53 @@ describe("the side view", () => {
     expect(await run([{ op: "wait_for", pane: "side", match: "never" }])).toEqual([{ op: "wait_for", ok: false, error: "the Explain view is no longer open" }]);
   });
 });
+
+describe("runSteps, with a host that rejects with a non-Error", () => {
+  it("reports the rejection of each host call as its text", async () => {
+    host.openFile = () => Promise.reject("file gone");
+    host.walkthrough = () => Promise.reject("load failed");
+    expect(await run([{ op: "open_file", path: "main.go" }])).toEqual([{ op: "open_file", ok: false, error: "file gone" }]);
+    expect(await run([{ op: "open_walkthrough", walkthrough_id: 12 }])).toEqual([{ op: "open_walkthrough", ok: false, error: "load failed" }]);
+  });
+
+  it("reports a non-Error from showing a walkthrough", async () => {
+    host.showWalkthrough = () => Promise.reject("show failed");
+    expect(await run([{ op: "open_walkthrough", walkthrough_id: 12 }])).toEqual([{ op: "open_walkthrough", ok: false, error: "show failed" }]);
+  });
+
+  it.each([
+    ["a string", "chat went away", "chat went away"],
+    ["nothing", undefined, "failed"],
+  ])("reports showing a message rejected with %s", async (_name, reason, error) => {
+    host.showMessage = () => Promise.reject(reason);
+    expect(await run([{ op: "show_message", message_id: 7 }])).toEqual([{ op: "show_message", ok: false, error }]);
+  });
+
+  it("reports a chat send rejected with a non-Error", async () => {
+    const chat = new FakeChat();
+    chat.send = () => Promise.reject("send failed");
+    host.chats.set("c1:chat", chat);
+    expect(await run([{ op: "send_input", pane: "chat", text: "go" }])).toEqual([{ op: "send_input", ok: false, error: "send failed" }]);
+  });
+});
+
+describe("runSteps, walkthrough step counts", () => {
+  it("treats a walkthrough without steps as empty", async () => {
+    host.walkthroughs.set(14, { id: 14, channel_id: "c1", title: "Bare", created_at: "2026-10-29T10:00:00Z", step_count: 0 });
+    expect(await run([{ op: "open_walkthrough", walkthrough_id: 14 }])).toEqual([{ op: "open_walkthrough", ok: false, error: "walkthrough 14 has no steps" }]);
+  });
+
+  it("says step in the singular for a one-step walkthrough", async () => {
+    host.walkthroughs.set(15, { id: 15, channel_id: "c1", title: "One", created_at: "2026-10-29T10:00:00Z", step_count: 1, steps: [{ path: "main.go", start_line: 1, end_line: 2 }] });
+    expect(await run([{ op: "open_walkthrough", walkthrough_id: 15, walkthrough_step: 2 }])).toEqual([
+      { op: "open_walkthrough", ok: false, error: "walkthrough 15 has 1 step; walkthrough_step must be from 1 to 1" },
+    ]);
+  });
+});
+
+describe("runSteps, a tab with no panes", () => {
+  it("lists none when the pane isn't there", async () => {
+    ws.panes = [];
+    expect(await run([{ op: "remove_pane", pane: "git" }])).toEqual([{ op: "remove_pane", ok: false, error: 'no pane "git" in the open tab; panes: none' }]);
+  });
+});

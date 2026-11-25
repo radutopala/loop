@@ -97,12 +97,11 @@ export function ConfigHistory({
       });
   };
 
-  const handleRestore = async () => {
-    if (!selected) return;
+  const handleRestore = async (rev: ConfigRevision) => {
     setBusy(true);
     setMessage(null);
     try {
-      await restoreConfigRevision(selected.id);
+      await restoreConfigRevision(rev.id);
       fetchSeq.current++;
       setSelected(null);
       setAgainst(null);
@@ -233,7 +232,7 @@ export function ConfigHistory({
                   <button
                     type="button"
                     data-testid="config-history-restore"
-                    onClick={handleRestore}
+                    onClick={() => handleRestore(selected)}
                     disabled={busy || unsaved || selected.id === current}
                     title={unsaved ? "Save or cancel your edits first" : selected.id === current ? "This is the current version" : undefined}
                     style={btnStyle(!busy && !unsaved && selected.id !== current)}

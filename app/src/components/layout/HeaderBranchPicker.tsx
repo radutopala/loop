@@ -288,7 +288,8 @@ export function HeaderBranchPicker({
           {hasWorktrees && (
             <WorktreeRows
               testId="branch-picker-worktrees"
-              worktrees={branchInfo?.worktrees ?? []}
+              // hasWorktrees means the listing loaded with some.
+              worktrees={branchInfo!.worktrees}
               search={search}
               onSelectThread={onSelectThread}
               onImport={onImportWorktree && ((path) => onImportWorktree(channelId, path))}

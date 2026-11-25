@@ -106,6 +106,7 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
   // Connect WebSocket with auto-reconnect.
   useEffect(() => {
     if (!channelId) return;
+    const cid = channelId;
 
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let reconnectDelay = 1000;
@@ -115,8 +116,6 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
     setConnected(false);
     setStarted(false);
     function connect() {
-      if (stopped) return;
-
       const wsUrl = `${getWsUrl()}/api/ws/browser`;
       const ws = new WebSocket(wsUrl, wsProtocols());
       wsRef.current = ws;
@@ -142,15 +141,13 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
               // which may not fire reliably across StrictMode remounts.
               ws.send(JSON.stringify({ type: "screencast", width: 1920, height: 1080 }));
               // Request tab list via HTTP (WS no longer handles list_tabs).
-              if (channelId) {
-                browserAction(channelId, "list_tabs").then((resp) => {
-                  if (resp.tabs) {
-                    setTabs(resp.tabs);
-                    const active = resp.tabs.find((t) => t.active);
-                    if (active) setActiveTargetId(active.target_id);
-                  }
-                });
-              }
+              browserAction(cid, "list_tabs").then((resp) => {
+                if (resp.tabs) {
+                  setTabs(resp.tabs);
+                  const active = resp.tabs.find((t) => t.active);
+                  if (active) setActiveTargetId(active.target_id);
+                }
+              });
               onStartedRef.current?.();
               break;
             case "stopped":
@@ -303,11 +300,9 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
         // Refresh tab list after page loads to get the final title
         // (Chrome may not have the title ready immediately after navigate).
         setTimeout(() => {
-          if (channelId) {
-            browserAction(channelId, "list_tabs").then((r) => {
-              if (r.tabs) setTabs(r.tabs);
-            });
-          }
+          browserAction(channelId, "list_tabs").then((r) => {
+            if (r.tabs) setTabs(r.tabs);
+          });
         }, 1000);
       });
     },

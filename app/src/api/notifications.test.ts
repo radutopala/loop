@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { unreadable } from "../test/hooks-c-api-fetch";
 import { clearNotifications, deleteNotification, fetchNotifications, fetchUnreadNotifications, markNotificationsRead } from "./notifications";
 
 let fetchMock: ReturnType<typeof vi.fn>;
@@ -99,5 +100,12 @@ describe("clearNotifications", () => {
   it("throws on an error", async () => {
     fetchMock.mockResolvedValue(new Response("boom", { status: 500 }));
     await expect(clearNotifications("ch")).rejects.toThrow("Failed to clear notifications: boom");
+  });
+});
+
+describe("unreadable error bodies", () => {
+  it("fall back to the status text", async () => {
+    fetchMock.mockResolvedValue(unreadable(502, "Bad Gateway"));
+    await expect(fetchNotifications("c1")).rejects.toThrow("Failed to list notifications: Bad Gateway");
   });
 });

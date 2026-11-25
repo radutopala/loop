@@ -118,7 +118,7 @@ export function PRPanel({ channelId, status, colors, onChanged }: { channelId: s
         )}
         {prStaleCheckout(status) && (
           <span data-testid="git-panel-pr-stale" style={{ color: colors.warning, fontSize: 11 }}>
-            The checkout is at {sha(status.checkout_sha ?? "")}, not the head: it was pushed from elsewhere, or the checkout has commits not pushed yet.
+            The checkout is at {sha(status.checkout_sha!)}, not the head: it was pushed from elsewhere, or the checkout has commits not pushed yet.
           </span>
         )}
         {conflict && (

@@ -164,6 +164,14 @@ describe("approveBody", () => {
   });
 });
 
+describe("approveBody with a blank nit", () => {
+  it("lists only the place of a nit without text", () => {
+    expect(approveBody(outcome({ state: "approve_with_nits", nits: ["b"] }), [comment("b", { body: " \n " })])).toBe(
+      ["Approved. A few nice-to-haves, none blocking:", "", "- `internal/api/x.go:12`"].join("\n"),
+    );
+  });
+});
+
 describe("impactLabel", () => {
   it("names each impact", () => {
     expect(impactLabel("blocking")).toBe("blocking");

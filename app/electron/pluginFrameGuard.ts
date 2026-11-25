@@ -11,7 +11,8 @@ export function pluginFrameBase(url: string): string {
   }
   const cap = /^\/c\/([^/]+)\//.exec(u.pathname)?.[1];
   if (!cap) return "";
-  const payload = cap.split(".")[0] ?? "";
+  const dot = cap.indexOf(".");
+  const payload = dot === -1 ? cap : cap.slice(0, dot);
   try {
     const json = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
     if ((JSON.parse(json) as { k?: unknown }).k !== "plugin") return "";

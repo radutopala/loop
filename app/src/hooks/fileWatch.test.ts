@@ -21,6 +21,7 @@ describe("parseFileWatchChange", () => {
   it.each([
     ["a file change", '{"type":"file","root":1,"path":"a.ts"}', { type: "file", pathKey: "1:a.ts" }],
     ["a root dir change (path omitted)", '{"type":"dir","root":0}', { type: "dir", pathKey: "0:" }],
+    ["root omitted defaults to 0", '{"type":"dir","path":"docs"}', { type: "dir", pathKey: "0:docs" }],
     ["an error", '{"type":"error","root":0,"message":"x"}', null],
     ["broken JSON", "{", null],
     ["a binary frame", new ArrayBuffer(1), null],

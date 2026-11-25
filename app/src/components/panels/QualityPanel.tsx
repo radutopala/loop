@@ -183,9 +183,12 @@ export function QualityPanel({ channelId, embedded, onClose }: QualityPanelProps
 
   const treemapRoot = useMemo(() => {
     if (!treemapData) return null;
-    return hierarchy<TreemapDatum>(treemapData)
-      .sum((d) => d.size ?? 0)
-      .sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
+    return (
+      hierarchy<TreemapDatum>(treemapData)
+        .sum((d) => d.size ?? 0)
+        // sum() sets value on every node, so it is always defined here.
+        .sort((a, b) => b.value! - a.value!)
+    );
   }, [treemapData]);
 
   const headerStyle: React.CSSProperties = {

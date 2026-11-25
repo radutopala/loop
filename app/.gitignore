@@ -4,3 +4,4 @@ dist-electron/
 release/
 resources/
 .vite/
+coverage/

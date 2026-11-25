@@ -154,8 +154,8 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
   // scroll through a long chat is slow, and its scroll events would turn
   // following the latest message off again on the way.
   const jumpToLatest = useCallback(() => {
-    const el = containerRef.current;
-    if (!el) return;
+    // The button is inside the container, so it's mounted.
+    const el = containerRef.current!;
     autoScrollRef.current = true;
     el.scrollTop = el.scrollHeight;
   }, []);
@@ -197,8 +197,8 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
     // "at bottom?" check, flipping auto-follow off until the user manually scrolls
     // down. An instant pin to scrollHeight always tracks the growing content (and
     // keeps interactive cards' action buttons in view).
-    const el = containerRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    const el = containerRef.current!;
+    el.scrollTop = el.scrollHeight;
     // Re-pin not just on message/stream growth but whenever the bottom region
     // changes height: the queue (backendQueue) gaining/losing items, a run
     // starting/finishing (isRunning) which mounts the processing indicator and
@@ -273,8 +273,8 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
 
   // Track whether user has scrolled up.
   const handleScroll = useCallback(() => {
-    const el = containerRef.current;
-    if (!el) return;
+    // Only the container's own scroll events call this.
+    const el = containerRef.current!;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
     autoScrollRef.current = atBottom;
     setScrolledUp(!atBottom);
@@ -326,8 +326,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
   // states on every scroll/resize via rAF instead.
   const [userMsgStates, setUserMsgStates] = useState<Map<string, "above" | "visible" | "below">>(new Map());
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
+    const container = containerRef.current!;
     let rafId = 0;
     const recompute = () => {
       rafId = 0;

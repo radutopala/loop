@@ -350,18 +350,8 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
 
   // Mount/update CodeMirror editor.
   useEffect(() => {
-    if (!editorRef.current || fileContent === null || isBinary) {
-      if (viewRef.current) {
-        viewRef.current.destroy();
-        viewRef.current = null;
-      }
-      return;
-    }
-
-    if (viewRef.current) {
-      viewRef.current.destroy();
-      viewRef.current = null;
-    }
+    // The previous run's cleanup has already destroyed its view.
+    if (!editorRef.current || fileContent === null || isBinary) return;
 
     // Where this tab was left. It's tracked as it changes, not read back on
     // close: by then the view may be off the page and report no scroll.
@@ -451,12 +441,12 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       });
     });
     const onEditorScroll = () => {
-      if (!restoring && scroller) {
+      if (!restoring) {
         // 1px down: a line ending right at the edge isn't in view.
         const top = view.lineBlockAtHeight(scroller.getBoundingClientRect().top - view.documentTop + 1).from;
         if (top !== tabView.top) tabViewChanged({ top });
       }
-      if (scrollSyncSource.current === "preview" || !scroller) return;
+      if (scrollSyncSource.current === "preview") return;
       scrollSyncSource.current = "editor";
       const el = previewRef.current;
       if (el) {
@@ -467,10 +457,10 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
         scrollSyncSource.current = null;
       });
     };
-    scroller?.addEventListener("scroll", onEditorScroll);
+    scroller.addEventListener("scroll", onEditorScroll);
 
     return () => {
-      scroller?.removeEventListener("scroll", onEditorScroll);
+      scroller.removeEventListener("scroll", onEditorScroll);
       cancelAnimationFrame(restoreFrame);
       if (reportTimer) {
         clearTimeout(reportTimer);
@@ -521,10 +511,10 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
     // file is scrolled to first, then again with room for its card.
     let id = 0;
     const reveal = (again: boolean) => {
+      // The cleanup cancels the latest frame, so a frame only runs on this
+      // view, which shows the step.
       id = requestAnimationFrame(() => {
-        if (viewRef.current !== view) return;
-        const shown = shownWalkthroughRange(view.state);
-        if (!shown) return;
+        const shown = shownWalkthroughRange(view.state)!;
         const card = view.dom.querySelector<HTMLElement>(".cm-walkthrough-card");
         view.dispatch({ effects: EditorView.scrollIntoView(view.state.doc.line(shown.start_line).from, { y: "start", yMargin: (card?.offsetHeight ?? 0) + 16 }) });
         if (!card && again) reveal(false);
@@ -538,24 +528,20 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
     const view = viewRef.current;
     const items: MenuItem[] = [];
     const hasSelection = view ? view.state.selection.main.from !== view.state.selection.main.to : false;
-    if (hasSelection) {
+    if (view && hasSelection) {
       items.push({
         label: "Copy",
         onClick: () => {
-          if (view) {
-            const sel = view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to);
-            navigator.clipboard.writeText(sel);
-          }
+          const sel = view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to);
+          navigator.clipboard.writeText(sel);
         },
       });
       items.push({
         label: "Cut",
         onClick: () => {
-          if (view) {
-            const sel = view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to);
-            navigator.clipboard.writeText(sel);
-            view.dispatch({ changes: { from: view.state.selection.main.from, to: view.state.selection.main.to, insert: "" } });
-          }
+          const sel = view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to);
+          navigator.clipboard.writeText(sel);
+          view.dispatch({ changes: { from: view.state.selection.main.from, to: view.state.selection.main.to, insert: "" } });
         },
       });
     }
@@ -636,12 +622,11 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
               onScroll={() => {
                 if (scrollSyncSource.current === "editor") return;
                 scrollSyncSource.current = "preview";
-                const el = previewRef.current;
-                const ed = editorRef.current;
-                if (el && ed) {
-                  const pct = el.scrollTop / Math.max(1, el.scrollHeight - el.clientHeight);
-                  ed.scrollTop = pct * (ed.scrollHeight - ed.clientHeight);
-                }
+                // Both are mounted while the preview scrolls.
+                const el = previewRef.current!;
+                const ed = editorRef.current!;
+                const pct = el.scrollTop / Math.max(1, el.scrollHeight - el.clientHeight);
+                ed.scrollTop = pct * (ed.scrollHeight - ed.clientHeight);
                 requestAnimationFrame(() => {
                   scrollSyncSource.current = null;
                 });

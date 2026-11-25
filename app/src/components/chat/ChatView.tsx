@@ -161,11 +161,11 @@ export function ChatView({
   // composer holds that message's text to edit and send. The draft is
   // written first, so the thread's composer finds it when it mounts.
   const forkAt = useCallback(
+    // Only handed to the messages with a channel open and onSelectThread set.
     async (msg: Message) => {
-      if (!channelId || !onSelectThread) return;
-      const res = await forkAtMessage(channelId, msg.msg_id);
+      const res = await forkAtMessage(channelId!, msg.msg_id);
       if (res.prompt) draftText.set(res.thread_id, res.prompt);
-      onSelectThread(res.thread_id);
+      onSelectThread!(res.thread_id);
     },
     [channelId, onSelectThread],
   );

@@ -31,9 +31,10 @@ describe("allowPermissionRequest", () => {
     ["the microphone for a plugin frame", { isMainFrame: false, requestingUrl: pluginFrame }, packaged, false],
     ["the microphone for another page in the main frame", { isMainFrame: true, requestingUrl: "https://example.com/" }, packaged, false],
     ["the microphone with no URL", { isMainFrame: true }, packaged, false],
+    ["the microphone with undefined mediaTypes", { isMainFrame: true, requestingUrl: `${packaged}#ch`, mediaTypes: undefined }, packaged, false],
   ] as const)("media: %s", (_name, info, entry, want) => {
     const withTypes = "mediaTypes" in info ? info : { ...info, mediaTypes: ["audio"] };
-    expect(allowPermissionRequest("media", { ...withTypes, mediaTypes: [...withTypes.mediaTypes] }, entry)).toBe(want);
+    expect(allowPermissionRequest("media", { ...withTypes, mediaTypes: withTypes.mediaTypes ? [...withTypes.mediaTypes] : undefined }, entry)).toBe(want);
   });
 
   it.each(["notifications", "clipboard-read", "clipboard-sanitized-write", "fullscreen", "openExternal"])("keeps granting %s anywhere", (perm) => {
@@ -48,6 +49,7 @@ describe("allowPermissionCheck", () => {
     ["an unknown media type", { isMainFrame: true, requestingUrl: `${dev}/`, mediaType: "unknown" }, false],
     ["audio for a plugin frame", { isMainFrame: false, requestingUrl: pluginFrame, mediaType: "audio" }, false],
     ["audio for another page", { isMainFrame: true, requestingUrl: "https://example.com/", mediaType: "audio" }, false],
+    ["audio with no URL", { isMainFrame: true, mediaType: "audio" }, false],
   ])("media: %s", (_name, info, want) => {
     expect(allowPermissionCheck("media", info, dev)).toBe(want);
   });

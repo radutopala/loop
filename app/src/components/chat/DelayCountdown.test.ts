@@ -1,5 +1,8 @@
-import { describe, expect, it } from "vitest";
-import { formatCountdown } from "./DelayCountdown";
+// @vitest-environment jsdom
+import { act, cleanup, render, screen } from "@testing-library/react";
+import { createElement } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DelayCountdown, formatCountdown } from "./DelayCountdown";
 
 describe("formatCountdown", () => {
   it("renders sub-minute delays as m:ss", () => {
@@ -26,5 +29,40 @@ describe("formatCountdown", () => {
   it("clamps negatives to 0:00", () => {
     expect(formatCountdown(-1)).toBe("0:00");
     expect(formatCountdown(-500)).toBe("0:00");
+  });
+});
+
+describe("DelayCountdown", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+  });
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+  });
+
+  const now = () => Date.now() / 1000;
+
+  it("ticks down once a second and disappears when the delay ends", () => {
+    const { container } = render(createElement(DelayCountdown, { notBefore: now() + 2 }));
+    expect(screen.getByTitle("Scheduled — runs when the countdown ends").textContent).toBe("⏱ 0:02");
+    act(() => vi.advanceTimersByTime(1000));
+    expect(container.textContent).toBe("⏱ 0:01");
+    act(() => vi.advanceTimersByTime(1000));
+    expect(container.innerHTML).toBe("");
+  });
+
+  it("renders nothing for a delay already over", () => {
+    const { container } = render(createElement(DelayCountdown, { notBefore: now() - 5 }));
+    expect(container.innerHTML).toBe("");
+  });
+
+  it("restarts the countdown when the time changes, and stops ticking on unmount", () => {
+    const { container, rerender, unmount } = render(createElement(DelayCountdown, { notBefore: now() + 5 }));
+    rerender(createElement(DelayCountdown, { notBefore: now() + 90 }));
+    expect(container.textContent).toBe("⏱ 1:30");
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

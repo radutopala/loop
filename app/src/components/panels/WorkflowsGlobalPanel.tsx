@@ -40,21 +40,18 @@ export const WorkflowsGlobalPanel = forwardRef<WorkflowsGlobalPanelHandle, Workf
 
   const headerBtnStyle = buildHeaderBtnStyle(colors);
 
-  // Escape to close dialog first, then panel.
+  // Escape closes the panel. While the start dialog is open, its own
+  // capture-phase listener closes it and stops the event before it gets here.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
-        if (wf.showStartDialog) {
-          wf.setShowStartDialog(false);
-        } else {
-          onClose();
-        }
+        onClose();
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose, wf.showStartDialog, wf.setShowStartDialog]);
+  }, [onClose]);
 
   useImperativeHandle(ref, () => ({ handleWorkflowEvent: wf.handleWorkflowEvent }), [wf.handleWorkflowEvent]);
 

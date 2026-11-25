@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
+import { unreadable } from "../test/hooks-c-api-fetch";
 import { type AttentionItem, attentionActions, attentionKey, fetchAttention, groupAttention, needsFlash, nextSeen, runAttentionAction } from "./attention";
 import { formatAskAnswers } from "./channels";
 
@@ -37,6 +37,18 @@ describe("fetchAttention", () => {
   ])("throws with %s", async (_name, res, want) => {
     fetchMock.mockResolvedValue(res);
     await expect(fetchAttention()).rejects.toThrow(want);
+  });
+
+  it("throws with the status when the body can't be read", async () => {
+    fetchMock.mockResolvedValue(unreadable(502, "Bad Gateway"));
+    await expect(fetchAttention()).rejects.toThrow("Failed to list what needs you: Bad Gateway");
+  });
+});
+
+describe("attentionKey", () => {
+  it("joins kind, channel and ref, with an empty ref when there is none", () => {
+    expect(attentionKey(run)).toBe("run\u0000t3\u00007");
+    expect(attentionKey(pr)).toBe("pr\u0000t1\u0000");
   });
 });
 
@@ -110,6 +122,12 @@ describe("runAttentionAction", () => {
     fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
     await runAttentionAction(it, id);
     expect(sent()).toEqual(want);
+  });
+
+  it("resolves a gate request without a ref under an empty id", async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
+    await runAttentionAction({ ...gate, ref: undefined }, "once");
+    expect(sent().url).toBe("http://localhost:8222/api/gate/approvals/");
   });
 
   it("takes a gate request already gone as done", async () => {

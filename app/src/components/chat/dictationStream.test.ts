@@ -110,4 +110,45 @@ describe("DictationStream", () => {
     expect(h.onPartial).not.toHaveBeenCalled();
     expect(h.onError).not.toHaveBeenCalled();
   });
+
+  it("treats a close while still listening as an error, and ignores socket errors", () => {
+    const { ws, h } = make();
+    ws.open();
+    ws.onerror?.({});
+    expect(h.onError).not.toHaveBeenCalled();
+    ws.close();
+    expect(h.onError).toHaveBeenCalledWith("closed", "The dictation connection closed.");
+    expect(h.onEnd).toHaveBeenCalledOnce();
+  });
+
+  it("fills in missing fields of partial, final and error frames", () => {
+    const a = make();
+    a.ws.open();
+    a.ws.server({ type: "partial" });
+    expect(a.h.onPartial).toHaveBeenCalledWith("", "");
+    a.ws.server({ type: "final" });
+    expect(a.h.onFinal).toHaveBeenCalledWith("");
+    const b = make();
+    b.ws.open();
+    b.ws.server({ type: "error" });
+    expect(b.h.onError).toHaveBeenCalledWith("error", "Dictation failed.");
+  });
+
+  it("does nothing on a second cancel or a late open", () => {
+    const { ws, s, h } = make();
+    s.sendAudio(pcm(1));
+    s.cancel();
+    s.cancel();
+    expect(h.onEnd).toHaveBeenCalledOnce();
+    ws.readyState = 1;
+    ws.onopen?.({});
+    expect(ws.sent).toEqual([]);
+    expect(s.done).toBe(true);
+  });
+});
+
+describe("FakeSocket", () => {
+  it("refuses to send before it opens", () => {
+    expect(() => new FakeSocket().send("x")).toThrow("send before open");
+  });
 });

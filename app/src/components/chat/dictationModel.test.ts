@@ -39,6 +39,7 @@ describe("prompt text", () => {
   it("shows download progress", () => {
     expect(downloadProgressText(status({}, { active: true, received: 287_000_000, total: 574_041_195 }))).toMatch(/^Downloading… 49% \(/);
     expect(downloadProgressText(status({}, { active: true }))).toBe("Downloading…");
+    expect(downloadProgressText(status({}, { active: true, received: 2048 }))).toMatch(/^Downloading… \d/);
   });
 
   it("explains a missing transcriber and names the hold key", () => {
@@ -46,6 +47,9 @@ describe("prompt text", () => {
     expect(micButtonTip("ready", status({ model_ready: true }), true)).toContain("Right Option");
     expect(micButtonTip("ready", status({ model_ready: true }), false)).toContain("Right Alt");
     expect(micButtonTip("needs_model", status(), false)).toContain("~550 MB");
+    expect(micButtonTip("unavailable", status({ available: false, reason: "crashed" }), false)).toBe("Dictation unavailable\nThe daemon can't run the transcriber.");
+    expect(micButtonTip("downloading", status({}, { active: true, received: 50, total: 100 }), false)).toMatch(/^Dictation\nDownloading… 50% \(/);
+    expect(micButtonTip("downloading", null, false)).toBe("Dictation\nDownloading…");
     expect(editButtonTip("ready", status({ model_ready: true }), true)).toMatch(/^Edit by voice\nHold Shift\+Right Option/);
     expect(editButtonTip("needs_model", status(), false)).toBe(`Edit by voice\nNeeds a one-time ~550 MB model download; press to set it up.`);
   });
@@ -110,6 +114,14 @@ describe("downloadDictationModel", () => {
     const t = deps([status({}, { active: true })]);
     let n = 0;
     await expect(downloadDictationModel({ ...t.d, cancelled: () => ++n > 2 })).resolves.toBeNull();
+  });
+
+  it("drops a status that arrives after the caller cancelled", async () => {
+    const t = deps([status({ model_ready: true })]);
+    let n = 0;
+    await expect(downloadDictationModel({ ...t.d, cancelled: () => ++n > 1 })).resolves.toBeNull();
+    expect(t.calls).toEqual(["start", "status"]);
+    expect(t.progress).toEqual([]);
   });
 });
 

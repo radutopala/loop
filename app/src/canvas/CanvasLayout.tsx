@@ -76,8 +76,7 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats,
   useEffect(() => {
     if (canvasForCenter.tiles.length === 0) return;
     if (vp.x !== 0 || vp.y !== 0 || vp.zoom !== 1) return;
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (!rect) return;
+    const rect = boxOf(containerRef);
     const minX = Math.min(...canvasForCenter.tiles.map((t) => t.x));
     const minY = Math.min(...canvasForCenter.tiles.map((t) => t.y));
     const maxX = Math.max(...canvasForCenter.tiles.map((t) => t.x + t.width));
@@ -149,7 +148,8 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats,
     savedBoundsRef.current = null;
     maximizedRef.current = null;
     setMaximizedId(null);
-    return saved ? { ...c, tiles: c.tiles.map((t) => (t.id === id ? { ...t, ...saved } : t)) } : c;
+    // Set by maximized, which marks a tile maximized.
+    return { ...c, tiles: c.tiles.map((t) => (t.id === id ? { ...t, ...saved } : t)) };
   }, []);
 
   const maximized = useCallback((c: CanvasNode, id: string): CanvasNode => {
@@ -192,8 +192,7 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats,
   /** Convert screen coordinates to world coordinates. */
   const screenToWorld = useCallback(
     (screenX: number, screenY: number) => {
-      const rect = containerRef.current?.getBoundingClientRect();
-      if (!rect) return { x: 0, y: 0 };
+      const rect = boxOf(containerRef);
       return {
         x: (screenX - rect.left - vp.x) / vp.zoom,
         y: (screenY - rect.top - vp.y) / vp.zoom,
@@ -209,10 +208,11 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats,
       if (position) {
         worldPos = position;
       } else if (showAddMenu) {
-        worldPos = screenToWorld((containerRef.current?.getBoundingClientRect().left ?? 0) + showAddMenu.x, (containerRef.current?.getBoundingClientRect().top ?? 0) + showAddMenu.y);
+        const rect = boxOf(containerRef);
+        worldPos = screenToWorld(rect.left + showAddMenu.x, rect.top + showAddMenu.y);
       } else {
-        const rect = containerRef.current?.getBoundingClientRect();
-        worldPos = rect ? screenToWorld(rect.left + rect.width / 2 - 250, rect.top + rect.height / 2 - 200) : { x: 20, y: 20 };
+        const rect = boxOf(containerRef);
+        worldPos = screenToWorld(rect.left + rect.width / 2 - 250, rect.top + rect.height / 2 - 200);
       }
       const maxZ = Math.max(...canvas.tiles.map((t) => t.zIndex), 0);
       const id = `${panel}-${Date.now()}`;
@@ -221,7 +221,6 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats,
       const adjusted = findNonOverlappingPosition(worldPos.x, worldPos.y, tileW, tileH, canvas.tiles);
       const openMode = takesOpenMode(panel) ? meta?.openMode : undefined;
       const plugin = panel === "plugin" ? meta?.plugin : undefined;
-      if (panel === "plugin" && !plugin) return;
       const newTile: CanvasTileType = {
         id,
         panel,
@@ -274,8 +273,7 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats,
 
   // --- Pan: middle-click drag ---
   useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
+    const el = containerRef.current as HTMLDivElement;
     const onMouseDown = (e: MouseEvent) => {
       if (e.button !== 1) return;
       e.preventDefault();
@@ -314,9 +312,9 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats,
   const dockTile = learnDock ? canvas.tiles.find((t) => (learnDock.tileId ? t.id === learnDock.tileId : t.panel === "chat")) : undefined;
   const dockedId = dockTile?.id;
   useEffect(() => {
-    const rect = containerRef.current?.getBoundingClientRect();
     const chat = canvasRef.current.tiles.find((t) => t.id === dockedId);
-    if (!rect || !chat) return;
+    if (!chat) return;
+    const rect = boxOf(containerRef);
     const v = vpRef.current;
     const w = chat.width * 2 + LEARN_DOCK_GAP;
     const left = chat.x * v.zoom + v.x;
@@ -327,8 +325,7 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats,
   }, [dockedId]);
 
   useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
+    const el = containerRef.current as HTMLDivElement;
     const handler = (e: WheelEvent) => {
       const v = vpRef.current;
       const insideTile = (e.target as HTMLElement).closest?.("[data-canvas-tile]");
@@ -455,8 +452,9 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats,
               <button
                 key={opt.key}
                 onClick={(e) => {
+                  // A disabled button gets no click.
                   e.stopPropagation();
-                  if (!disabled) handleAddTile(opt.panel, undefined, opt.meta);
+                  handleAddTile(opt.panel, undefined, opt.meta);
                 }}
                 disabled={disabled}
                 style={{
@@ -473,7 +471,8 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats,
                   borderRadius: 3,
                 }}
                 onMouseEnter={(e) => {
-                  if (!disabled) e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)";
+                  // A disabled button gets no mouseenter.
+                  e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)";
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.backgroundColor = "transparent";
@@ -494,8 +493,7 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats,
           containerRef={containerRef}
           onPan={(x, y) => setViewport(x, y, vp.zoom)}
           onZoom={(newZoom) => {
-            const rect = containerRef.current?.getBoundingClientRect();
-            if (!rect) return;
+            const rect = boxOf(containerRef);
             const cx = rect.width / 2;
             const cy = rect.height / 2;
             const scale = newZoom / vp.zoom;
@@ -505,6 +503,12 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats,
       )}
     </div>
   );
+}
+
+/** The box of a mounted element: for effects and event handlers, which run
+ *  once it's mounted. */
+function boxOf(ref: React.RefObject<HTMLDivElement | null>): DOMRect {
+  return (ref.current as HTMLDivElement).getBoundingClientRect();
 }
 
 // --- Minimap ---
@@ -616,8 +620,7 @@ function CanvasMinimap({
   // Click on minimap to jump viewport center.
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
-      const mmRect = minimapRef.current?.getBoundingClientRect();
-      if (!mmRect) return;
+      const mmRect = boxOf(minimapRef);
       const clickX = e.clientX - mmRect.left;
       const clickY = e.clientY - mmRect.top;
       const worldClickX = clickX / scale + worldMinX;

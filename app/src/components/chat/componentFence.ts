@@ -19,17 +19,17 @@ export const componentTag = "loop-component";
 export function readFence(lines: string[], start: number): Fence | null {
   const open = /^(`{3,})(.*)$/.exec(lines[start] ?? "");
   if (!open) return null;
-  const ticks = open[1]?.length ?? 0;
+  const ticks = open[1]!.length;
   const body: string[] = [];
   for (let i = start + 1; i < lines.length; i++) {
-    const line = lines[i] ?? "";
+    const line = lines[i]!;
     const close = /^(`{3,})\s*$/.exec(line);
-    if (close && (close[1]?.length ?? 0) >= ticks) {
-      return { info: (open[2] ?? "").trim(), body: body.join("\n"), closed: true, next: i + 1 };
+    if (close && close[1]!.length >= ticks) {
+      return { info: open[2]!.trim(), body: body.join("\n"), closed: true, next: i + 1 };
     }
     body.push(line);
   }
-  return { info: (open[2] ?? "").trim(), body: body.join("\n"), closed: false, next: lines.length };
+  return { info: open[2]!.trim(), body: body.join("\n"), closed: false, next: lines.length };
 }
 
 // parseComponentInfo reads a component fence's info string, or returns null
@@ -37,7 +37,7 @@ export function readFence(lines: string[], start: number): Fence | null {
 export function parseComponentInfo(info: string): { template: string; title: string } | null {
   const m = new RegExp(`^${componentTag}\\s+([a-z0-9][a-z0-9_-]*)(?:\\s+(.*))?$`).exec(info);
   if (!m) return null;
-  return { template: m[1] ?? "", title: (m[2] ?? "").trim() };
+  return { template: m[1]!, title: (m[2] ?? "").trim() };
 }
 
 // componentHeightMessage is what a component's document posts to report its

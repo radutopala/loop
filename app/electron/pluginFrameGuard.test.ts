@@ -19,6 +19,7 @@ describe("pluginFrameBase", () => {
     ["a file url", "file:///Applications/Loop.app/index.html", ""],
     ["not a url", "nope", ""],
     ["a cap that isn't base64 JSON", "http://127.0.0.1:8222/c/%%%.sig/x", ""],
+    ["a cap without a dot", `http://127.0.0.1:8222/c/${plugin.split(".")[0]}/x`, `http://127.0.0.1:8222/c/${plugin.split(".")[0]}/`],
     ["a cap without a path after it", `http://127.0.0.1:8222/c/${plugin}`, ""],
   ])("%s", (_name, url, want) => {
     expect(pluginFrameBase(url)).toBe(want);

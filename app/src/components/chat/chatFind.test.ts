@@ -32,6 +32,8 @@ describe("locateMatch", () => {
     { name: "spans nodes", texts: ["the agent", "gate", " file"], term: "agentgate", want: { start: { node: 0, offset: 4 }, end: { node: 1, offset: 4 } } },
     { name: "starts in the next node when the term begins at a boundary", texts: ["see ", "agentgate"], term: "agentgate", want: { start: { node: 1, offset: 0 }, end: { node: 1, offset: 9 } } },
     { name: "takes the first occurrence", texts: ["gate", "gate"], term: "gate", want: { start: { node: 0, offset: 0 }, end: { node: 0, offset: 4 } } },
+    { name: "ends at the end of the last node", texts: ["see ", "agent", "gate"], term: "gate", want: { start: { node: 2, offset: 0 }, end: { node: 2, offset: 4 } } },
+    { name: "skips empty nodes", texts: ["", "gate", ""], term: "ate", want: { start: { node: 1, offset: 1 }, end: { node: 1, offset: 4 } } },
     { name: "is null when the text lacks the term", texts: ["a link"], term: "agentgate", want: null },
     { name: "is null for an empty term", texts: ["text"], term: "", want: null },
   ])("$name", ({ texts, term, want }) => {

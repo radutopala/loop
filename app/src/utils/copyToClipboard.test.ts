@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { type ClipboardWriter, writeClipboard } from "./copyToClipboard";
 
 function fakeClipboard(overrides: Partial<ClipboardWriter> = {}): ClipboardWriter & { write: ReturnType<typeof vi.fn>; writeText: ReturnType<typeof vi.fn> } {
@@ -63,5 +63,30 @@ describe("writeClipboard", () => {
 
   it("rejects when there is no clipboard at all", async () => {
     await expect(writeClipboard("a", undefined, undefined, makeItem)).rejects.toThrow("clipboard unavailable");
+  });
+
+  describe("with the browser defaults", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("writes a ClipboardItem to navigator.clipboard", async () => {
+      class FakeItem {
+        constructor(readonly data: Record<string, Blob>) {}
+      }
+      const clip = fakeClipboard();
+      vi.stubGlobal("ClipboardItem", FakeItem);
+      vi.stubGlobal("navigator", { clipboard: clip });
+      await writeClipboard("a", "<b>a</b>");
+
+      const [items] = clip.write.mock.calls[0] as [FakeItem[]];
+      expect(items[0]).toBeInstanceOf(FakeItem);
+      expect(Object.keys(items[0]!.data)).toEqual(["text/plain", "text/html"]);
+    });
+
+    it("rejects when there is no navigator", async () => {
+      vi.stubGlobal("navigator", undefined);
+      await expect(writeClipboard("a")).rejects.toThrow("clipboard unavailable");
+    });
   });
 });

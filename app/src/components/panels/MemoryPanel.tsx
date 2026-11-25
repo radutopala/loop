@@ -29,7 +29,7 @@ interface TabsState {
   selected: string | null;
 }
 
-function loadTabs(channelId: string): TabsState {
+export function loadTabs(channelId: string): TabsState {
   const all = storageGetJSON<Record<string, TabsState>>(TABS_KEY);
   if (all && typeof all === "object" && all[channelId]) {
     return all[channelId];
@@ -165,24 +165,20 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFi
   }, [openMemoryFile]);
 
   const markDirty = useCallback(() => {
-    const p = selectedPathRef.current;
-    if (p) {
-      setDirtyTabs((prev) => {
-        if (prev.has(p)) return prev;
-        const next = new Set(prev);
-        next.add(p);
-        return next;
-      });
-      // Editing promotes a preview tab to permanent.
-      setPreviewTab((cur) => (cur === p ? null : cur));
-    }
+    const p = selectedPathRef.current!;
+    setDirtyTabs((prev) => {
+      if (prev.has(p)) return prev;
+      const next = new Set(prev);
+      next.add(p);
+      return next;
+    });
+    // Editing promotes a preview tab to permanent.
+    setPreviewTab((cur) => (cur === p ? null : cur));
   }, []);
 
-  const saveFile = useCallback((filePath?: string) => {
-    const savePath = filePath ?? selectedPathRef.current;
-    if (!savePath) return;
+  const saveFile = useCallback((savePath: string) => {
     const view = viewRef.current;
-    if (!view || savePath !== selectedPathRef.current) return;
+    if (!view) return;
     let content = view.state.doc.toString();
     if (content.length > 0 && !content.endsWith("\n")) {
       content += "\n";
@@ -202,8 +198,9 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFi
   }, []);
 
   const saveAllDirty = useCallback(() => {
-    if (dirtyTabsRef.current.has(selectedPathRef.current ?? "")) {
-      saveFile();
+    const p = selectedPathRef.current;
+    if (p && dirtyTabsRef.current.has(p)) {
+      saveFile(p);
     }
   }, [saveFile]);
 
@@ -218,9 +215,8 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFi
   const switchToTab = useCallback(
     (path: string) => {
       const curPath = selectedPathRef.current;
-      if (curPath && dirtyTabsRef.current.has(curPath)) {
-        const view = viewRef.current;
-        if (view) dirtyContentRef.current.set(curPath, view.state.doc.toString());
+      if (curPath && dirtyTabsRef.current.has(curPath) && viewRef.current) {
+        dirtyContentRef.current.set(curPath, viewRef.current.state.doc.toString());
         if (autoSaveOnBlurRef.current) saveAllDirty();
       }
       setSelectedPath(path);
@@ -273,10 +269,7 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFi
         return;
       }
       // Replace the existing preview tab with this file.
-      setOpenTabs((prev) => {
-        const without = previewTab ? prev.filter((t) => t !== previewTab) : prev;
-        return without.includes(path) ? without : [...without, path];
-      });
+      setOpenTabs((prev) => [...prev.filter((t) => t !== previewTab && t !== path), path]);
       setPreviewTab(path);
       if (selectedPathRef.current !== path) switchToTab(path);
     },
@@ -295,7 +288,7 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFi
 
   const handleCloseTab = useCallback(
     (path: string, e?: React.MouseEvent) => {
-      if (e) e.stopPropagation();
+      e!.stopPropagation();
       if (autoSaveOnBlurRef.current && path === selectedPath) saveAllDirty();
       dirtyContentRef.current.delete(path);
       setDirtyTabs((prev) => {
@@ -353,7 +346,6 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFi
           if (content !== current) {
             view.dispatch({ changes: { from: 0, to: current.length, insert: content } });
             setDirtyTabs((prev) => {
-              if (!prev.has(path)) return prev;
               const next = new Set(prev);
               next.delete(path);
               return next;

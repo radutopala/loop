@@ -38,10 +38,12 @@ const SHELL_FILES = new Set([".bashrc", ".bash_profile", ".zshrc", ".zprofile", 
  * "Dockerfile.dev" and "chrome.Dockerfile" all count.
  */
 export function langIdFor(path: string): LangId | null {
-  const name = (path.split("/").pop() ?? "").toLowerCase();
+  const slash = path.lastIndexOf("/");
+  const name = (slash < 0 ? path : path.slice(slash + 1)).toLowerCase();
   if (SHELL_FILES.has(name)) return "shell";
   const base = name.split(".")[0];
   if (base === "dockerfile" || base === "containerfile") return "dockerfile";
-  if (!name.includes(".")) return null;
-  return BY_EXTENSION[name.split(".").pop() ?? ""] ?? null;
+  const dot = name.lastIndexOf(".");
+  if (dot < 0) return null;
+  return BY_EXTENSION[name.slice(dot + 1)] ?? null;
 }

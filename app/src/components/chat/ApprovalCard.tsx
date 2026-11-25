@@ -33,10 +33,12 @@ export function ApprovalCard({
   // winning scroll even when the user had scrolled up.
   useEffect(() => {
     const id = requestAnimationFrame(() => {
-      let el = cardRef.current?.parentElement ?? null;
+      // The card is always mounted here: unmounting cancels this frame.
+      const card = cardRef.current!;
+      let el = card.parentElement;
       while (el && getComputedStyle(el).overflowY !== "auto") el = el.parentElement;
       if (el) el.scrollTop = el.scrollHeight;
-      else cardRef.current?.scrollIntoView({ block: "end" });
+      else card.scrollIntoView({ block: "end" });
     });
     return () => cancelAnimationFrame(id);
   }, []);
@@ -52,9 +54,8 @@ export function ApprovalCard({
   const caretRef = useRef<HTMLButtonElement | null>(null);
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const openDenyMenu = () => {
-    const el = caretRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
+    // Only the caret's own click opens the menu, so the ref is set.
+    const r = caretRef.current!.getBoundingClientRect();
     setMenuPos({ x: r.left, y: r.bottom + 2 });
   };
 
@@ -336,7 +337,7 @@ export function ApprovalCard({
                 backgroundColor: colors.warning,
                 color: "#fff",
                 cursor: sending !== null || prompt.trim().length === 0 ? "default" : "pointer",
-                opacity: sending !== null || prompt.trim().length === 0 ? 0.5 : sending === "deny-with-prompt" ? 0.7 : 1,
+                opacity: sending !== null || prompt.trim().length === 0 ? 0.5 : 1,
               }}
             >
               {sending === "deny-with-prompt" ? "..." : "Deny & send prompt"}

@@ -106,9 +106,9 @@ function fileIcon(name: string): { color: string; label: string } {
     default:
       break;
   }
+  // A name without a dot is its own "extension" above, so Makefile and
+  // Dockerfile are already matched there.
   const lower = name.toLowerCase();
-  if (lower === "makefile") return { color: "#6d8086", label: "M" };
-  if (lower === "dockerfile") return { color: "#384d54", label: "D" };
   if (lower === "license") return { color: "#d4930d", label: "L" };
   if (lower.startsWith(".git")) return { color: "#f14e32", label: "G" };
   if (lower.startsWith(".env")) return { color: "#ecd53f", label: "E" };

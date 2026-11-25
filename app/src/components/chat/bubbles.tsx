@@ -164,7 +164,7 @@ export function MessageBubble({
       const selectedText = sel?.toString().trim() ?? "";
       const inThisBubble = !!sel && sel.rangeCount > 0 && bubble.contains(sel.anchorNode);
       const items: MenuItem[] = [];
-      const linkHref = (e.target as Element).closest?.("a[data-copy-href]")?.getAttribute("data-copy-href");
+      const linkHref = (e.target as Element).closest("a[data-copy-href]")?.getAttribute("data-copy-href");
       if (linkHref) {
         items.push({ label: "Copy link", onClick: () => void writeClipboard(linkHref).catch(() => {}) });
         // A web link can open in the channel's Docker browser pane, or in the
@@ -713,7 +713,6 @@ export function AskUserQuestionCard({ questions, channelId, mode, onSent }: { qu
     for (let i = 0; i < questions.length; i++) {
       const q = questions[i]!;
       const sel = selectedFor(i);
-      if (sel.size === 0) continue;
       const labels = [...sel].filter((l) => l !== OTHER);
       if (sel.has(OTHER)) labels.push(otherTexts.get(i)?.trim() || "(no answer)");
       answers.push({ question: q.question, labels });
@@ -989,7 +988,6 @@ export function ExitPlanCard({ plan, channelId, setMode, onSent }: { plan: ExitP
 
   const handleRequestChanges = async () => {
     const prompt = changesText.trim();
-    if (!prompt) return;
     setSending(true);
     try {
       setMode("plan");

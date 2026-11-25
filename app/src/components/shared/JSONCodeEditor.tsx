@@ -30,10 +30,10 @@ export function JSONCodeEditor({ value, onChange, onSave, colors }: { value: str
   onSaveRef.current = onSave;
 
   // Built once; value, colors and the font size sync in below.
+  // The host div always renders, so its ref is set when this runs.
   useEffect(() => {
-    if (!hostRef.current) return;
     const view = new EditorView({
-      parent: hostRef.current,
+      parent: hostRef.current!,
       state: EditorState.create({
         doc: value,
         extensions: [

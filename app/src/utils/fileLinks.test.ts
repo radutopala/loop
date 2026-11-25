@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { checkFilesExist } from "../api/files";
-import { commandDirs, findCandidatePaths, getValidationStatus, markdownFileTarget, pathInDir, requestValidation, resetFileLinkCache, retain, revalidateMissing } from "./fileLinks";
+import { commandDirs, findCandidatePaths, getValidationStatus, markdownFileTarget, pathInDir, requestValidation, resetFileLinkCache, retain, revalidateMissing, subscribe } from "./fileLinks";
 
 vi.mock("../api/files", () => ({ checkFilesExist: vi.fn() }));
 
@@ -80,6 +80,7 @@ describe("commandDirs", () => {
     ["cd sub && ls", []],
     ["cd ~/x; cd $HOME/y", []],
     ["abcd /nope; echo cd /nope", []],
+    ["cd /a && cd ..", ["/a", "/"]],
   ])("%s", (cmd, want) => {
     expect(commandDirs(cmd).map((d) => d.dir)).toEqual(want);
   });
@@ -154,6 +155,87 @@ describe("revalidateMissing", () => {
     revalidateMissing("ch");
     await settle();
     expect(exists).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("validation cache", () => {
+  const exists = vi.mocked(checkFilesExist);
+  const settle = async () => {
+    await vi.advanceTimersByTimeAsync(100);
+  };
+  beforeEach(() => {
+    vi.useFakeTimers();
+    resetFileLinkCache();
+    exists.mockReset();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("reports unknown for a path never requested", () => {
+    expect(getValidationStatus("ch", "a/never.txt")).toEqual({ kind: "unknown" });
+  });
+
+  it("batches requests, skips repeats and notifies subscribers until they unsubscribe", async () => {
+    exists.mockResolvedValue([{ path: "a/b.txt", exists: true, root_index: 1, rel_path: "a/b.txt" }]);
+    const listener = vi.fn();
+    const unsubscribe = subscribe("ch", listener);
+    requestValidation("ch", "a/b.txt");
+    requestValidation("ch", "a/b.txt");
+    expect(getValidationStatus("ch", "a/b.txt").kind).toBe("pending");
+    await settle();
+    expect(exists).toHaveBeenCalledTimes(1);
+    expect(exists).toHaveBeenCalledWith("ch", ["a/b.txt"]);
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(getValidationStatus("ch", "a/b.txt")).toEqual({ kind: "valid", target: { rootIndex: 1, relPath: "a/b.txt" } });
+
+    unsubscribe();
+    requestValidation("ch", "a/c.txt");
+    await settle();
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks the batch invalid when the check fails", async () => {
+    exists.mockRejectedValue(new Error("down"));
+    requestValidation("ch", "a/x.txt");
+    requestValidation("ch", "a/y.txt");
+    await settle();
+    expect(getValidationStatus("ch", "a/x.txt").kind).toBe("invalid");
+    expect(getValidationStatus("ch", "a/y.txt").kind).toBe("invalid");
+  });
+
+  it("checks more than a batch's worth of paths in successive batches", async () => {
+    exists.mockImplementation(async (_ch, paths) => paths.map((path) => ({ path, exists: false })));
+    for (let i = 0; i < 150; i++) requestValidation("ch", `d/f${i}.txt`);
+    await settle();
+    await settle();
+    expect(exists).toHaveBeenCalledTimes(2);
+    expect(exists.mock.calls[0]![1]).toHaveLength(100);
+    expect(exists.mock.calls[1]![1]).toHaveLength(50);
+    expect(getValidationStatus("ch", "d/f149.txt").kind).toBe("invalid");
+  });
+
+  it("does nothing on a flush after the channel's cache was dropped", async () => {
+    requestValidation("ch", "a/x.txt");
+    requestValidation("other", "a/x.txt");
+    resetFileLinkCache("ch");
+    await settle();
+    expect(exists).toHaveBeenCalledTimes(1);
+    expect(exists).toHaveBeenCalledWith("other", ["a/x.txt"]);
+    expect(getValidationStatus("ch", "a/x.txt").kind).toBe("unknown");
+  });
+
+  it("tolerates releasing a shown path more than once", async () => {
+    exists.mockResolvedValue([{ path: "a/x.txt", exists: false }]);
+    const release = retain("ch", "a/x.txt");
+    release();
+    release();
+    requestValidation("ch", "a/x.txt");
+    await settle();
+    exists.mockClear();
+    revalidateMissing("ch");
+    await settle();
+    expect(exists).not.toHaveBeenCalled();
   });
 });
 

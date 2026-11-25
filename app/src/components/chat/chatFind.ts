@@ -27,13 +27,16 @@ export function locateMatch(texts: string[], term: string): { start: TextPoint; 
   if (at < 0) return null;
   const point = (pos: number, isEnd: boolean): TextPoint => {
     let base = 0;
-    for (let node = 0; node < texts.length; node++) {
+    // The match lies within the joined text, so whatever the earlier nodes
+    // don't hold is in the last one.
+    const last = texts.length - 1;
+    for (let node = 0; node < last; node++) {
       const len = texts[node]!.length;
       // An end exactly at a node's end stays in that node, not at the start of the next.
       if (pos < base + len || (isEnd && pos === base + len)) return { node, offset: pos - base };
       base += len;
     }
-    return { node: texts.length - 1, offset: texts[texts.length - 1]!.length };
+    return { node: last, offset: pos - base };
   };
   return { start: point(at, false), end: point(at + term.length, true) };
 }

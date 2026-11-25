@@ -335,7 +335,6 @@ export function KanbanPanel({ channelId, dirPath, rootDirPath, allowWorktree, on
   }, [tickets]);
 
   const handleCreate = useCallback(async () => {
-    if (!newTitle.trim() || !boardDir) return;
     try {
       const parsedTags = newTags
         .split(",")
@@ -377,7 +376,6 @@ export function KanbanPanel({ channelId, dirPath, rootDirPath, allowWorktree, on
 
   const handleStatusChange = useCallback(
     async (ticketId: string, newStatus: string) => {
-      if (!boardDir) return;
       try {
         await updateTicketStatus(ticketId, newStatus, boardDir);
         loadTickets();
@@ -390,7 +388,6 @@ export function KanbanPanel({ channelId, dirPath, rootDirPath, allowWorktree, on
 
   const handleAssign = useCallback(
     async (ticketId: string) => {
-      if (!boardDir) return;
       setAssigning(ticketId);
       setError(null);
       try {
@@ -447,7 +444,6 @@ export function KanbanPanel({ channelId, dirPath, rootDirPath, allowWorktree, on
 
   const handleDelete = useCallback(
     async (ticketId: string) => {
-      if (!boardDir) return;
       try {
         await deleteTicket(ticketId, boardDir);
         setConfirmDelete(null);
@@ -461,7 +457,8 @@ export function KanbanPanel({ channelId, dirPath, rootDirPath, allowWorktree, on
   );
 
   const handleEdit = useCallback(async () => {
-    if (!editing || !editTitle.trim() || !boardDir) return;
+    // Only the open drawer's Save and title Enter call this, so editing is set.
+    const ticket = editing!;
     try {
       const parsedTags = editTags
         .split(",")
@@ -471,7 +468,7 @@ export function KanbanPanel({ channelId, dirPath, rootDirPath, allowWorktree, on
         .split(",")
         .map((d) => d.trim())
         .filter(Boolean);
-      await updateTicket(editing.id, {
+      await updateTicket(ticket.id, {
         dir: boardDir,
         title: editTitle.trim(),
         type: editType,
@@ -1084,7 +1081,7 @@ export function KanbanPanel({ channelId, dirPath, rootDirPath, allowWorktree, on
                 }}
               />
               <span style={{ fontSize: 12, fontWeight: 600, color: colors.text }}>{col.label}</span>
-              <span style={{ fontSize: 11, color: colors.textDim }}>{columns[col.key]?.length ?? 0}</span>
+              <span style={{ fontSize: 11, color: colors.textDim }}>{columns[col.key]!.length}</span>
             </div>
 
             {/* Cards */}
@@ -1098,8 +1095,8 @@ export function KanbanPanel({ channelId, dirPath, rootDirPath, allowWorktree, on
                 gap: 6,
               }}
             >
-              {(columns[col.key] ?? []).map((t) => renderCard(t))}
-              {(columns[col.key] ?? []).length === 0 && <div style={{ padding: 12, color: colors.textDim, fontSize: 11, textAlign: "center" }}>No tickets</div>}
+              {columns[col.key]!.map((t) => renderCard(t))}
+              {columns[col.key]!.length === 0 && <div style={{ padding: 12, color: colors.textDim, fontSize: 11, textAlign: "center" }}>No tickets</div>}
             </div>
           </div>
         ))}

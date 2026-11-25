@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { closeTerminalSessionById, killAgentContainer } from "../../api/loopApi";
 import { type CanvasControl, CanvasLayout } from "../../canvas/CanvasLayout";
 import { freshTileId, type NewTile, withPanelTile, withTileBeside, withTileReplaced } from "../../canvas/tilePlacement";
-import type { CanvasNode, CanvasTile } from "../../canvas/types";
+import type { CanvasNode } from "../../canvas/types";
 import { ShortcutsVersionContext } from "../../hooks/shortcutsVersion";
 import { useAgentRegistry } from "../../hooks/useAgentRegistry";
 import { useChatState } from "../../hooks/useChatState";
@@ -107,42 +107,15 @@ import { LearnPane } from "./LearnPane";
 import { LEARN_SPLIT_MS, LEARN_SPLIT_SLOT_ID, LearnSplit, type SideView } from "./LearnSplit";
 import { PromptEditsPane } from "./PromptEditsPane";
 import { SideChatPane, type SideChatView, sideChatViewSlotId } from "./SideChatPane";
+import { initIdCounter, insertOppositeHorizontal, leafIdForPanel, shownPluginTiles, withDefaultFileTreeForEditor } from "./workspaceTree";
 
 type AgentState = "running" | "stopped" | "none";
-
-/** Per-storageKey counters so IDs don't collide across channels. */
-const idCounters = new Map<string, number>();
-
-function nextId(channelId: string, panel: PanelType): string {
-  const key = `layout-${channelId}`;
-  const n = idCounters.get(key) ?? 0;
-  idCounters.set(key, n + 1);
-  return `${panel}-${n}`;
-}
-
-function initIdCounter(channelId: string, tree: PaneNode) {
-  const key = `layout-${channelId}`;
-  const cur = idCounters.get(key) ?? 0;
-  let max = 0;
-  for (const leaf of collectLeaves(tree)) {
-    const parts = leaf.id.split("-");
-    const num = parseInt(parts[parts.length - 1] ?? "0", 10);
-    if (!isNaN(num) && num > max) max = num;
-  }
-  // Only increase, never decrease (other layouts may have higher IDs)
-  if (max + 1 > cur) idCounters.set(key, max + 1);
-}
 
 /** A canvas with no tiles yet. */
 const NO_SINGLETONS = new Set<never>();
 const noop = () => {};
 
 const EMPTY_CANVAS: CanvasNode = { type: "canvas", viewport: { x: 0, y: 0, zoom: 1 }, tiles: [] };
-
-/** The plugin panels the tiles show, as plugin/panel. */
-function shownPluginTiles(tiles: CanvasTile[]): Set<string> {
-  return new Set(tiles.flatMap((t) => (t.panel === "plugin" && t.plugin ? [pluginPaneKey(t.plugin)] : [])));
-}
 
 /** Closes the session of a terminal pane that's going away. A pane on
  *  another tab isn't mounted, so its stored session is closed directly.
@@ -161,88 +134,6 @@ function closeTerminalSession(channelId: string, leaf: Pick<LeafNode, "id" | "pa
   }
   const sid = takeStoredSession(channelId, target, leaf.id);
   if (sid) closeTerminalSessionById(sid, target);
-}
-
-function leafIdForPanel(channelId: string, panel: PanelType): string {
-  if (panel === "chat" || panel === "editor" || panel === "memory" || panel === "git" || panel === "sessions" || panel === "notes" || panel === "audit") {
-    return panel;
-  }
-  return nextId(channelId, panel);
-}
-
-/**
- * Insert `newLeaf` on the opposite horizontal side of the leaf identified by
- * `anchorId`. If the anchor's parent is a horizontal split, the new leaf is
- * appended at whichever end is farther from the anchor. Otherwise the anchor
- * is wrapped into a new horizontal split with the new leaf placed to its
- * right (the typical layout when chat is on the left).
- */
-function insertOppositeHorizontal(node: PaneNode, anchorId: string, newLeaf: LeafNode): PaneNode {
-  if (node.type === "leaf") {
-    if (node.id !== anchorId) return node;
-    return {
-      type: "split",
-      direction: "horizontal",
-      flex: node.flex,
-      children: [
-        { ...node, flex: 1 },
-        { ...newLeaf, flex: 1 },
-      ],
-    };
-  }
-  const directIdx = node.children.findIndex((c) => c.type === "leaf" && c.id === anchorId);
-  if (directIdx !== -1) {
-    if (node.direction === "horizontal") {
-      const half = (node.children.length - 1) / 2;
-      const appendRight = directIdx <= half;
-      // Match the existing siblings' scale so the new leaf is visible. Using
-      // `flex: 1` against siblings whose flex values are 50+ would compress the
-      // new pane to ~1% of the container width.
-      const totalFlex = node.children.reduce((sum, c) => sum + c.flex, 0);
-      const avgFlex = totalFlex / node.children.length;
-      const inserted: LeafNode = { ...newLeaf, flex: avgFlex };
-      return {
-        ...node,
-        children: appendRight ? [...node.children, inserted] : [inserted, ...node.children],
-      };
-    }
-    return {
-      ...node,
-      children: node.children.map((c, i) => {
-        if (i !== directIdx) return c;
-        return {
-          type: "split" as const,
-          direction: "horizontal" as const,
-          flex: c.flex,
-          children: [
-            { ...c, flex: 1 },
-            { ...newLeaf, flex: 1 },
-          ],
-        };
-      }),
-    };
-  }
-  return { ...node, children: node.children.map((c) => insertOppositeHorizontal(c, anchorId, newLeaf)) };
-}
-
-function withDefaultFileTreeForEditor(tree: PaneNode, editorLeafId: string, fileTreeLeafId: string): PaneNode {
-  if (!canAddPanel(tree, "file-tree")) return tree;
-  const transform = (n: PaneNode): PaneNode => {
-    if (n.type === "leaf") {
-      if (n.id !== editorLeafId) return n;
-      return {
-        type: "split",
-        direction: "horizontal",
-        flex: n.flex,
-        children: [
-          { type: "leaf", id: fileTreeLeafId, panel: "file-tree", flex: 25 },
-          { ...n, flex: 75 },
-        ],
-      };
-    }
-    return { ...n, children: n.children.map(transform) };
-  };
-  return transform(tree);
 }
 
 function buildLayoutMenuItemStyle(colors: ColorPalette): React.CSSProperties {
@@ -434,7 +325,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   // The channel's explanations, shown in the Explain view beside the chat
   // (the Learn view's, with the Explain pane) and at the end of the turns.
   // Showing one opens the view (openSide, defined below with the layout's).
-  const openSideRef = useRef<(view: SideView) => void>(() => {});
+  const openSideRef = useRef<(view: SideView) => void>(noop);
   const chatRunningRef = useRef(false);
   const showExplain = useCallback(() => openSideRef.current("explain"), []);
   const explain = useExplain(channelId, subscribeChatEvents, wsOpens, showExplain);
@@ -456,7 +347,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   // Shell view's terminal and the learn thread's chat register as theirs).
   const sideOpenRef = useRef<SideView | null>(null);
   sideOpenRef.current = learnOpen ? sideView : null;
-  const closeSideRef = useRef<() => void>(() => {});
+  const closeSideRef = useRef<() => void>(noop);
   const learnRef = useRef(learn);
   learnRef.current = learn;
   const explainRef = useRef(explain);
@@ -776,7 +667,6 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
 
   const handleReorderLayout = useCallback(
     (fromName: string, toName: string) => {
-      if (fromName === toName) return;
       setLayoutNames((prev) => {
         const from = prev.indexOf(fromName);
         const to = prev.indexOf(toName);
@@ -824,7 +714,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
           setAgentState("none");
           return null;
         }
-        const newTree = removeLeaf(prev, id) ?? null;
+        const newTree = removeLeaf(prev, id);
         if (wasAgent && newTree && !hasAgentLeaf(newTree)) {
           setAgentState("none");
         } else {
@@ -1023,7 +913,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         }
         const current = treeRef.current;
         const old = leafOf(id);
-        if (!canAddPanel(current ? removeLeaf(current, id) : null, panel)) throw new Error(`the tab can't have another ${panel} pane`);
+        if (!canAddPanel(removeLeaf(current as PaneNode, id), panel)) throw new Error(`the tab can't have another ${panel} pane`);
         const leaf = newLeaf(panel, opts);
         const next = withFileTree(replaceLeaf(current as PaneNode, id, leaf), leaf);
         closeTerminalSession(channelId, old);
@@ -1247,7 +1137,9 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       }
     }
     const defaults = createDefaultLayouts();
+    /* v8 ignore start -- Reset current is only rendered when isDefaultLayout is true, so defaults.layouts[activeName] always exists */
     const defaultTree = defaults.layouts[activeName] ?? null;
+    /* v8 ignore stop */
     const lt = defaults.types[activeName] ?? "split";
     if (defaultTree) {
       saveLayout(channelId, activeName, defaultTree as any);
@@ -1260,11 +1152,13 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         setTree(defaultTree as PaneNode);
         setCanvasState(null);
       }
+      /* v8 ignore start -- unreachable because Reset current is gated by isDefaultLayout */
     } else {
       clearLayout(channelId, activeName);
       setTree(null);
       setCanvasState(null);
     }
+    /* v8 ignore stop */
     statusMapRef.current.clear();
     setAgentState("none");
   }, [channelId, activeName]);
@@ -2371,7 +2265,7 @@ function LayoutTab({
   // over it: the tab strip scrolls, so it would clip a popover inside it.
   const [confirmAt, setConfirmAt] = useState<DOMRect | null>(null);
   const confirming = confirmAt !== null;
-  const setConfirming = (on: boolean) => setConfirmAt(on ? (tabRef.current?.getBoundingClientRect() ?? null) : null);
+  const openConfirm = () => setConfirmAt(tabRef.current!.getBoundingClientRect());
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const tabRef = useRef<HTMLDivElement>(null);
@@ -2388,19 +2282,16 @@ function LayoutTab({
   // Close confirm popover on outside click.
   useEffect(() => {
     if (!confirming) return;
-    const handler = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (!target.closest("[data-confirm-popover]")) setConfirmAt(null);
-    };
-    // The popover holds the tab's box, so it closes once the tab moves: the
+    // A click outside closes it (the popover keeps its own mousedowns). The
+    // popover holds the tab's box, so it closes once the tab moves too: the
     // strip scrolls or the window resizes.
     const close = () => setConfirmAt(null);
     const strip = tabRef.current?.parentElement;
-    document.addEventListener("mousedown", handler);
+    document.addEventListener("mousedown", close);
     window.addEventListener("resize", close);
     strip?.addEventListener("scroll", close);
     return () => {
-      document.removeEventListener("mousedown", handler);
+      document.removeEventListener("mousedown", close);
       window.removeEventListener("resize", close);
       strip?.removeEventListener("scroll", close);
     };
@@ -2476,7 +2367,7 @@ function LayoutTab({
         <button
           onClick={(e) => {
             e.stopPropagation();
-            setConfirming(true);
+            openConfirm();
           }}
           title="Delete layout"
           style={{

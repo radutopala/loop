@@ -19,6 +19,9 @@ function workletModuleURL(): string {
 
 const FLUSH_TIMEOUT_MS = 300;
 
+/** The chunk handler before start and after stop. */
+const dropChunk = (_buf: ArrayBuffer): void => {};
+
 /** Microphone capture through getUserMedia and an AudioWorklet that encodes
  *  to the daemon's PCM format. Calls made while the microphone is still
  *  opening take effect once it has. */
@@ -28,7 +31,7 @@ export class MicCapture implements AudioCapture {
   private node: AudioWorkletNode | null = null;
   private closed = false;
   private opened: Promise<void> = Promise.resolve();
-  private onChunk: (buf: ArrayBuffer) => void = () => {};
+  private onChunk: (buf: ArrayBuffer) => void = dropChunk;
   private flushed: (() => void) | null = null;
 
   start(onChunk: (buf: ArrayBuffer) => void, onError: (err: unknown) => void): void {
@@ -83,7 +86,7 @@ export class MicCapture implements AudioCapture {
 
   stop(): void {
     this.closed = true;
-    this.onChunk = () => {};
+    this.onChunk = dropChunk;
     this.release();
   }
 

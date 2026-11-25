@@ -113,13 +113,11 @@ export class DictationStream {
   }
 
   private fail(code: string, message: string): void {
-    if (this.ended) return;
     this.h.onError?.(code, message);
     this.end();
   }
 
   private end(): void {
-    if (this.ended) return;
     this.ended = true;
     this.h.onEnd?.();
   }

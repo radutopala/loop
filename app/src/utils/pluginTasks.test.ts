@@ -121,6 +121,23 @@ describe("pluginTaskEntry", () => {
   });
 });
 
+describe("pluginTaskEntry, default without a type", () => {
+  it("treats a typeless global schedule under the project as cron", () => {
+    const p: PluginInfo = {
+      id: "echo",
+      version: "1",
+      capabilities: ["schedule"],
+      status: "installed",
+      actions: ["daily"],
+      global_schedules: { daily: { schedule: "0 9 * * *" } },
+      enabled: true,
+    };
+    const [o] = pluginTaskOptions({ off: false, plugins: [p] }, "ch-1");
+    expect(pluginTaskEntry(o!, "cron", "0 9 * * *")).toEqual({ schedule: undefined, enabled: true, type: undefined });
+    expect(pluginTaskEntry(o!, "interval", "0 9 * * *")).toEqual({ schedule: "0 9 * * *", enabled: true, type: "interval" });
+  });
+});
+
 describe("pluginTaskEntry, turned off", () => {
   it("keeps the schedule", () => {
     const p: PluginInfo = {

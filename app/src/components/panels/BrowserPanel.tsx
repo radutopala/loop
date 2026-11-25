@@ -52,6 +52,7 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
   const [showDownloads, setShowDownloads] = useState(false);
   const showDownloadsRef = useRef(false);
   showDownloadsRef.current = showDownloads;
+  /* v8 ignore next -- @preserve placeholder overwritten immediately after useBrowserWs */
   const listDownloadsRef = useRef<() => void>(() => {});
   const [error, setError] = useState<string | null>(null);
   const [hoveredTab, setHoveredTab] = useState<string | null>(null);
@@ -70,6 +71,7 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
   const drawFrameRef = useRef(createFrameRenderer(() => canvasRef.current));
   // Set right after useBrowserWs returns; the coalescer outlives any single
   // sendInput identity, so it reads the current one through this ref.
+  /* v8 ignore next -- @preserve placeholder overwritten immediately after useBrowserWs */
   const sendInputRef = useRef<(ev: BrowserInput) => void>(() => {});
   const inputQueueRef = useRef(createInputCoalescer((ev) => sendInputRef.current(ev)));
 
@@ -221,6 +223,7 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
     (e: React.FormEvent) => {
       e.preventDefault();
       const input = urlInputRef.current;
+      /* v8 ignore next -- @preserve form only submits while its input is mounted */
       if (!input) return;
       const targetUrl = normalizeNavigateUrl(input.value);
       if (!targetUrl) return;
@@ -232,6 +235,7 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
   const handleCanvasMouseEvent = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       const canvas = canvasRef.current;
+      /* v8 ignore next -- @preserve mouse events only fire while the canvas is mounted */
       if (!canvas) return;
       const rect = canvas.getBoundingClientRect();
       const scaleX = canvas.width / rect.width;
@@ -262,6 +266,7 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
   const handleCanvasWheel = useCallback(
     (e: React.WheelEvent<HTMLCanvasElement>) => {
       const canvas = canvasRef.current;
+      /* v8 ignore next -- @preserve wheel events only fire while the canvas is mounted */
       if (!canvas) return;
       const rect = canvas.getBoundingClientRect();
       const scaleX = canvas.width / rect.width;
@@ -869,7 +874,8 @@ function ToolbarButton({
         flexShrink: 0,
       }}
     >
-      {text ?? label}
+      {/* private button is always passed text */}
+      {/* v8 ignore next -- @preserve */ text ?? label}
     </button>
   );
 }

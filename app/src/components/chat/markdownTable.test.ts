@@ -7,6 +7,7 @@ describe("startsTable", () => {
     { name: "pipeless header", lines: ["PR | What", "---|---"], want: true },
     { name: "separator missing", lines: ["| PR | What |", "| #31 | thing |"], want: false },
     { name: "header is the last line", lines: ["| PR | What |"], want: false },
+    { name: "no lines at all", lines: [], want: false },
     { name: "fenced code that contains a pipe", lines: ["```sh", "a | b"], want: false },
   ];
   for (const c of cases) {

@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { type BashShortcut, fetchBashShortcuts, fetchShortcuts, type PromptShortcut } from "../../api/configApi";
 import { ShortcutsVersionContext } from "../../hooks/shortcutsVersion";
@@ -72,14 +72,6 @@ export function TerminalShortcuts({ channelId, leafId, onPick, target = "agent",
     };
   }, [channelId, promptsEnabled, shortcutsVersion]);
 
-  useLayoutEffect(() => {
-    if (openKind === null) return;
-    const btn = openKind === "prompt" ? promptBtnRef.current : bashBtnRef.current;
-    if (!btn) return;
-    const r = btn.getBoundingClientRect();
-    setMenuPos({ bottom: window.innerHeight - r.top + 4, left: r.left });
-  }, [openKind]);
-
   useEffect(() => {
     if (openKind === null) return;
     const handler = (e: MouseEvent) => {
@@ -93,22 +85,6 @@ export function TerminalShortcuts({ channelId, leafId, onPick, target = "agent",
     return () => document.removeEventListener("mousedown", handler);
   }, [openKind]);
 
-  const pickPrompt = useCallback(
-    (sc: PromptShortcut) => {
-      setOpenKind(null);
-      onPick(sc.prompt);
-    },
-    [onPick],
-  );
-
-  const pickBash = useCallback(
-    (sc: BashShortcut) => {
-      setOpenKind(null);
-      onPick(sc.command);
-    },
-    [onPick],
-  );
-
   const showPromptBtn = promptsEnabled && prompts.length > 0;
   const showBashBtn = !promptsEnabled && bash.length > 0;
 
@@ -121,14 +97,17 @@ export function TerminalShortcuts({ channelId, leafId, onPick, target = "agent",
         ? bash.map((b) => ({ name: b.name, description: b.description, text: b.command }))
         : [];
 
-  const pickItem = (idx: number) => {
-    if (openKind === "prompt") {
-      const p = prompts[idx];
-      if (p) pickPrompt(p);
-    } else if (openKind === "bash") {
-      const b = bash[idx];
-      if (b) pickBash(b);
-    }
+  const pickItem = (text: string) => {
+    setOpenKind(null);
+    onPick(text);
+  };
+
+  // Opens (or closes) a menu, popping it upward from the button clicked.
+  const toggleMenu = (kind: MenuKind, btn: HTMLButtonElement) => {
+    const r = btn.getBoundingClientRect();
+    setMenuPos({ bottom: window.innerHeight - r.top + 4, left: r.left });
+    setSelectedIdx(0);
+    setOpenKind((k) => (k === kind ? null : kind));
   };
 
   const sigil = openKind === "bash" ? "$" : "#";
@@ -149,10 +128,7 @@ export function TerminalShortcuts({ channelId, leafId, onPick, target = "agent",
       {showPromptBtn && (
         <button
           ref={promptBtnRef}
-          onClick={() => {
-            setSelectedIdx(0);
-            setOpenKind((k) => (k === "prompt" ? null : "prompt"));
-          }}
+          onClick={(e) => toggleMenu("prompt", e.currentTarget)}
           title="Prompt shortcuts"
           data-testid={`terminal-shortcuts-btn-${leafId}`}
           style={pickerBtnStyle(colors)}
@@ -171,10 +147,7 @@ export function TerminalShortcuts({ channelId, leafId, onPick, target = "agent",
       {showBashBtn && (
         <button
           ref={bashBtnRef}
-          onClick={() => {
-            setSelectedIdx(0);
-            setOpenKind((k) => (k === "bash" ? null : "bash"));
-          }}
+          onClick={(e) => toggleMenu("bash", e.currentTarget)}
           title="Bash shortcuts"
           data-testid={`terminal-bash-shortcuts-btn-${leafId}`}
           style={pickerBtnStyle(colors)}
@@ -236,7 +209,7 @@ export function TerminalShortcuts({ channelId, leafId, onPick, target = "agent",
                   key={it.name}
                   onMouseDown={(e) => {
                     e.preventDefault();
-                    pickItem(i);
+                    pickItem(it.text);
                   }}
                   onMouseEnter={() => setSelectedIdx(i)}
                   style={{

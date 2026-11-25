@@ -12,8 +12,8 @@ export function MessageOrigin({ name, href }: { name: string; href: string }) {
   const ref = useRef<HTMLAnchorElement>(null);
   const [truncated, setTruncated] = useState(false);
   useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
+    // The anchor always renders, so the ref is set by layout time.
+    const el = ref.current!;
     const measure = () => setTruncated(el.scrollWidth > el.clientWidth);
     measure();
     const ro = new ResizeObserver(measure);

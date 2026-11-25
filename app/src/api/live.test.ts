@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { stopLiveTask, warmLive } from "./live";
+import { fetchLive, stopLiveTask, warmLive } from "./live";
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -40,5 +40,18 @@ describe("stopLiveTask", () => {
   it("throws on an error", async () => {
     fetchMock.mockResolvedValue(new Response("gone", { status: 404, statusText: "Not Found" }));
     await expect(stopLiveTask("c1", "b1")).rejects.toThrow("Not Found");
+  });
+});
+
+describe("fetchLive", () => {
+  it("returns the live session", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ running: true, busy: false })));
+    await expect(fetchLive("c 1")).resolves.toEqual({ running: true, busy: false });
+    expect(fetchMock.mock.calls[0]![0]).toBe("http://localhost:8222/api/channels/c%201/live");
+  });
+
+  it("throws on an error", async () => {
+    fetchMock.mockResolvedValue(new Response("", { status: 500, statusText: "Internal Server Error" }));
+    await expect(fetchLive("c1")).rejects.toThrow("Failed to fetch the live session: Internal Server Error");
   });
 });

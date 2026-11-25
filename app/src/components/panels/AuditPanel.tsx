@@ -1,6 +1,6 @@
 import "@fontsource/jetbrains-mono/400.css";
-import type { MouseEvent as ReactMouseEvent } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import type { MouseEvent as ReactMouseEvent, UIEvent } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { AuditFileEntry } from "../../api/audit";
 import { deleteAuditFile, fetchAuditFiles } from "../../api/audit";
 import { useTheme } from "../../ThemeContext";
@@ -38,8 +38,6 @@ export function AuditPanel({ channelId }: AuditPanelProps) {
   const [listWidth, setListWidth] = useState(300);
   const [hoveredDate, setHoveredDate] = useState<string | null>(null);
   const [confirmingDate, setConfirmingDate] = useState<string | null>(null);
-  const draggingRef = useRef(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
 
   const loadPage = useCallback(
     async (offset: number, append: boolean) => {
@@ -66,23 +64,23 @@ export function AuditPanel({ channelId }: AuditPanelProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channelId]);
 
-  const onListScroll = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el || loading) return;
-    if (files.length >= total) return;
-    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 80) {
-      loadPage(files.length, true);
-    }
-  }, [files.length, total, loading, loadPage]);
+  const onListScroll = useCallback(
+    (e: UIEvent<HTMLDivElement>) => {
+      const el = e.currentTarget;
+      if (loading) return;
+      if (files.length >= total) return;
+      if (el.scrollTop + el.clientHeight >= el.scrollHeight - 80) {
+        loadPage(files.length, true);
+      }
+    },
+    [files.length, total, loading, loadPage],
+  );
 
   useEffect(() => {
     if (!confirmingDate) return;
-    const handler = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (!target.closest("[data-confirm-popover]")) {
-        setConfirmingDate(null);
-      }
-    };
+    // A mousedown inside the popover stops propagating before it reaches the
+    // document, so any mousedown seen here is outside it.
+    const handler = () => setConfirmingDate(null);
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [confirmingDate]);
@@ -102,13 +100,10 @@ export function AuditPanel({ channelId }: AuditPanelProps) {
   );
 
   const onMouseDown = useCallback(() => {
-    draggingRef.current = true;
     const onMove = (e: MouseEvent) => {
-      if (!draggingRef.current) return;
       setListWidth((prev) => Math.max(180, Math.min(500, prev + e.movementX)));
     };
     const onUp = () => {
-      draggingRef.current = false;
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
@@ -154,7 +149,7 @@ export function AuditPanel({ channelId }: AuditPanelProps) {
             &#x21bb;
           </button>
         </div>
-        <div ref={scrollRef} onScroll={onListScroll} style={{ flex: 1, overflowY: "auto" }}>
+        <div onScroll={onListScroll} style={{ flex: 1, overflowY: "auto" }}>
           {files.length === 0 && !loading && <div style={{ padding: 16, color: colors.textDim, fontSize: 12, textAlign: "center" }}>No audit logs yet</div>}
           {files.map((f) => {
             const isSelected = f.date === selectedDate;

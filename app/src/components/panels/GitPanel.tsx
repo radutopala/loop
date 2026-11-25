@@ -146,12 +146,11 @@ export function GitPanel({
   };
 
   // The PR/MR tab's data; a daemon without PR watching answers with an error.
-  const loadPRStatus = useCallback(() => {
-    if (!channelId) return;
-    getPRStatus(channelId)
+  const loadPRStatus = useCallback((id: string) => {
+    getPRStatus(id)
       .then(setPRStatus)
       .catch(() => setPRStatus(null));
-  }, [channelId]);
+  }, []);
 
   // Load PR info. When a PR is open, seed sourceBranch to the PR's base
   // (only once per channel) so the Branches Diff mode defaults to the PR's
@@ -168,7 +167,7 @@ export function GitPanel({
         .then((res) => {
           if (res.present && res.pr) {
             setPR(res.pr);
-            loadPRStatus();
+            loadPRStatus(channelId);
             if (prSeededRef.current !== channelId) {
               setSourceBranch(res.pr.base_ref);
               prSeededRef.current = channelId;
@@ -626,7 +625,7 @@ export function GitPanel({
 
   const prContent =
     channelId && prShown ? (
-      <PRPanel key={channelId} channelId={channelId} status={prShown} colors={colors} onChanged={loadPRStatus} />
+      <PRPanel key={channelId} channelId={channelId} status={prShown} colors={colors} onChanged={() => loadPRStatus(channelId)} />
     ) : (
       <div style={{ padding: 12, fontSize: 12, color: colors.textDim }}>No status for this branch's PR/MR.</div>
     );

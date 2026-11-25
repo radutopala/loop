@@ -9,16 +9,21 @@ export function useElapsedTimer() {
   const startTimeRef = useRef<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval>>(undefined);
 
-  const start = useCallback((fromTimestamp?: number) => {
-    if (startTimeRef.current) return; // already running
-    startTimeRef.current = fromTimestamp ?? Date.now();
-    setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000));
-    timerRef.current = setInterval(() => {
-      if (startTimeRef.current) {
-        setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000));
-      }
-    }, 1000);
+  const tick = useCallback(() => {
+    if (startTimeRef.current) {
+      setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000));
+    }
   }, []);
+
+  const start = useCallback(
+    (fromTimestamp?: number) => {
+      if (startTimeRef.current) return; // already running
+      startTimeRef.current = fromTimestamp ?? Date.now();
+      setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000));
+      timerRef.current = setInterval(tick, 1000);
+    },
+    [tick],
+  );
 
   const stop = useCallback(() => {
     clearInterval(timerRef.current);
@@ -28,12 +33,8 @@ export function useElapsedTimer() {
   /** Resume the timer from where it was paused (keeps the original start time). */
   const resume = useCallback(() => {
     if (!startTimeRef.current || timerRef.current) return;
-    timerRef.current = setInterval(() => {
-      if (startTimeRef.current) {
-        setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000));
-      }
-    }, 1000);
-  }, []);
+    timerRef.current = setInterval(tick, 1000);
+  }, [tick]);
 
   const reset = useCallback(() => {
     clearInterval(timerRef.current);

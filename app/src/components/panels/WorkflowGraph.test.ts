@@ -90,4 +90,16 @@ describe("expandLoopBodies", () => {
     const { effectiveDefs } = expandLoopBodies(defs, [run("x", 0)]);
     expect(effectiveDefs.find((d) => d.id === "b")!.depends_on).toEqual(["a"]);
   });
+
+  it("passes a loop with an empty body through as a plain node", () => {
+    const defs = [def("L", "loop", { body: [] })];
+    expect(expandLoopBodies(defs, [])).toEqual({ effectiveDefs: defs, groupSpecs: [] });
+  });
+
+  it("leaves defs with empty deps untouched while rewiring", () => {
+    const after = def("after", "bash", { depends_on: [] });
+    const defs = [def("L", "loop", { body: [def("x", "bash")] }), after];
+    const { effectiveDefs } = expandLoopBodies(defs, []);
+    expect(effectiveDefs.find((d) => d.id === "after")).toBe(after);
+  });
 });
