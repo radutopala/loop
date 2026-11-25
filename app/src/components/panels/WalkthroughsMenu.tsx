@@ -80,7 +80,8 @@ export function WalkthroughsBadge({ leafId, channelId, open }: WalkthroughsBadge
     try {
       await deleteWalkthrough(channelId, w.id);
       if (open?.id === w.id) closeWalkthrough(channelId);
-      setList((l) => l?.filter((x) => x.id !== w.id) ?? null);
+      // A delete is offered only from a listed item, so the list is loaded.
+      setList((l) => l!.filter((x) => x.id !== w.id));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }

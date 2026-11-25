@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WalkthroughStep } from "../api/walkthroughs";
 import { subscribeUiChanged } from "../uiBridge/registry";
@@ -15,6 +17,7 @@ import {
   setEditorSelection,
   showWalkthrough,
   subscribeWalkthroughs,
+  useOpenWalkthrough,
 } from "./walkthroughStore";
 
 const steps: WalkthroughStep[] = [
@@ -49,6 +52,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  cleanup();
   for (const fn of unsubscribe) fn();
   for (const ch of ["c1", "c2"]) {
     closeWalkthrough(ch);
@@ -105,6 +109,12 @@ describe("goToStep", () => {
     // Showing a step clears it.
     await goToStep("c1", 0, files.open);
     expect(getOpenWalkthrough("c1")?.notice).toBeUndefined();
+  });
+
+  it("says why when the file opener rejects with something other than an Error", async () => {
+    await showWalkthrough("c1", walkthrough, 1, files.open);
+    await goToStep("c1", 0, () => Promise.reject("denied"));
+    expect(getOpenWalkthrough("c1")).toMatchObject({ step: 1, notice: "Step 1: denied" });
   });
 
   it.each([-1, 3])("does nothing for step %s", async (index) => {
@@ -276,5 +286,16 @@ describe("playWalkthrough", () => {
     playWalkthrough("c1", files.open, 5);
     closeWalkthrough("c1");
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("useOpenWalkthrough", () => {
+  it("follows the channel's walkthrough as it opens and closes", async () => {
+    const { result } = renderHook(() => useOpenWalkthrough("c1"));
+    expect(result.current).toBeNull();
+    await act(() => showWalkthrough("c1", walkthrough, 0, files.open));
+    expect(result.current).toMatchObject({ id: 12, step: 0 });
+    act(() => closeWalkthrough("c1"));
+    expect(result.current).toBeNull();
   });
 });

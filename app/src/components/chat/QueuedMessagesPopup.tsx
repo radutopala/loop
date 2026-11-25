@@ -99,11 +99,11 @@ export function QueuedMessagesPopup({ messages, channelId, isRunning, onEdit, ed
     }
   };
 
+  // Only reachable from the edit button, which shows only with onEdit.
   const handleEdit = async (msg: Message) => {
-    if (!onEdit) return;
     let opened = false;
     try {
-      opened = await onEdit(msg);
+      opened = await onEdit!(msg);
     } catch (err) {
       logErr("editing queued message")(err);
       return;
@@ -382,8 +382,10 @@ export function QueuedMessagesPopup({ messages, channelId, isRunning, onEdit, ed
                         fontSize: 11,
                         borderRadius: 4,
                       }}
+                      // React skips onMouseEnter on a disabled button, so these
+                      // hovers run only while the button is enabled.
                       onMouseEnter={(e) => {
-                        if (!isSteered) e.currentTarget.style.color = colors.textLight;
+                        e.currentTarget.style.color = colors.textLight;
                       }}
                       onMouseLeave={(e) => {
                         if (!isSteered) e.currentTarget.style.color = colors.textDim;
@@ -417,7 +419,7 @@ export function QueuedMessagesPopup({ messages, channelId, isRunning, onEdit, ed
                         borderRadius: 4,
                       }}
                       onMouseEnter={(e) => {
-                        if (!isDeleting) e.currentTarget.style.color = colors.textLight;
+                        e.currentTarget.style.color = colors.textLight;
                       }}
                       onMouseLeave={(e) => {
                         e.currentTarget.style.color = colors.textDim;
@@ -483,7 +485,7 @@ export function QueuedMessagesPopup({ messages, channelId, isRunning, onEdit, ed
                         borderRadius: 4,
                       }}
                       onMouseEnter={(e) => {
-                        if (!isDeleting && !isEditing) e.currentTarget.style.color = colors.dangerText;
+                        e.currentTarget.style.color = colors.dangerText;
                       }}
                       onMouseLeave={(e) => {
                         e.currentTarget.style.color = colors.textDim;

@@ -7,7 +7,7 @@ import type { PanelType } from "../types/panels";
 import { DropZoneOverlay } from "./DropZoneOverlay";
 import { PaneLeafHeader } from "./PaneLeafHeader";
 import { collectPanelTypes, flexPercents } from "./treeOps";
-import type { DropPosition, LeafNode, PaneNode, SplitDirection } from "./types";
+import type { DropPosition, LeafNode, PaneNode, SplitDirection, SplitNode } from "./types";
 
 const HEADER_HEIGHT = 22;
 
@@ -115,19 +115,18 @@ function PaneTree({
   const [draggingDivider, setDraggingDivider] = useState<number | null>(null);
 
   const handleDivider = useCallback(
-    (e: React.MouseEvent, dividerIndex: number, direction: "vertical" | "horizontal") => {
+    // Only a split renders dividers, each between two of its children, inside
+    // the container the ref points at.
+    (e: React.MouseEvent, split: SplitNode, dividerIndex: number) => {
       e.preventDefault();
-      const container = containerRef.current;
-      if (!container || node.type !== "split") return;
+      const container = containerRef.current!;
+      const direction = split.direction;
 
       const startPos = direction === "vertical" ? e.clientY : e.clientX;
-      const above = node.children[dividerIndex];
-      const below = node.children[dividerIndex + 1];
-      if (!above || !below) return;
-      const aboveFlex = above.flex;
-      const belowFlex = below.flex;
+      const aboveFlex = split.children[dividerIndex]!.flex;
+      const belowFlex = split.children[dividerIndex + 1]!.flex;
       const totalFlex = aboveFlex + belowFlex;
-      const allFlex = node.children.reduce((s, c) => s + c.flex, 0);
+      const allFlex = split.children.reduce((s, c) => s + c.flex, 0);
       const rect = container.getBoundingClientRect();
       const containerSize = direction === "vertical" ? rect.height : rect.width;
       const pixelsPerFlex = containerSize / allFlex;
@@ -158,7 +157,7 @@ function PaneTree({
       document.addEventListener("mousemove", onMouseMove);
       document.addEventListener("mouseup", onMouseUp);
     },
-    [node, path, onUpdateFlex],
+    [path, onUpdateFlex],
   );
 
   if (node.type === "leaf") {
@@ -232,7 +231,7 @@ function PaneTree({
     >
       {node.children.map((child, i) => (
         <Fragment key={child.type === "leaf" ? child.id : `split-${i}`}>
-          {i > 0 && <SplitDivider vertical={isVertical} onMouseDown={(e) => handleDivider(e, i - 1, node.direction)} />}
+          {i > 0 && <SplitDivider vertical={isVertical} onMouseDown={(e) => handleDivider(e, node, i - 1)} />}
           <PaneTree
             node={child}
             path={[...path, i]}

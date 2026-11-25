@@ -93,7 +93,7 @@ function goDurationToSeconds(dur: string): number | null {
   while ((m = re.exec(dur)) !== null) {
     matched = true;
     consumed += m[0].length;
-    const n = parseFloat(m[1] ?? "0");
+    const n = parseFloat(m[1]!);
     total += m[2] === "h" ? n * 3600 : m[2] === "m" ? n * 60 : n;
   }
   if (!matched || consumed !== dur.length) return null;

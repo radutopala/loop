@@ -77,6 +77,13 @@ describe("loadGitView", () => {
     expect(s.diffDone).toHaveBeenCalledOnce();
   });
 
+  it("skips the uncommitted sections the diff leaves out", async () => {
+    const d = diff({ staged_diff: patch("s.go") });
+    const s = sink();
+    await loadGitView(view(), api({ fetchDiff: vi.fn<GitViewApi["fetchDiff"]>().mockResolvedValue(d) }), () => true, s);
+    expect(s.diff).toHaveBeenCalledWith(d, [expect.objectContaining({ path: "s.go", status: "staged" })]);
+  });
+
   it("loads the branch diff from its patch", async () => {
     const a = api({ fetchDiff: vi.fn<GitViewApi["fetchDiff"]>().mockResolvedValue(diff({ diff: patch("b.go") })) });
     const s = sink();

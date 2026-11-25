@@ -102,7 +102,6 @@ interface ReviewRunIdChangedDetail {
   runId: string | null;
 }
 function broadcastReviewRunIdChange(channelId: string, runId: string | null): void {
-  if (typeof window === "undefined") return;
   window.dispatchEvent(
     new CustomEvent<ReviewRunIdChangedDetail>(REVIEW_RUN_ID_EVENT, {
       detail: { channelId, runId },
@@ -111,7 +110,6 @@ function broadcastReviewRunIdChange(channelId: string, runId: string | null): vo
 }
 
 function readStoredMode(): ReviewMode {
-  if (typeof window === "undefined") return "review-only";
   const v = window.localStorage.getItem(REVIEW_MODE_STORAGE_KEY);
   return v === "review-fix" ? "review-fix" : "review-only";
 }
@@ -476,7 +474,7 @@ export function allActionItems(a: {
 // what the next run goes with.
 export function runSettingsSummary(a: { maxIter: number; model: string; effort: string; forkMode: ReviewForkMode; scope: ReviewScope }): string {
   const fork = a.forkMode === "current" ? "fork chat session" : a.forkMode === "custom" ? "fork session id" : "fresh session";
-  const scope = REVIEW_SCOPE_OPTIONS.find((o) => o.value === a.scope)?.label ?? a.scope;
+  const scope = REVIEW_SCOPE_OPTIONS.find((o) => o.value === a.scope)!.label;
   return [`${a.maxIter} iteration${a.maxIter === 1 ? "" : "s"}`, a.model ? shortModel(a.model) : "default model", a.effort || "default effort", fork, scope].join(", ");
 }
 
@@ -537,22 +535,14 @@ interface ReviewPanelProps {
   wsOpens?: number;
 }
 
-function statusLabel(status: ReviewStatus): string {
-  switch (status) {
-    case "idle":
-      return "Idle";
-    case "loading":
-      return "Loading PR...";
-    case "ready":
-      return "Ready";
-    case "reviewing":
-      return "Reviewing...";
-    case "verifying":
-      return "Verifying...";
-    case "error":
-      return "Error";
-  }
-}
+const STATUS_LABELS: Record<ReviewStatus, string> = {
+  idle: "Idle",
+  loading: "Loading PR...",
+  ready: "Ready",
+  reviewing: "Reviewing...",
+  verifying: "Verifying...",
+  error: "Error",
+};
 
 export function ReviewPanel({
   channelId,
@@ -586,18 +576,15 @@ export function ReviewPanel({
   // verifies the run is still live and either resyncs the chip or clears
   // the key on terminal status.
   const [loopRunId, setLoopRunId] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
     return window.sessionStorage.getItem(reviewRunIdKey(channelId));
   });
   const [loopChip, setLoopChip] = useState<string>("");
   // The run whose canvas the bottom drawer shows. Survives run completion (so
   // the final canvas stays visible) — see reviewDrawerRunIdKey.
   const [drawerRunId, setDrawerRunId] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
     return window.sessionStorage.getItem(reviewDrawerRunIdKey(channelId));
   });
   const [drawerCollapsed, setDrawerCollapsed] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false;
     return window.localStorage.getItem(REVIEW_DRAWER_COLLAPSED_KEY) === "1";
   });
   // Tracks whether a workflow run is in flight independently of
@@ -608,11 +595,9 @@ export function ReviewPanel({
   // mid-loop and let the user start a second concurrent run on the same
   // worktree. Cleared on workflow.run_completed.
   const [loopActive, setLoopActive] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false;
     return window.sessionStorage.getItem(reviewRunIdKey(channelId)) !== null;
   });
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
-  const caretRef = useRef<HTMLButtonElement | null>(null);
   // The fork control is edited locally and committed to the daemon on
   // change/blur. Two drafts because "custom" is only a legal server-side
   // choice once an id exists — the dropdown can sit on it while the
@@ -624,7 +609,6 @@ export function ReviewPanel({
   const [agentDefaults, setAgentDefaults] = useState<{ model: string; effort: string; models: string[] }>({ model: "", effort: "", models: [] });
   const [showStats, setShowStats] = useState(false);
   const [moreMenuPos, setMoreMenuPos] = useState<{ x: number; y: number } | null>(null);
-  const moreBtnRef = useRef<HTMLButtonElement | null>(null);
   // The run settings (iterations, model, effort, fork, scope) sit in a row
   // of their own under the header, shown on demand.
   const [showSettings, setShowSettings] = useState(false);
@@ -756,11 +740,9 @@ export function ReviewPanel({
   // Persist mode to localStorage so the primary button label survives
   // remounts/reloads.
   useEffect(() => {
-    if (typeof window === "undefined") return;
     window.localStorage.setItem(REVIEW_MODE_STORAGE_KEY, mode);
   }, [mode]);
   useEffect(() => {
-    if (typeof window === "undefined") return;
     window.localStorage.setItem(REVIEW_DRAWER_COLLAPSED_KEY, drawerCollapsed ? "1" : "0");
   }, [drawerCollapsed]);
 
@@ -783,7 +765,6 @@ export function ReviewPanel({
   // `storage` events fire only for OTHER documents/tabs, so we layer a
   // window-level CustomEvent for same-tab siblings on top.
   useEffect(() => {
-    if (typeof window === "undefined") return;
     const onCustom = (ev: Event) => {
       const detail = (ev as CustomEvent<ReviewRunIdChangedDetail>).detail;
       if (!detail || detail.channelId !== channelId) return;
@@ -829,10 +810,8 @@ export function ReviewPanel({
     ({ runId, mode }: AdoptableReviewRun, rereadSession: boolean) => {
       if (loopRunIdRef.current === runId) return;
       loopRunIdRef.current = runId;
-      if (typeof window !== "undefined") {
-        window.sessionStorage.setItem(reviewRunIdKey(channelId), runId);
-        window.sessionStorage.setItem(reviewDrawerRunIdKey(channelId), runId);
-      }
+      window.sessionStorage.setItem(reviewRunIdKey(channelId), runId);
+      window.sessionStorage.setItem(reviewDrawerRunIdKey(channelId), runId);
       broadcastReviewRunIdChange(channelId, runId);
       setDrawerRunId(runId);
       setLoopRunId(runId);
@@ -904,9 +883,7 @@ export function ReviewPanel({
         if (cancelled) return;
         const status = detail.run?.status;
         if (status === "completed" || status === "failed" || status === "cancelled") {
-          if (typeof window !== "undefined") {
-            window.sessionStorage.removeItem(reviewRunIdKey(channelId));
-          }
+          window.sessionStorage.removeItem(reviewRunIdKey(channelId));
           broadcastReviewRunIdChange(channelId, null);
           setLoopChip(status === "completed" ? "done" : status);
           setLoopActive(false);
@@ -927,9 +904,7 @@ export function ReviewPanel({
         // handle; a momentary daemon restart shouldn't wipe a live loop's
         // UI state.
         if (e instanceof FetchWorkflowRunError && e.status === 404) {
-          if (typeof window !== "undefined") {
-            window.sessionStorage.removeItem(reviewRunIdKey(channelId));
-          }
+          window.sessionStorage.removeItem(reviewRunIdKey(channelId));
           broadcastReviewRunIdChange(channelId, null);
           setLoopChip("");
           setLoopActive(false);
@@ -1005,9 +980,7 @@ export function ReviewPanel({
           setLoopActive(false);
           // Drop the sessionStorage handle once the run hits a terminal
           // state, so a subsequent remount doesn't re-resync to a stale id.
-          if (typeof window !== "undefined") {
-            window.sessionStorage.removeItem(reviewRunIdKey(channelId));
-          }
+          window.sessionStorage.removeItem(reviewRunIdKey(channelId));
           broadcastReviewRunIdChange(channelId, null);
           // Also drop the in-memory loopRunId so the hydration effect
           // doesn't re-fire fetchWorkflowRun against this terminal id when
@@ -1132,12 +1105,11 @@ export function ReviewPanel({
           setSession(null);
           throw new Error("No review session loaded — pick a PR first, then run the loop.");
         }
-        setSession(server.session);
         // Optimistically flip to "reviewing" so the Run button stays disabled
         // even before the review.status WS event lands — otherwise there's a
         // brief window after setBusy(false) where status is still "ready" and
         // the button re-enables itself.
-        setSession((prev) => (prev ? { ...prev, status: "reviewing" } : prev));
+        setSession({ ...server.session, status: "reviewing" });
         const prNumber = server.session.pr?.number;
         if (!prNumber) throw new Error("No review session loaded — pick a PR first, then run the loop.");
         // review/start, not a bare workflow run: it starts a new review, so
@@ -1158,10 +1130,8 @@ export function ReviewPanel({
         // initial mount-and-set would land at the same wall-clock tick as the
         // sessionStorage write, and a competing remount in another browser
         // process could observe an empty key.
-        if (typeof window !== "undefined") {
-          window.sessionStorage.setItem(reviewRunIdKey(channelId), resp.run_id);
-          window.sessionStorage.setItem(reviewDrawerRunIdKey(channelId), resp.run_id);
-        }
+        window.sessionStorage.setItem(reviewRunIdKey(channelId), resp.run_id);
+        window.sessionStorage.setItem(reviewDrawerRunIdKey(channelId), resp.run_id);
         broadcastReviewRunIdChange(channelId, resp.run_id);
         // Bind the bottom drawer to this run so its canvas is in front of the
         // user as the loop runs (expanded by default; respects a prior collapse).
@@ -1196,9 +1166,7 @@ export function ReviewPanel({
         setLoopRunId(null);
         // No run was dispatched — make sure no stale id from a prior attempt
         // sticks around to fool the next remount's hydration.
-        if (typeof window !== "undefined") {
-          window.sessionStorage.removeItem(reviewRunIdKey(channelId));
-        }
+        window.sessionStorage.removeItem(reviewRunIdKey(channelId));
         broadcastReviewRunIdChange(channelId, null);
       } finally {
         setBusy(false);
@@ -1211,17 +1179,13 @@ export function ReviewPanel({
     void runMode(mode);
   }, [runMode, mode]);
 
-  const openModeMenu = useCallback(() => {
-    const el = caretRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
+  const openModeMenu = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
     setMenuPos({ x: r.left, y: r.bottom + 2 });
   }, []);
 
-  const openMoreMenu = useCallback(() => {
-    const el = moreBtnRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
+  const openMoreMenu = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
     setMoreMenuPos({ x: r.left, y: r.bottom + 2 });
   }, []);
 
@@ -1307,9 +1271,7 @@ export function ReviewPanel({
       setSession(null);
       // The worktree is gone — drop the canvas drawer for this channel too.
       setDrawerRunId(null);
-      if (typeof window !== "undefined") {
-        window.sessionStorage.removeItem(reviewDrawerRunIdKey(channelId));
-      }
+      window.sessionStorage.removeItem(reviewDrawerRunIdKey(channelId));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -1418,8 +1380,8 @@ export function ReviewPanel({
   // Address all, or with blockingOnly the blocking findings alone.
   const onAddressAll = useCallback(
     async (blockingOnly = false) => {
-      const pending = (session?.comments ?? []).filter(blockingOnly ? isBlocking : isActionable);
-      if (pending.length === 0) return;
+      // The All menu only offers this with something to send, from an open session.
+      const pending = session!.comments.filter(blockingOnly ? isBlocking : isActionable);
       // Toggle `busy` for the duration of the sendMessage round-trip so the
       // header buttons (which all gate on `busy`) actually disable. Without
       // this the disabled={busy} on "Address all" was a no-op and
@@ -1441,8 +1403,8 @@ export function ReviewPanel({
 
   const newCount = useMemo(() => (session?.comments ?? []).filter((c) => c.source !== "github").length, [session]);
 
+  // The All menu only offers this when the session has findings of its own.
   const onCheckAll = useCallback(async () => {
-    if (newCount === 0) return;
     setBusy(true);
     setError(null);
     try {
@@ -1453,7 +1415,7 @@ export function ReviewPanel({
     } finally {
       setBusy(false);
     }
-  }, [channelId, ensureChatOpen, session, newCount]);
+  }, [channelId, ensureChatOpen, session]);
 
   // Stop cancels the loop before the review: a loop left running would start
   // its next round as soon as the stopped review is ready again. Between
@@ -1479,7 +1441,8 @@ export function ReviewPanel({
       setPushNotice(null);
       // Each comment shows as on its way, and lands as the daemon announces
       // it; the banner counts them.
-      const ids = pushTargets(sessionRef.current?.comments ?? [], blockingOnly);
+      // The All menu that offers this only shows with a session open.
+      const ids = pushTargets(sessionRef.current!.comments, blockingOnly);
       // A single push still on its way keeps its spinner.
       setPushing((prev) => ids.reduce(withId, prev));
       setPushAllTotal(ids.length);
@@ -1573,13 +1536,13 @@ export function ReviewPanel({
   // Approving past the outcome: offered when the plain button is held back
   // by the outcome alone.
   const approveAnyway = !!session && !!outcome && !canApprove(outcome) && !isApprovedAtHead(session) && !busy && !reviewRunning;
+  // Both openers sit behind an open session, which always has an outcome.
   const openApprove = (force: boolean) => {
-    if (!session || !outcome) return;
-    setApproveDraft({ body: approveBody(outcome, session.comments), force });
+    setApproveDraft({ body: approveBody(outcome!, session!.comments), force });
   };
+  // Only the dialog calls this, and it shows only while approveDraft is set.
   const onApprove = async (body: string) => {
-    if (!approveDraft) return;
-    const sha = await approveReview(channelId, { body, force: approveDraft.force });
+    const sha = await approveReview(channelId, { body, force: approveDraft!.force });
     setSession((prev) => (prev ? { ...prev, approved_sha: sha } : prev));
     setApproveDraft(null);
   };
@@ -1666,7 +1629,7 @@ export function ReviewPanel({
                   </>
                 )}
                 {" · "}
-                {session ? statusLabel(session.status) : ""}
+                {STATUS_LABELS[session!.status]}
                 {reviewScopeChip(session) && (
                   <span data-testid="review-scope-chip" title="What the latest review run reviewed">
                     {" · last run: "}
@@ -1729,7 +1692,8 @@ export function ReviewPanel({
                     ? approveDisabledReason(outcome)
                     : reviewRunning
                       ? "Wait for the review to finish"
-                      : `Approve the PR on GitHub at ${session?.head_sha?.slice(0, 7) ?? "its head"}`
+                      : // Approvable means the reviewed head is the PR head, so it is set.
+                        `Approve the PR on GitHub at ${session!.head_sha!.slice(0, 7)}`
                 }
               >
                 Approve on GitHub
@@ -1751,7 +1715,6 @@ export function ReviewPanel({
                 {reviewRunning ? "Running..." : modePrimaryLabel(mode)}
               </button>
               <button
-                ref={caretRef}
                 data-testid="review-run-mode-caret"
                 onClick={openModeMenu}
                 disabled={runDisabled}
@@ -1789,15 +1752,7 @@ export function ReviewPanel({
             >
               ⚙
             </button>
-            <button
-              ref={moreBtnRef}
-              data-testid="review-more-btn"
-              onClick={openMoreMenu}
-              aria-haspopup="menu"
-              aria-label="More review actions"
-              style={btnStyle}
-              title="Sync, the All actions, Stats and Close"
-            >
+            <button data-testid="review-more-btn" onClick={openMoreMenu} aria-haspopup="menu" aria-label="More review actions" style={btnStyle} title="Sync, the All actions, Stats and Close">
               ⋯
             </button>
           </>
@@ -2123,7 +2078,7 @@ export function ReviewPanel({
           headSha={session.head_sha}
           initialBody={approveDraft.body}
           force={approveDraft.force}
-          warning={outcome ? approveDisabledReason(outcome).split(";")[0] : undefined}
+          warning={approveDisabledReason(outcome!).split(";")[0]}
           onCancel={() => setApproveDraft(null)}
           onSubmit={onApprove}
         />

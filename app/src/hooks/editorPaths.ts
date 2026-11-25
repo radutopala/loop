@@ -57,7 +57,8 @@ export function tabDescriptions(tabs: TabPathInfo[], showRoot: boolean): Map<str
   const dirsOf = (t: TabPathInfo) => t.relativePath.split("/").slice(0, -1);
   const groups = new Map<string, TabPathInfo[]>();
   for (const t of tabs) {
-    const name = t.relativePath.split("/").pop() ?? "";
+    const slash = t.relativePath.lastIndexOf("/");
+    const name = slash < 0 ? t.relativePath : t.relativePath.slice(slash + 1);
     const group = (showRoot ? t.rootName : "") + "\0" + name;
     groups.set(group, [...(groups.get(group) ?? []), t]);
   }

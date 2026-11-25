@@ -23,7 +23,6 @@ export function useWorkflowState({ channelId, initialListWidth, listWidthMin, li
   const [listWidth, setListWidth] = useState(initialListWidth);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
-  const draggingRef = useRef(false);
 
   // Ref for selectedRunId so polling/WS callbacks always read latest value
   // without being in useCallback dependency arrays.
@@ -297,7 +296,8 @@ export function useWorkflowState({ channelId, initialListWidth, listWidthMin, li
       try {
         parsed = JSON.parse(jsonText);
       } catch (err) {
-        return `Invalid JSON: ${err instanceof Error ? err.message : String(err)}`;
+        // JSON.parse of a string only ever throws a SyntaxError.
+        return `Invalid JSON: ${(err as SyntaxError).message}`;
       }
       if (!parsed || typeof parsed.name !== "string" || parsed.name === "") {
         return 'Definition must have a non-empty "name".';
@@ -336,13 +336,11 @@ export function useWorkflowState({ channelId, initialListWidth, listWidthMin, li
 
   // Resizable divider.
   const onDividerMouseDown = useCallback(() => {
-    draggingRef.current = true;
+    // onUp removes this listener as it ends the drag, so it only runs mid-drag.
     const onMove = (e: MouseEvent) => {
-      if (!draggingRef.current) return;
       setListWidth((prev) => Math.max(listWidthMin, Math.min(listWidthMax, prev + e.movementX)));
     };
     const onUp = () => {
-      draggingRef.current = false;
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };

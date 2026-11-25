@@ -151,19 +151,16 @@ export function FileTreePanel({ channelId, dirPath, branch, editorState, embedde
     setNewDirName(null);
     handleCreateDirPath(name);
   };
-  const submitRename = () => {
-    if (!renaming) return;
-    const { pathKey, value } = renaming;
+  const submitRename = ({ pathKey, value }: { pathKey: string; value: string }) => {
     setTreeError(null);
     handleRenamePath(pathKey, value)
       .then(() => setRenaming(null))
       .catch((err) => setTreeError(err instanceof Error ? err.message : "Failed to rename"));
   };
   // Pastes what was copied into a directory, or beside a file.
-  const pasteInto = (pathKey: string, isDir: boolean) => {
-    if (!copied) return;
+  const pasteInto = (source: { pathKey: string; isDir: boolean }, pathKey: string, isDir: boolean) => {
     setTreeError(null);
-    handleCopyPath(copied.pathKey, copied.isDir, isDir ? pathKey : parentDirKey(pathKey))
+    handleCopyPath(source.pathKey, source.isDir, isDir ? pathKey : parentDirKey(pathKey))
       .then((key) => setRevealed(key))
       .catch((err) => setTreeError(err instanceof Error ? err.message : "Failed to paste"));
   };
@@ -176,8 +173,8 @@ export function FileTreePanel({ channelId, dirPath, branch, editorState, embedde
     const row = (e.target as HTMLElement).closest<HTMLElement>('[data-testid="file-tree-entry"], [data-testid="file-tree-root"]');
     if (!row) return;
     const isRoot = row.dataset.testid === "file-tree-root";
-    const pathKey = isRoot ? makePathKey(Number(row.dataset.root), "") : row.dataset.path;
-    if (!pathKey) return;
+    // Every tree row carries its path key in data-path.
+    const pathKey = isRoot ? makePathKey(Number(row.dataset.root), "") : (row.dataset.path as string);
     const isDir = isRoot || row.dataset.dir !== undefined;
     if (key === "c") {
       if (isRoot || window.getSelection()?.toString()) return;
@@ -185,7 +182,7 @@ export function FileTreePanel({ channelId, dirPath, branch, editorState, embedde
       setCopied({ pathKey, isDir });
     } else if (copied) {
       e.preventDefault();
-      pasteInto(pathKey, isDir);
+      pasteInto(copied, pathKey, isDir);
     }
   };
   const openResult = (index: number, promote: boolean) => {
@@ -208,8 +205,7 @@ export function FileTreePanel({ channelId, dirPath, branch, editorState, embedde
   };
   const searchCount = contentMode ? hits.length : (results?.length ?? 0);
 
-  const getContextMenuItems = (): MenuItem[] => {
-    if (!contextMenu) return [];
+  const getContextMenuItems = (contextMenu: { x: number; y: number; path: string; isDir: boolean }): MenuItem[] => {
     const { rootIndex: ctxRoot, relativePath: ctxRelPath } = parsePathKey(contextMenu.path);
     const ctxRootEntry = roots.find((r) => r.index === ctxRoot);
     const absBase = ctxRootEntry?.display_path ?? ctxRootEntry?.path ?? dirPath;
@@ -227,7 +223,7 @@ export function FileTreePanel({ channelId, dirPath, branch, editorState, embedde
     if (!isRoot) items.push({ label: "Copy", separator: true, onClick: () => setCopied({ pathKey: path, isDir }) });
     if (copied) {
       const name = parsePathKey(copied.pathKey).relativePath.split("/").pop();
-      items.push({ label: "Paste", hint: name, separator: isRoot, onClick: () => pasteInto(path, isDir) });
+      items.push({ label: "Paste", hint: name, separator: isRoot, onClick: () => pasteInto(copied, path, isDir) });
     }
     if (!isRoot) {
       items.push({
@@ -451,7 +447,7 @@ export function FileTreePanel({ channelId, dirPath, branch, editorState, embedde
               value={renaming.value}
               onChange={(e) => setRenaming({ ...renaming, value: e.target.value })}
               onKeyDown={(e) => {
-                if (e.key === "Enter") submitRename();
+                if (e.key === "Enter") submitRename(renaming);
                 if (e.key === "Escape") {
                   setRenaming(null);
                   setTreeError(null);
@@ -651,7 +647,7 @@ export function FileTreePanel({ channelId, dirPath, branch, editorState, embedde
             })}
         </div>
       </div>
-      {contextMenu && <ContextMenu x={contextMenu.x} y={contextMenu.y} items={getContextMenuItems()} onClose={() => setContextMenu(null)} />}
+      {contextMenu && <ContextMenu x={contextMenu.x} y={contextMenu.y} items={getContextMenuItems(contextMenu)} onClose={() => setContextMenu(null)} />}
     </FilePanel>
   );
 }
@@ -729,7 +725,8 @@ function ContentResults({ content, activeHit, roots, selectedPath, onHover, onOp
     <>
       {result.files.map((file) => {
         const pathKey = makePathKey(file.root_index, file.rel_path);
-        const name = file.rel_path.split("/").pop() ?? file.rel_path;
+        // split always returns at least one part.
+        const name = file.rel_path.split("/").pop() as string;
         const { where } = fileSearchLabel({ ...file, name }, roots);
         return (
           <div key={pathKey} data-testid="content-search-file" data-path={pathKey}>

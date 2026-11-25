@@ -1,4 +1,4 @@
-.PHONY: help build build-linux install test test-integration test-integration-browser test-integration-plugin test-integration-pluginsdk test-component test-runner-build test-runner-push bdd-serve lint lint-go lint-app sdk-gen sdk-gen-check coverage coverage-check prove-seccomp codeql-download codeql codeql-js docker-build docs-build docs-serve docs-capture docs-architecture run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-record app-test app-install app-build-binary app-dist-linux app-icons whisper-build _sync-loop-overrides
+.PHONY: help build build-linux install test test-integration test-integration-browser test-integration-plugin test-integration-pluginsdk test-component test-runner-build test-runner-push bdd-serve lint lint-go lint-app sdk-gen sdk-gen-check coverage coverage-check coverage-check-go coverage-check-app prove-seccomp codeql-download codeql codeql-js docker-build docs-build docs-serve docs-capture docs-architecture run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-record app-test app-install app-build-binary app-dist-linux app-icons whisper-build _sync-loop-overrides
 .DEFAULT_GOAL := help
 
 # Strip gate-child env inheritance when invoking make from inside a
@@ -237,7 +237,7 @@ _coverage-check-run:
 		if (miss > 0) { printf "Coverage is %.4f%% (%d of %d statements uncovered), required 100%%\n", 100 * (total - miss) / total, miss, total; exit 1 } \
 		printf "Coverage: 100%% (%d statements)\n", total }' $(COVER_DIR)/coverage.out $(COVER_DIR)/coverage-pluginsdk.out
 
-coverage-check: ## Run tests and enforce 100% coverage (via Docker on host, directly in CI)
+coverage-check-go: ## Run Go tests and enforce 100% coverage (via Docker on host, directly in CI)
 	@if [ "$$CI" = "true" ] || [ -f /.dockerenv ]; then \
 		$(MAKE) _coverage-check-run; \
 	else \
@@ -245,6 +245,19 @@ coverage-check: ## Run tests and enforce 100% coverage (via Docker on host, dire
 			-v loop-gomod:/go/pkg/mod -v loop-gocache:/root/.cache/go-build \
 			golang:1.27 make _coverage-check-run COVER_DIR=/tmp; \
 	fi
+
+coverage-check-app: ## Run frontend tests and enforce 100% coverage (via Docker on host, directly in CI)
+	@if [ "$$CI" = "true" ] || [ -f /.dockerenv ]; then \
+		cd app && npm run test:coverage; \
+	else \
+		docker run --rm \
+			-v "$$(pwd)":/repo -w /repo/app \
+			-v loop-lint-node-modules:/repo/app/node_modules \
+			-v loop-npmcache:/root/.npm \
+			node:24-alpine sh -c "npm install && npm run test:coverage"; \
+	fi
+
+coverage-check: coverage-check-go coverage-check-app ## Run Go and frontend tests and enforce 100% coverage
 
 prove-seccomp: ## Prove the agent gate's seccomp filter for amd64 + arm64 with the z3 SMT solver, over every syscall number (in the test-runner image unless z3 is installed)
 	@if command -v z3 >/dev/null; then \

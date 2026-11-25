@@ -663,7 +663,7 @@ export function useChatStateStore({ channels, channelsFetchedAt, selectedId, onA
     // Web Notification when the relevant view isn't focused.
     if (channelId && wsEvent.type === "gate.approval_requested") {
       const reqData = wsEvent.data as GateApprovalRequestedData;
-      const approvalTarget = stateTarget || channelId;
+      const approvalTarget = channelId;
       if (document.hidden || approvalTarget !== selectedIdRef.current) {
         const ch = channelsRef.current.find((c) => c.id === approvalTarget) ?? channelsRef.current.find((c) => c.id === channelId);
         const name = ch?.name || channelId;

@@ -203,8 +203,8 @@ function computeLayout(defs: WorkflowNodeDef[], runs: WorkflowNodeRun[]): { node
       const sepIdx = remainder.indexOf(":");
       const iter = parseInt(remainder.slice(0, sepIdx), 10);
       const srcId = remainder.slice(sepIdx + 1);
-      const origDef = expanded.find((d) => d.id === synthId);
-      if (!origDef) continue;
+      // Every synthetic id came from expanded, so the find always hits.
+      const origDef = expanded.find((d) => d.id === synthId)!;
       syntheticMeta.set(synthId, { loopId: g.loopId, srcId, iteration: iter, origDef });
     }
   }
@@ -266,7 +266,8 @@ function computeLayout(defs: WorkflowNodeDef[], runs: WorkflowNodeRun[]): { node
 
   const layerGroups = new Map<number, WorkflowNodeDef[]>();
   for (const d of effectiveDefs) {
-    const l = layers.get(d.id) ?? 0;
+    // getLayer above assigned every def a layer.
+    const l = layers.get(d.id)!;
     if (!layerGroups.has(l)) layerGroups.set(l, []);
     layerGroups.get(l)!.push(d);
   }
@@ -298,8 +299,8 @@ function computeLayout(defs: WorkflowNodeDef[], runs: WorkflowNodeRun[]): { node
 
   const layoutEdges: LayoutEdge[] = [];
   for (const d of effectiveDefs) {
-    const to = nodeMap.get(d.id);
-    if (!to) continue;
+    // Every def was placed in a layer above, so it has a node.
+    const to = nodeMap.get(d.id)!;
     for (const dep of d.depends_on ?? []) {
       const from = nodeMap.get(dep);
       if (from) layoutEdges.push({ from, to });
@@ -312,8 +313,8 @@ function computeLayout(defs: WorkflowNodeDef[], runs: WorkflowNodeRun[]): { node
   // Group rects: bounding box around all synthetic nodes sharing a loop.
   const groupRects: GroupRect[] = [];
   for (const spec of groupSpecs) {
+    // Each spec lists at least one synthetic id, and every one became a node.
     const members = layoutNodes.filter((n) => n.synthetic?.loopId === spec.loopId);
-    if (members.length === 0) continue;
     let minX = Infinity,
       minY = Infinity,
       maxX = -Infinity,
@@ -381,8 +382,8 @@ export function WorkflowGraph({ defs, nodeRuns, colors, onNodeClick, expandedNod
   useEffect(() => {
     if (hasCentered.current) return;
     if (nodes.length === 0) return;
-    const el = containerRef.current;
-    if (!el) return;
+    // With nodes to show the canvas div is mounted, so the ref is set.
+    const el = containerRef.current!;
     const rect = el.getBoundingClientRect();
     const fitZoom = Math.min(1.2, (rect.width * 0.9) / width, (rect.height * 0.9) / height);
     const z = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, fitZoom));
@@ -396,14 +397,15 @@ export function WorkflowGraph({ defs, nodeRuns, colors, onNodeClick, expandedNod
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     // Only pan on background (left button), not on nodes.
     if (e.button !== 0) return;
-    const target = e.target as HTMLElement;
-    if (target.closest?.("g[data-node]")) return;
+    const target = e.target as Element;
+    if (target.closest("g[data-node]")) return;
     e.preventDefault();
     isPanning.current = true;
     const startX = e.clientX - vpRef.current.x;
     const startY = e.clientY - vpRef.current.y;
+    // onUp clears isPanning and removes this listener together, so a move
+    // only arrives while panning.
     const onMove = (ev: MouseEvent) => {
-      if (!isPanning.current) return;
       setVp((v) => ({ ...v, x: ev.clientX - startX, y: ev.clientY - startY }));
     };
     const onUp = () => {
@@ -440,9 +442,9 @@ export function WorkflowGraph({ defs, nodeRuns, colors, onNodeClick, expandedNod
   }, []);
 
   // Zoom helper for buttons.
+  // The zoom buttons live inside the canvas div, so the ref is set.
   const zoomTo = useCallback((newZoom: number) => {
-    const el = containerRef.current;
-    if (!el) return;
+    const el = containerRef.current!;
     const rect = el.getBoundingClientRect();
     const cx = rect.width / 2;
     const cy = rect.height / 2;
@@ -479,8 +481,9 @@ export function WorkflowGraph({ defs, nodeRuns, colors, onNodeClick, expandedNod
   const worldMinY = Math.min(0, vpWorldY);
   const worldMaxX = Math.max(width, vpWorldX + vpWorldW);
   const worldMaxY = Math.max(height, vpWorldY + vpWorldH);
-  const worldW = worldMaxX - worldMinX || 1;
-  const worldH = worldMaxY - worldMinY || 1;
+  // Both spans are at least the layout's width/height, which are never 0.
+  const worldW = worldMaxX - worldMinX;
+  const worldH = worldMaxY - worldMinY;
   const mmScale = Math.min(MINIMAP_W / worldW, MINIMAP_H / worldH);
   const mmW = worldW * mmScale;
   const mmH = worldH * mmScale;
@@ -828,7 +831,7 @@ export function WorkflowGraph({ defs, nodeRuns, colors, onNodeClick, expandedNod
               </div>
             </>
           )}
-          {expandedRun.error_text && <div style={{ color: colors.error ?? "#ef4444", fontSize: 11, whiteSpace: "pre-wrap", marginBottom: 4 }}>{expandedRun.error_text}</div>}
+          {expandedRun.error_text && <div style={{ color: colors.error, fontSize: 11, whiteSpace: "pre-wrap", marginBottom: 4 }}>{expandedRun.error_text}</div>}
           {(expandedRun.output || expandedRun.input) && <div style={{ fontSize: 10, color: colors.textDim, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 3 }}>Output</div>}
           {expandedRun.output && (
             <div
@@ -856,8 +859,8 @@ export function WorkflowGraph({ defs, nodeRuns, colors, onNodeClick, expandedNod
 // Helpers
 // ---------------------------------------------------------------------------
 
-function elapsedShort(start: string | null, end: string | null): string {
-  if (!start) return "";
+// Callers only pass a set start time.
+function elapsedShort(start: string, end: string | null): string {
   const s = new Date(start).getTime();
   const e = end ? new Date(end).getTime() : Date.now();
   const secs = Math.max(0, Math.floor((e - s) / 1000));

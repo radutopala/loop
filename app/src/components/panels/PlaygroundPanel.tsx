@@ -266,9 +266,8 @@ export function PlaygroundPanel({ channelId, instanceId = "default" }: Playgroun
     }
   }
 
-  function handleCopyShareUrl() {
-    if (!shareUrl) return;
-    navigator.clipboard.writeText(shareUrl).then(() => {
+  function handleCopyShareUrl(url: string) {
+    navigator.clipboard.writeText(url).then(() => {
       setShareCopied(true);
       setTimeout(() => setShareCopied(false), 1500);
     }, logErr("copying share url"));
@@ -334,7 +333,7 @@ export function PlaygroundPanel({ channelId, instanceId = "default" }: Playgroun
             >
               {shareUrl}
             </span>
-            <ToolbarButton onClick={handleCopyShareUrl} title="Copy share URL" colors={colors}>
+            <ToolbarButton onClick={() => handleCopyShareUrl(shareUrl)} title="Copy share URL" colors={colors}>
               {shareCopied ? "copied!" : "Copy"}
             </ToolbarButton>
           </>

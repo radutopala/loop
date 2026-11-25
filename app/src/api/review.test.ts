@@ -1,6 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { approveReview, getReviewSession, getReviewStats, pushAllReviewComments, setReviewScope, startReview } from "./review";
+import {
+  approveReview,
+  deleteReviewComment,
+  deleteReviewSession,
+  getReviewSession,
+  getReviewStats,
+  listReviewPRs,
+  listReviewSessions,
+  loadReviewPR,
+  pushAllReviewComments,
+  pushReviewComment,
+  runReview,
+  setReviewAgent,
+  setReviewFork,
+  setReviewScope,
+  startReview,
+  stopReview,
+  syncReviewSession,
+} from "./review";
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -141,5 +159,116 @@ describe("approveReview", () => {
   it("falls back to the status text", async () => {
     fetchMock.mockResolvedValue(new Response("", { status: 502, statusText: "Bad Gateway" }));
     await expect(approveReview("ch1")).rejects.toThrow("Failed to approve the PR: Bad Gateway");
+  });
+});
+
+// respond answers every fetch with a fresh Response, so a body can be read on each call.
+function respond(body: string | null, init: ResponseInit = {}) {
+  fetchMock.mockImplementation(() => Promise.resolve(new Response(body, init)));
+}
+
+describe("list endpoints", () => {
+  it.each([
+    ["listReviewSessions", () => listReviewSessions(), "http://localhost:8222/api/review/sessions", "sessions"],
+    ["listReviewPRs", () => listReviewPRs("ch1"), "http://localhost:8222/api/channels/ch1/review/prs", "prs"],
+  ] as const)("%s returns the list, or an empty one for a missing key", async (_name, run, url, key) => {
+    respond(JSON.stringify({ [key]: [{ number: 1 }] }));
+    await expect(run()).resolves.toEqual([{ number: 1 }]);
+    expect(fetchMock.mock.calls[0]![0]).toBe(url);
+    respond(JSON.stringify({ [key]: null }));
+    await expect(run()).resolves.toEqual([]);
+  });
+
+  it("listReviewSessions throws with the status text", async () => {
+    respond("", { status: 500, statusText: "Bad" });
+    await expect(listReviewSessions()).rejects.toThrow("Failed to list review sessions: Bad");
+  });
+
+  it("listReviewPRs throws the daemon's message, or the status text", async () => {
+    respond("gh not authenticated", { status: 502 });
+    await expect(listReviewPRs("ch1")).rejects.toThrow("gh not authenticated");
+    respond("", { status: 500, statusText: "Bad" });
+    await expect(listReviewPRs("ch1")).rejects.toThrow("Failed to list PRs: Bad");
+  });
+});
+
+describe("session writes", () => {
+  const session = JSON.stringify({ present: true, session: { channel_id: "ch1", comments: null, status: "ready" } });
+
+  it.each([
+    ["loadReviewPR", () => loadReviewPR("ch1", 7), "review/load", "POST", '{"pr_number":7,"background":true}', "Failed to load PR: Bad"],
+    ["syncReviewSession", () => syncReviewSession("ch1"), "review/sync", "POST", undefined, "Failed to sync review: Bad"],
+    ["setReviewFork with a session", () => setReviewFork("ch1", "custom", "s1"), "review/fork", "PUT", '{"mode":"custom","session_id":"s1"}', "Failed to set fork mode: Bad"],
+    ["setReviewFork without a session", () => setReviewFork("ch1", "current"), "review/fork", "PUT", '{"mode":"current","session_id":""}', "Failed to set fork mode: Bad"],
+    ["setReviewAgent", () => setReviewAgent("ch1", "opus", "high"), "review/agent", "PUT", '{"model":"opus","effort":"high"}', "Failed to set review model: Bad"],
+  ] as const)("%s sends the request and normalizes the session", async (_name, run, path, method, body, err) => {
+    respond(session);
+    const resp = await run();
+    expect(resp.session?.comments).toEqual([]);
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe(`http://localhost:8222/api/channels/ch1/${path}`);
+    expect(init.method).toBe(method);
+    expect(init.body).toBe(body);
+
+    respond("busy", { status: 409 });
+    await expect(run()).rejects.toThrow(/^busy$/);
+    respond("", { status: 500, statusText: "Bad" });
+    await expect(run()).rejects.toThrow(err);
+  });
+
+  it("keeps comments the daemon sends and passes a missing session through", async () => {
+    respond(JSON.stringify({ present: true, session: { channel_id: "ch1", comments: [{ id: "c1" }], status: "ready" } }));
+    expect((await syncReviewSession("ch1")).session?.comments).toEqual([{ id: "c1" }]);
+    respond(JSON.stringify({ present: false }));
+    expect(await syncReviewSession("ch1")).toEqual({ present: false });
+  });
+});
+
+describe("deleteReviewSession", () => {
+  it.each([204, 404])("treats %s as closed", async (status) => {
+    respond(null, { status });
+    await expect(deleteReviewSession("ch1")).resolves.toBeUndefined();
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("http://localhost:8222/api/channels/ch1/review");
+    expect(init.method).toBe("DELETE");
+  });
+
+  it("throws on other failures", async () => {
+    respond("", { status: 500, statusText: "Bad" });
+    await expect(deleteReviewSession("ch1")).rejects.toThrow("Failed to close review: Bad");
+  });
+});
+
+describe("run and comment actions", () => {
+  it("runReview POSTs and returns the status", async () => {
+    respond(JSON.stringify({ status: "started" }));
+    await expect(runReview("ch1")).resolves.toEqual({ status: "started" });
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("http://localhost:8222/api/channels/ch1/review/run");
+    expect(init.method).toBe("POST");
+  });
+
+  it.each([
+    ["stopReview", () => stopReview("ch1"), "http://localhost:8222/api/channels/ch1/review/stop", "POST"],
+    ["pushReviewComment", () => pushReviewComment("ch1", "a/b"), "http://localhost:8222/api/channels/ch1/review/comments/a%2Fb/push", "POST"],
+    ["deleteReviewComment", () => deleteReviewComment("ch1", "a/b"), "http://localhost:8222/api/channels/ch1/review/comments/a%2Fb", "DELETE"],
+  ] as const)("%s sends the request", async (_name, run, url, method) => {
+    respond(null, { status: 204 });
+    await expect(run()).resolves.toBeUndefined();
+    expect(fetchMock.mock.calls[0]![0]).toBe(url);
+    expect(fetchMock.mock.calls[0]![1].method).toBe(method);
+  });
+
+  it.each([
+    ["runReview", () => runReview("ch1"), "Failed to start review: Bad"],
+    ["stopReview", () => stopReview("ch1"), "Failed to stop review: Bad"],
+    ["pushReviewComment", () => pushReviewComment("ch1", "c1"), "Failed to push comment: Bad"],
+    ["deleteReviewComment", () => deleteReviewComment("ch1", "c1"), "Failed to delete comment: Bad"],
+    ["pushAllReviewComments", () => pushAllReviewComments("ch1"), "Failed to push comments: Bad"],
+  ] as const)("%s throws the daemon's message, or the status text", async (_name, run, err) => {
+    respond("not found", { status: 404 });
+    await expect(run()).rejects.toThrow(/^not found$/);
+    respond("", { status: 500, statusText: "Bad" });
+    await expect(run()).rejects.toThrow(err);
   });
 });

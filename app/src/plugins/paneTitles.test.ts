@@ -1,5 +1,7 @@
+// @vitest-environment jsdom
+import { act, cleanup, renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { clearPaneTitle, paneTitle, setPaneTitle } from "./paneTitles";
+import { clearPaneTitle, paneTitle, setPaneTitle, usePaneTitle } from "./paneTitles";
 
 describe("paneTitles", () => {
   it("keeps a title per leaf until its owner drops it", () => {
@@ -25,5 +27,19 @@ describe("paneTitles", () => {
     expect(paneTitle("l3")).toBe("New");
     clearPaneTitle("l3", now);
     expect(paneTitle("l3")).toBe("");
+  });
+});
+
+describe("usePaneTitle", () => {
+  it("follows the leaf's title until unmounted", () => {
+    const owner = {};
+    const { result, unmount } = renderHook(() => usePaneTitle("l4"));
+    expect(result.current).toBe("");
+    act(() => setPaneTitle("l4", owner, "Quiz"));
+    expect(result.current).toBe("Quiz");
+    act(() => clearPaneTitle("l4", owner));
+    expect(result.current).toBe("");
+    unmount();
+    cleanup();
   });
 });

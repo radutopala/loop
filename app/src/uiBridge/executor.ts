@@ -570,7 +570,8 @@ async function waitForOutput(step: UiStep, run: Run): Promise<StepOutput> {
     try {
       match = RE2JS.compile(step.match, RE2JS.MULTILINE);
     } catch (err) {
-      throw new StepError(`match: ${err instanceof Error ? err.message : String(err)}`);
+      // RE2JS throws only its own Error subclasses.
+      throw new StepError(`match: ${(err as Error).message}`);
     }
   }
   const quietMs = step.quiet_ms ?? WAIT_QUIET_MS;

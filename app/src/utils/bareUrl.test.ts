@@ -25,4 +25,8 @@ describe("bare URLs", () => {
   ])("finds %s", (_name, text, want) => {
     expect(find(text)).toBe(want);
   });
+
+  it("trims punctuation alone down to nothing", () => {
+    expect(trimUrl(".,")).toBe("");
+  });
 });

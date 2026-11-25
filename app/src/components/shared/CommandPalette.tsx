@@ -111,7 +111,8 @@ export function CommandPalette({ channels, selectedChannelId, open, onClose, onS
   const memoryItems = useMemo((): PaletteItem[] => {
     return memoryFiles.map((f) => ({
       id: `mem-${f.file_path}`,
-      label: f.file_path.split("/").pop() || f.file_path,
+      // file_path is an existing .md file, so its last segment is the file name.
+      label: f.file_path.split("/").pop()!,
       detail: f.dir_path,
       kind: "memory" as const,
       filePath: f.file_path,
@@ -151,9 +152,8 @@ export function CommandPalette({ channels, selectedChannelId, open, onClose, onS
       await Promise.all(promises);
       setSearching(false);
     }, 300);
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
+    // The cleanup only exists once the timer above is set.
+    return () => clearTimeout(debounceRef.current!);
   }, [query, selectedChannelId]);
 
   // Reset state when opened.
@@ -183,15 +183,14 @@ export function CommandPalette({ channels, selectedChannelId, open, onClose, onS
 
   const handleItemSelect = useCallback(
     (item: PaletteItem) => {
-      if (item.kind === "memory" && item.filePath) {
-        if (onSelectMemoryFile) {
-          onSelectMemoryFile(item.filePath);
-        }
-      } else if (item.kind === "message" && item.channelId && item.messageId) {
+      // Memory items always carry filePath, message items channelId and messageId.
+      if (item.kind === "memory") {
+        onSelectMemoryFile?.(item.filePath!);
+      } else if (item.kind === "message") {
         if (onSelectMessage) {
-          onSelectMessage(item.channelId, item.messageId);
+          onSelectMessage(item.channelId!, item.messageId!);
         } else {
-          onSelect(item.channelId);
+          onSelect(item.channelId!);
         }
       } else {
         onSelect(item.id);

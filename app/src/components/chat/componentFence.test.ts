@@ -26,6 +26,10 @@ describe("readFence", () => {
   it("reads from the given line", () => {
     expect(readFence(["before", "```", "a", "```"], 1)).toEqual({ info: "", body: "a", closed: true, next: 4 });
   });
+
+  it("reads no fence past the last line", () => {
+    expect(readFence(["```"], 1)).toBeNull();
+  });
 });
 
 describe("parseComponentInfo", () => {

@@ -180,7 +180,7 @@ export function Settings({
   // Scroll to and flash the field a search result points at.
   useEffect(() => {
     if (!jumpKey) return;
-    const el = contentRef.current?.querySelector<HTMLElement>(`[data-config-key="${CSS.escape(jumpKey)}"]`);
+    const el = contentRef.current!.querySelector<HTMLElement>(`[data-config-key="${CSS.escape(jumpKey)}"]`);
     setJumpKey(null);
     if (!el) return;
     el.scrollIntoView({ block: "center" });
@@ -316,11 +316,12 @@ export function Settings({
   };
 
   const handleSaveProjectConfig = async (content: string): Promise<string | null> => {
-    if (!channelId) return "No channel selected";
+    // The project forms only show while a channel's config is loaded.
+    const id = channelId!;
     try {
-      await saveProjectConfig(channelId, content);
+      await saveProjectConfig(id, content);
       // Re-fetch so other sections see the updated values.
-      fetchProjectConfig(channelId).then(setProjectConfig).catch(logErr("re-fetching project config"));
+      fetchProjectConfig(id).then(setProjectConfig).catch(logErr("re-fetching project config"));
       return null;
     } catch (e: any) {
       return e.message ?? "Failed to save";
@@ -338,8 +339,9 @@ export function Settings({
       .catch(logErr("re-fetching global config"));
   };
 
+  // The project history only shows with a channel.
   const handleProjectRestored = () => {
-    if (channelId) fetchProjectConfig(channelId).then(setProjectConfig).catch(logErr("re-fetching project config"));
+    fetchProjectConfig(channelId!).then(setProjectConfig).catch(logErr("re-fetching project config"));
   };
 
   const handleFloatingSave = async () => {
@@ -980,7 +982,7 @@ function DaemonSection({ colors, daemonInfo, restarting, onRestart }: { colors: 
             fontFamily: "inherit",
           }}
           onMouseEnter={(e) => {
-            if (!restarting) e.currentTarget.style.borderColor = colors.textDim;
+            e.currentTarget.style.borderColor = colors.textDim;
           }}
           onMouseLeave={(e) => {
             e.currentTarget.style.borderColor = colors.border;
@@ -1121,7 +1123,7 @@ function DockerImageSection({
             fontFamily: "inherit",
           }}
           onMouseEnter={(e) => {
-            if (imageBuildStatus?.state !== "building") e.currentTarget.style.borderColor = colors.textDim;
+            e.currentTarget.style.borderColor = colors.textDim;
           }}
           onMouseLeave={(e) => {
             e.currentTarget.style.borderColor = colors.border;
@@ -1294,7 +1296,7 @@ function ContainersSection({ colors, reclaiming, reclaimMsg, onReclaim }: { colo
               fontFamily: "inherit",
             }}
             onMouseEnter={(e) => {
-              if (!reclaiming) e.currentTarget.style.borderColor = colors.textDim;
+              e.currentTarget.style.borderColor = colors.textDim;
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.borderColor = colors.border;

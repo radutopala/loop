@@ -321,7 +321,8 @@ export const ConfigForm = forwardRef<ConfigFormHandle, ConfigFormProps>(function
           setFormData(JSON.parse(jsonDraft) as ConfigData);
           setError(null);
         } catch (e: unknown) {
-          setError("Invalid JSON: " + (e instanceof Error ? e.message : "parse error"));
+          // JSON.parse only throws a SyntaxError.
+          setError("Invalid JSON: " + (e as SyntaxError).message);
           return;
         }
       }
@@ -598,8 +599,6 @@ function FieldRenderer({
       return <KeyValueFieldRow field={field} value={(value ?? {}) as Record<string, string>} onChange={onKV} colors={colors} inputStyle={inputStyle} />;
     case "objectmap":
       return <ObjectMapFieldRow field={field} value={(value ?? {}) as Record<string, Record<string, ItemFieldValue>>} onChange={onObjMap} colors={colors} inputStyle={inputStyle} />;
-    default:
-      return null;
   }
 }
 
@@ -681,8 +680,8 @@ function NumberFieldRow({
             onChange(undefined);
             return;
           }
-          const n = Number(r);
-          onChange(isNaN(n) ? undefined : n);
+          // A number input's value is empty or a valid number.
+          onChange(Number(r));
         }}
         style={{ ...inputStyle, width: 100, flexShrink: 0 }}
       />
@@ -714,7 +713,7 @@ function DropdownFieldRow({ field, value, onChange, colors, inputStyle }: { fiel
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "8px 12px", ...rowBorder(colors) }}>
       <FieldLabel field={field} colors={colors} />
       <select value={value} onChange={(e) => onChange(e.target.value)} style={{ ...inputStyle, ...wideInput, cursor: "pointer" }}>
-        {(field.options ?? []).map((o) => (
+        {field.options!.map((o) => (
           <option key={o} value={o}>
             {field.optionLabels?.[o] ?? (o || "(default)")}
           </option>
@@ -729,7 +728,7 @@ function DropdownFieldRow({ field, value, onChange, colors, inputStyle }: { fiel
 // ---------------------------------------------------------------------------
 
 function MultiSelectFieldRow({ field, value, onChange, colors }: { field: FieldDef; value: string[]; onChange: (v: string[]) => void; colors: ColorPalette }) {
-  const options = field.options ?? [];
+  const options = field.options!;
   const selected = new Set(Array.isArray(value) ? value : []);
   const toggle = (opt: string) => {
     const next = new Set(selected);
@@ -778,7 +777,7 @@ function ObjectArrayFieldRow({
   inputStyle: React.CSSProperties;
 }) {
   const items: Record<string, ItemFieldValue>[] = Array.isArray(value) ? value : [];
-  const props = field.itemProperties ?? {};
+  const props = field.itemProperties!;
   const propKeys = Object.entries(props).sort(([, a], [, b]) => (a["x-order"] ?? 999) - (b["x-order"] ?? 999));
 
   const addItem = () => {
@@ -1012,7 +1011,7 @@ function KeyValueFieldRow({
 }) {
   const [dk, setDk] = useState("");
   const [dv, setDv] = useState("");
-  const entries = Object.entries(value ?? {});
+  const entries = Object.entries(value);
   const add = () => {
     const k = dk.trim();
     if (!k) return;
@@ -1095,8 +1094,8 @@ function ObjectMapFieldRow({
   inputStyle: React.CSSProperties;
 }) {
   const [newKey, setNewKey] = useState("");
-  const entries = Object.entries(value ?? {});
-  const props = field.itemProperties ?? {};
+  const entries = Object.entries(value);
+  const props = field.itemProperties!;
   const propKeys = Object.entries(props).sort(([, a], [, b]) => (a["x-order"] ?? 999) - (b["x-order"] ?? 999));
 
   const addEntry = () => {
@@ -1242,7 +1241,7 @@ function ObjectMapKVProp({
 }) {
   const [dk, setDk] = useState("");
   const [dv, setDv] = useState("");
-  const entries = Object.entries(value ?? {});
+  const entries = Object.entries(value);
   const add = () => {
     const k = dk.trim();
     if (!k) return;

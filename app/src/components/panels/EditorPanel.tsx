@@ -259,9 +259,7 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
     [channelId],
   );
 
-  const tabMenuItems = (): MenuItem[] => {
-    if (!tabMenu) return [];
-    const tab = tabMenu.path;
+  const tabMenuItems = (tab: string): MenuItem[] => {
     const { relativePath } = parsePathKey(tab);
     const unsaved = (t: string) => dirtyTabs.has(t) || deletedTabs.has(t);
     const items: MenuItem[] = [{ label: "Close", onClick: () => closeTab(tab) }];
@@ -754,7 +752,7 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, leafId, ..
         </div>
       </div>
       {leafId && <WalkthroughsBadge leafId={leafId} channelId={channelId} open={walkthrough} />}
-      {tabMenu && <ContextMenu x={tabMenu.x} y={tabMenu.y} items={tabMenuItems()} onClose={() => setTabMenu(null)} />}
+      {tabMenu && <ContextMenu x={tabMenu.x} y={tabMenu.y} items={tabMenuItems(tabMenu.path)} onClose={() => setTabMenu(null)} />}
     </FilePanel>
   );
 }

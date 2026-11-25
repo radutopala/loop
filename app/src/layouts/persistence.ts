@@ -64,11 +64,8 @@ const migrations: Record<number, (ch: ChannelLayouts) => void> = {
     }
   },
 
-  // v3: Add layout types map and fix corrupted canvas layouts.
+  // v3: Fix corrupted canvas layouts. (Loading fills in a missing types map.)
   3: (ch) => {
-    if (!ch.types) {
-      ch.types = { ...DEFAULT_LAYOUT_TYPES };
-    }
     const defaults = createDefaultLayouts();
     for (const [name, lt] of Object.entries(ch.types)) {
       if (lt === "canvas" && ch.layouts[name] && !Array.isArray((ch.layouts[name] as any).tiles)) {
@@ -89,10 +86,7 @@ const migrations: Record<number, (ch: ChannelLayouts) => void> = {
 
   // v6: Update Editor layout to include host shell and chat pane.
   6: (ch) => {
-    const defaults = createDefaultLayouts();
-    if (defaults.layouts["Editor"]) {
-      ch.layouts["Editor"] = defaults.layouts["Editor"];
-    }
+    ch.layouts["Editor"] = createDefaultLayouts().layouts["Editor"]!;
   },
   // v7: Add "Playground" default layout.
   7: () => {
@@ -138,9 +132,8 @@ const migrations: Record<number, (ch: ChannelLayouts) => void> = {
       if (!layout || (layout as any).type === "canvas") continue;
       ch.layouts[name] = wrapEditorWithFileTree(layout as PaneNode);
     }
-    const defaults = createDefaultLayouts();
-    if (defaults.layouts["Editor"] && ch.layouts["Editor"]) {
-      ch.layouts["Editor"] = defaults.layouts["Editor"];
+    if (ch.layouts["Editor"]) {
+      ch.layouts["Editor"] = createDefaultLayouts().layouts["Editor"]!;
     }
   },
 
@@ -152,9 +145,8 @@ const migrations: Record<number, (ch: ChannelLayouts) => void> = {
   13: (ch) => {
     const defaults = createDefaultLayouts();
     for (const name of ["Chat", "Browser Chat"]) {
-      if (!ch.layouts[name] || ch.types?.[name] === "canvas") continue;
-      const fresh = defaults.layouts[name];
-      if (fresh) ch.layouts[name] = fresh;
+      if (!ch.layouts[name] || ch.types[name] === "canvas") continue;
+      ch.layouts[name] = defaults.layouts[name]!;
     }
   },
 };
@@ -165,7 +157,7 @@ function runMigrations(ch: ChannelLayouts): boolean {
   if (from >= CURRENT_VERSION) return false;
 
   for (let v = from + 1; v <= CURRENT_VERSION; v++) {
-    migrations[v]?.(ch);
+    migrations[v]!(ch);
   }
   ch.version = CURRENT_VERSION;
   return true;

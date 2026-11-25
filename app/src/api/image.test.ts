@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { getReclaimable, reclaimDockerSpace } from "./image";
+import { getImageStatus, getReclaimable, rebuildImage, reclaimDockerSpace, removeImage } from "./image";
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -51,5 +51,46 @@ describe("reclaimDockerSpace", () => {
   it("throws the server's error", async () => {
     fetchMock.mockResolvedValue(new Response("daemon down", { status: 500 }));
     await expect(reclaimDockerSpace()).rejects.toThrow("daemon down");
+  });
+});
+
+describe("getImageStatus", () => {
+  it("returns the status", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ exists: true })));
+    await expect(getImageStatus()).resolves.toEqual({ exists: true });
+    expect(fetchMock.mock.calls[0]![0]).toBe("http://localhost:8222/api/image/status");
+  });
+
+  it("throws the server's error", async () => {
+    fetchMock.mockResolvedValue(new Response("no docker", { status: 500 }));
+    await expect(getImageStatus()).rejects.toThrow("no docker");
+  });
+});
+
+describe("rebuildImage", () => {
+  it("posts a rebuild", async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 202 }));
+    await rebuildImage();
+    expect(fetchMock.mock.calls[0]![0]).toBe("http://localhost:8222/api/image/rebuild");
+    expect(fetchMock.mock.calls[0]![1].method).toBe("POST");
+  });
+
+  it("throws the server's error", async () => {
+    fetchMock.mockResolvedValue(new Response("busy", { status: 409 }));
+    await expect(rebuildImage()).rejects.toThrow("busy");
+  });
+});
+
+describe("removeImage", () => {
+  it("deletes the image", async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
+    await removeImage();
+    expect(fetchMock.mock.calls[0]![0]).toBe("http://localhost:8222/api/image");
+    expect(fetchMock.mock.calls[0]![1].method).toBe("DELETE");
+  });
+
+  it("throws the server's error", async () => {
+    fetchMock.mockResolvedValue(new Response("in use", { status: 409 }));
+    await expect(removeImage()).rejects.toThrow("in use");
   });
 });

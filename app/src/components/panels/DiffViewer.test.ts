@@ -60,7 +60,77 @@ new file mode 100644
   });
 });
 
+describe("parseUnifiedDiff edge cases", () => {
+  it("skips a section without a/ and b/ paths", () => {
+    expect(parseUnifiedDiff("diff --git nonsense\n@@ -1 +1 @@\n+x\n")).toEqual([]);
+  });
+
+  it("drops a hunk with no lines, including one that ends the patch", () => {
+    const files = parseUnifiedDiff("diff --git a/e.go b/e.go\n@@ -1,0 +1,0 @@\n\n@@ -3 +3 @@");
+    expect(files).toEqual([{ path: "e.go", hunks: [], status: undefined }]);
+  });
+
+  it("numbers from 1 when the hunk header has no line numbers", () => {
+    const lines = parseUnifiedDiff("diff --git a/h.go b/h.go\n@@ x @@\n ctx\n+add\n")[0]!.hunks[0]!.lines;
+    expect(lines).toEqual([
+      { type: "ctx", content: "ctx", oldNum: 1, newNum: 1 },
+      { type: "add", content: "add", oldNum: null, newNum: 2 },
+    ]);
+  });
+
+  it("reads a CRLF patch, whose body doesn't start with a bare newline", () => {
+    const lines = parseUnifiedDiff("diff --git a/w.go b/w.go\r\n@@ -1 +1 @@\r\n-old\r\n+new\r\n")[0]!.hunks[0]!.lines;
+    expect(lines).toEqual([
+      { type: "del", content: "old\r", oldNum: 1, newNum: null },
+      { type: "add", content: "new\r", oldNum: null, newNum: 1 },
+    ]);
+  });
+});
+
 describe("computeSegments", () => {
+  it("emits no top gap for a hunk at line 1 and no gap between adjacent hunks", () => {
+    const diff = `diff --git a/a.go b/a.go
+--- a/a.go
++++ b/a.go
+@@ -1,2 +1,2 @@
+-one
++ONE
+ two
+@@ -3,1 +3,1 @@
+-three
++THREE
+`;
+    const parsed = parseUnifiedDiff(diff)[0]!;
+    expect(computeSegments(parsed).map((s) => s.kind)).toEqual(["hunk", "hunk"]);
+    expect(computeSegments(parsed, 3).map((s) => s.kind)).toEqual(["hunk", "hunk"]);
+  });
+
+  it("finds a hunk's range whatever order its lines come in", () => {
+    const segments = computeSegments(
+      {
+        path: "r.go",
+        hunks: [
+          {
+            header: "@@ -5 +5 @@",
+            lines: [
+              { type: "ctx", content: "b", oldNum: 6, newNum: 6 },
+              { type: "ctx", content: "a", oldNum: 5, newNum: 5 },
+            ],
+          },
+        ],
+      },
+      10,
+    );
+    expect(segments.filter((s) => s.kind === "gap").map((s) => s.kind === "gap" && s.gap)).toEqual([
+      { startLine: 1, endLine: 4, oldStart: 1, totalLines: 4 },
+      { startLine: 7, endLine: 10, oldStart: 7, totalLines: 4 },
+    ]);
+  });
+
+  it("emits no segments for a file without hunks", () => {
+    expect(computeSegments({ path: "x", hunks: [] }, 10)).toEqual([]);
+  });
+
   it("emits top and bottom gaps around a mid-file hunk", () => {
     const diff = `diff --git a/big.go b/big.go
 --- a/big.go
@@ -101,6 +171,10 @@ describe("formatRenamePath", () => {
 
   it("handles a move across directories with a shared file name", () => {
     expect(formatRenamePath("pkg/a/util.go", "pkg/b/util.go")).toBe("pkg/{a => b}/util.go");
+  });
+
+  it("leaves out the prefix and suffix when there are none", () => {
+    expect(formatRenamePath("a.go", "b.go")).toBe("{a.go => b.go}");
   });
 });
 

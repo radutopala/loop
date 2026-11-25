@@ -36,6 +36,7 @@ function make(
     end?: number;
     sendPhrases?: string[];
     editPrompt?: DictationDeps["editPrompt"];
+    micAccess?: DictationDeps["micAccess"];
   } = {},
 ) {
   const composer = { text: opts.text ?? "", start: opts.caret ?? (opts.text ?? "").length, end: opts.end ?? opts.caret ?? (opts.text ?? "").length };
@@ -68,10 +69,12 @@ function make(
       captures.push(cap);
       return cap;
     },
-    micAccess: async (ask) => {
-      if (ask) access.asked++;
-      return access.value as MicAccess;
-    },
+    micAccess:
+      opts.micAccess ??
+      (async (ask) => {
+        if (ask) access.asked++;
+        return access.value as MicAccess;
+      }),
     availability: () => avail.value as DictationAvailability,
     refresh: async () => {
       avail.refreshes++;
@@ -412,6 +415,138 @@ describe("DictationController", () => {
     t.release();
     await t.flush();
     expect(t.last()?.phase).toBe("transcribing");
+  });
+
+  it("takes a failed access check at init as not granted, and a failed ask as unknown", async () => {
+    const t = make({ micAccess: () => Promise.reject(new Error("no bridge")) });
+    await t.c.init();
+    t.press();
+    expect(t.captures).toHaveLength(0);
+    t.held();
+    await t.flush();
+    expect(t.captures).toHaveLength(1);
+    expect(t.last()?.phase).toBe("recording");
+  });
+
+  it("doesn't open the microphone when the hold ended before access was known", async () => {
+    const t = make({ access: "not-determined" });
+    await t.c.init();
+    t.press();
+    t.access.value = "granted";
+    t.held();
+    t.release();
+    await t.flush();
+    expect(t.last()?.phase).toBe("transcribing");
+    expect(t.captures).toHaveLength(0);
+  });
+
+  it("drops an access answer that arrives after the hold was cancelled", async () => {
+    const t = make({ access: "not-determined", text: "keep" });
+    await t.c.init();
+    t.press();
+    t.held();
+    t.c.keyDown({ code: "KeyA", key: "a" });
+    await t.flush();
+    expect(t.captures).toHaveLength(0);
+    expect(t.last()).toMatchObject({ phase: "idle", notice: null });
+    expect(t.composer.text).toBe("keep");
+  });
+
+  it("ignores chunks and errors from a microphone it already let go", async () => {
+    const t = make({ text: "keep" });
+    await t.c.init();
+    t.press();
+    t.held();
+    const cap = t.captures[0]!;
+    t.c.keyDown({ code: "Escape", key: "Escape" });
+    const before = t.states.length;
+    cap.onChunk!(pcm(1));
+    cap.onError!(new Error("late"));
+    expect(t.states).toHaveLength(before);
+    expect(t.sockets[0]!.audio).toEqual([]);
+  });
+
+  it("drops a microphone that fails before the hold counts, without a message", async () => {
+    const t = make();
+    await t.c.init();
+    t.press();
+    t.captures[0]!.onChunk!(pcm(1));
+    t.captures[0]!.onError!("busy");
+    t.held();
+    expect(t.sockets[0]!.audio).toEqual([]);
+    expect(t.last()?.error).toBeNull();
+  });
+
+  it("shows the denied state when the microphone is refused before the hold counts", async () => {
+    const t = make();
+    await t.c.init();
+    t.press();
+    t.captures[0]!.onError!(Object.assign(new Error("no"), { name: "SecurityError" }));
+    expect(t.last()?.notice).toBe("mic_denied");
+    expect(t.sockets).toHaveLength(0);
+  });
+
+  it("reports a microphone failure without a message by its value", async () => {
+    const t = make();
+    await t.c.init();
+    t.press();
+    t.held();
+    t.captures[0]!.onError!("device gone");
+    expect(t.last()?.error).toBe("Couldn't open the microphone: device gone");
+  });
+
+  it("still asks for the final text when the microphone fails to finish", async () => {
+    const t = make();
+    await t.c.init();
+    t.press();
+    t.held();
+    t.sockets[0]!.open();
+    t.captures[0]!.finish = () => Promise.reject(new Error("flush failed"));
+    t.release();
+    await t.flush();
+    expect(t.sockets[0]!.controls).toEqual([{ type: "stop" }]);
+  });
+
+  it("Esc during a refused hold leaves the session that is transcribing", async () => {
+    const t = make();
+    await t.c.init();
+    t.press();
+    t.held();
+    t.release();
+    await t.flush();
+    t.press();
+    t.held();
+    expect(t.c.keyDown({ code: "Escape", key: "Escape" })).toBe(true);
+    expect(t.sockets[0]!.closed).toBe(false);
+    expect(t.last()?.phase).toBe("transcribing");
+  });
+
+  it("turns a binary_missing error into the unavailable notice", async () => {
+    const t = make();
+    await t.c.init();
+    t.press();
+    t.held();
+    t.sockets[0]!.open();
+    t.sockets[0]!.server({ type: "error", code: "binary_missing", message: "no whisper" });
+    expect(t.last()).toMatchObject({ notice: "unavailable", error: null });
+  });
+
+  it("dismiss leaves a clean state alone", () => {
+    const t = make();
+    t.c.dismiss();
+    expect(t.states).toEqual([]);
+  });
+
+  it("an edit-button hold without editPrompt leaves the draft", async () => {
+    const t = make({ text: "draft" });
+    await t.c.init();
+    t.c.hold.pointerDown("edit");
+    t.sockets[0]!.open();
+    t.c.hold.pointerDown();
+    await t.flush();
+    t.sockets[0]!.server({ type: "final", text: "make it shorter" });
+    expect(t.composer.text).toBe("draft");
+    expect(t.last()?.phase).toBe("idle");
   });
 
   it("disposes without touching the composer", async () => {

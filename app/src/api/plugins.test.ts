@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { unreadable } from "../test/hooks-c-api-fetch";
 import {
   fetchPluginAgent,
   fetchPluginAudit,
@@ -11,6 +12,7 @@ import {
   pluginXRequest,
   postPluginNotification,
   removePlugin,
+  scheduleEntry,
   setPluginEnabled,
   setPluginSchedule,
   setPluginScheduleEntry,
@@ -297,5 +299,19 @@ describe("fetchPluginAgent", () => {
   it("explains a failure", async () => {
     fetchMock.mockResolvedValue(new Response("", { status: 404, statusText: "Not Found" }));
     await expect(fetchPluginAgent("echo", "ch")).rejects.toThrow("Failed to look up the plugin's agent: Not Found");
+  });
+});
+
+describe("scheduleEntry", () => {
+  it("keeps only the set fields", () => {
+    expect(scheduleEntry({ enabled: false, type: "", schedule: "" })).toEqual({ enabled: false });
+    expect(scheduleEntry({})).toEqual({});
+  });
+});
+
+describe("plugin request failures", () => {
+  it("falls back to the status text when the body can't be read", async () => {
+    fetchMock.mockResolvedValue(unreadable(502, "Bad Gateway"));
+    await expect(inspectPlugin("echo:2")).rejects.toThrow("Failed to inspect the plugin: Bad Gateway");
   });
 });

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DICTATION_HOLD_CODE, DICTATION_HOLD_MS, type HoldTimers, HoldToTalk } from "./dictationHold";
 
 /** Manual timers: run() fires what's due by the time given. */
@@ -271,5 +271,24 @@ describe("HoldToTalk edit holds", () => {
     expect(calls).toEqual(["prepare", "start", "stop"]);
     hold.pointerDown();
     expect(hold.mode).toBe("dictate");
+  });
+
+  describe("with the default timers", () => {
+    afterEach(() => vi.useRealTimers());
+
+    it("starts after the hold and clears the timer on a tap", () => {
+      vi.useFakeTimers();
+      const calls: string[] = [];
+      const push = (c: string) => () => calls.push(c);
+      const hold = new HoldToTalk({ prepare: push("prepare"), start: push("start"), stop: push("stop"), cancel: push("cancel"), abort: push("abort") });
+      hold.keyDown(alt);
+      hold.keyUp(alt);
+      vi.advanceTimersByTime(DICTATION_HOLD_MS);
+      expect(calls).toEqual(["prepare", "abort"]);
+      hold.keyDown(alt);
+      vi.advanceTimersByTime(DICTATION_HOLD_MS);
+      expect(calls).toEqual(["prepare", "abort", "prepare", "start"]);
+      expect(vi.getTimerCount()).toBe(0);
+    });
   });
 });

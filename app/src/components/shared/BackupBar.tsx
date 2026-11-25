@@ -78,8 +78,8 @@ export function BackupBar({ colors, refreshKey, dirty, onKeyCreated }: { colors:
   };
 
   const handleCopy = () => {
-    if (!privateKey) return;
-    writeClipboard(privateKey)
+    // The copy button only shows while privateKey is set.
+    writeClipboard(privateKey!)
       .then(() => setCopied(true))
       .catch(logErr("copying the private key"));
   };

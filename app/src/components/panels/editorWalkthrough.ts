@@ -140,12 +140,11 @@ function decorate(state: EditorState, card: WalkthroughCard, range: StepRange, h
   return { card, from: first.from, to: last.to, status: range.status, decorations: Decoration.set(decos, true) };
 }
 
-const noop = () => {};
-
 /** The handlers of the editor's card: one editor's, given by its
- *  walkthroughExtension. */
+ *  walkthroughExtension, which is the only place the field below is
+ *  installed, so a state that reads them always has them. */
 const handlersFacet = Facet.define<WalkthroughHandlers, WalkthroughHandlers>({
-  combine: (values) => values[0] ?? { prev: noop, next: noop, close: noop, ask: noop, togglePlay: noop, pause: noop },
+  combine: (values) => values[0] as WalkthroughHandlers,
 });
 
 const walkthroughField: StateField<Shown | null> = StateField.define<Shown | null>({

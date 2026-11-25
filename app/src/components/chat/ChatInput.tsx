@@ -432,8 +432,8 @@ export function ChatInput({
   // edited), from three lines up to composerMaxHeight; past that it scrolls.
   // Measured before paint so the box never flashes at the wrong size.
   useLayoutEffect(() => {
-    const el = inputRef.current;
-    if (!el) return;
+    // The textarea always renders, so the ref is set by the layout pass.
+    const el = inputRef.current!;
     el.style.height = "auto";
     const cs = getComputedStyle(el);
     const lineHeight = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.4;
@@ -554,13 +554,11 @@ export function ChatInput({
 
       try {
         const path = await uploadPastedImage(channelId, file);
+        // Unmounted during the upload: there's no composer to put it in.
         const ta = inputRef.current;
-        if (!ta) {
-          setText((prev) => prev + path);
-          return;
-        }
-        const start = ta.selectionStart ?? text.length;
-        const end = ta.selectionEnd ?? text.length;
+        if (!ta) return;
+        const start = ta.selectionStart;
+        const end = ta.selectionEnd;
         const next = text.slice(0, start) + path + text.slice(end);
         setText(next);
         draftText.set(channelId, next);
@@ -858,8 +856,8 @@ export function ChatInput({
   }, []);
 
   const acceptMention = useCallback(() => {
-    if (mentionIdx < 0) return;
-    const pos = inputRef.current?.selectionStart ?? text.length;
+    // Only the textarea's keys and the picker under it accept, so it's mounted.
+    const pos = inputRef.current!.selectionStart;
     const newText = text.slice(0, mentionIdx) + "@LoopBot " + text.slice(pos);
     setText(newText);
     draftText.set(channelId, newText);
@@ -879,11 +877,11 @@ export function ChatInput({
   // root at its host path, so absolute paths resolve correctly inside it.
   const acceptFile = useCallback(
     (r: FileSearchResult) => {
-      if (fileAtIdx < 0) return;
       const root = roots?.find((x) => x.index === r.root_index);
       const absPath = root ? `${root.path.replace(/\/$/, "")}/${r.rel_path}` : r.rel_path;
       const token = r.root_index === -1 ? `@LoopBot ` : `@${absPath} `;
-      const pos = inputRef.current?.selectionStart ?? text.length;
+      // Only the textarea's keys and the picker under it accept, so it's mounted.
+      const pos = inputRef.current!.selectionStart;
       const newText = text.slice(0, fileAtIdx) + token + text.slice(pos);
       setText(newText);
       draftText.set(channelId, newText);
@@ -917,8 +915,8 @@ export function ChatInput({
         }
         if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
           e.preventDefault();
-          const cmd = filteredCommands[cmdSelectedIdx];
-          if (cmd) acceptCommand(cmd);
+          // The pick resets to 0 with each new list and the arrows keep it in range.
+          acceptCommand(filteredCommands[cmdSelectedIdx]!);
           return;
         }
         if (e.key === "Escape") {
@@ -941,8 +939,7 @@ export function ChatInput({
         }
         if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
           e.preventDefault();
-          const sc = filteredShortcuts[shortcutSelectedIdx];
-          if (sc) acceptShortcut(sc);
+          acceptShortcut(filteredShortcuts[shortcutSelectedIdx]!);
           return;
         }
         if (e.key === "Escape") {
@@ -965,8 +962,7 @@ export function ChatInput({
         }
         if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
           e.preventDefault();
-          const r = filePickerResults[filePickerIdx];
-          if (r) acceptFile(r);
+          acceptFile(filePickerResults[filePickerIdx]!);
           return;
         }
         if (e.key === "Escape") {
@@ -999,8 +995,9 @@ export function ChatInput({
       }
       // Message history navigation.
       if (e.key === "ArrowUp" && !showCommands && !showShortcuts && !showMention && !showFilePicker) {
-        const el = inputRef.current;
-        if (el && el.selectionStart === 0 && el.selectionEnd === 0) {
+        // The keys come from the textarea, so the ref is set.
+        const el = inputRef.current!;
+        if (el.selectionStart === 0 && el.selectionEnd === 0) {
           const hist = historyRef.current;
           if (hist.length === 0) return;
           e.preventDefault();
@@ -1014,15 +1011,13 @@ export function ChatInput({
           const val = hist[historyIdxRef.current]!;
           setText(val);
           draftText.set(channelId, val);
-          requestAnimationFrame(() => {
-            if (el) el.setSelectionRange(0, 0);
-          });
+          requestAnimationFrame(() => el.setSelectionRange(0, 0));
           return;
         }
       }
       if (e.key === "ArrowDown" && !showCommands && !showShortcuts && !showMention && !showFilePicker) {
-        const el = inputRef.current;
-        if (el && el.selectionStart === el.value.length && el.selectionEnd === el.value.length && historyIdxRef.current !== -1) {
+        const el = inputRef.current!;
+        if (el.selectionStart === el.value.length && el.selectionEnd === el.value.length && historyIdxRef.current !== -1) {
           e.preventDefault();
           const hist = historyRef.current;
           if (historyIdxRef.current < hist.length - 1) {
@@ -1038,9 +1033,7 @@ export function ChatInput({
             if (val) draftText.set(channelId, val);
             else draftText.delete(channelId);
           }
-          requestAnimationFrame(() => {
-            if (el) el.setSelectionRange(el.value.length, el.value.length);
-          });
+          requestAnimationFrame(() => el.setSelectionRange(el.value.length, el.value.length));
           return;
         }
       }

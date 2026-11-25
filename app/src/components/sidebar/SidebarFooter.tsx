@@ -60,10 +60,9 @@ export function SidebarFooter({
             color: updateStatus.downloaded ? colors.active : updateStatus.downloading ? colors.textDim : colors.active,
             cursor: updateStatus.downloading ? "default" : "pointer",
           }}
+          // React skips onMouseEnter on a disabled button, so this never runs while downloading.
           onMouseEnter={(e) => {
-            if (!updateStatus.downloading) {
-              e.currentTarget.style.backgroundColor = colors.hoverBg;
-            }
+            e.currentTarget.style.backgroundColor = colors.hoverBg;
           }}
           onMouseLeave={(e) => {
             e.currentTarget.style.backgroundColor = "transparent";

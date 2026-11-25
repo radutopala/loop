@@ -3,7 +3,6 @@ let apiUrl = "http://localhost:8222";
 // When running in a browser (not Electron), probe for the API server.
 // Try same-origin first (works when Vite proxies /api), then external URLs.
 async function probeApiUrl(): Promise<void> {
-  if (typeof window === "undefined") return;
   const candidates = [
     window.location.origin, // same-origin (Vite proxy or co-located server)
     "http://host.docker.internal:8222",

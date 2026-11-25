@@ -25,12 +25,9 @@ export function BranchesPanel({ channelId, isWorktree, hasBranch, onSelectThread
 
   useEffect(() => {
     if (!confirmingBranch) return;
-    const handler = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (!target.closest("[data-confirm-popover]")) {
-        setConfirmingBranch(null);
-      }
-    };
+    // A mousedown inside the popover stops propagating at React's root, so
+    // any mousedown that reaches the document is outside it.
+    const handler = () => setConfirmingBranch(null);
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [confirmingBranch]);

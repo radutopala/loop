@@ -24,6 +24,10 @@ describe("findMathBlock", () => {
       expect(findMathBlock(c.lines, 0)).toEqual(c.want);
     });
   }
+
+  it("finds no block past the last line", () => {
+    expect(findMathBlock(["$$a$$"], 1)).toBeNull();
+  });
 });
 
 describe("inlineMathPattern", () => {

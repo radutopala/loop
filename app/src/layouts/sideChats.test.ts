@@ -1,8 +1,14 @@
-import { describe, expect, it, vi } from "vitest";
-import type { SideChat, SideChatMode } from "../api/sideChats";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createSideChat, type SideChat, type SideChatMode } from "../api/sideChats";
 import type { CanvasNode } from "../canvas/types";
 import type { PaneNode } from "../types/panels";
-import { type PaneSideChats, type SideChatDeps, SideChats, sideChatLeafIds, sideChatsKey } from "./sideChats";
+import { type PaneSideChats, type SideChatDeps, SideChats, sideChatLeafIds, sideChats, sideChatsKey } from "./sideChats";
+
+vi.mock("../api/sideChats", () => ({
+  createSideChat: vi.fn(async () => "side-9"),
+  deleteSideChat: vi.fn(),
+  listSideChats: vi.fn(),
+}));
 
 // fakeDeps is a daemon and a storage in memory: create hands out side-1,
 // side-2, …, and list returns the side chats not removed.
@@ -179,5 +185,22 @@ describe("SideChats.sweep", () => {
     save.mockClear();
     await expect(sc.sweep("c1", () => new Set(["p1"]))).resolves.toEqual([]);
     expect(save).not.toHaveBeenCalled();
+  });
+});
+
+describe("sideChats", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("keeps the panes' side chats in local storage", async () => {
+    const items = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => items.get(k) ?? null,
+      setItem: (k: string, v: string) => items.set(k, v),
+    });
+    expect(await sideChats.open("c1", "pane-1", "fresh")).toBe("side-9");
+    expect(vi.mocked(createSideChat)).toHaveBeenCalledWith("c1", "fresh");
+    expect(JSON.parse(items.get(sideChatsKey("c1"))!)).toEqual({ "pane-1": "side-9" });
+    expect(await sideChats.open("c1", "pane-1", "fresh")).toBe("side-9");
+    expect(vi.mocked(createSideChat)).toHaveBeenCalledOnce();
   });
 });

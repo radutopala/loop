@@ -7,7 +7,7 @@ import { PickerSection } from "./OpenPRs";
 export function filterWorktrees(worktrees: readonly WorktreeInfo[], search: string): WorktreeInfo[] {
   const q = search.trim().toLowerCase();
   if (!q) return [...worktrees];
-  return worktrees.filter((wt) => wt.branch.toLowerCase().includes(q) || (wt.path.split("/").pop() ?? "").toLowerCase().includes(q));
+  return worktrees.filter((wt) => wt.branch.toLowerCase().includes(q) || wt.path.split("/").pop()!.toLowerCase().includes(q));
 }
 
 /**

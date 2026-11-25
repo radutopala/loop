@@ -19,7 +19,7 @@ export function codeToFence(body: string, info: string): string {
 /** codeToHTML renders a code block's text as an HTML <pre><code> block. */
 export function codeToHTML(body: string, info: string): string {
   // The info string's first word is the language, as in CommonMark.
-  const lang = info.split(/\s+/)[0] ?? "";
+  const lang = info.split(/\s+/)[0]!;
   const cls = lang ? ` class="language-${escapeHTML(lang)}"` : "";
   return `<pre><code${cls}>${escapeHTML(body)}</code></pre>`;
 }

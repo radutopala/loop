@@ -1,5 +1,8 @@
+// @vitest-environment jsdom
+import { renderHook } from "@testing-library/react";
+import { createElement, type ReactNode } from "react";
 import { describe, expect, it } from "vitest";
-import { ciPillIds, commentPillIds, conflictPillIds, fixingPill, pluginBadgeTitle, REVIEWING_PILL, SIDEBAR_PILLS, shownPills, trustPillIds } from "./pills";
+import { ciPillIds, commentPillIds, conflictPillIds, fixingPill, pluginBadgeTitle, REVIEWING_PILL, ShownPillsContext, SIDEBAR_PILLS, shownPills, trustPillIds, useShownPills } from "./pills";
 
 describe("REVIEWING_PILL", () => {
   it("stays out of the pills that mean the session needs you", () => {
@@ -84,5 +87,14 @@ describe("PR/MR pills", () => {
 
   it("lights cmt on unresolved review threads", () => {
     expect([...commentPillIds(rows)]).toEqual(["conflict"]);
+  });
+});
+
+describe("useShownPills", () => {
+  it("defaults to every pill, and reads what the Sidebar provides", () => {
+    expect(renderHook(() => useShownPills()).result.current).toBe(SIDEBAR_PILLS);
+    const shown = shownPills(["ci"]);
+    const wrapper = ({ children }: { children: ReactNode }) => createElement(ShownPillsContext.Provider, { value: shown }, children);
+    expect(renderHook(() => useShownPills(), { wrapper }).result.current).toBe(shown);
   });
 });

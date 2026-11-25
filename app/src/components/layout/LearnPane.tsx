@@ -159,9 +159,9 @@ export function LearnPane({ uiChannelId, learn, worktree, roots, subscribeChanne
 // elsewhere) isn't followed, nor is focus in the learn thread's chat.
 function useKeepFocus(paneRef: React.RefObject<HTMLDivElement | null>) {
   const lastRef = useRef<{ el: HTMLElement; card: string | null } | null>(null);
+  // The pane's div always renders, so its ref is set by the time effects run.
   useEffect(() => {
-    const pane = paneRef.current;
-    if (!pane) return;
+    const pane = paneRef.current!;
     const onFocusIn = (e: FocusEvent) => {
       const el = e.target instanceof HTMLElement ? e.target : null;
       lastRef.current = el && pane.contains(el) && !el.closest("[data-learn-thread]") ? { el, card: el.closest<HTMLElement>("[data-proposal-id]")?.dataset.proposalId ?? null } : null;
@@ -182,9 +182,9 @@ function useKeepFocus(paneRef: React.RefObject<HTMLDivElement | null>) {
   // After every render: the settled card or the emptied header re-renders
   // the pane.
   useLayoutEffect(() => {
-    const pane = paneRef.current;
+    const pane = paneRef.current!;
     const last = lastRef.current;
-    if (!pane || !last) return;
+    if (!last) return;
     const active = document.activeElement;
     if (active && active !== document.body && active !== last.el) return;
     if (last.el.isConnected) {

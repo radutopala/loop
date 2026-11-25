@@ -2,16 +2,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   configRevisionSourceLabel,
+  fetchBashShortcuts,
   fetchConfigHistory,
   fetchConfigHistoryFiles,
   fetchConfigRevision,
+  fetchConfigSchema,
+  fetchGlobalConfig,
   fetchProjectConfig,
   fetchProjectTrust,
+  fetchShortcuts,
   GLOBAL_CONFIG_SAVED_EVENT,
   ProjectTrustChangedError,
   restoreConfigRevision,
+  saveGlobalConfig,
+  saveProjectConfig,
   setGlobalConfigValue,
   trustProjectConfig,
+  withConfigValue,
 } from "./configApi";
 
 let fetchMock: ReturnType<typeof vi.fn>;
@@ -199,5 +206,119 @@ describe("setGlobalConfigValue", () => {
     expect(content).toContain('"theme": "light"');
     expect(content).toMatch(/"hidden_pills": \[\s*"ci",\s*"comment"\s*\]/);
     expect(dispatched).toEqual([GLOBAL_CONFIG_SAVED_EVENT]);
+  });
+});
+
+describe("fetchConfigSchema", () => {
+  it("returns the schema", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ sections: [] })));
+    await expect(fetchConfigSchema()).resolves.toEqual({ sections: [] });
+    expect(fetchMock.mock.calls[0]![0]).toBe("http://localhost:8222/api/config/schema");
+  });
+
+  it("throws on an error status", async () => {
+    fetchMock.mockResolvedValue(new Response("", { status: 500, statusText: "boom" }));
+    await expect(fetchConfigSchema()).rejects.toThrow("Failed to fetch config schema: boom");
+  });
+});
+
+describe("global config", () => {
+  it("fetches it", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ raw: "{}", content: {} })));
+    await expect(fetchGlobalConfig()).resolves.toEqual({ raw: "{}", content: {} });
+    expect(fetchMock.mock.calls[0]![0]).toBe("http://localhost:8222/api/config");
+  });
+
+  it("throws when fetching fails", async () => {
+    fetchMock.mockResolvedValue(new Response("", { status: 500, statusText: "boom" }));
+    await expect(fetchGlobalConfig()).rejects.toThrow("Failed to fetch global config: boom");
+  });
+
+  it("saves it and tells the window", async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
+    await saveGlobalConfig("{}");
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("http://localhost:8222/api/config");
+    expect(init.method).toBe("PUT");
+    expect(JSON.parse(init.body)).toEqual({ content: "{}" });
+    expect(dispatched).toEqual([GLOBAL_CONFIG_SAVED_EVENT]);
+  });
+
+  it("saves it without a window to tell", async () => {
+    fetchMock.mockImplementation(async () => {
+      vi.stubGlobal("window", undefined);
+      return new Response(null, { status: 204 });
+    });
+    await expect(saveGlobalConfig("{}")).resolves.toBeUndefined();
+    expect(dispatched).toEqual([]);
+  });
+
+  it("throws when saving fails, without telling the window", async () => {
+    fetchMock.mockResolvedValue(new Response("", { status: 500, statusText: "boom" }));
+    await expect(saveGlobalConfig("{}")).rejects.toThrow("Failed to save global config: boom");
+    expect(dispatched).toEqual([]);
+  });
+
+  it("sets a value in a config with no raw text", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ content: null })));
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await setGlobalConfigValue(["a"], 1);
+    expect(JSON.parse(JSON.parse(fetchMock.mock.calls[1]![1].body).content)).toEqual({ a: 1 });
+  });
+});
+
+describe("saveProjectConfig", () => {
+  it("puts the content for the channel", async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
+    await saveProjectConfig("c 1", "{}");
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("http://localhost:8222/api/config/project?channel_id=c+1");
+    expect(init.method).toBe("PUT");
+    expect(JSON.parse(init.body)).toEqual({ content: "{}" });
+  });
+
+  it("throws on an error status", async () => {
+    fetchMock.mockResolvedValue(new Response("", { status: 500, statusText: "boom" }));
+    await expect(saveProjectConfig("c1", "{}")).rejects.toThrow("Failed to save project config: boom");
+  });
+});
+
+describe.each([
+  ["fetchShortcuts", fetchShortcuts, "shortcuts"],
+  ["fetchBashShortcuts", fetchBashShortcuts, "bash-shortcuts"],
+] as const)("%s", (_name, run, path) => {
+  it("lists them, with and without a channel", async () => {
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify([{ name: "s" }])));
+    await expect(run("c 1")).resolves.toEqual([{ name: "s" }]);
+    await run();
+    expect(fetchMock.mock.calls[0]![0]).toBe(`http://localhost:8222/api/${path}?channel_id=c%201`);
+    expect(fetchMock.mock.calls[1]![0]).toBe(`http://localhost:8222/api/${path}`);
+  });
+
+  it("returns none on an error status", async () => {
+    fetchMock.mockResolvedValue(new Response("", { status: 500 }));
+    await expect(run("c1")).resolves.toEqual([]);
+  });
+});
+
+describe("withConfigValue", () => {
+  it("starts an empty file as an object", () => {
+    expect(JSON.parse(withConfigValue("  ", ["a"], 1))).toEqual({ a: 1 });
+  });
+
+  it("refuses a file that doesn't parse", () => {
+    expect(() => withConfigValue("{", ["a"], 1)).toThrow("the config file doesn't parse; fix it first");
+  });
+
+  it("keeps the file's indent width", () => {
+    expect(withConfigValue('{\n    "a": 1\n}\n', ["b"], 2)).toBe('{\n    "a": 1,\n    "b": 2\n}\n');
+  });
+
+  it("keeps tab indents and CRLF line ends", () => {
+    expect(withConfigValue('{\r\n\t"a": 1\r\n}\r\n', ["b"], 2)).toBe('{\r\n\t"a": 1,\r\n\t"b": 2\r\n}\r\n');
+  });
+
+  it("removes a key when the value is undefined", () => {
+    expect(JSON.parse(withConfigValue('{"a": 1, "b": 2}', ["a"], undefined))).toEqual({ b: 2 });
   });
 });

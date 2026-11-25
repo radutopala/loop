@@ -29,7 +29,7 @@ export function findMathBlock(lines: string[], i: number): MathBlock | null {
     }
     const body = [rest];
     for (let j = i + 1; j < lines.length; j++) {
-      const line = (lines[j] ?? "").trim();
+      const line = lines[j]!.trim();
       if (line.endsWith(close)) {
         body.push(line.slice(0, -close.length));
         const tex = body.join("\n").trim();

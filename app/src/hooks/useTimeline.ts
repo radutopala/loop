@@ -7,6 +7,8 @@ import { TimelineCache } from "./timelineCache";
 
 const PAGE_SIZE = 50;
 
+type MessageItem = Extract<TimelineItem, { kind: "message" }>;
+
 // The newest page each recently opened channel showed.
 const lastPages = new TimelineCache(30, PAGE_SIZE);
 
@@ -231,12 +233,12 @@ export function useTimeline(channelId: string | null, cache: TimelineCache = las
 
   const takeMessage = useCallback(
     (msgId: string) => {
-      const isIt = (it: TimelineItem) => it.kind === "message" && it.data.msg_id === msgId;
+      const isIt = (it: TimelineItem): it is MessageItem => it.kind === "message" && it.data.msg_id === msgId;
       const found = itemsRef.current.find(isIt);
       setItems((prev) => (prev.some(isIt) ? prev.filter((it) => !isIt(it)) : prev));
       setLiveTail((prev) => {
         const item = prev.find(isIt) ?? found;
-        if (!item || item.kind !== "message") return prev;
+        if (!item) return prev;
         // It joins the turn that read it, the turn of the latest linked row,
         // as the backend links it, so it renders inside that turn.
         const rest = prev.filter((it) => !isIt(it));

@@ -57,9 +57,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
   const hasChecks = items.some((item) => item.checked !== undefined);
 
   useLayoutEffect(() => {
-    const el = menuRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
+    const r = menuRef.current!.getBoundingClientRect();
     const margin = 8;
     let nx = x;
     let ny = y;
@@ -80,19 +78,18 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
   // then move focus into the menu itself so screen readers announce
   // the menu opening and arrow keys work immediately.
   useEffect(() => {
-    triggerRef.current = (document.activeElement as HTMLElement) ?? null;
-    const el = menuRef.current;
-    if (el) el.focus();
+    triggerRef.current = document.activeElement as HTMLElement | null;
+    menuRef.current!.focus();
     return () => {
-      triggerRef.current?.focus?.();
+      triggerRef.current?.focus();
     };
   }, []);
 
   // Keep DOM focus in sync with the focused index after arrow nav.
   useEffect(() => {
     if (focusIdx < 0) return;
-    const btn = itemRefs.current[focusIdx];
-    if (btn) btn.focus();
+    // focusIdx only ever holds an index of the current items.
+    itemRefs.current[focusIdx]!.focus();
   }, [focusIdx]);
 
   useEffect(() => {
@@ -117,8 +114,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
           const delta = e.key === "ArrowDown" ? 1 : -1;
           nextPos = (pos + delta + itemIndices.length) % itemIndices.length;
         }
-        const next = itemIndices[nextPos];
-        if (next !== undefined) setFocusIdx(next);
+        setFocusIdx(itemIndices[nextPos]!);
         return;
       }
       if (e.key === "Home") {

@@ -62,11 +62,10 @@ function dispatchOpenFile(channelId: string, relPath: string) {
 
 // Key a diff line the way FileSection's comment map does, so a comment's
 // (line, side) can be located among a hunk's lines. Context lines carry both
-// numbers and key as RIGHT, matching where comments render.
+// numbers and key as RIGHT, matching where comments render. The parser gives
+// every line at least one number: a deleted line has only the old one.
 function lineKey(line: HunkLine): string {
-  if (line.newNum !== null) return `R:${line.newNum}`;
-  if (line.oldNum !== null) return `L:${line.oldNum}`;
-  return "";
+  return line.newNum !== null ? `R:${line.newNum}` : `L:${line.oldNum}`;
 }
 
 /** One comment's position in the rendered scroll, for the floating navigator. */
@@ -88,7 +87,6 @@ export type CommentNavScope = "new" | "all";
 const COMMENT_NAV_SCOPE_KEY = "loop-review-comment-nav-scope";
 
 function readCommentNavScope(): CommentNavScope {
-  if (typeof window === "undefined") return "new";
   return window.localStorage.getItem(COMMENT_NAV_SCOPE_KEY) === "all" ? "all" : "new";
 }
 
@@ -110,7 +108,6 @@ const COMMENT_NAV_KINDS: { value: CommentNavKind; label: string }[] = [
 const COMMENT_NAV_KIND_KEY = "loop-review-comment-nav-kind";
 
 function readCommentNavKind(): CommentNavKind {
-  if (typeof window === "undefined") return "any";
   const v = window.localStorage.getItem(COMMENT_NAV_KIND_KEY);
   return COMMENT_NAV_KINDS.find((k) => k.value === v)?.value ?? "any";
 }
@@ -191,7 +188,7 @@ export function orderedComments(summaries: FileSummary[], byFile: Map<string, Re
     for (const h of sum.parsed.hunks) {
       for (const l of h.lines) {
         const k = lineKey(l);
-        if (k && !pos.has(k)) pos.set(k, n);
+        if (!pos.has(k)) pos.set(k, n);
         n++;
       }
     }
@@ -325,8 +322,9 @@ export function ReviewDiffView({
   const fileRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
   const navigateToFile = useCallback(
+    // Only ever handed a real row: the toolbar's prev/next are disabled
+    // without a commented file that way, and the find bar's picks are rows.
     (idx: number) => {
-      if (idx < 0 || idx >= summaries.length) return;
       setFocusedIdx(idx);
       const sum = summaries[idx]!;
       setExpanded((prev) => {
@@ -493,8 +491,8 @@ export function ReviewDiffView({
         navigateToComment(at + dir);
         return;
       }
-      const sc = scrollRef.current;
-      const view = sc ? sc.getBoundingClientRect() : { top: 0, bottom: 0 };
+      // The navigator renders only beside the scroll, so its ref is set.
+      const view = scrollRef.current!.getBoundingClientRect();
       const rects = anchors.map((a) => commentRefs.current.get(a.id)?.getBoundingClientRect() ?? null);
       navigateToComment(unlandedTarget(dir, rects, view, Math.min(activeRef.current, anchors.length - 1)));
     },
@@ -545,8 +543,8 @@ export function ReviewDiffView({
   useEffect(() => {
     const match = contentMatches[activeMatch];
     if (!match) return;
-    const sum = summaries[match.fileIndex];
-    if (!sum) return;
+    // Matches come from these summaries, so the index is always in range.
+    const sum = summaries[match.fileIndex]!;
     if (!expanded.has(sum.path)) {
       setExpanded((prev) => {
         const next = new Set(prev);
@@ -1344,8 +1342,7 @@ function FileSection({
                   {seg.hunk.header}
                 </div>
                 {seg.hunk.lines.map((line, li) => {
-                  const key = lineKey(line);
-                  const matched = key ? commentMap.get(key) : undefined;
+                  const matched = commentMap.get(lineKey(line));
                   const active = activeMatch && activeMatch.fileIndex === fileIndex && activeMatch.hunkIndex === seg.hunkIndex && activeMatch.lineIndex === li ? activeMatch.start : -1;
                   return (
                     <div key={li}>
@@ -1535,8 +1532,8 @@ function InlineComment({
   // comment to `pushed`, so without this guard rapid double-clicks during the
   // sendMessage round-trip would queue duplicate prompts to the agent.
   const [sending, setSending] = useState(false);
+  // The button is disabled while sending, so a click never lands mid-send.
   const handleAddress = async () => {
-    if (sending) return;
     setSending(true);
     try {
       await onAddress(comment);

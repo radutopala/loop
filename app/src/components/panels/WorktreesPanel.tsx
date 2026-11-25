@@ -26,12 +26,11 @@ export function WorktreesPanel({ channelId, isWorktree, hasBranch, onImportWorkt
   // Close confirm popover on outside click.
   useEffect(() => {
     if (!confirmingId && !confirmingPath) return;
-    const handler = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (!target.closest("[data-confirm-popover]")) {
-        setConfirmingId(null);
-        setConfirmingPath(null);
-      }
+    // A mousedown inside the popover stops propagating at React's root, so
+    // any mousedown that reaches the document is outside it.
+    const handler = () => {
+      setConfirmingId(null);
+      setConfirmingPath(null);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -63,11 +62,10 @@ export function WorktreesPanel({ channelId, isWorktree, hasBranch, onImportWorkt
 
   useEventStream({ channelId, onEvent });
 
-  const handleDelete = async (wt: WorktreeInfo) => {
-    if (!wt.thread_id) return;
-    setDeletingId(wt.thread_id);
+  const handleDelete = async (wt: WorktreeInfo, threadId: string) => {
+    setDeletingId(threadId);
     try {
-      await removeWorktree(channelId, wt.path, wt.thread_id);
+      await removeWorktree(channelId, wt.path, threadId);
       await loadWorktrees();
     } catch {
       // ignore
@@ -102,9 +100,8 @@ export function WorktreesPanel({ channelId, isWorktree, hasBranch, onImportWorkt
   };
 
   const handleNavigate = (wt: WorktreeInfo) => {
-    if (wt.thread_id && onSelectThread) {
-      onSelectThread(wt.thread_id);
-    }
+    // Only imported worktrees, which have a thread, offer Go.
+    onSelectThread?.(wt.thread_id!);
   };
 
   const handleToggleLock = async (wt: WorktreeInfo) => {
@@ -278,7 +275,7 @@ export function WorktreesPanel({ channelId, isWorktree, hasBranch, onImportWorkt
                   onClick={() => {
                     if (confirmingId) {
                       setConfirmingId(null);
-                      handleDelete(wt);
+                      handleDelete(wt, confirmingId);
                     } else {
                       setConfirmingPath(null);
                       handleRemove(wt);

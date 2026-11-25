@@ -185,7 +185,7 @@ export function useXTerminal({ containerRef, colors, fontSize: termFontSize, onI
       // xterm measures its first cell. Without a refit, cell width is computed
       // against the fallback (SF Mono / Menlo) and the new font renders into
       // wrong-width cells. Re-fit once the font finishes loading.
-      if (typeof document !== "undefined" && document.fonts?.ready) {
+      if (document.fonts?.ready) {
         void document.fonts.ready.then(() => {
           if (disposed) return;
           fitAddon.fit();
@@ -426,7 +426,8 @@ export function useXTerminal({ containerRef, colors, fontSize: termFontSize, onI
   useEffect(() => {
     if (xtermRef.current && termFontSize != null) {
       xtermRef.current.options.fontSize = termFontSize;
-      fitAddonRef.current?.fit();
+      // Set together with xtermRef in init().
+      fitAddonRef.current!.fit();
     }
   }, [termFontSize]);
 

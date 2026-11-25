@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { unreadable } from "../test/hooks-c-api-fetch";
 import { editPrompt, fetchPromptEditState, onPromptEditSettled } from "./promptEdit";
 
 let fetchMock: ReturnType<typeof vi.fn>;
@@ -70,5 +71,12 @@ describe("fetchPromptEditState", () => {
   it("throws on an error status", async () => {
     fetchMock.mockResolvedValue(new Response("", { status: 404 }));
     await expect(fetchPromptEditState("ch")).rejects.toThrow("HTTP 404");
+  });
+});
+
+describe("editPrompt with an unreadable error body", () => {
+  it("falls back to the status text", async () => {
+    fetchMock.mockResolvedValue(unreadable(500, "Internal Server Error"));
+    await expect(editPrompt("ch", { draft: "", start: 0, end: 0, instruction: "x" })).rejects.toThrow("Internal Server Error");
   });
 });

@@ -206,4 +206,18 @@ describe("createFrameRenderer", () => {
     render(new ArrayBuffer(4));
     await vi.waitFor(() => expect(bitmap.close).toHaveBeenCalled());
   });
+
+  it("defaults to createImageBitmap and tolerates a bitmap without close", async () => {
+    const { canvas, ctx } = fakeCanvas();
+    const bitmap = { width: 4, height: 3 } as ImageBitmap;
+    const decode = vi.fn().mockResolvedValue(bitmap);
+    vi.stubGlobal("createImageBitmap", decode);
+    const render = createFrameRenderer(() => canvas);
+
+    render(new ArrayBuffer(4));
+    await vi.waitFor(() => expect(ctx.drawImage).toHaveBeenCalledWith(bitmap, 0, 0));
+    expect(decode).toHaveBeenCalledWith(expect.any(Blob));
+    expect((decode.mock.calls[0]![0] as Blob).type).toBe("image/jpeg");
+    vi.unstubAllGlobals();
+  });
 });

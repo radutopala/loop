@@ -239,7 +239,7 @@ export function searchParsedFiles(parsedFiles: Array<ParsedFile | undefined>, qu
 export function searchContent(files: Array<Pick<DiffFile, "path" | "status">>, parsedFiles: ParsedFile[], query: string): ContentMatch[] {
   // Same pairing rule the renderer uses, so fileIndex addresses the same row.
   return searchParsedFiles(
-    files.map((file) => (file ? parsedFiles.find((pf) => pf.path === file.path && pf.status === file.status) : undefined)),
+    files.map((file) => parsedFiles.find((pf) => pf.path === file.path && pf.status === file.status)),
     query,
   );
 }

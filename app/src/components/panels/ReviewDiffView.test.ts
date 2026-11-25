@@ -108,6 +108,21 @@ describe("orderedComments", () => {
     ]);
   });
 
+  it("places a comment on a line two hunks share under the first of them", () => {
+    // Both hunks show new line 1; the comment goes under the first, so a
+    // comment on new line 2 of the second hunk still sorts after it.
+    const overlap = `diff --git a/d.go b/d.go
+--- a/d.go
++++ b/d.go
+@@ -1,1 +1,1 @@
+ package d
+@@ -1,2 +1,2 @@
+ package d
++var v = 1
+`;
+    expect(ids(overlap, [comment("two", "d.go", 2), comment("one", "d.go", 1)])).toEqual(["one", "two"]);
+  });
+
   it("returns nothing when there are no comments", () => {
     expect(ids(DIFF, [])).toEqual([]);
   });

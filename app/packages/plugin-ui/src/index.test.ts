@@ -78,6 +78,30 @@ describe("connect", () => {
     opened.push(bridge);
     await expect(bridge.context.get()).resolves.toEqual({ pluginId: "echo", panel: "main", channelId: "ch1", channelName: "proj", dirPath: "/src/proj" });
   });
+
+  it("listens on the frame's window for its parent by default", async () => {
+    const win = new EventTarget();
+    const parent = new MessageChannel();
+    vi.stubGlobal("addEventListener", win.addEventListener.bind(win));
+    vi.stubGlobal("removeEventListener", win.removeEventListener.bind(win));
+    vi.stubGlobal("parent", parent.port1);
+    try {
+      const ready = connect();
+      const host = fakeHost();
+      const ch = new MessageChannel();
+      opened.push(
+        parent.port1,
+        parent.port2,
+        connectBridge(ch.port1, () => host),
+      );
+      win.dispatchEvent(new MessageEvent("message", { data: { type: BRIDGE_INIT }, ports: [ch.port2], source: parent.port1 }));
+      const bridge = await ready;
+      opened.push(bridge);
+      await expect(bridge.settings.get()).resolves.toEqual({ count: 5 });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe("calls", () => {
@@ -280,6 +304,37 @@ describe("notifications", () => {
   });
 });
 
+describe("a listener that throws", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("doesn't keep the other listeners from the message, and rethrows later", async () => {
+    // The rethrow is scheduled with no delay; hold it here instead of letting
+    // it reach the runner as an uncaught error.
+    const deferred: (() => void)[] = [];
+    const realSetTimeout = globalThis.setTimeout;
+    vi.spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void, ms?: number, ...args: unknown[]) => {
+      if (ms === undefined) {
+        deferred.push(fn);
+        return 0;
+      }
+      return realSetTimeout(fn, ms, ...args);
+    }) as typeof setTimeout);
+    const { bridge, hostEnd } = pair();
+    const boom = new Error("listener broke");
+    bridge.settings.onChange(() => {
+      throw boom;
+    });
+    const second = vi.fn();
+    bridge.settings.onChange(second);
+    hostEnd.notify("settings", { count: 9 });
+    await vi.waitFor(() => expect(second).toHaveBeenCalledWith({ count: 9 }));
+    expect(deferred).toHaveLength(1);
+    expect(() => deferred[0]!()).toThrow(boom);
+  });
+});
+
 function fakeElement(): ThemeTarget & { vars: Record<string, string> } {
   const vars: Record<string, string> = {};
   return { vars, dataset: {}, style: { colorScheme: "", setProperty: (k: string, v: string | null) => void (vars[k] = v ?? "") } };
@@ -292,6 +347,27 @@ describe("applyTheme", () => {
     expect(el.vars).toEqual({ "--bg": "#fff", "--fg": "#000" });
     expect(el.dataset.theme).toBe("light");
     expect(el.style.colorScheme).toBe("light");
+  });
+
+  it("leaves the mode alone when the theme has none it knows, and no vars", () => {
+    const el = fakeElement();
+    applyTheme({ mode: "sepia" } as unknown as Theme, el);
+    expect(el.vars).toEqual({});
+    expect(el.dataset.theme).toBeUndefined();
+    expect(el.style.colorScheme).toBe("");
+  });
+
+  it("syncTheme applies to the document element by default", async () => {
+    const { bridge } = pair();
+    const el = fakeElement();
+    vi.stubGlobal("document", { documentElement: el });
+    try {
+      const off = await syncTheme(bridge);
+      expect(el.dataset.theme).toBe("dark");
+      off();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("syncTheme applies now and on change", async () => {

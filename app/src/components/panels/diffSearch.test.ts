@@ -50,6 +50,24 @@ describe("fuzzyScore", () => {
     expect(fuzzyScore("readme", "README.md")).not.toBeNull();
   });
 
+  it("ranks a digit after a letter like a camelCase hump", () => {
+    const hump = fuzzyScore("1", "file1.ts")!.score;
+    const midWord = fuzzyScore("e", "file1.ts")!.score;
+    expect(hump).toBeGreaterThan(midWord);
+  });
+
+  it("lifts a run to the word-boundary bonus a later member earns", () => {
+    // "/" scores no bonus of its own; the "b" after it starts a segment, so
+    // the run is scored as a boundary match.
+    // 2 matches, no bonus on "/", the boundary bonus on "b".
+    expect(fuzzyScore("/b", "a/b")!.score).toBe(16 * 2 + 8);
+  });
+
+  it("keeps the run's bonus when a later boundary does not beat it", () => {
+    // "a" (boundary) then "/" then "b" (boundary): the run keeps one boundary bonus.
+    expect(fuzzyScore("a/b", "a/b")!.score).toBe(16 * 3 + 8 * 2 + 8 + 8);
+  });
+
   it("is case-sensitive once the query has an uppercase character", () => {
     expect(fuzzyScore("Diff", "diffviewer.ts")).toBeNull();
     expect(fuzzyScore("Diff", "DiffViewer.ts")).not.toBeNull();
@@ -67,6 +85,12 @@ describe("searchPaths", () => {
     const hits = searchPaths(files, "gitpanel");
     expect(hits).toHaveLength(1);
     expect(hits[0]!.fileIndex).toBe(0);
+  });
+
+  it("treats a hole in the file list as an empty path", () => {
+    const sparse: { path: string }[] = [];
+    sparse[1] = { path: "git.go" };
+    expect(searchPaths(sparse, "git").map((m) => m.fileIndex)).toEqual([1]);
   });
 
   it("orders by score, best first", () => {
@@ -151,6 +175,12 @@ describe("searchContent", () => {
     expect(searchContent([{ path: "gone.go", status: undefined }], parsedFiles, "errtimeout")).toEqual([]);
   });
 
+  it("skips a hole in the file list without shifting the indices after it", () => {
+    const sparse: typeof files = [];
+    sparse[1] = files[1]!;
+    expect(searchContent(sparse, parsedFiles, "errtimeout").map((m) => m.fileIndex)).toEqual([1]);
+  });
+
   it("pairs on status so a partially staged path matches the right row", () => {
     const staged: ParsedFile = { path: "a.go", status: "staged", hunks: [{ header: "@@", lines: [{ type: "add", content: "hit", oldNum: null, newNum: 1 }] }] };
     const unstaged: ParsedFile = { path: "a.go", status: "unstaged", hunks: [{ header: "@@", lines: [{ type: "add", content: "miss", oldNum: null, newNum: 1 }] }] };
@@ -179,6 +209,14 @@ describe("searchParsedFiles", () => {
   it("reports every match in a line, left to right", () => {
     const hits = searchParsedFiles([parsedFiles[1]!], "errTimeout");
     expect(hits.map((m) => m.start)).toEqual([0, 11]);
+  });
+
+  it("skips holes in a file's hunks and in a hunk's lines", () => {
+    const lines: ParsedFile["hunks"][number]["lines"] = [];
+    lines[1] = { type: "add", content: "errTimeout", oldNum: null, newNum: 1 };
+    const hunks: ParsedFile["hunks"] = [];
+    hunks[1] = { header: "@@", lines };
+    expect(searchParsedFiles([{ path: "a.go", hunks }], "errtimeout")).toEqual([{ fileIndex: 0, hunkIndex: 1, lineIndex: 1, start: 0, end: 10 }]);
   });
 
   it("skips a hole without shifting the indices after it", () => {

@@ -29,8 +29,8 @@ export function HoverTip({ text, shrink, mono, width = WIDTH, children }: { text
     window.clearTimeout(timer.current);
     if (!text) return;
     timer.current = window.setTimeout(() => {
-      const r = anchor.current?.getBoundingClientRect();
-      if (!r) return;
+      // The timer is cleared on unmount, so the anchor is still mounted.
+      const r = anchor.current!.getBoundingClientRect();
       const centred = r.left + r.width / 2 - width / 2;
       setAt({
         left: Math.max(MARGIN, Math.min(centred, window.innerWidth - width - MARGIN)),
@@ -40,9 +40,9 @@ export function HoverTip({ text, shrink, mono, width = WIDTH, children }: { text
   };
   // Placed above first; moved below before it paints when that cuts it off.
   useLayoutEffect(() => {
-    if (at?.bottom === undefined || (tip.current?.getBoundingClientRect().top ?? MARGIN) >= MARGIN) return;
-    const r = anchor.current?.getBoundingClientRect();
-    if (r) setAt({ left: at.left, top: r.bottom + 6 });
+    // With `at` set the tip is rendered, so both refs are mounted.
+    if (at?.bottom === undefined || tip.current!.getBoundingClientRect().top >= MARGIN) return;
+    setAt({ left: at.left, top: anchor.current!.getBoundingClientRect().bottom + 6 });
   }, [at]);
   const hide = () => {
     window.clearTimeout(timer.current);

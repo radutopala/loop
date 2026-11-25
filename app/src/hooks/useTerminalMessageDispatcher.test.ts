@@ -54,3 +54,43 @@ describe("terminal session messages", () => {
     expect(opts.onStatus).toHaveBeenCalledWith("running");
   });
 });
+
+describe("terminal data and endings", () => {
+  it("passes binary output straight through", () => {
+    const { opts } = setup();
+    const { handleMessage } = useTerminalMessageDispatcher(opts);
+    const buf = new ArrayBuffer(4);
+    handleMessage({ data: buf } as MessageEvent);
+    expect(opts.onData).toHaveBeenCalledWith(buf);
+    expect(opts.onStatus).not.toHaveBeenCalled();
+  });
+
+  it.each(["stopped", "closed"])("ends the session on %s", (type) => {
+    const { opts, send } = setup();
+    send({ type });
+    expect(opts.onSessionChange).toHaveBeenCalledWith(null);
+    expect(opts.onStatus).toHaveBeenCalledWith("completed");
+  });
+
+  it.each(["created", "attached"])("reports no session when %s carries no id", (type) => {
+    const { opts, send } = setup();
+    send({ type });
+    expect(opts.onSessionChange).toHaveBeenCalledWith(null);
+  });
+
+  it("ignores message types it doesn't know", () => {
+    const { opts, send } = setup();
+    send({ type: "resized" });
+    for (const fn of Object.values(opts)) expect(fn).not.toHaveBeenCalled();
+  });
+
+  it("works without the optional callbacks", () => {
+    const opts = { onData: vi.fn(), onStatus: vi.fn(), onError: vi.fn(), onSessionChange: vi.fn() };
+    const { handleMessage } = useTerminalMessageDispatcher(opts);
+    handleMessage({ data: JSON.stringify({ type: "created", session_id: "s" }) } as MessageEvent);
+    handleMessage({ data: JSON.stringify({ type: "error", message: "x", error_code: "no_session" }) } as MessageEvent);
+    expect(opts.onSessionChange).toHaveBeenCalledWith("s");
+    expect(opts.onSessionChange).toHaveBeenLastCalledWith(null);
+    expect(opts.onError).toHaveBeenCalledWith("x");
+  });
+});

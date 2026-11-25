@@ -1,6 +1,19 @@
+// @vitest-environment jsdom
+import { StateEffect } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
 import { describe, expect, it } from "vitest";
 import { parseUnifiedDiff } from "./DiffViewer";
-import { computeGitLineChanges, emptyGitLineChanges, gitGutterColors, gitLineChangesForFile, gitOverviewMarks, hasGitLineChanges } from "./editorGitGutter";
+import {
+  computeGitLineChanges,
+  emptyGitLineChanges,
+  gitChangeGutter,
+  gitChangeGutterExtension,
+  gitGutterColors,
+  gitLineChangesForFile,
+  gitOverviewMarks,
+  hasGitLineChanges,
+  setGitLineChanges,
+} from "./editorGitGutter";
 
 const MODIFIED_DIFF = `diff --git a/main.go b/main.go
 --- a/main.go
@@ -65,6 +78,32 @@ describe("computeGitLineChanges", () => {
     const changes = computeGitLineChanges(both);
     expect(changes.changed.get(2)).toBe("modified");
     expect(changes.deletedAbove.has(2)).toBe(true);
+  });
+});
+
+describe("computeGitLineChanges with hand-built hunks", () => {
+  it("ignores an added line without a new-file number", () => {
+    const changes = computeGitLineChanges([{ path: "m.go", hunks: [{ header: "@@", lines: [{ type: "add", content: "x", oldNum: null, newNum: null }] }] }]);
+    expect(hasGitLineChanges(changes)).toBe(false);
+  });
+
+  it("anchors a deletion past lines without a new-file number", () => {
+    const changes = computeGitLineChanges([
+      {
+        path: "m.go",
+        hunks: [
+          {
+            header: "@@",
+            lines: [
+              { type: "del", content: "gone", oldNum: 1, newNum: null },
+              { type: "ctx", content: "", oldNum: 2, newNum: null },
+              { type: "ctx", content: "keep", oldNum: 3, newNum: 5 },
+            ],
+          },
+        ],
+      },
+    ]);
+    expect([...changes.deletedAbove]).toEqual([5]);
   });
 });
 
@@ -146,5 +185,51 @@ describe("gitGutterColors", () => {
       expect(new Set([c.added, c.modified, c.deleted]).size).toBe(3);
     }
     expect(gitGutterColors(true).added).not.toBe(gitGutterColors(false).added);
+  });
+});
+
+describe("gitChangeGutter", () => {
+  const doc = ["one", "two", "three", "four", "five"].join("\n");
+  const marks = (view: EditorView) => Array.from(view.dom.querySelectorAll(".cm-gitChangeGutter .cm-gutterElement"), (el) => el.querySelector(".cm-gitChange")?.className ?? "");
+
+  it("marks added, modified and deleted lines, and the deletion at the end", () => {
+    const view = new EditorView({ doc, extensions: gitChangeGutterExtension, parent: document.body });
+    expect(marks(view).filter(Boolean)).toEqual([]);
+    const changes = emptyGitLineChanges();
+    changes.changed.set(1, "added");
+    changes.changed.set(2, "modified");
+    changes.deletedAbove.add(4);
+    changes.deletedAtEnd = true;
+    view.dispatch({ effects: setGitLineChanges.of(changes) });
+    expect(marks(view).filter(Boolean)).toEqual(["cm-gitChange cm-gitChange-added", "cm-gitChange cm-gitChange-modified", "cm-gitChange cm-gitChange-deleted", "cm-gitChange cm-gitChange-deleted"]);
+    view.destroy();
+  });
+
+  it("keeps the markers through edits that bring no new changes", () => {
+    const view = new EditorView({ doc, extensions: gitChangeGutterExtension, parent: document.body });
+    const changes = emptyGitLineChanges();
+    changes.changed.set(3, "added");
+    view.dispatch({ effects: setGitLineChanges.of(changes) });
+    view.dispatch({ changes: { from: 0, insert: "x" }, effects: StateEffect.define<null>().of(null) });
+    expect(marks(view).filter(Boolean)).toEqual(["cm-gitChange cm-gitChange-added"]);
+    view.destroy();
+  });
+
+  it("redraws a line whose kind of change changes", () => {
+    const view = new EditorView({ doc, extensions: gitChangeGutterExtension, parent: document.body });
+    const added = emptyGitLineChanges();
+    added.changed.set(3, "added");
+    view.dispatch({ effects: setGitLineChanges.of(added) });
+    const modified = emptyGitLineChanges();
+    modified.changed.set(3, "modified");
+    view.dispatch({ effects: setGitLineChanges.of(modified) });
+    expect(marks(view).filter(Boolean)).toEqual(["cm-gitChange cm-gitChange-modified"]);
+    view.destroy();
+  });
+
+  it("marks nothing without the state field", () => {
+    const view = new EditorView({ doc, extensions: gitChangeGutter, parent: document.body });
+    expect(marks(view).filter(Boolean)).toEqual([]);
+    view.destroy();
   });
 });

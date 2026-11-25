@@ -14,8 +14,8 @@ function getPurifier(): Purifier {
   if (purifier) return purifier;
   const p = DOMPurify(window);
   p.addHook("afterSanitizeAttributes", (node) => {
-    if (node.tagName !== "A" || !node.hasAttribute("href")) return;
-    const href = node.getAttribute("href") ?? "";
+    const href = node.getAttribute("href");
+    if (node.tagName !== "A" || href === null) return;
     // A loop://channel/ link moves the page's hash, as it does in the chat.
     const inApp = inAppHref(href);
     if (inApp) {

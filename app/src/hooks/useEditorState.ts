@@ -247,7 +247,8 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     if (!shown || shown.retried) return;
     forgetContentCap({ kind: "raw", channelId, root: shown.ri });
     showMedia(shown.rp, shown.ri);
-    if (mediaShownRef.current) mediaShownRef.current.retried = true;
+    // showMedia set it for this file.
+    mediaShownRef.current!.retried = true;
   }, [channelId, showMedia]);
   // Every content link was forgotten (the daemon restarted): resolve the
   // shown file's again.
@@ -993,7 +994,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     async (pathKey: string, isDir: boolean, destDirKey: string) => {
       const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
       const { rootIndex: di, relativePath: dp } = parsePathKey(destDirKey);
-      const name = rp.split("/").pop() ?? rp;
+      const name = rp.split("/").pop()!;
       const at = (n: string) => (dp ? `${dp}/${n}` : n);
       // Beside itself it starts at " copy"; elsewhere it keeps its name first.
       let n = parentDirKey(pathKey) === destDirKey ? 1 : 0;

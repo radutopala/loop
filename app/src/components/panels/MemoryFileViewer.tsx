@@ -63,7 +63,7 @@ export function MemoryFileViewer({
 
   // Mount/update CodeMirror editor.
   useEffect(() => {
-    if (!editorRef.current || fileContent === null) {
+    if (fileContent === null) {
       if (viewRef.current) {
         viewRef.current.destroy();
         viewRef.current = null;
@@ -102,18 +102,19 @@ export function MemoryFileViewer({
       extensions,
     });
 
+    // The editor host div is always rendered, so the ref is set once mounted.
+    const scroller = editorRef.current as HTMLDivElement;
     const view = new EditorView({
       state,
-      parent: editorRef.current,
+      parent: scroller,
     });
 
     viewRef.current = view;
     setPreviewHtml(renderMarkdownSafe(fileContent));
 
     // Sync editor scroll -> preview.
-    const scroller = editorRef.current;
     const onEditorScroll = () => {
-      if (scrollSyncSource.current === "preview" || !scroller) return;
+      if (scrollSyncSource.current === "preview") return;
       scrollSyncSource.current = "editor";
       const el = previewRef.current;
       if (el) {
@@ -124,10 +125,10 @@ export function MemoryFileViewer({
         scrollSyncSource.current = null;
       });
     };
-    scroller?.addEventListener("scroll", onEditorScroll);
+    scroller.addEventListener("scroll", onEditorScroll);
 
     return () => {
-      scroller?.removeEventListener("scroll", onEditorScroll);
+      scroller.removeEventListener("scroll", onEditorScroll);
       view.destroy();
       viewRef.current = null;
     };
@@ -276,15 +277,14 @@ export function MemoryFileViewer({
               ref={previewRef}
               className="readme-content"
               dangerouslySetInnerHTML={{ __html: previewHtml }}
-              onScroll={() => {
+              onScroll={(e) => {
                 if (scrollSyncSource.current === "editor") return;
                 scrollSyncSource.current = "preview";
-                const el = previewRef.current;
-                const ed = editorRef.current;
-                if (el && ed) {
-                  const pct = el.scrollTop / Math.max(1, el.scrollHeight - el.clientHeight);
-                  ed.scrollTop = pct * (ed.scrollHeight - ed.clientHeight);
-                }
+                const el = e.currentTarget;
+                // The editor host is always mounted next to the preview.
+                const ed = editorRef.current as HTMLDivElement;
+                const pct = el.scrollTop / Math.max(1, el.scrollHeight - el.clientHeight);
+                ed.scrollTop = pct * (ed.scrollHeight - ed.clientHeight);
                 requestAnimationFrame(() => {
                   scrollSyncSource.current = null;
                 });

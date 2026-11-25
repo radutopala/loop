@@ -12,20 +12,16 @@ export const DEFAULT_TILE_SIZES: Partial<Record<PanelType, { w: number; h: numbe
 };
 
 /** Find a position that doesn't overlap existing tiles. Tries the given position
- *  first, then shifts right, then wraps below. */
+ *  first, then right of the rightmost tile, where nothing overlaps. */
 export function findNonOverlappingPosition(x: number, y: number, w: number, h: number, tiles: CanvasTile[]): { x: number; y: number } {
   const overlaps = (px: number, py: number) => tiles.some((t) => px < t.x + t.width + GAP && px + w + GAP > t.x && py < t.y + t.height + GAP && py + h + GAP > t.y);
 
   if (!overlaps(x, y)) return { x, y };
 
-  // Try placing to the right of the rightmost tile.
+  // Right of the rightmost tile: a tile overlaps only what starts before its
+  // right edge plus the gap.
   const maxRight = Math.max(...tiles.map((t) => t.x + t.width), 0);
-  const rightPos = { x: maxRight + GAP, y };
-  if (!overlaps(rightPos.x, rightPos.y)) return rightPos;
-
-  // Try below the bottommost tile.
-  const maxBottom = Math.max(...tiles.map((t) => t.y + t.height), 0);
-  return { x, y: maxBottom + GAP };
+  return { x: maxRight + GAP, y };
 }
 
 /**

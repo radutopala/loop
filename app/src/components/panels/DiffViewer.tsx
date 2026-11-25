@@ -179,8 +179,8 @@ export function parseUnifiedDiff(raw: string, status?: DiffFileStatus): ParsedFi
           lines.push({ type: "del", content: line.slice(1), oldNum, newNum: null });
           oldNum++;
         } else if (line.startsWith(" ") || line === "") {
-          // Skip the "\ No newline at end of file" marker
-          if (line.startsWith("\\")) continue;
+          // The "\ No newline at end of file" marker matches no branch, so
+          // it is skipped.
           lines.push({ type: "ctx", content: line.slice(1) || "", oldNum, newNum });
           oldNum++;
           newNum++;
@@ -347,7 +347,6 @@ export function DiffViewer({
 
   const navigateToFile = useCallback(
     (index: number) => {
-      if (index < 0 || index >= files.length) return;
       isNavigatingRef.current = true;
       setFocusedFileIndex(index);
       const file = files[index]!;
@@ -372,8 +371,8 @@ export function DiffViewer({
   useEffect(() => {
     const match = contentMatches[activeMatch];
     if (!match) return;
-    const file = files[match.fileIndex];
-    if (!file) return;
+    // searchContent only reports matches in rows of `files`.
+    const file = files[match.fileIndex]!;
     const key = fileKey(file);
     if (!expandedFiles.has(key)) {
       onToggleFile(key);
@@ -543,7 +542,7 @@ export function DiffViewer({
     if (!cached) return [];
     const lines: HunkLine[] = [];
     for (let i = startLine; i <= endLine && i <= cached.length; i++) {
-      lines.push({ type: "ctx", content: cached[i - 1] ?? "", oldNum: oldStart + (i - startLine), newNum: i });
+      lines.push({ type: "ctx", content: cached[i - 1]!, oldNum: oldStart + (i - startLine), newNum: i });
     }
     return lines;
   };

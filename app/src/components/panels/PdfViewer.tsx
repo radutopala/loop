@@ -75,8 +75,8 @@ export default function PdfViewer({ url }: { url: string }) {
 
   // Fit-width tracks the pane's width, so resizing the editor re-fits.
   useEffect(() => {
-    const el = scrollRef.current;
-    if (!el || !fit || !baseSize) return;
+    const el = scrollRef.current!;
+    if (!fit || !baseSize) return;
     const refit = () => setZoom(fitWidthZoom(el.clientWidth, baseSize.width, GUTTER));
     refit();
     const ro = new ResizeObserver(refit);
@@ -87,8 +87,8 @@ export default function PdfViewer({ url }: { url: string }) {
   // Keep the same spot in the document on screen across zoom changes.
   const prevZoom = useRef(zoom);
   useLayoutEffect(() => {
-    const el = scrollRef.current;
-    if (el && prevZoom.current !== zoom) {
+    const el = scrollRef.current!;
+    if (prevZoom.current !== zoom) {
       el.scrollTop *= zoom / prevZoom.current;
       el.scrollLeft *= zoom / prevZoom.current;
     }
@@ -104,8 +104,7 @@ export default function PdfViewer({ url }: { url: string }) {
   // Registered by hand because React's onWheel is passive and can't stop the
   // page itself from zooming.
   useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
+    const el = scrollRef.current!;
     const onWheel = (e: WheelEvent) => {
       if (!e.ctrlKey && !e.metaKey) return;
       e.preventDefault();
@@ -117,8 +116,7 @@ export default function PdfViewer({ url }: { url: string }) {
   }, []);
 
   const onScroll = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
+    const el = scrollRef.current!;
     const tops = Array.from(el.querySelectorAll<HTMLElement>("[data-pdf-page]"), (p) => p.offsetTop);
     setPage(currentPage(tops, el.scrollTop, el.clientHeight));
   }, []);
@@ -199,8 +197,7 @@ function PdfPage({ doc, pageNumber, zoom, fallback, rootRef }: PdfPageProps) {
   const [userUnit, setUserUnit] = useState(1);
 
   useEffect(() => {
-    const el = wrapRef.current;
-    if (!el) return;
+    const el = wrapRef.current!;
     const io = new IntersectionObserver((entries) => setVisible(entries.some((e) => e.isIntersecting)), {
       root: rootRef.current,
       rootMargin: "100% 0px",
@@ -210,9 +207,8 @@ function PdfPage({ doc, pageNumber, zoom, fallback, rootRef }: PdfPageProps) {
   }, [rootRef]);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    const text = textRef.current;
-    if (!canvas || !text) return;
+    const canvas = canvasRef.current!;
+    const text = textRef.current!;
     if (!visible) {
       // Release the bitmap; it's redrawn when the page scrolls back in.
       canvas.width = 0;
@@ -269,8 +265,7 @@ function PdfPage({ doc, pageNumber, zoom, fallback, rootRef }: PdfPageProps) {
   // While a selection is being dragged, stretch endOfContent over the page so
   // the selection doesn't jump when the pointer crosses the gaps between spans.
   useEffect(() => {
-    const text = textRef.current;
-    if (!text) return;
+    const text = textRef.current!;
     const layer = () => text.querySelector(".textLayer");
     const down = () => layer()?.classList.add("selecting");
     const up = () => layer()?.classList.remove("selecting");

@@ -125,14 +125,7 @@ export const ContainersPanel = forwardRef<ContainersPanelHandle, ContainersPanel
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
 
-  const formatTime = (ts: string) => {
-    try {
-      const d = new Date(ts);
-      return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-    } catch {
-      return "";
-    }
-  };
+  const formatTime = (ts: string) => new Date(ts).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
   return (
     <div

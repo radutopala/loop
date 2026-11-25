@@ -37,6 +37,7 @@ describe("explainToggleTitle", () => {
     expect(explainToggleTitle("", true)).toMatch(/^Explain is on — config default \(on\)\./);
     expect(explainToggleTitle("off", true)).toMatch(/^Explain is off — set for this channel\./);
     expect(explainToggleTitle("on", false)).toMatch(/Click to turn it off\.$/);
+    expect(explainToggleTitle("", false)).toMatch(/^Explain is off — config default \(off\)\./);
   });
 });
 

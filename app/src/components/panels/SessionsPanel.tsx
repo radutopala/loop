@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { SessionEntry } from "../../api/loopApi";
 import { createThread, fetchSessions, setSession } from "../../api/loopApi";
 import { useTheme } from "../../ThemeContext";
@@ -30,7 +30,6 @@ export function SessionsPanel({ channelId, onStatusChange }: SessionsPanelProps)
   const [newSessionKey, setNewSessionKey] = useState("");
   const [listWidth, setListWidth] = useState(380);
   const [resumeNote, setResumeNote] = useState<{ text: string; error: boolean } | null>(null);
-  const draggingRef = useRef(false);
 
   const loadSessions = useCallback(async () => {
     try {
@@ -84,13 +83,10 @@ export function SessionsPanel({ channelId, onStatusChange }: SessionsPanelProps)
 
   // Resizable divider
   const onMouseDown = useCallback(() => {
-    draggingRef.current = true;
     const onMove = (e: MouseEvent) => {
-      if (!draggingRef.current) return;
       setListWidth((prev) => Math.max(180, Math.min(500, prev + e.movementX)));
     };
     const onUp = () => {
-      draggingRef.current = false;
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };

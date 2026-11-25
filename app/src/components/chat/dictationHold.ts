@@ -98,7 +98,6 @@ export class HoldToTalk {
       this.cb.prepare();
       this.timer = this.timers.set(() => {
         this.timer = null;
-        if (this.phase !== "armed") return;
         this.phase = "active";
         this.cb.start();
       }, this.holdMs);

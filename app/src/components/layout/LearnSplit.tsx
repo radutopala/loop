@@ -73,11 +73,10 @@ export function LearnSplit({ shown, ms, view = "learn", running, chatHeader, cha
   );
   const onDivider = useCallback(
     (e: React.MouseEvent) => {
-      const box = boxRef.current;
-      if (!box || !onSplitChange) return;
+      // Only bound as the divider's handler with onSplitChange, while the box is mounted.
       e.preventDefault();
-      const rect = box.getBoundingClientRect();
-      const onMove = (ev: MouseEvent) => onSplitChange(clampSplit((ev.clientX - rect.left) / rect.width));
+      const rect = boxRef.current!.getBoundingClientRect();
+      const onMove = (ev: MouseEvent) => onSplitChange!(clampSplit((ev.clientX - rect.left) / rect.width));
       const onUp = () => {
         document.removeEventListener("mousemove", onMove);
         document.removeEventListener("mouseup", onUp);

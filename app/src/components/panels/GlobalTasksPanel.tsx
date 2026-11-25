@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { ScheduledTask, TaskRunLog, WorkflowDef } from "../../api/loopApi";
 import { deleteTask, fetchAllTasks, fetchTaskRuns, fetchWorkflows, runTaskNow, updateTask } from "../../api/loopApi";
 import { useTheme } from "../../ThemeContext";
@@ -39,7 +39,6 @@ export function GlobalTasksPanel({ channel, sidebarOpen, onOpenPalette, onClose,
   const [runs, setRuns] = useState<TaskRunLog[]>([]);
   const [listWidth, setListWidth] = useState(380);
   const [editing, setEditing] = useState(false);
-  const draggingRef = useRef(false);
 
   const headerBtnStyle = buildHeaderBtnStyle(colors);
   const hoverIn = (e: React.MouseEvent<HTMLButtonElement>) => {
@@ -148,13 +147,14 @@ export function GlobalTasksPanel({ channel, sidebarOpen, onOpenPalette, onClose,
     async (taskId: number) => {
       try {
         await deleteTask(taskId);
-        if (selectedId === taskId) setSelectedId(null);
+        // Delete is only offered for the selected task, so clear the selection.
+        setSelectedId(null);
         loadTasks();
       } catch {
         /* ignore */
       }
     },
-    [selectedId, loadTasks],
+    [loadTasks],
   );
 
   const handleRunNow = useCallback(
@@ -196,37 +196,36 @@ export function GlobalTasksPanel({ channel, sidebarOpen, onOpenPalette, onClose,
     setEditing(true);
   }, []);
 
-  const handleSaveEdit = useCallback(async () => {
-    if (selectedId == null) return;
-    try {
-      await updateTask(selectedId, {
-        schedule: editType === "manual" ? "" : editSchedule,
-        type: editType,
-        prompt: editMode === "prompt" ? editPrompt : "",
-        workflow_name: editMode === "workflow" ? editWorkflowName : "",
-        workflow_inputs: editMode === "workflow" ? JSON.stringify(editWorkflowInputs) : "",
-        bash_script: editMode === "bash" ? editBashScript : "",
-        worktree: editWorktree,
-        origin_branch: editOriginBranch || undefined,
-        update_before_run: editUpdateBeforeRun,
-        auto_delete_sec: editAutoDelete,
-      });
-      setEditing(false);
-      loadTasks();
-    } catch {
-      /* ignore */
-    }
-  }, [selectedId, editSchedule, editType, editMode, editPrompt, editWorkflowName, editWorkflowInputs, editBashScript, editWorktree, editOriginBranch, editUpdateBeforeRun, editAutoDelete, loadTasks]);
+  const handleSaveEdit = useCallback(
+    async (taskId: number) => {
+      try {
+        await updateTask(taskId, {
+          schedule: editType === "manual" ? "" : editSchedule,
+          type: editType,
+          prompt: editMode === "prompt" ? editPrompt : "",
+          workflow_name: editMode === "workflow" ? editWorkflowName : "",
+          workflow_inputs: editMode === "workflow" ? JSON.stringify(editWorkflowInputs) : "",
+          bash_script: editMode === "bash" ? editBashScript : "",
+          worktree: editWorktree,
+          origin_branch: editOriginBranch || undefined,
+          update_before_run: editUpdateBeforeRun,
+          auto_delete_sec: editAutoDelete,
+        });
+        setEditing(false);
+        loadTasks();
+      } catch {
+        /* ignore */
+      }
+    },
+    [editSchedule, editType, editMode, editPrompt, editWorkflowName, editWorkflowInputs, editBashScript, editWorktree, editOriginBranch, editUpdateBeforeRun, editAutoDelete, loadTasks],
+  );
 
   // Resizable divider
   const onMouseDown = useCallback(() => {
-    draggingRef.current = true;
     const onMove = (e: MouseEvent) => {
-      if (!draggingRef.current) return;
       setListWidth((prev) => Math.max(240, Math.min(600, prev + e.movementX)));
     };
     const onUp = () => {
-      draggingRef.current = false;
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
@@ -513,7 +512,7 @@ export function GlobalTasksPanel({ channel, sidebarOpen, onOpenPalette, onClose,
             <button onClick={() => setEditing(false)} style={btnSecondaryStyle}>
               Cancel
             </button>
-            <button onClick={handleSaveEdit} style={btnStyle}>
+            <button onClick={() => handleSaveEdit(selectedTask.id)} style={btnStyle}>
               Save
             </button>
           </div>
@@ -557,7 +556,7 @@ export function GlobalTasksPanel({ channel, sidebarOpen, onOpenPalette, onClose,
             {selectedTask.channel_worktree && <span style={{ fontSize: 11, color: colors.textDim, border: `1px solid ${colors.border}`, borderRadius: 3, padding: "0 4px" }}>channel worktree</span>}
             <div style={{ flex: 1 }} />
             {selectedTask.running && selectedTask.thread_id ? (
-              <button onClick={() => onSelectChannel?.(selectedTask.thread_id!)} style={{ ...btnStyle, background: colors.warning ?? "#eab308" }}>
+              <button onClick={() => onSelectChannel?.(selectedTask.thread_id!)} style={{ ...btnStyle, background: colors.warning }}>
                 Running...
               </button>
             ) : (
@@ -565,13 +564,13 @@ export function GlobalTasksPanel({ channel, sidebarOpen, onOpenPalette, onClose,
                 {selectedTask.running ? "Running..." : runningNow ? "Starting..." : "\u25B6 Run Now"}
               </button>
             )}
-            <button onClick={() => handleToggle(selectedTask)} style={{ ...btnSecondaryStyle, color: selectedTask.enabled ? (colors.warning ?? "#eab308") : colors.active }}>
+            <button onClick={() => handleToggle(selectedTask)} style={{ ...btnSecondaryStyle, color: selectedTask.enabled ? colors.warning : colors.active }}>
               {selectedTask.enabled ? "Disable" : "Enable"}
             </button>
             <button onClick={() => startEdit(selectedTask)} style={btnSecondaryStyle}>
               Edit
             </button>
-            <button onClick={() => handleDelete(selectedTask.id)} style={{ ...btnSecondaryStyle, color: colors.error ?? "#ef4444", borderColor: colors.error ?? "#ef4444" }}>
+            <button onClick={() => handleDelete(selectedTask.id)} style={{ ...btnSecondaryStyle, color: colors.error, borderColor: colors.error }}>
               Delete
             </button>
           </div>
@@ -636,14 +635,14 @@ export function GlobalTasksPanel({ channel, sidebarOpen, onOpenPalette, onClose,
                       width: 8,
                       height: 8,
                       borderRadius: "50%",
-                      background: run.status === "success" ? colors.active : run.status === "failed" ? (colors.error ?? "#ef4444") : (colors.warning ?? "#eab308"),
+                      background: run.status === "success" ? colors.active : run.status === "failed" ? colors.error : colors.warning,
                       flexShrink: 0,
                     }}
                   />
                   <span style={{ color: colors.text }}>{run.status}</span>
                   <span style={{ color: colors.textDim, fontSize: 11, marginLeft: "auto" }}>{timeAgo(run.started_at)}</span>
                 </div>
-                {run.error_text && <div style={{ color: colors.error ?? "#ef4444", fontSize: 11, paddingLeft: 14 }}>{run.error_text}</div>}
+                {run.error_text && <div style={{ color: colors.error, fontSize: 11, paddingLeft: 14 }}>{run.error_text}</div>}
                 {run.response_text && (
                   <div
                     style={{

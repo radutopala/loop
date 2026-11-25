@@ -25,7 +25,8 @@ export function mountToggles(props: Record<string, SchemaProperty> | undefined, 
 export function mountTarget(mount: string): string {
   const parts = mount.split(":");
   if (parts.length > 2 && (parts.at(-1) === "ro" || parts.at(-1) === "rw")) parts.pop();
-  return parts.length < 2 ? "" : (parts.at(-1) ?? "").replace(/\/+$/, "");
+  const target = parts.length < 2 ? undefined : parts.at(-1);
+  return (target ?? "").replace(/\/+$/, "");
 }
 
 function covers(mount: string, target: string): boolean {

@@ -49,6 +49,15 @@ describe("matchAbsPathToKey", () => {
     expect(matchAbsPathToKey("/home/user/project", roots)).toBe("0:");
   });
 
+  it("handles nested and duplicate roots with trailing slashes", () => {
+    // Exact match wins over an already-matched shorter outer root.
+    expect(matchAbsPathToKey("/repo/sub", [root(0, "/repo"), root(1, "/repo/sub")])).toBe("1:");
+    // Duplicate exact match does not replace an earlier equal-or-longer root.
+    expect(matchAbsPathToKey("/repo/sub", [root(0, "/repo/sub/"), root(1, "/repo/sub")])).toBe("0:");
+    // Nested prefix match compares against a prior root that had a trailing slash.
+    expect(matchAbsPathToKey("/repo/sub/a.ts", [root(0, "/repo/"), root(1, "/repo/sub")])).toBe("1:a.ts");
+  });
+
   it("returns null for an empty roots list", () => {
     expect(matchAbsPathToKey("/anything.ts", [])).toBeNull();
   });

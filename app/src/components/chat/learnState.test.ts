@@ -43,6 +43,10 @@ describe("learnToggleTitle", () => {
     expect(learnToggleTitle("off", true)).toMatch(/^Learn is off — set for this channel\./);
     expect(learnToggleTitle("off", true)).toMatch(/Click to turn it on\.$/);
   });
+
+  it("names an off config default", () => {
+    expect(learnToggleTitle("", false)).toMatch(/^Learn is off — config default \(off\)\./);
+  });
 });
 
 function proposal(over: Partial<LearnProposal>): LearnProposal {
@@ -100,6 +104,11 @@ describe("learnPassesByMessage", () => {
     expect(got.get("a")?.id).toBe(3);
     expect(got.get("b")?.status).toBe("running");
     expect(got.size).toBe(2);
+  });
+
+  it("keeps the newest pass when an older one comes later", () => {
+    const got = learnPassesByMessage([pass({ id: 5, message_id: "a" }), pass({ id: 4, message_id: "a", status: "failed" })]);
+    expect(got.get("a")?.id).toBe(5);
   });
 });
 

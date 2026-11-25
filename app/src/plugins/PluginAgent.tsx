@@ -47,9 +47,10 @@ export function usePluginAgent(pluginId: string, channelId: string, subscribeCha
     let cancelled = false;
     fetchPluginAgent(pluginId, channelId)
       .then((a) => {
-        if (cancelled || !a.thread_id) return;
+        const thread = a.thread_id;
+        if (cancelled || !thread) return;
         // A run that started while this was in flight is newer.
-        setThreadId((cur) => cur ?? a.thread_id ?? null);
+        setThreadId((cur) => cur ?? thread);
         setRunning((cur) => cur || a.running);
       })
       .catch(logErr("looking up the plugin's agent"));
