@@ -1052,14 +1052,18 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   // attach — opening a file should give the editor alone, not the editor
   // + file tree combo.
   // The learn thread's FileLinks in the Learn view count too, and those of
-  // the channel's side chats: they share the channel's roots.
+  // the channel's side chats and their Learn views: they share the
+  // channel's roots.
   useEffect(() => {
     const handler = (ev: Event) => {
       const ce = ev as CustomEvent<FileLinkOpenDetail>;
       const from = ce.detail?.channelId;
-      if (!from || (from !== channelId && from !== learnChannelId && !sideChats.shows(channelId, from))) return;
-      // The editor is in the layout: the Learn view closes to show it.
+      if (!from) return;
+      const side = Object.values(sideChatViewsRef.current).find((v) => v.sideChannelId === from || v.learnChannelId === from);
+      if (from !== channelId && from !== learnChannelId && !side) return;
+      // The editor is in the layout: the view over it closes to show it.
       setLearnOpen(false);
+      if (side?.open) side.close();
       const { target, line, pin } = ce.detail;
       const pathKey = makePathKey(target.rootIndex, target.relPath);
 

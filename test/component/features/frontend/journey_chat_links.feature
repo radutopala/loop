@@ -80,3 +80,43 @@ Feature: Chat Links Journey
     # the channel's editor.
     When I click on "[data-testid='side-chat'] a[href='#']"
     Then I wait for text "sidechatlinktarget" to appear
+
+  @chat-file-links
+  Scenario: A file link in a side chat's Learn view opens the file in the channel's editor
+    Given I set up a test channel via API for git repo "bdd-side-learn-links"
+    And I create a file "notes/learn.md" in the repo with:
+      """
+      sidelearnlinktarget
+      """
+    And I open the app in a browser
+    And I wait for text "bdd-side-learn-links" to appear
+
+    When I click on "bdd-side-learn-links" in the sidebar
+    And I wait for "textarea" to be visible
+    And I add a "Chat (Fresh session)" panel
+    Then I wait for "[data-testid='side-chat'] textarea" to be visible
+    Given the current channel becomes its side chat
+    And the current channel has a learn thread
+    And the learn thread has a bot message:
+      """
+      Learn reply: see notes/learn.md for what changed.
+      """
+    When I open the app in a browser
+    And I wait for text "bdd-side-learn-links" to appear
+    And I click on "bdd-side-learn-links" in the sidebar
+    Then I wait for "[data-testid='side-chat'] textarea" to be visible
+    When I inject a "learn.started" event for the channel with data:
+      """
+      {"learn_channel_id":"{learn_channel_id}"}
+      """
+    And I inject a "agent.status" event for the learn thread with data:
+      """
+      {"status":"completed","run_id":"bdd-side-learn-run"}
+      """
+    And I click on "[data-testid='learn-badge'][aria-expanded='false']"
+    Then I wait for "[data-testid='side-chat-split'][data-view='learn']" to be visible
+    And I wait for "[data-testid='side-chat-split'] [data-learn-thread] a[href='#']" to be visible
+    # The link closes the view and opens the file in the channel's editor.
+    When I click on "[data-testid='side-chat-split'] [data-learn-thread] a[href='#']"
+    Then I wait up to "5s" for "[data-testid='side-chat-split']" to disappear
+    And I wait for text "sidelearnlinktarget" to appear

@@ -98,17 +98,6 @@ describe("SideChats.open", () => {
   });
 });
 
-describe("SideChats.shows", () => {
-  it("tells the channel's side chats from others", async () => {
-    const { deps } = fakeDeps();
-    const sc = new SideChats(deps);
-    await sc.open("c1", "p1", "fork");
-    expect(sc.shows("c1", "side-1")).toBe(true);
-    expect(sc.shows("c1", "side-2")).toBe(false);
-    expect(sc.shows("c2", "side-1")).toBe(false);
-  });
-});
-
 describe("SideChats.close", () => {
   it("ends the pane's side chat and forgets it", async () => {
     const { deps, stored, server } = fakeDeps();

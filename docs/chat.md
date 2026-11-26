@@ -171,7 +171,7 @@ Every component gets a small stepper: each `<section data-step="Title">` becomes
 
 ## File Links
 
-Paths that look like files in the channel's working tree are auto-detected in both message text and tool-use input blocks, validated against the loop fs, and rendered as clickable links. Clicking opens the file in the editor panel and scrolls to the parsed line.
+Paths that look like files in the channel's working tree are auto-detected in both message text and tool-use input blocks, validated against the loop fs, and rendered as clickable links. Clicking opens the file in the editor panel and scrolls to the parsed line. The links in a [side chat](#side-chats), and in its Learn view, open the file in the channel's editor, as the chat's do; a view over the layout closes to show it.
 
 ### Detection
 
