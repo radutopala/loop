@@ -87,6 +87,7 @@ Tabs at the top of the list switch between Recent and Tree (the channel tree); t
 ## Search
 
 The search box sits below the header and provides real-time case-insensitive filtering.
+Resting the pointer on it shows a card, like the tab bar's, with what it matches and how `tag:name` filters.
 
 ### Behavior
 
@@ -160,6 +161,7 @@ The DM channel is always pinned at the top of the channel list:
 - Auto-selected on first load if no channel is selected and no hash is present
 - Cannot be deleted (excluded from context menu delete option)
 - Cannot be selected in batch selection mode
+- Stays through a text search, but a `tag:name` search hides it unless a thread in it carries the tag (the DM itself can't be tagged)
 
 ---
 

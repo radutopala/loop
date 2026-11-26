@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
+import { SectionInfo } from "./InfoPopup";
 
 function NewMenu({ onNewProject, onOpenDirectory, onClose }: { onNewProject: () => void; onOpenDirectory?: () => void; onClose: () => void }) {
   const { colors } = useTheme();
@@ -123,6 +124,8 @@ export function SidebarHeader({
   const { colors } = useTheme();
   const [newMenuOpen, setNewMenuOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchBoxRef = useRef<HTMLDivElement>(null);
+  const [searchHovered, setSearchHovered] = useState(false);
 
   const sidebarBtnStyle: React.CSSProperties = {
     background: "none",
@@ -269,7 +272,7 @@ export function SidebarHeader({
         />
       )}
       <div style={{ padding: "6px 12px 4px", flexShrink: 0, display: "flex", alignItems: "center", gap: 4 }}>
-        <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
+        <div ref={searchBoxRef} onMouseEnter={() => setSearchHovered(true)} onMouseLeave={() => setSearchHovered(false)} style={{ position: "relative", flex: 1, minWidth: 0 }}>
           <svg
             width="13"
             height="13"
@@ -350,6 +353,18 @@ export function SidebarHeader({
             </button>
           )}
         </div>
+        <SectionInfo
+          anchorRef={searchBoxRef}
+          hovered={searchHovered}
+          testId="sidebar-search-info"
+          title="Search"
+          description="Filters the sessions by name, description, ticket URL, branch, PR title or reference (#12, !12), and the channel a thread is in. Esc clears it."
+          lines={[
+            ["tag:name", "only the rows carrying that tag", "tag"],
+            ["tag:a tag:b", "rows carrying both", "tags"],
+            ["tag:api login", "tagged api, with login in the text", "both"],
+          ]}
+        />
       </div>
       {creatingChannel && (
         <div style={{ padding: "4px 12px 8px" }}>

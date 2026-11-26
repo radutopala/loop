@@ -18,7 +18,7 @@ import { RenameThreadDialog } from "./RenameThreadDialog";
 import { type SectionKey, SectionTabs, SessionSections } from "./SessionSections";
 import { SidebarFooter } from "./SidebarFooter";
 import { SidebarHeader } from "./SidebarHeader";
-import { activeSessions, isSearching, isTaskThread, matchesSearch, recentSessions, sessionContext } from "./sessions";
+import { activeSessions, isSearching, isTaskThread, matchesSearch, parseSearch, recentSessions, sessionContext } from "./sessions";
 import { SIDEBAR_MIN_WIDTH, savedSidebarWidth } from "./sidebarWidth";
 import { TagsDialog } from "./TagsDialog";
 import { TicketDialog } from "./TicketDialog";
@@ -510,7 +510,6 @@ export function Sidebar({
 
   // Separate DM channel (pinned at top) from regular channels.
   const dm = channels.find((c) => c.name === "dm" && !c.parent_id);
-  const dmChannel = dm && shownInTree(dm) ? dm : undefined;
   const allTopLevel = sortByOrder(
     channels.filter((c) => !c.parent_id && (c.name || c.dir_path) && !(c.name === "dm" && !c.parent_id) && shownInTree(c)),
     channelOrder,
@@ -524,18 +523,17 @@ export function Sidebar({
   };
 
   // When searching, show channels that match or have matching threads/sub-threads.
-  const topLevel = searching
-    ? allTopLevel.filter((c) => {
-        const threads = threadsByParent[c.id] ?? [];
-        return matchesSearch(c, query) || threads.some(threadTreeMatches);
-      })
-    : allTopLevel;
+  const inSearch = (c: Channel) => !searching || matchesSearch(c, query) || (threadsByParent[c.id] ?? []).some(threadTreeMatches);
+  const topLevel = allTopLevel.filter(inSearch);
+  // The DM stays pinned on top through a text search, but not through a
+  // tag:x it (or a thread in it) doesn't carry.
+  const dmChannel = dm && shownInTree(dm) && (parseSearch(query).tags.length === 0 || inSearch(dm)) ? dm : undefined;
 
   // Filter threads when searching.
   const getFilteredThreads = (parentId: string): Channel[] => {
     const threads = threadsByParent[parentId] ?? [];
     if (!searching) return threads;
-    const parent = allTopLevel.find((c) => c.id === parentId);
+    const parent = parentId === dm?.id ? dm : allTopLevel.find((c) => c.id === parentId);
     if (parent && matchesSearch(parent, query)) return threads;
     return threads.filter(threadTreeMatches);
   };

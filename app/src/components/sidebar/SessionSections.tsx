@@ -1,8 +1,8 @@
-import { Fragment, type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { Channel } from "../../types";
-import { InfoPopup } from "./InfoPopup";
+import { SectionInfo } from "./InfoPopup";
 import type { PillKind } from "./pills";
 import { fixingPill, REVIEWING_PILL, SIDEBAR_PILLS, useShownPills } from "./pills";
 import { RowInfoPopup } from "./RowInfoPopup";
@@ -225,37 +225,6 @@ export function SectionTabs({ tab, showTabs, recentCount, onChange, hideTasks, o
 }
 
 type SectionInfoKey = SectionKey | "bell" | "tasks";
-
-interface SectionInfoProps {
-  anchorRef: RefObject<HTMLElement | null>;
-  hovered: boolean;
-  testId: string;
-  title: string;
-  description: string;
-  /** Label, value and an optional key for the value's test id (the label's text otherwise). */
-  lines: [ReactNode, string, string?][];
-}
-
-/** The info card of a control in the bar above the list. */
-function SectionInfo({ anchorRef, hovered, testId, title, description, lines }: SectionInfoProps) {
-  const { colors } = useTheme();
-  return (
-    <InfoPopup anchorRef={anchorRef} hovered={hovered} testId={testId} title={title}>
-      <div style={{ gridColumn: "1 / -1", color: colors.textLight, maxWidth: 320, marginBottom: 4 }}>{description}</div>
-      {lines.map(([label, value, key]) => {
-        const id = key ?? String(label);
-        return (
-          <Fragment key={id}>
-            <span style={{ color: colors.textMuted }}>{label}</span>
-            <span data-testid={`${testId}-${id.replace(/ /g, "-")}`} style={{ color: colors.textLight }}>
-              {value}
-            </span>
-          </Fragment>
-        );
-      })}
-    </InfoPopup>
-  );
-}
 
 interface SessionRowProps {
   channel: Channel;

@@ -160,13 +160,30 @@ describe("Sidebar", () => {
       const { user } = setup({ channels });
       const search = screen.getByPlaceholderText("Search...");
       await user.type(search, "tag:api");
-      expect(channelRowNames()).toEqual(["dm", "alpha", "beta"]);
+      // The untagged DM goes, unlike in a text search.
+      expect(channelRowNames()).toEqual(["alpha", "beta"]);
       // A tagged channel keeps all its threads, as a matching one does.
       expect(threadNames()).toEqual(["three", "bee"]);
       await user.type(search, " tag:web");
-      expect(channelRowNames()).toEqual(["dm", "alpha"]);
+      expect(channelRowNames()).toEqual(["alpha"]);
       await user.type(search, " nothing");
+      expect(channelRowNames()).toEqual([]);
+    });
+
+    it("keeps the DM for a tag:x a thread in it carries, with only that thread", async () => {
+      const dmThreads = [channel({ id: "dt", name: "tagged", parent_id: "dm", tags: ["api"] }), channel({ id: "du", name: "plain", parent_id: "dm" })];
+      const { user } = setup({ channels: [...all, ...dmThreads] });
+      await user.type(screen.getByPlaceholderText("Search..."), "tag:api");
       expect(channelRowNames()).toEqual(["dm"]);
+      expect(threadNames()).toEqual(["tagged"]);
+    });
+
+    it("keeps all the DM's threads when the DM matches", async () => {
+      const dmThreads = [channel({ id: "dt", name: "first", parent_id: "dm" }), channel({ id: "du", name: "second", parent_id: "dm" })];
+      const { user } = setup({ channels: [...all, ...dmThreads] });
+      await user.type(screen.getByPlaceholderText("Search..."), "dm");
+      expect(channelRowNames()).toEqual(["dm"]);
+      expect(threadNames()).toEqual(["first", "second"]);
     });
   });
 
