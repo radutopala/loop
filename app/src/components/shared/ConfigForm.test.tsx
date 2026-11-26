@@ -270,6 +270,26 @@ describe("ConfigForm", () => {
       expect(onDirtyChange).not.toHaveBeenCalled();
     });
 
+    it("refuses to save the form over a file it couldn't parse, until the JSON view parses", async () => {
+      const { user, ref, onSave } = renderForm({ schema, config: cfg(null, "{broken") });
+      await user.type(row("name").querySelector("input")!, "b");
+      await act(() => ref.current!.save());
+      expect(onSave).not.toHaveBeenCalled();
+      expect(screen.getByText(/couldn't be parsed/)).toBeTruthy();
+
+      act(() => ref.current!.cancel());
+      await act(() => ref.current!.save());
+      expect(onSave).not.toHaveBeenCalled();
+
+      await user.click(screen.getByRole("button", { name: "JSON" }));
+      await act(() => ref.current!.save());
+      expect(onSave).toHaveBeenCalledWith("{broken");
+      setEditorDoc('{"name": "fixed"}');
+      await user.click(screen.getByRole("button", { name: "Form" }));
+      await act(() => ref.current!.save());
+      expect(saved(onSave, 1)).toEqual({ name: "fixed" });
+    });
+
     it("cancel restores the loaded config", async () => {
       const { user, ref, onDirtyChange } = renderForm({ schema, config: cfg({ name: "a" }) });
       await user.type(row("name").querySelector("input")!, "b");

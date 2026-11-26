@@ -61,6 +61,7 @@ func (s *ParserSuite) TestSupportsKnownExtensions() {
 		"foo.go", "Foo.GO",
 		"bar.ts", "bar.tsx",
 		"baz.js", "baz.jsx", "baz.mjs", "baz.cjs",
+		"qux.py", "lib.rs",
 	}
 	for _, p := range known {
 		require.Truef(s.T(), s.parser.Supports(p), "expected Supports(%q) = true", p)
@@ -68,7 +69,7 @@ func (s *ParserSuite) TestSupportsKnownExtensions() {
 }
 
 func (s *ParserSuite) TestSupportsRejectsUnknownExtensions() {
-	unknown := []string{"foo.py", "bar.rs", "no-extension", "README.md"}
+	unknown := []string{"foo.rb", "bar.java", "stub.pyi", "no-extension", "README.md"}
 	for _, p := range unknown {
 		require.Falsef(s.T(), s.parser.Supports(p), "expected Supports(%q) = false", p)
 	}
@@ -139,10 +140,148 @@ func (s *ParserSuite) TestParseJavaScript() {
 	require.Equal(s.T(), []Call{{Name: "greet", StartLine: 6}}, facts.Calls)
 }
 
+func (s *ParserSuite) TestParsePython() {
+	facts, err := s.parser.Parse("sample.py", s.loadTestdata("sample.py"))
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "python", facts.Language)
+	require.False(s.T(), facts.ParseFailed)
+	require.Equal(s.T(), 15, facts.LOC)
+
+	require.Equal(s.T(), []sigOnly{
+		{Name: "greet", StartLine: 9, EndLine: 10},
+		{Name: "make_widget", StartLine: 14, EndLine: 15},
+	}, signatures(facts.Functions))
+	require.Equal(s.T(), []TypeDecl{{Name: "Widget", StartLine: 8}}, facts.Types)
+	require.Equal(s.T(), []Import{
+		{Path: "os", StartLine: 1},
+		{Path: "os/path", StartLine: 2},
+		{Path: "./__init__", StartLine: 3},
+		{Path: "./sibling", StartLine: 3},
+		{Path: "../pkg/mod", StartLine: 4},
+		{Path: "../pkg/mod/thing", StartLine: 4},
+		{Path: "../pkg/mod/other", StartLine: 4},
+		{Path: "pkg", StartLine: 5},
+		{Path: "pkg/x", StartLine: 5},
+	}, facts.Imports)
+	require.Equal(s.T(), []Call{
+		{Name: "helper", StartLine: 10},
+		{Name: "build", StartLine: 15},
+	}, facts.Calls)
+}
+
+func (s *ParserSuite) TestParseRust() {
+	facts, err := s.parser.Parse("sample.rs", s.loadTestdata("sample.rs"))
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "rust", facts.Language)
+	require.False(s.T(), facts.ParseFailed)
+
+	require.Equal(s.T(), []sigOnly{
+		{Name: "area", StartLine: 9, EndLine: 9},
+		{Name: "new", StartLine: 13, EndLine: 18},
+		{Name: "it_works", StartLine: 22, EndLine: 22},
+	}, signatures(facts.Functions))
+	entries := map[string]bool{}
+	for _, f := range facts.Functions {
+		entries[f.Name] = f.Entry
+	}
+	require.Equal(s.T(), map[string]bool{"area": false, "new": false, "it_works": true}, entries)
+	require.Equal(s.T(), []TypeDecl{
+		{Name: "Widget", StartLine: 7},
+		{Name: "Shape", StartLine: 8},
+		{Name: "Area", StartLine: 9},
+		{Name: "Alias", StartLine: 10},
+	}, facts.Types)
+	// The inline `mod inline {}` names no file, so it isn't an import.
+	require.Equal(s.T(), []Import{
+		{Path: "std::collections::HashMap", StartLine: 1},
+		{Path: "crate::graph::Node", StartLine: 2},
+		{Path: "crate::graph::edge", StartLine: 2},
+		{Path: "crate::graph::edge::Edge", StartLine: 2},
+		{Path: "super", StartLine: 3},
+		{Path: "self::inner", StartLine: 4},
+	}, facts.Imports)
+	require.Equal(s.T(), []Call{
+		{Name: "helper", StartLine: 14},
+		{Name: "new", StartLine: 15},
+		{Name: "clone", StartLine: 16},
+	}, facts.Calls)
+}
+
+func (s *ParserSuite) TestParseDropsEmptyImportPath() {
+	facts, err := s.parser.Parse("empty.go", []byte("package p\n\nimport \"\"\n"))
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), facts.Imports)
+}
+
+func (s *ParserSuite) TestPythonImportPaths() {
+	cases := []struct {
+		raw  string
+		want []string
+	}{
+		{raw: "os", want: []string{"os"}},
+		{raw: "a.b.c", want: []string{"a/b/c"}},
+		{raw: "from . import sib", want: []string{"./__init__", "./sib"}},
+		{raw: "from .. import x", want: []string{"../__init__", "../x"}},
+		{raw: "from .sib import A, B as C", want: []string{"./sib", "./sib/A", "./sib/B"}},
+		{raw: "from ..pkg.mod import thing", want: []string{"../pkg/mod", "../pkg/mod/thing"}},
+		{raw: "from ...up import *", want: []string{"../../up"}},
+		{raw: "from a.b import (\n    x,  # why\n    y,\n)", want: []string{"a/b", "a/b/x", "a/b/y"}},
+		{raw: "from a import x, \\\n    y", want: []string{"a", "a/x", "a/y"}},
+		{raw: "from . sib import z", want: []string{"./sib", "./sib/z"}},
+	}
+	for _, tc := range cases {
+		require.Equalf(s.T(), tc.want, pythonImportPaths(tc.raw), "raw %q", tc.raw)
+	}
+}
+
+func (s *ParserSuite) TestRustImportPaths() {
+	cases := []struct {
+		raw  string
+		want []string
+	}{
+		{raw: "std::fmt", want: []string{"std::fmt"}},
+		{raw: "::std::fmt", want: []string{"std::fmt"}},
+		{raw: "crate::a::*", want: []string{"crate::a"}},
+		{raw: "super::*", want: []string{"super"}},
+		{raw: "crate::a as b", want: []string{"crate::a"}},
+		{raw: "crate::{a::X, b::{self, Y as Z}}", want: []string{"crate::a::X", "crate::b", "crate::b::Y"}},
+		{raw: "crate::{\n    a,\n    b,\n}", want: []string{"crate::a", "crate::b"}},
+		{raw: "{a, b}", want: []string{"a", "b"}},
+		{raw: "crate::{a, b", want: []string{"crate::a", "crate::b"}},
+		{raw: "*", want: nil},
+	}
+	for _, tc := range cases {
+		require.Equalf(s.T(), tc.want, rustImportPaths(tc.raw), "raw %q", tc.raw)
+	}
+}
+
+func (s *ParserSuite) TestIsTestAttributed() {
+	cases := []struct {
+		src  string
+		want bool
+	}{
+		{src: "#[test]\nfn f() {}", want: true},
+		{src: "#[tokio::test]\nfn f() {}", want: true},
+		{src: "#[test]\n// why\n#[ignore]\nfn f() {}", want: true},
+		{src: "#[test_case(1)]\nfn f() {}", want: false},
+		{src: "#[inline]\nfn f() {}", want: false},
+		{src: "struct S;\nfn f() {}", want: false},
+		{src: "fn f() {}", want: false},
+	}
+	lang := grammars.RustLanguage()
+	for _, tc := range cases {
+		tree, err := gotreesitter.NewParser(lang).Parse([]byte(tc.src))
+		require.NoError(s.T(), err)
+		fn := findFirstNamedDescendant(tree.RootNode(), lang, "function_item")
+		require.NotNil(s.T(), fn, tc.src)
+		require.Equalf(s.T(), tc.want, isTestAttributed(lang, fn, []byte(tc.src)), "src %q", tc.src)
+	}
+}
+
 // --- Parse: edge cases ---
 
 func (s *ParserSuite) TestParseRejectsUnsupportedExtension() {
-	_, err := s.parser.Parse("foo.py", []byte("print('hi')"))
+	_, err := s.parser.Parse("foo.rb", []byte("puts 'hi'"))
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "unsupported file")
 }
@@ -268,6 +407,47 @@ func (s *ParserSuite) TestParseBodyJavaScript() {
 	require.Equal(s.T(), 3, branchy.MaxNesting)
 }
 
+func (s *ParserSuite) TestParseBodyPython() {
+	facts, err := s.parser.Parse("complex.py", s.loadTestdata("complex.py"))
+	require.NoError(s.T(), err)
+	bodies := bodiesByName(facts.Functions)
+
+	branchy := bodies["branchy"]
+	require.NotNil(s.T(), branchy)
+	require.Equal(s.T(), 19, branchy.LOC)
+	// self and the bare `*` separator aren't parameters.
+	require.Equal(s.T(), 3, branchy.ParamCount)
+	require.Equal(s.T(), 3, branchy.MaxNesting)
+	require.Equal(s.T(), 14, branchy.DecisionPoints)
+	require.Equal(s.T(), 24, branchy.CognitiveLoad)
+
+	trivial := bodies["trivial"]
+	require.NotNil(s.T(), trivial)
+	require.Equal(s.T(), 1, trivial.ParamCount)
+	require.Equal(s.T(), 1, trivial.DecisionPoints)
+	require.Equal(s.T(), 0, trivial.CognitiveLoad)
+}
+
+func (s *ParserSuite) TestParseBodyRust() {
+	facts, err := s.parser.Parse("complex.rs", s.loadTestdata("complex.rs"))
+	require.NoError(s.T(), err)
+	bodies := bodiesByName(facts.Functions)
+
+	branchy := bodies["branchy"]
+	require.NotNil(s.T(), branchy)
+	require.Equal(s.T(), 22, branchy.LOC)
+	// &self is a receiver, not a parameter.
+	require.Equal(s.T(), 3, branchy.ParamCount)
+	require.Equal(s.T(), 3, branchy.MaxNesting)
+	require.Equal(s.T(), 9, branchy.DecisionPoints)
+	require.Equal(s.T(), 18, branchy.CognitiveLoad)
+
+	trivial := bodies["trivial"]
+	require.NotNil(s.T(), trivial)
+	require.Equal(s.T(), 1, trivial.ParamCount)
+	require.Equal(s.T(), 1, trivial.DecisionPoints)
+}
+
 func (s *ParserSuite) TestShingleStability() {
 	src := s.loadTestdata("complex.go")
 	a, err := s.parser.Parse("complex.go", src)
@@ -323,7 +503,7 @@ func (s *ParserSuite) TestIsShortCircuitOnNonBinaryNode() {
 }
 
 func (s *ParserSuite) TestCountParamsNoParamListField() {
-	require.Equal(s.T(), 0, countParams(nil, nil, langProfile{}))
+	require.Equal(s.T(), 0, countParams(nil, nil, langProfile{}, nil))
 }
 
 func (s *ParserSuite) TestCountParamsMissingFieldOnNode() {
@@ -334,7 +514,7 @@ func (s *ParserSuite) TestCountParamsMissingFieldOnNode() {
 	fn := findFirstNamedDescendant(tree.RootNode(), lang, "function_declaration")
 	require.NotNil(s.T(), fn)
 	// Use a profile that points at a non-existent field — list lookup misses.
-	require.Equal(s.T(), 0, countParams(lang, fn, langProfile{paramListField: "no_such_field"}))
+	require.Equal(s.T(), 0, countParams(lang, fn, langProfile{paramListField: "no_such_field"}, nil))
 }
 
 func (s *ParserSuite) TestCountParamsCountsNamedChildrenWhenChildTypeUnset() {
@@ -344,7 +524,7 @@ func (s *ParserSuite) TestCountParamsCountsNamedChildrenWhenChildTypeUnset() {
 	require.NoError(s.T(), err)
 	fn := findFirstNamedDescendant(tree.RootNode(), lang, "function_declaration")
 	require.NotNil(s.T(), fn)
-	require.Equal(s.T(), 3, countParams(lang, fn, jsProfile))
+	require.Equal(s.T(), 3, countParams(lang, fn, jsProfile, src))
 }
 
 func (s *ParserSuite) TestCountParamsSkipsNonMatchingChildType() {
@@ -361,7 +541,7 @@ func (s *ParserSuite) TestCountParamsSkipsNonMatchingChildType() {
 		paramListChildType: "no_such_type",
 		paramNameLeafType:  "identifier",
 	}
-	require.Equal(s.T(), 0, countParams(lang, fn, mismatched))
+	require.Equal(s.T(), 0, countParams(lang, fn, mismatched, nil))
 }
 
 func (s *ParserSuite) TestCountLeavesEmptySubtreeCountsOne() {
@@ -385,6 +565,18 @@ func (s *ParserSuite) TestNormaliseTokenAllBranches() {
 	require.Equal(s.T(), "LIT_BOOL", normaliseToken("null"))
 	require.Equal(s.T(), "LIT_BOOL", normaliseToken("undefined"))
 	require.Equal(s.T(), "block", normaliseToken("block"))
+	for _, tc := range []struct{ node, want string }{
+		{node: "shorthand_field_identifier", want: "IDENT"},
+		{node: "string_content", want: "LIT_STR"},
+		{node: "integer", want: "LIT_NUM"},
+		{node: "float", want: "LIT_NUM"},
+		{node: "integer_literal", want: "LIT_NUM"},
+		{node: "char_literal", want: "LIT_NUM"},
+		{node: "none", want: "LIT_BOOL"},
+		{node: "boolean_literal", want: "LIT_BOOL"},
+	} {
+		require.Equalf(s.T(), tc.want, normaliseToken(tc.node), "node %q", tc.node)
+	}
 }
 
 func (s *ParserSuite) TestShingleTokensBelowK() {

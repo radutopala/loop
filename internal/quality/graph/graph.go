@@ -153,7 +153,8 @@ var candidateExts = []string{".go", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"
 //  4. file-suffix match (module-style TS/JS imports without extension).
 //
 // fromLang is the importer's language ("go", "typescript", "javascript",
-// or ""). Go bare imports (no slash) are always stdlib (e.g. "embed",
+// "python", "rust", or ""). Python and Rust have their own resolvers,
+// since their import paths follow module rules rather than file paths. Go bare imports (no slash) are always stdlib (e.g. "embed",
 // "fmt") and never resolve to a local file — without that guard, the
 // fuzzy file-suffix match in steps 3–4 would falsely tie any local
 // `*/embed.go` to every Go file that imports the stdlib `embed` package
@@ -168,6 +169,12 @@ func resolveImport(impPath, fromPath, fromLang string, index map[string]int, dir
 	}
 	if idx, ok := index[imp]; ok {
 		return idx, true
+	}
+	switch fromLang {
+	case "python":
+		return resolvePythonImport(imp, fromPath, index)
+	case "rust":
+		return resolveRustImport(imp, fromPath, index)
 	}
 
 	if strings.HasPrefix(imp, "./") || strings.HasPrefix(imp, "../") {
@@ -225,6 +232,108 @@ func resolveImport(impPath, fromPath, fromLang string, index map[string]int, dir
 	return best, best >= 0
 }
 
+// resolvePythonImport resolves a module path from parser.pythonImportPaths
+// ("a/b", "./sib", "../pkg/__init__") to a module file or a package's
+// __init__.py. A relative path resolves against the importer's directory.
+// An absolute one matches by path suffix, but only from a directory that
+// isn't itself a package (no __init__.py): Python imports a module by its
+// full name from a source root, so "util" never names "pkg/util.py". The
+// shortest match wins, ties going to the lowest index.
+func resolvePythonImport(imp, fromPath string, index map[string]int) (int, bool) {
+	candidates := []string{imp + ".py", imp + "/__init__.py"}
+	if strings.HasPrefix(imp, "./") || strings.HasPrefix(imp, "../") {
+		for _, c := range candidates {
+			if idx, ok := index[path.Join(path.Dir(fromPath), c)]; ok {
+				return idx, true
+			}
+		}
+		return -1, false
+	}
+	best, bestLen := -1, math.MaxInt
+	for p, idx := range index {
+		for _, c := range candidates {
+			root, ok := strings.CutSuffix(p, c)
+			if !ok || (root != "" && !strings.HasSuffix(root, "/")) {
+				continue
+			}
+			if _, pkg := index[root+"__init__.py"]; pkg && root != "" {
+				continue
+			}
+			if len(p) < bestLen || (len(p) == bestLen && idx < best) {
+				best, bestLen = idx, len(p)
+			}
+		}
+	}
+	return best, best >= 0
+}
+
+// resolveRustImport resolves a `use` or `mod` path from
+// parser.rustImportPaths to the file of the deepest module it names.
+// "crate::" starts at the crate root (the nearest directory up with a
+// lib.rs or main.rs), "self::" at the importer's own module, and each
+// "super::" one module up. Any other path is tried from the importer's
+// own module, for a child declared with `mod`; external crates such as
+// std find no file and are dropped.
+func resolveRustImport(imp, fromPath string, index map[string]int) (int, bool) {
+	segs := strings.Split(imp, "::")
+	base := rustModuleDir(fromPath)
+	minDepth := 1
+	switch segs[0] {
+	case "crate":
+		root, ok := rustCrateRoot(fromPath, index)
+		if !ok {
+			return -1, false
+		}
+		base, segs, minDepth = root, segs[1:], 0
+	case "self", "super":
+		for len(segs) > 0 && segs[0] == "super" {
+			base = path.Dir(base)
+			segs = segs[1:]
+		}
+		if len(segs) > 0 && segs[0] == "self" {
+			segs = segs[1:]
+		}
+		minDepth = 0
+	}
+	// The path's tail can name an item (a type or fn) rather than a
+	// module, so try the longest module prefix first.
+	for depth := len(segs); depth >= minDepth; depth-- {
+		dir := path.Join(append([]string{base}, segs[:depth]...)...)
+		for _, c := range []string{dir + ".rs", dir + "/mod.rs", dir + "/lib.rs", dir + "/main.rs"} {
+			if idx, ok := index[c]; ok {
+				return idx, true
+			}
+		}
+	}
+	return -1, false
+}
+
+// rustModuleDir is the directory holding a Rust file's child modules:
+// a mod.rs, lib.rs or main.rs file's own directory, and "x/foo" for any
+// other "x/foo.rs".
+func rustModuleDir(p string) string {
+	switch path.Base(p) {
+	case "mod.rs", "lib.rs", "main.rs":
+		return path.Dir(p)
+	}
+	return strings.TrimSuffix(p, ".rs")
+}
+
+// rustCrateRoot walks up from p's directory to the first one with a
+// lib.rs or main.rs.
+func rustCrateRoot(p string, index map[string]int) (string, bool) {
+	for dir := path.Dir(p); ; dir = path.Dir(dir) {
+		for _, root := range []string{"lib.rs", "main.rs"} {
+			if _, ok := index[path.Join(dir, root)]; ok {
+				return dir, true
+			}
+		}
+		if dir == "." || dir == "/" {
+			return "", false
+		}
+	}
+}
+
 // jsExts are the JS/TS source extensions whose test naming conventions
 // IsTestPath applies.
 var jsExts = map[string]bool{
@@ -233,8 +342,10 @@ var jsExts = map[string]bool{
 }
 
 // IsTestPath reports whether the slash-separated path p is a test file.
-// Each naming convention applies to its own language: Go's *_test.go, and
-// JS/TS *.test.*, *.spec.* and files under a __tests__ dir. Anything
+// Each naming convention applies to its own language: Go's *_test.go;
+// JS/TS *.test.*, *.spec.* and files under a __tests__ dir; Python's
+// test_*.py, *_test.py, conftest.py and files under a tests dir; and
+// Rust files under a tests dir (integration tests). Anything
 // under a testdata dir counts whatever its language, since it holds
 // fixtures (Go tooling skips the dir).
 func IsTestPath(p string) bool {
@@ -248,6 +359,10 @@ func IsTestPath(p string) bool {
 		return strings.HasSuffix(base, "_test.go")
 	case jsExts[ext]:
 		return strings.Contains(base, ".test.") || strings.Contains(base, ".spec.") || underDir(p, "__tests__")
+	case ext == ".py":
+		return strings.HasPrefix(base, "test_") || strings.HasSuffix(base, "_test.py") || base == "conftest.py" || underDir(p, "tests")
+	case ext == ".rs":
+		return underDir(p, "tests")
 	}
 	return false
 }

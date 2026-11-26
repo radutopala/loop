@@ -234,8 +234,9 @@ func (s *ServerSuite) TestModifyShortcutAddGlobal() {
 	sys.On("UserHomeDir").Return("/home/testuser", nil)
 	sys.On("ReadFile", "/home/testuser/.loop/config.json").Return([]byte(`{"platforms":["local"]}`), nil)
 	var written []byte
-	sys.On("WriteFile", "/home/testuser/.loop/config.json", mock.Anything, mock.Anything).
+	sys.On("WriteFile", "/home/testuser/.loop/config.json.tmp", mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) { written = args.Get(1).([]byte) }).Return(nil)
+	sys.On("Rename", "/home/testuser/.loop/config.json.tmp", "/home/testuser/.loop/config.json").Return(nil)
 	s.srv.sys = sys
 
 	rec := s.testRequest("POST", "/api/shortcuts", `{
@@ -279,8 +280,9 @@ func (s *ServerSuite) TestModifyShortcutUpdate() {
 	sys.On("ReadFile", "/home/testuser/.loop/config.json").Return(
 		[]byte(`{"prompt_shortcuts":[{"name":"lint","prompt":"old","description":"old desc"}]}`), nil)
 	var written []byte
-	sys.On("WriteFile", "/home/testuser/.loop/config.json", mock.Anything, mock.Anything).
+	sys.On("WriteFile", "/home/testuser/.loop/config.json.tmp", mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) { written = args.Get(1).([]byte) }).Return(nil)
+	sys.On("Rename", "/home/testuser/.loop/config.json.tmp", "/home/testuser/.loop/config.json").Return(nil)
 	s.srv.sys = sys
 
 	rec := s.testRequest("POST", "/api/shortcuts", `{
@@ -319,8 +321,9 @@ func (s *ServerSuite) TestModifyShortcutDelete() {
 	sys.On("ReadFile", "/home/testuser/.loop/config.json").Return(
 		[]byte(`{"prompt_shortcuts":[{"name":"a","prompt":"pa"},{"name":"b","prompt":"pb"}]}`), nil)
 	var written []byte
-	sys.On("WriteFile", "/home/testuser/.loop/config.json", mock.Anything, mock.Anything).
+	sys.On("WriteFile", "/home/testuser/.loop/config.json.tmp", mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) { written = args.Get(1).([]byte) }).Return(nil)
+	sys.On("Rename", "/home/testuser/.loop/config.json.tmp", "/home/testuser/.loop/config.json").Return(nil)
 	s.srv.sys = sys
 
 	rec := s.testRequest("POST", "/api/shortcuts", `{
@@ -354,7 +357,8 @@ func (s *ServerSuite) TestModifyShortcutProjectScope() {
 	sys := new(testutil.MockSystem)
 	sys.On("MkdirAll", "/projects/app/.loop", os.FileMode(0755)).Return(nil)
 	sys.On("ReadFile", "/projects/app/.loop/config.json").Return([]byte(`{}`), nil)
-	sys.On("WriteFile", "/projects/app/.loop/config.json", mock.Anything, mock.Anything).Return(nil)
+	sys.On("WriteFile", "/projects/app/.loop/config.json.tmp", mock.Anything, mock.Anything).Return(nil)
+	sys.On("Rename", "/projects/app/.loop/config.json.tmp", "/projects/app/.loop/config.json").Return(nil)
 	s.srv.sys = sys
 	s.store.On("GetChannel", mock.Anything, "ch-proj").Return(&db.Channel{ChannelID: "ch-proj", DirPath: "/projects/app"}, nil)
 
@@ -439,7 +443,8 @@ func (s *ServerSuite) TestModifyShortcutNewConfigFile() {
 	sys := new(testutil.MockSystem)
 	sys.On("UserHomeDir").Return("/home/testuser", nil)
 	sys.On("ReadFile", "/home/testuser/.loop/config.json").Return(nil, os.ErrNotExist)
-	sys.On("WriteFile", "/home/testuser/.loop/config.json", mock.Anything, mock.Anything).Return(nil)
+	sys.On("WriteFile", "/home/testuser/.loop/config.json.tmp", mock.Anything, mock.Anything).Return(nil)
+	sys.On("Rename", "/home/testuser/.loop/config.json.tmp", "/home/testuser/.loop/config.json").Return(nil)
 	s.srv.sys = sys
 
 	rec := s.testRequest("POST", "/api/shortcuts", `{
@@ -456,8 +461,9 @@ func (s *ServerSuite) TestModifyShortcutWithPromptPath() {
 	sys.On("UserHomeDir").Return("/home/testuser", nil)
 	sys.On("ReadFile", "/home/testuser/.loop/config.json").Return([]byte(`{}`), nil)
 	var written []byte
-	sys.On("WriteFile", "/home/testuser/.loop/config.json", mock.Anything, mock.Anything).
+	sys.On("WriteFile", "/home/testuser/.loop/config.json.tmp", mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) { written = args.Get(1).([]byte) }).Return(nil)
+	sys.On("Rename", "/home/testuser/.loop/config.json.tmp", "/home/testuser/.loop/config.json").Return(nil)
 	s.srv.sys = sys
 
 	rec := s.testRequest("POST", "/api/shortcuts", `{
@@ -481,8 +487,9 @@ func (s *ServerSuite) TestModifyShortcutUpdateSwitchToPromptPath() {
 	sys.On("ReadFile", "/home/testuser/.loop/config.json").Return(
 		[]byte(`{"prompt_shortcuts":[{"name":"review","prompt":"inline review"}]}`), nil)
 	var written []byte
-	sys.On("WriteFile", "/home/testuser/.loop/config.json", mock.Anything, mock.Anything).
+	sys.On("WriteFile", "/home/testuser/.loop/config.json.tmp", mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) { written = args.Get(1).([]byte) }).Return(nil)
+	sys.On("Rename", "/home/testuser/.loop/config.json.tmp", "/home/testuser/.loop/config.json").Return(nil)
 	s.srv.sys = sys
 
 	rec := s.testRequest("POST", "/api/shortcuts", `{

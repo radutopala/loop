@@ -281,7 +281,7 @@ func redundancyFileDrag(g *graph.Graph) map[string]float64 {
 		}
 		dead := 0
 		for _, f := range n.Functions {
-			if isReachableByConvention(f.Name) {
+			if isReachableByConvention(f, n.Language) {
 				continue
 			}
 			if _, called := callSet[f.Name]; called {

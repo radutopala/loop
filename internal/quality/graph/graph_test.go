@@ -397,10 +397,138 @@ func (s *GraphSuite) TestIsTestPath() {
 		{"app/src/mod.test.mjs", true},
 		{"app/testdata/page.html", true},
 		{"docs/guide.spec.md", false},
+		{"pkg/test_parser.py", true},
+		{"pkg/parser_test.py", true},
+		{"conftest.py", true},
+		{"tests/helpers.py", true},
+		{"pkg/parser.py", false},
+		{"pkg/latest_x.py", false},
+		{"crate/tests/integration.rs", true},
+		{"src/lib.rs", false},
+		{"src/test_utils.rs", false},
+		{"tests/helpers.go", false},
 	}
 	for _, tc := range tests {
 		s.Run(tc.path, func() {
 			require.Equal(s.T(), tc.want, IsTestPath(tc.path))
 		})
 	}
+}
+
+func (s *GraphSuite) TestResolvePythonImport() {
+	index := map[string]int{
+		"app/main.py":         0,
+		"app/__init__.py":     1,
+		"app/util.py":         2,
+		"app/sub/__init__.py": 3,
+		"app/sub/leaf.py":     4,
+		"src/lib/core.py":     5,
+		"lib/core.py":         6,
+		"pkg/json.py":         7,
+		"pkg/__init__.py":     8,
+		"json.py":             9,
+		"xlib/core.py":        10,
+	}
+	tests := []struct {
+		name, imp, from string
+		want            int
+	}{
+		{"sibling module", "./util", "app/main.py", 2},
+		{"own package", "./__init__", "app/main.py", 1},
+		{"parent package module", "../util", "app/sub/leaf.py", 2},
+		{"relative package dir", "./sub", "app/main.py", 3},
+		{"missing relative", "./nope", "app/main.py", -1},
+		{"absolute module", "app/util", "src/lib/core.py", 2},
+		{"absolute package", "app/sub", "lib/core.py", 3},
+		{"shortest root wins", "lib/core", "app/main.py", 6},
+		{"module inside a package isn't a root", "util", "app/main.py", -1},
+		{"top-level module", "json", "pkg/json.py", 9},
+		{"stdlib", "os", "app/main.py", -1},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			idx, ok := resolveImport(tc.imp, tc.from, "python", index, nil)
+			require.Equal(s.T(), tc.want, idx)
+			require.Equal(s.T(), tc.want >= 0, ok)
+		})
+	}
+}
+
+func (s *GraphSuite) TestResolvePythonImportTieGoesToLowestIndex() {
+	// "a/m.py" and "b/m.py" aren't suffixes of each other, but both end in
+	// "/m.py" at the same length; neither dir is a package.
+	for range 20 {
+		idx, ok := resolveImport("m", "x.py", "python", map[string]int{"a/m.py": 3, "b/m.py": 1}, nil)
+		require.True(s.T(), ok)
+		require.Equal(s.T(), 1, idx)
+	}
+}
+
+func (s *GraphSuite) TestResolveRustImport() {
+	index := map[string]int{
+		"src/lib.rs":            0,
+		"src/graph.rs":          1,
+		"src/graph/edge.rs":     2,
+		"src/util/mod.rs":       3,
+		"src/util/fmt.rs":       4,
+		"tool/src/main.rs":      5,
+		"tool/src/cli.rs":       6,
+		"loose/orphan.rs":       7,
+		"src/graph/node/mod.rs": 8,
+	}
+	tests := []struct {
+		name, imp, from string
+		want            int
+	}{
+		{"crate item in module file", "crate::graph::Node", "src/util/fmt.rs", 1},
+		{"crate nested module", "crate::graph::edge::Edge", "src/lib.rs", 2},
+		{"crate mod.rs module", "crate::util", "src/graph.rs", 3},
+		{"crate root itself", "crate", "src/graph.rs", 0},
+		{"main.rs crate root", "crate::cli::run", "tool/src/main.rs", 6},
+		{"no crate root", "crate::x", "loose/orphan.rs", -1},
+		{"mod from lib.rs", "self::graph", "src/lib.rs", 1},
+		{"mod from a module file", "self::edge", "src/graph.rs", 2},
+		{"mod from mod.rs", "self::fmt", "src/util/mod.rs", 4},
+		{"mod to a mod.rs dir", "self::node", "src/graph.rs", 8},
+		{"super from a module file", "super::util", "src/graph.rs", 3},
+		{"super from mod.rs", "super::graph", "src/util/mod.rs", 1},
+		{"super module itself", "super", "src/graph/edge.rs", 1},
+		{"super super", "super::super::util", "src/graph/node/mod.rs", 3},
+		{"self then path", "self::edge::Edge", "src/graph.rs", 2},
+		{"child module without prefix", "edge::Edge", "src/graph.rs", 2},
+		{"external crate", "std::collections::HashMap", "src/lib.rs", -1},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			idx, ok := resolveImport(tc.imp, tc.from, "rust", index, nil)
+			require.Equal(s.T(), tc.want, idx)
+			require.Equal(s.T(), tc.want >= 0, ok)
+		})
+	}
+}
+
+func (s *GraphSuite) TestRustCrateRootAtTopLevel() {
+	idx, ok := resolveImport("crate::a", "b.rs", "rust", map[string]int{"lib.rs": 0, "a.rs": 1, "b.rs": 2}, nil)
+	require.True(s.T(), ok)
+	require.Equal(s.T(), 1, idx)
+}
+
+func (s *GraphSuite) TestBuildResolvesPythonAndRustImports() {
+	g := Build([]*parser.FileFacts{
+		{Path: "app/__init__.py", Language: "python"},
+		{Path: "app/main.py", Language: "python", Imports: []parser.Import{{Path: "./util"}, {Path: "os"}}},
+		{Path: "app/util.py", Language: "python"},
+		{Path: "src/lib.rs", Language: "rust", Imports: []parser.Import{{Path: "self::graph"}, {Path: "std::fmt"}}},
+		{Path: "src/graph.rs", Language: "rust", Imports: []parser.Import{{Path: "crate"}}},
+	})
+	paths := func(e Edge) [2]string { return [2]string{g.Nodes[e.FromIndex].Path, g.Nodes[e.ToIndex].Path} }
+	var got [][2]string
+	for _, e := range g.Edges {
+		got = append(got, paths(e))
+	}
+	require.Equal(s.T(), [][2]string{
+		{"app/main.py", "app/util.py"},
+		{"src/graph.rs", "src/lib.rs"},
+		{"src/lib.rs", "src/graph.rs"},
+	}, got)
 }

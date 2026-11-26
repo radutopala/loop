@@ -187,16 +187,40 @@ func (s *RedundancySuite) TestDeadListSortedByPathThenLine() {
 }
 
 func (s *RedundancySuite) TestIsReachableByConvention() {
-	require.True(s.T(), isReachableByConvention("main"))
-	require.True(s.T(), isReachableByConvention("init"))
-	require.True(s.T(), isReachableByConvention("TestSomething"))
-	require.True(s.T(), isReachableByConvention("BenchmarkLoop"))
-	require.True(s.T(), isReachableByConvention("ExampleX"))
-	require.True(s.T(), isReachableByConvention("FuzzInput"))
-	require.True(s.T(), isReachableByConvention("String"))
-	require.True(s.T(), isReachableByConvention("Error"))
-	require.False(s.T(), isReachableByConvention("ordinaryHelper"))
-	require.True(s.T(), isReachableByConvention("Test")) // bare "Test" still matches the prefix rule
+	cases := []struct {
+		name  string
+		lang  string
+		entry bool
+		want  bool
+	}{
+		{name: "main", lang: "go", want: true},
+		{name: "init", lang: "go", want: true},
+		{name: "TestSomething", lang: "go", want: true},
+		{name: "BenchmarkLoop", lang: "go", want: true},
+		{name: "ExampleX", lang: "go", want: true},
+		{name: "FuzzInput", lang: "go", want: true},
+		{name: "String", lang: "go", want: true},
+		{name: "Error", lang: "go", want: true},
+		{name: "ordinaryHelper", lang: "go", want: false},
+		{name: "Test", lang: "go", want: true}, // bare "Test" still matches the prefix rule
+		{name: "__init__", lang: "python", want: true},
+		{name: "__eq__", lang: "python", want: true},
+		{name: "____", lang: "python", want: false},
+		{name: "__private", lang: "python", want: false},
+		{name: "test_parses", lang: "python", want: true},
+		{name: "setUp", lang: "python", want: true},
+		{name: "helper", lang: "python", want: false},
+		{name: "__init__", lang: "go", want: false},
+		{name: "fmt", lang: "rust", want: true},
+		{name: "from_str", lang: "rust", want: true},
+		{name: "helper", lang: "rust", want: false},
+		{name: "fmt", lang: "go", want: false},
+		{name: "it_parses", lang: "rust", entry: true, want: true},
+	}
+	for _, tc := range cases {
+		got := isReachableByConvention(parser.Function{Name: tc.name, Entry: tc.entry}, tc.lang)
+		require.Equalf(s.T(), tc.want, got, "%s (%s)", tc.name, tc.lang)
+	}
 }
 
 func (s *RedundancySuite) TestClonesDragScore() {

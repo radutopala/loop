@@ -37,7 +37,11 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	path := filepath.Join(home, ".loop", "config.json")
-	resp := readConfigFile(s.sys.ReadFile, path)
+	resp, err := readConfigFile(s.sys.ReadFile, path)
+	if err != nil {
+		http.Error(w, "failed to read config file", http.StatusInternalServerError)
+		return
+	}
 	writeHTTPJSON(w, http.StatusOK, resp, s.logger)
 }
 
@@ -63,7 +67,7 @@ func (s *Server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 	// A whole-file write, but it must not land inside another edit's
 	// read-modify-write of the file, which would then overwrite it.
 	defer s.lockConfig(path, "settings")()
-	if err := s.sys.WriteFile(path, content, 0644); err != nil {
+	if err := writeConfigAtomic(s.sys, path, content); err != nil {
 		http.Error(w, "failed to write config file", http.StatusInternalServerError)
 		return
 	}
@@ -88,7 +92,11 @@ func (s *Server) handleGetProjectConfig(w http.ResponseWriter, r *http.Request) 
 	}
 	// Read through the project dir: a link swapped in after the check
 	// still can't lead out.
-	resp := readConfigFile(func(p string) ([]byte, error) { return s.sys.ReadFileIn(dirPath, p) }, path)
+	resp, err := readConfigFile(func(p string) ([]byte, error) { return s.sys.ReadFileIn(dirPath, p) }, path)
+	if err != nil {
+		http.Error(w, "failed to read config file", http.StatusInternalServerError)
+		return
+	}
 	writeHTTPJSON(w, http.StatusOK, resp, s.logger)
 }
 
@@ -124,7 +132,7 @@ func (s *Server) handleSaveProjectConfig(w http.ResponseWriter, r *http.Request)
 	// See handleSaveConfig.
 	defer s.lockConfig(path, "settings")()
 	before, keep := s.readProjectConfigBefore(path)
-	if err := s.sys.WriteFileIn(dirPath, path, content, 0644); err != nil {
+	if err := writeConfigAtomic(projectFS{s.sys, dirPath}, path, content); err != nil {
 		http.Error(w, "failed to write config file", http.StatusInternalServerError)
 		return
 	}
@@ -198,14 +206,16 @@ func (s *Server) resolveWorkflowConfigPaths(ctx context.Context, channelID strin
 }
 
 // readConfigFile reads a config file with read and returns a configResponse.
-// If the file does not exist, it returns a response with nil content and empty raw.
-func readConfigFile(read func(string) ([]byte, error), path string) configResponse {
+// A missing file gives nil content and empty raw. Any other read error is
+// returned: shown as a missing file, the empty config would be saved over
+// the real one.
+func readConfigFile(read func(string) ([]byte, error), path string) (configResponse, error) {
 	data, err := read(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return configResponse{Path: path}
+			return configResponse{Path: path}, nil
 		}
-		return configResponse{Path: path}
+		return configResponse{}, err
 	}
 
 	raw := string(data)
@@ -214,13 +224,13 @@ func readConfigFile(read func(string) ([]byte, error), path string) configRespon
 	standardized, err := hujson.Standardize(data)
 	if err != nil {
 		// Return raw even if HJSON parsing fails.
-		return configResponse{Path: path, Raw: raw}
+		return configResponse{Path: path, Raw: raw}, nil
 	}
 
 	var content map[string]any
 	if err := json.Unmarshal(standardized, &content); err != nil {
-		return configResponse{Path: path, Raw: raw}
+		return configResponse{Path: path, Raw: raw}, nil
 	}
 
-	return configResponse{Path: path, Content: content, Raw: raw}
+	return configResponse{Path: path, Content: content, Raw: raw}, nil
 }

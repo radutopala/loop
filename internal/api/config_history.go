@@ -135,6 +135,22 @@ func (s *Server) configFileFS(path string) hjsonedit.FS {
 	return s.sys
 }
 
+// writeConfigAtomic writes a config file to a temp file beside path and
+// renames it into place: the reads of /api/config, the daemon's reloads and
+// the plugins don't take the config lock, and a plain write would let them
+// see the file empty or cut short.
+func writeConfigAtomic(fsys hjsonedit.FS, path string, data []byte) error {
+	tmp := path + ".tmp"
+	if err := fsys.WriteFile(tmp, data, 0o644); err != nil {
+		return err
+	}
+	if err := fsys.Rename(tmp, path); err != nil {
+		_ = fsys.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
 // recordConfig stores the config file at path as its newest revision,
 // written by source, when its content changed. A missing file, or one that
 // isn't UTF-8 text, records nothing. Callers hold path's config lock.
@@ -504,7 +520,7 @@ func (s *Server) handleRestoreConfigRevision(w http.ResponseWriter, r *http.Requ
 	if rel != configFileName {
 		// Not part of the trusted project config, nor read by the plugins.
 		defer s.lockConfigFile(rev.Path, source)()
-		if err := fsys.WriteFile(rev.Path, []byte(rev.Content), 0644); err != nil {
+		if err := writeConfigAtomic(fsys, rev.Path, []byte(rev.Content)); err != nil {
 			http.Error(w, "failed to write "+rel, http.StatusInternalServerError)
 			return
 		}
@@ -520,7 +536,7 @@ func (s *Server) handleRestoreConfigRevision(w http.ResponseWriter, r *http.Requ
 		before, keep = s.readProjectConfigBefore(rev.Path)
 	}
 	content := []byte(rev.Content)
-	if err := fsys.WriteFile(rev.Path, content, 0644); err != nil {
+	if err := writeConfigAtomic(fsys, rev.Path, content); err != nil {
 		http.Error(w, "failed to write config file", http.StatusInternalServerError)
 		return
 	}
