@@ -52,7 +52,7 @@ Feature: Backup
 
     # Removed again, so later scenarios don't back up or see it.
     When I remove the global backup config
-    Then the response status should be 204
+    Then the response status should be 200
 
   Scenario: Backups are encrypted to the key Loop creates
     Given there is no "bdd-backups" dir in the global loop dir
@@ -93,4 +93,4 @@ Feature: Backup
     Then the response status should be 400
 
     When I remove the global backup config
-    Then the response status should be 204
+    Then the response status should be 200
