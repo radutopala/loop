@@ -266,6 +266,50 @@ func (s *BrowserHandlerSuite) TestBrowserActionScreenshotError() {
 	require.Contains(s.T(), resp.Error, "screenshot failed")
 }
 
+func (s *BrowserHandlerSuite) TestBrowserActionScreenshotFullPage() {
+	tests := []struct {
+		name   string
+		toFile bool
+	}{
+		{"inline", false},
+		{"to file", true},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			mockCDP := new(mockCDPSession)
+			s.setupActionMocks(mockCDP)
+			mockCDP.On("FullPageScreenshot", mock.Anything, 8000).Return([]byte{0x89, 0x50, 0x4E, 0x47}, 12000, nil)
+			if tt.toFile {
+				s.srv.browser.setScreenshotDir(s.T().TempDir())
+				defer s.srv.browser.setScreenshotDir("")
+			}
+
+			w := s.postBrowserAction(browserActionRequest{
+				ChannelID: "ch-1",
+				Action:    "screenshot",
+				Params:    map[string]any{"full_page": true, "max_height": 8000},
+			})
+			var resp browserActionResponse
+			require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+			require.Empty(s.T(), resp.Error)
+			require.Equal(s.T(), 12000, resp.PageHeight)
+			require.Equal(s.T(), tt.toFile, resp.ScreenshotPath != "")
+			require.Equal(s.T(), !tt.toFile, resp.Image != "")
+		})
+	}
+}
+
+func (s *BrowserHandlerSuite) TestBrowserActionScreenshotFullPageError() {
+	mockCDP := new(mockCDPSession)
+	s.setupActionMocks(mockCDP)
+	mockCDP.On("FullPageScreenshot", mock.Anything, 0).Return(nil, 0, errors.New("too big"))
+
+	w := s.postBrowserAction(browserActionRequest{ChannelID: "ch-1", Action: "screenshot", Params: map[string]any{"full_page": true}})
+	var resp browserActionResponse
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Contains(s.T(), resp.Error, "screenshot failed: too big")
+}
+
 func (s *BrowserHandlerSuite) TestBrowserActionScreenshotToFile() {
 	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)

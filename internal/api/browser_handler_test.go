@@ -667,6 +667,11 @@ func (m *mockCDPSession) Screenshot(ctx context.Context) ([]byte, error) {
 	data, _ := args.Get(0).([]byte)
 	return data, args.Error(1)
 }
+func (m *mockCDPSession) FullPageScreenshot(ctx context.Context, maxHeight int) ([]byte, int, error) {
+	a := m.Called(ctx, maxHeight)
+	d, _ := a.Get(0).([]byte)
+	return d, a.Int(1), a.Error(2)
+}
 func (m *mockCDPSession) EnableConsoleCapture(ctx context.Context, ch chan<- browser.ConsoleMessage) error {
 	return m.Called(ctx, ch).Error(0)
 }

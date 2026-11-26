@@ -3,9 +3,11 @@
 package browser
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
@@ -101,6 +103,10 @@ func (s *CDPIntegrationSuite) SetupSuite() {
 	mux.HandleFunc("/opener", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		fmt.Fprint(w, `<html><body style="margin:0"><a href="/page3" target="_blank" style="display:block;width:100vw;height:100vh">open</a></body></html>`)
+	})
+	mux.HandleFunc("/tall", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, `<html><body style="margin:0"><div style="height:3000px;background:linear-gradient(red,blue)"></div></body></html>`)
 	})
 	mux.HandleFunc("/checks", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
@@ -268,6 +274,37 @@ func (s *CDPIntegrationSuite) TestScreenshot() {
 	require.Greater(s.T(), len(buf), 1000)
 	// Verify it's a valid PNG (starts with PNG magic bytes).
 	require.Equal(s.T(), []byte{0x89, 0x50, 0x4E, 0x47}, buf[:4], "should be a valid PNG")
+}
+
+// A full-page capture is the page's height, past the viewport, and stops at
+// the height asked for.
+func (s *CDPIntegrationSuite) TestFullPageScreenshot() {
+	require.NoError(s.T(), s.client.Navigate(context.Background(), s.testURL+"/tall"))
+	time.Sleep(500 * time.Millisecond)
+	tests := []struct {
+		name      string
+		maxHeight int
+		wantImage int
+	}{
+		{"whole page", 0, 3000},
+		{"cut", 1000, 1000},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			buf, height, err := s.client.FullPageScreenshot(context.Background(), tt.maxHeight)
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), 3000, height)
+			img, err := png.DecodeConfig(bytes.NewReader(buf))
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tt.wantImage, img.Height)
+		})
+	}
+	// The viewport capture is still the viewport.
+	buf, err := s.client.Screenshot(context.Background())
+	require.NoError(s.T(), err)
+	img, err := png.DecodeConfig(bytes.NewReader(buf))
+	require.NoError(s.T(), err)
+	require.Less(s.T(), img.Height, 3000)
 }
 
 // --- JavaScript ---

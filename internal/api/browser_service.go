@@ -594,7 +594,14 @@ func (s *browserService) dispatchBrowserAction(req browserActionRequest, cdpCl b
 		return browserActionResponse{Result: fmt.Sprintf("Clicked ref %d", refIndex)}
 
 	case "screenshot":
-		data, err := cdpCl.Screenshot(bg)
+		var data []byte
+		var pageHeight int
+		var err error
+		if paramBool(params, "full_page") {
+			data, pageHeight, err = cdpCl.FullPageScreenshot(bg, paramInt(params, "max_height"))
+		} else {
+			data, err = cdpCl.Screenshot(bg)
+		}
 		if err != nil {
 			return browserActionResponse{Error: fmt.Sprintf("screenshot failed: %v", err)}
 		}
@@ -604,9 +611,9 @@ func (s *browserService) dispatchBrowserAction(req browserActionRequest, cdpCl b
 			if err := os.WriteFile(fpath, data, 0o644); err != nil {
 				return browserActionResponse{Error: fmt.Sprintf("writing screenshot file: %v", err)}
 			}
-			return browserActionResponse{ScreenshotPath: fpath}
+			return browserActionResponse{ScreenshotPath: fpath, PageHeight: pageHeight}
 		}
-		return browserActionResponse{Image: base64.StdEncoding.EncodeToString(data)}
+		return browserActionResponse{Image: base64.StdEncoding.EncodeToString(data), PageHeight: pageHeight}
 
 	case "evaluate_js":
 		expression := paramStr(params, "expression")

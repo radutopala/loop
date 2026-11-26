@@ -146,6 +146,7 @@ type CDPSession interface {
 	ReadSelection(ctx context.Context) (string, error)
 	EvaluateJS(ctx context.Context, expression string) (string, error)
 	Screenshot(ctx context.Context) ([]byte, error)
+	FullPageScreenshot(ctx context.Context, maxHeight int) ([]byte, int, error)
 	GetElementRefs(ctx context.Context) ([]ElementRef, error)
 	ClickRef(ctx context.Context, refs []ElementRef, refIndex int) error
 	EnableConsoleCapture(ctx context.Context, ch chan<- ConsoleMessage) error

@@ -114,6 +114,11 @@ func (m *mockCDPSession) Screenshot(ctx context.Context) ([]byte, error) {
 	d, _ := a.Get(0).([]byte)
 	return d, a.Error(1)
 }
+func (m *mockCDPSession) FullPageScreenshot(ctx context.Context, maxHeight int) ([]byte, int, error) {
+	a := m.Called(ctx, maxHeight)
+	d, _ := a.Get(0).([]byte)
+	return d, a.Int(1), a.Error(2)
+}
 func (m *mockCDPSession) GetElementRefs(ctx context.Context) ([]ElementRef, error) {
 	a := m.Called(ctx)
 	r, _ := a.Get(0).([]ElementRef)

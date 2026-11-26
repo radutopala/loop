@@ -44,6 +44,7 @@ type directCDP interface {
 	KeyPress(ctx context.Context, key string, modifiers int) error
 	TypeText(ctx context.Context, text string) error
 	Screenshot(ctx context.Context) ([]byte, error)
+	FullPageScreenshot(ctx context.Context, maxHeight int) ([]byte, int, error)
 	EvaluateJS(ctx context.Context, expression string) (string, error)
 	ListTabs(ctx context.Context) ([]browser.TabInfo, error)
 	NewTab(ctx context.Context, url string) (string, error)
@@ -225,6 +226,14 @@ func (d *cdpDispatcher) dispatch(ctx context.Context, action string, params map[
 		return &actionResponse{Result: "Typed text"}, nil
 
 	case "screenshot":
+		if full, _ := params["full_page"].(bool); full {
+			maxHeight, _ := params["max_height"].(float64)
+			data, pageHeight, err := cdp.FullPageScreenshot(ctx, int(maxHeight))
+			if err != nil {
+				return nil, fmt.Errorf("screenshot failed: %w", err)
+			}
+			return &actionResponse{Image: base64.StdEncoding.EncodeToString(data), PageHeight: pageHeight}, nil
+		}
 		data, err := cdp.Screenshot(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("screenshot failed: %w", err)

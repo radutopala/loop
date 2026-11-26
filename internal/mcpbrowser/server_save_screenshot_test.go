@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/stretchr/testify/require"
 )
@@ -73,4 +74,30 @@ func (s *ServerSuite) TestSaveScreenshotWriteError() {
 	res := callTool(s.T(), session, "save_screenshot", map[string]any{"path": dir})
 	require.True(s.T(), res.IsError)
 	require.Contains(s.T(), getText(s.T(), res), "writing screenshot file")
+}
+
+func (s *ServerSuite) TestSaveScreenshotFullPage() {
+	tests := []struct {
+		name       string
+		pageHeight int
+		wantCut    bool
+	}{
+		{"fits", 9000, false},
+		{"cut", 20000, true},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			_, session := setupTest(s.T(), func(w http.ResponseWriter, r *http.Request) {
+				_, _, params := decodeActionRequest(s.T(), r)
+				require.Equal(s.T(), map[string]any{"full_page": true, "max_height": float64(16384)}, params)
+				writeJSON(w, actionResponse{Image: base64.StdEncoding.EncodeToString([]byte("png")), PageHeight: tt.pageHeight})
+			})
+			path := filepath.Join(s.T().TempDir(), "shot.png")
+			res := callTool(s.T(), session, "save_screenshot", map[string]any{"path": path, "full_page": true})
+			require.False(s.T(), res.IsError)
+			text := getText(s.T(), res)
+			require.Contains(s.T(), text, "Saved screenshot to "+path+" (3 bytes)")
+			require.Equal(s.T(), tt.wantCut, strings.Contains(text, "; the page is 20000 px tall, the screenshot shows its top 16384 px"))
+		})
+	}
 }

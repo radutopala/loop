@@ -1158,6 +1158,8 @@ type browserActionResponse struct {
 	ElementRefs    []browser.ElementRef `json:"element_refs,omitempty"`
 	Tabs           []browser.TabInfo    `json:"tabs,omitempty"`
 	PageInfo       *browser.PageInfo    `json:"page_info,omitempty"`
+	// PageHeight is a full-page screenshot's page height in CSS pixels.
+	PageHeight int `json:"page_height,omitempty"`
 }
 
 // writeJSON writes a JSON response to w.
