@@ -54,6 +54,11 @@ func (m *mockDirectCDP) KeyPress(ctx context.Context, key string, modifiers int)
 func (m *mockDirectCDP) TypeText(ctx context.Context, text string) error {
 	return m.Called(ctx, text).Error(0)
 }
+func (m *mockDirectCDP) FullPageScreenshot(ctx context.Context, maxHeight int) ([]byte, int, error) {
+	args := m.Called(ctx, maxHeight)
+	data, _ := args.Get(0).([]byte)
+	return data, args.Int(1), args.Error(2)
+}
 func (m *mockDirectCDP) Screenshot(ctx context.Context) ([]byte, error) {
 	args := m.Called(ctx)
 	if args.Get(0) == nil {
@@ -289,6 +294,20 @@ func (s *CDPDispatcherSuite) TestScreenshot() {
 	resp, err := s.d.dispatch(context.Background(), "screenshot", nil)
 	require.NoError(s.T(), err)
 	require.NotEmpty(s.T(), resp.Image)
+}
+
+func (s *CDPDispatcherSuite) TestScreenshotFullPage() {
+	s.mock.On("FullPageScreenshot", mock.Anything, 8000).Return([]byte{1, 2, 3}, 9000, nil)
+	resp, err := s.d.dispatch(context.Background(), "screenshot", map[string]any{"full_page": true, "max_height": float64(8000)})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "AQID", resp.Image)
+	require.Equal(s.T(), 9000, resp.PageHeight)
+}
+
+func (s *CDPDispatcherSuite) TestScreenshotFullPageError() {
+	s.mock.On("FullPageScreenshot", mock.Anything, 0).Return(nil, 0, fmt.Errorf("err"))
+	_, err := s.d.dispatch(context.Background(), "screenshot", map[string]any{"full_page": true})
+	require.ErrorContains(s.T(), err, "screenshot failed")
 }
 
 func (s *CDPDispatcherSuite) TestScreenshotError() {

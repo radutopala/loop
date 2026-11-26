@@ -178,3 +178,51 @@ func (s *ServerSuite) TestScreenshotFilePathReadError() {
 }
 
 // ==================== go_back ====================
+
+func (s *ServerSuite) TestScreenshotFullPage() {
+	imgData := []byte("png-bytes")
+	encoded := base64.StdEncoding.EncodeToString(imgData)
+	tests := []struct {
+		name       string
+		tool       string
+		args       map[string]any
+		pageHeight int
+		wantNote   string
+	}{
+		{"fits", "screenshot", map[string]any{"full_page": true}, 3000, ""},
+		{"cut", "screenshot", map[string]any{"full_page": true}, 12000, "the page is 12000 px tall, the screenshot shows its top 8000 px; save_screenshot with full_page goes down to 16384 px"},
+		{"computer", "computer", map[string]any{"action": "screenshot", "full_page": true}, 9000, "the page is 9000 px tall, the screenshot shows its top 8000 px"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			_, session := setupTest(s.T(), func(w http.ResponseWriter, r *http.Request) {
+				_, action, params := decodeActionRequest(s.T(), r)
+				require.Equal(s.T(), "screenshot", action)
+				require.Equal(s.T(), map[string]any{"full_page": true, "max_height": float64(8000)}, params)
+				writeJSON(w, actionResponse{Image: encoded, PageHeight: tt.pageHeight})
+			})
+			res := callTool(s.T(), session, tt.tool, tt.args)
+			require.False(s.T(), res.IsError)
+			ic, ok := res.Content[0].(*mcp.ImageContent)
+			require.True(s.T(), ok)
+			require.Equal(s.T(), imgData, ic.Data)
+			if tt.wantNote == "" {
+				require.Len(s.T(), res.Content, 1)
+				return
+			}
+			require.Len(s.T(), res.Content, 2)
+			require.Contains(s.T(), res.Content[1].(*mcp.TextContent).Text, tt.wantNote)
+		})
+	}
+}
+
+func (s *ServerSuite) TestScreenshotViewportSendsNoParams() {
+	_, session := setupTest(s.T(), func(w http.ResponseWriter, r *http.Request) {
+		_, _, params := decodeActionRequest(s.T(), r)
+		require.Empty(s.T(), params)
+		writeJSON(w, actionResponse{Image: base64.StdEncoding.EncodeToString([]byte("x"))})
+	})
+	res := callTool(s.T(), session, "screenshot", nil)
+	require.False(s.T(), res.IsError)
+	require.Len(s.T(), res.Content, 1)
+}

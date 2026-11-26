@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/url"
 	"path"
@@ -1561,7 +1562,7 @@ func (c *CDPClient) ClickRef(ctx context.Context, refs []ElementRef, refIndex in
 	return c.MouseClick(ctx, centerX, centerY, "left", 1)
 }
 
-// Screenshot captures a full-page screenshot as PNG. Bounded like
+// Screenshot captures what the viewport shows as PNG. Bounded like
 // GetElementRefs: a crashed renderer never answers the capture either.
 func (c *CDPClient) Screenshot(ctx context.Context) ([]byte, error) {
 	return boundedFor(ctx, c.pageReadDeadline(), func() ([]byte, error) {
@@ -1571,6 +1572,59 @@ func (c *CDPClient) Screenshot(ctx context.Context) ([]byte, error) {
 		}
 		return buf, nil
 	})
+}
+
+// MaxFullPageHeight is the most of a page FullPageScreenshot captures, in CSS
+// pixels: Chrome's capture fails or comes out blank past its texture size.
+const MaxFullPageHeight = 16384
+
+// FullPageScreenshot captures the whole page as PNG, beyond the viewport, down
+// to at most maxHeight CSS pixels (MaxFullPageHeight when it's zero or more). It returns the page's own height too, so the
+// caller can tell when the capture stopped short of it. Only the document's
+// scroll counts: a page that scrolls an inner element comes out viewport-sized.
+func (c *CDPClient) FullPageScreenshot(ctx context.Context, maxHeight int) ([]byte, int, error) {
+	type shot struct {
+		data   []byte
+		height int
+	}
+	limit := maxHeight
+	if limit <= 0 || limit > MaxFullPageHeight {
+		limit = MaxFullPageHeight
+	}
+	res, err := boundedFor(ctx, c.pageReadDeadline(), func() (shot, error) {
+		var out shot
+		err := c.runFn(c.ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+			var metrics cdppage.GetLayoutMetricsReturns
+			if err := c.exec(ctx, cdppage.CommandGetLayoutMetrics, nil, &metrics); err != nil {
+				return fmt.Errorf("measuring page: %w", err)
+			}
+			if metrics.CSSContentSize == nil {
+				return errors.New("measuring page: no content size")
+			}
+			out.height = int(math.Ceil(metrics.CSSContentSize.Height))
+			clip := &cdppage.Viewport{
+				Width:  math.Ceil(metrics.CSSContentSize.Width),
+				Height: float64(min(out.height, limit)),
+				Scale:  1,
+			}
+			var shotRes cdppage.CaptureScreenshotReturns
+			params := cdppage.CaptureScreenshot().WithFormat(cdppage.CaptureScreenshotFormatPng).WithCaptureBeyondViewport(true).WithClip(clip)
+			if err := c.exec(ctx, cdppage.CommandCaptureScreenshot, params, &shotRes); err != nil {
+				return fmt.Errorf("capturing screenshot: %w", err)
+			}
+			data, err := base64.StdEncoding.DecodeString(shotRes.Data)
+			if err != nil {
+				return fmt.Errorf("decoding screenshot: %w", err)
+			}
+			out.data = data
+			return nil
+		}))
+		if err != nil {
+			return shot{}, err
+		}
+		return out, nil
+	})
+	return res.data, res.height, err
 }
 
 // TabInfo holds information about a browser tab.

@@ -447,6 +447,9 @@ A ref outside the viewport is scrolled into it before `computer`, `form_input` o
 ### Waiting for a page
 Pages that build their content with script after loading can be read too early. `navigate`, `screenshot`, `save_screenshot` and `computer` take `wait_for_selector` and/or `wait_for_text`, with `wait_timeout_ms` (default 10000, max 60000). The tool polls the page every 250 ms through `evaluate_js` until it matches, and fails with a timeout error if it never does. `computer` waits after acting, except for `wait` and `screenshot`, which wait first; `computer` `wait` without either pauses for `duration` ms.
 
+### Full-page screenshots
+`screenshot`, `save_screenshot` and `computer` `screenshot` capture the viewport. With `full_page: true` they capture the whole page beyond it: `screenshot` and `computer` down to 8000 pixels, `save_screenshot` down to 16384. When a page is taller than that, the reply gives its height and says how much the screenshot shows. Only the page's own scroll counts: a page that scrolls inside an inner panel comes out viewport-sized.
+
 ### Tabs
 `list_tabs` numbers the tabs `[1]`, `[2]`, …; `switch_tab` and `close_tab` take that number as `index`, or the tab's `target_id` (also accepted as `tab_id`). `switch_tab` also brings the tab to the front in Chrome, since Chrome throttles a tab in the background.
 

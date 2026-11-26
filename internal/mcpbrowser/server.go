@@ -131,6 +131,7 @@ type actionResponse struct {
 	ElementRefs    []browser.ElementRef `json:"element_refs,omitempty"`
 	Tabs           []browser.TabInfo    `json:"tabs,omitempty"`
 	PageInfo       *browser.PageInfo    `json:"page_info,omitempty"`
+	PageHeight     int                  `json:"page_height,omitempty"`
 }
 
 // callAction dispatches a browser action via the configured dispatcher.
@@ -284,17 +285,27 @@ type computerInput struct {
 	Duration   int       `json:"duration,omitempty" jsonschema:"For action wait without wait_for_selector or wait_for_text: how long to wait, in milliseconds (max 60000)"`
 	StartX     float64   `json:"start_x,omitempty" jsonschema:"Start X coordinate for left_click_drag"`
 	StartY     float64   `json:"start_y,omitempty" jsonschema:"Start Y coordinate for left_click_drag"`
+	FullPage   bool      `json:"full_page,omitempty" jsonschema:"For action screenshot: capture the whole page, not just the viewport"`
 	waitSpec
 }
 
 type saveScreenshotInput struct {
-	Path string `json:"path" jsonschema:"Filesystem path to write the PNG screenshot to (e.g. /work/shot.png). Parent directories are created."`
+	Path     string `json:"path" jsonschema:"Filesystem path to write the PNG screenshot to (e.g. /work/shot.png). Parent directories are created."`
+	FullPage bool   `json:"full_page,omitempty" jsonschema:"Capture the whole page, not just the viewport, down to 16384 pixels. Only the page's own scroll counts: a page that scrolls an inner panel comes out viewport-sized."`
 	waitSpec
 }
 
 type screenshotInput struct {
+	FullPage bool `json:"full_page,omitempty" jsonschema:"Capture the whole page, not just the viewport, down to 8000 pixels (save_screenshot goes further). Only the page's own scroll counts: a page that scrolls an inner panel comes out viewport-sized."`
 	waitSpec
 }
+
+// Full-page screenshots stop at these heights, in CSS pixels: an inline image
+// past 8000 pixels is refused by the model, and a file at Chrome's limit.
+const (
+	inlineFullPageHeight = 8000
+	savedFullPageHeight  = browser.MaxFullPageHeight
+)
 
 func (s *Server) registerTools() {
 	type navigateInput struct {
@@ -382,21 +393,17 @@ func (s *Server) registerTools() {
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "screenshot",
-		Description: "Take a screenshot of the current page, optionally once it shows wait_for_selector or wait_for_text.",
+		Description: "Take a screenshot of the current page's viewport, or with full_page the whole page, optionally once it shows wait_for_selector or wait_for_text.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input screenshotInput) (*mcp.CallToolResult, any, error) {
 		if err := s.waitFor(ctx, input.waitSpec); err != nil {
 			return errorResult(err.Error()), nil, nil
 		}
-		data, err := s.captureScreenshot(ctx)
-		if err != nil {
-			return errorResult(err.Error()), nil, nil
-		}
-		return imageResult(data), nil, nil
+		return s.screenshotResult(ctx, input.FullPage)
 	})
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "save_screenshot",
-		Description: "Take a screenshot of the current page and write it to a PNG file on disk at the given path (parent directories are created). Returns the saved path. Use this instead of `screenshot` when you want the image persisted to a file rather than returned inline. Takes the same wait_for_selector and wait_for_text as `screenshot`.",
+		Description: "Take a screenshot of the current page and write it to a PNG file on disk at the given path (parent directories are created). Returns the saved path. Use this instead of `screenshot` when you want the image persisted to a file rather than returned inline. Takes the same full_page, wait_for_selector and wait_for_text as `screenshot`, and a full page goes further: down to 16384 pixels.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input saveScreenshotInput) (*mcp.CallToolResult, any, error) {
 		path := strings.TrimSpace(input.Path)
 		if path == "" {
@@ -405,7 +412,11 @@ func (s *Server) registerTools() {
 		if err := s.waitFor(ctx, input.waitSpec); err != nil {
 			return errorResult(err.Error()), nil, nil
 		}
-		data, err := s.captureScreenshot(ctx)
+		maxHeight := 0
+		if input.FullPage {
+			maxHeight = savedFullPageHeight
+		}
+		data, pageHeight, err := s.captureScreenshot(ctx, maxHeight)
 		if err != nil {
 			return errorResult(err.Error()), nil, nil
 		}
@@ -417,7 +428,7 @@ func (s *Server) registerTools() {
 		if writeErr := os.WriteFile(path, data, 0o644); writeErr != nil {
 			return errorResult(fmt.Sprintf("writing screenshot file: %v", writeErr)), nil, nil
 		}
-		return textResult(fmt.Sprintf("Saved screenshot to %s (%d bytes)", path, len(data))), nil, nil
+		return textResult(fmt.Sprintf("Saved screenshot to %s (%d bytes)", path, len(data)) + cutNote(pageHeight, maxHeight)), nil, nil
 	})
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
@@ -764,11 +775,7 @@ func (s *Server) runComputer(ctx context.Context, input computerInput) (*mcp.Cal
 		return textResult(fmt.Sprintf("Moved to (%.0f, %.0f)", x, y)), nil, nil
 
 	case "screenshot":
-		data, err := s.captureScreenshot(ctx)
-		if err != nil {
-			return errorResult(err.Error()), nil, nil
-		}
-		return imageResult(data), nil, nil
+		return s.screenshotResult(ctx, input.FullPage)
 
 	case "left_click_drag":
 		// Move to start position first so Chrome knows cursor location before press.
@@ -869,28 +876,61 @@ func (s *Server) handleFindElements(ctx context.Context, query string) (*mcp.Cal
 	return textResult(b.String()), nil, nil
 }
 
-// captureScreenshot takes a screenshot via the action backend and returns the
-// raw PNG bytes. When the host returns a file path it reads (and removes) the
-// file directly, avoiding base64 over HTTP; otherwise it decodes the inline
-// base64. Error messages are kept stable — callers surface them verbatim.
-func (s *Server) captureScreenshot(ctx context.Context) ([]byte, error) {
-	resp, err := s.callAction(ctx, "screenshot", nil)
+// screenshotResult takes a screenshot for an inline answer: the viewport, or
+// the whole page down to inlineFullPageHeight, saying so when it's cut there.
+func (s *Server) screenshotResult(ctx context.Context, fullPage bool) (*mcp.CallToolResult, any, error) {
+	maxHeight := 0
+	if fullPage {
+		maxHeight = inlineFullPageHeight
+	}
+	data, pageHeight, err := s.captureScreenshot(ctx, maxHeight)
 	if err != nil {
-		return nil, fmt.Errorf("screenshot failed: %v", err)
+		return errorResult(err.Error()), nil, nil
+	}
+	res := imageResult(data)
+	if note := cutNote(pageHeight, maxHeight); note != "" {
+		text := strings.TrimPrefix(note, "; ") + fmt.Sprintf("; save_screenshot with full_page goes down to %d px", savedFullPageHeight)
+		res.Content = append(res.Content, &mcp.TextContent{Text: text})
+	}
+	return res, nil, nil
+}
+
+// cutNote says a full-page screenshot stopped short of the page, if it did.
+func cutNote(pageHeight, maxHeight int) string {
+	if pageHeight <= maxHeight {
+		return ""
+	}
+	return fmt.Sprintf("; the page is %d px tall, the screenshot shows its top %d px", pageHeight, maxHeight)
+}
+
+// captureScreenshot takes a screenshot via the action backend and returns the
+// raw PNG bytes: the viewport when maxHeight is 0, else the whole page down to
+// maxHeight, with the page's height. When the host returns a file path it
+// reads (and removes) the file directly, avoiding base64 over HTTP; otherwise
+// it decodes the inline base64. Error messages are kept stable — callers
+// surface them verbatim.
+func (s *Server) captureScreenshot(ctx context.Context, maxHeight int) ([]byte, int, error) {
+	var params map[string]any
+	if maxHeight > 0 {
+		params = map[string]any{"full_page": true, "max_height": float64(maxHeight)}
+	}
+	resp, err := s.callAction(ctx, "screenshot", params)
+	if err != nil {
+		return nil, 0, fmt.Errorf("screenshot failed: %v", err)
 	}
 	if resp.ScreenshotPath != "" {
 		data, readErr := os.ReadFile(resp.ScreenshotPath)
 		if readErr != nil {
-			return nil, fmt.Errorf("reading screenshot file: %v", readErr)
+			return nil, 0, fmt.Errorf("reading screenshot file: %v", readErr)
 		}
 		os.Remove(resp.ScreenshotPath) //nolint:errcheck
-		return data, nil
+		return data, resp.PageHeight, nil
 	}
 	data, err := base64.StdEncoding.DecodeString(resp.Image)
 	if err != nil {
-		return nil, fmt.Errorf("screenshot decode failed: %v", err)
+		return nil, 0, fmt.Errorf("screenshot decode failed: %v", err)
 	}
-	return data, nil
+	return data, resp.PageHeight, nil
 }
 
 // registerDownloadTools adds the tools that read the downloads dir the daemon
