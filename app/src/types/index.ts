@@ -51,6 +51,8 @@ export interface Channel {
   description?: string;
   /** The URL of the channel or thread's ticket (Jira, GitHub, …); unset when it has none. */
   ticket_url?: string;
+  /** The channel or thread's tags, sorted; unset when it has none. */
+  tags?: string[];
   /** The project config's host-reaching fields wait for the owner's trust (for a worktree chain, the root checkout's config). */
   trust_pending?: boolean;
   /** The badges plugins show on the row, by plugin id. */
@@ -306,13 +308,14 @@ export interface ChannelUpdatedData {
   base_ahead?: number;
   base_behind?: number;
   /**
-   * Set by a rename, a description or a ticket change, which carry nothing
-   * else: the git fields are then empty and must be left alone. An empty
-   * description or ticket_url clears it.
+   * Set by a rename, a description, a ticket or a tags change, which carry
+   * nothing else: the git fields are then empty and must be left alone. An
+   * empty description or ticket_url clears it; empty tags clear them all.
    */
   name?: string;
   description?: string;
   ticket_url?: string;
+  tags?: string[];
 }
 
 /** A channel's model/effort overrides after they change; empty clears one. */

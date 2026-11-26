@@ -3,17 +3,19 @@ import type { Channel, ChannelUpdatedData, PluginBadge } from "../types";
 
 /**
  * Applies a channel.updated event to a channel. The branch poller's events
- * carry the git state; a rename, a description or a ticket change carries only
- * its name, description or ticket URL (the git fields come through empty), so those leave the git
- * state as it was — the poller only sends again when it changes.
+ * carry the git state; a rename, a description, a ticket or a tags change
+ * carries only its name, description, ticket URL or tags (the git fields come
+ * through empty), so those leave the git state as it was — the poller only
+ * sends again when it changes.
  */
 export function applyChannelUpdate(c: Channel, d: ChannelUpdatedData): Channel {
-  if (d.name !== undefined || d.description !== undefined || d.ticket_url !== undefined) {
+  if (d.name !== undefined || d.description !== undefined || d.ticket_url !== undefined || d.tags !== undefined) {
     return {
       ...c,
       ...(d.name !== undefined ? { name: d.name } : {}),
       ...(d.description !== undefined ? { description: d.description } : {}),
       ...(d.ticket_url !== undefined ? { ticket_url: d.ticket_url } : {}),
+      ...(d.tags !== undefined ? { tags: d.tags.length > 0 ? d.tags : undefined } : {}),
     };
   }
   return {

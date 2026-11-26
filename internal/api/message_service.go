@@ -36,6 +36,8 @@ type ChannelLister interface {
 	UpdateChannelName(ctx context.Context, channelID, name string) error
 	UpdateChannelDescription(ctx context.Context, channelID, description string) error
 	UpdateChannelTicketURL(ctx context.Context, channelID, ticketURL string) error
+	UpdateChannelTags(ctx context.Context, channelID string, add, remove []string) ([]string, error)
+	ListChannelTags(ctx context.Context) ([]db.TagCount, error)
 	DeleteChannel(ctx context.Context, channelID string) error
 	DeleteChannelsByParentID(ctx context.Context, parentID string) error
 	ListChannelIDsByParentID(ctx context.Context, parentID string) ([]string, error)

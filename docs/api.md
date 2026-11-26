@@ -167,6 +167,7 @@ List all channels with optional filtering. Enriches each channel with container 
 - `last_activity_at` is when the channel's newest message was written, or when its review session last changed if that's later, since a review writes no messages. Omitted when it has neither, or when the message lookup fails and there's no review session (the list is still returned). The sidebar's Recent section sorts by it.
 - `description` is what the channel or thread is for, set via [`POST /api/channels/{id}/description`](#post-apichannelsiddescription). Omitted when empty.
 - `ticket_url` is the URL of the channel or thread's ticket, set via [`POST /api/channels/{id}/ticket`](#post-apichannelsidticket). Omitted when unset.
+- `tags` are the channel or thread's tags, sorted, edited via [`POST /api/channels/{id}/tags`](#post-apichannelsidtags). Omitted when it has none.
 - `pr_kind` (`pr` or `mr`), `pr_number` and `pr_title` are the thread's PR/MR as the [PR watcher](#pr-watching) last saw it on the branch, merged or closed ones included; the sidebar's search matches them. Omitted when it hasn't seen one, once the branch has none, and when PR watching is off. Patched live from `channel.pr` events.
 - `trust_pending` is `true` when the project config's host-reaching fields changed since you last trusted them, so they don't apply yet (see [`GET /api/config/project/trust`](#get-apiconfigprojecttrust)). For a worktree chain it's the root checkout's config. Omitted otherwise, and when the config can't be read.
 - `pr_attention` is what the thread's PR/MR needs (see [PR watching](#pr-watching)): `failed` for a failure no agent is fixing, which lights the sidebar's `ci` pill, `fixing` while the thread's agent was sent to fix one (`ci…`), or `conflict` for a merge conflict with the base (`cnf`), which is always the owner's to resolve. Omitted otherwise, and when PR watching is off. The sidebar patches it live from `channel.pr` events.
@@ -391,6 +392,48 @@ Link a channel, thread or worktree thread to its ticket in any tracker (Jira, Gi
 **Behavior notes:** Allowed on locked rows. Broadcasts a `channel.updated` event carrying only the new `ticket_url`, so other clients refresh their sidebar live.
 
 **Errors:** `400` if the body isn't valid JSON, or the URL isn't an absolute http(s) URL or is longer than 2048 characters. `404` if channel not found. `501` if not configured.
+
+---
+### `POST /api/channels/{id}/tags`
+
+Add tags to a channel, thread or worktree thread and remove others in one edit. Tags are shared across projects: a tag exists while some channel or thread carries it, and the sidebar's search filters by it (`tag:name`).
+
+**Path Parameters:**
+
+| Param | Type   | Description |
+|-------|--------|-------------|
+| `id`  | string | Channel or thread ID |
+
+**Request:**
+```json
+{"add": ["backend", "#Auth"], "remove": ["old"]}
+```
+
+| Field    | Type     | Required | Description |
+|----------|----------|----------|-------------|
+| `add`    | string[] | no       | Tags to add. Each is trimmed, lowercased and loses a leading `#`; it must then be at most 32 bytes of letters, digits and `- _ . /`, starting with a letter or digit. Adding a tag it already has does nothing. |
+| `remove` | string[] | no       | Tags to remove, normalized the same way. Removing one it doesn't have does nothing; a tag in both lists is removed. |
+
+**Response:** `200 OK`, the tags it now has, sorted
+```json
+{"channel_id": "abc123", "tags": ["auth", "backend"]}
+```
+
+**Behavior notes:** Allowed on locked rows. The edit is one transaction: a tag no channel or thread carries any more is dropped. Broadcasts a `channel.updated` event carrying only the new `tags` (empty when it has none left), so other clients refresh their sidebar live.
+
+**Errors:** `400` if the body isn't valid JSON, a tag isn't one the rules above allow, or the edit would leave more than 20 tags (nothing is changed then). `404` if channel not found. `501` if not configured.
+
+---
+### `GET /api/tags`
+
+List the tags in use across every project, by name, each with how many channels and threads carry it. The sidebar's Tags dialog offers them to pick from.
+
+**Response:** `200 OK`
+```json
+{"tags": [{"tag": "auth", "count": 1}, {"tag": "backend", "count": 3}]}
+```
+
+**Errors:** `500` if the tags can't be read. `501` if not configured.
 
 ---
 

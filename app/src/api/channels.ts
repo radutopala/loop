@@ -65,6 +65,7 @@ interface ChannelAPIResponse {
   task_id?: number;
   description?: string;
   ticket_url?: string;
+  tags?: string[];
   trust_pending?: boolean;
   plugin_badges?: PluginBadge[];
   pr_attention?: PRAttention;
@@ -109,6 +110,7 @@ export async function fetchChannels(): Promise<Channel[]> {
     task_id: c.task_id,
     description: c.description,
     ticket_url: c.ticket_url,
+    tags: c.tags,
     trust_pending: c.trust_pending,
     plugin_badges: c.plugin_badges,
     pr_attention: c.pr_attention,
@@ -194,6 +196,30 @@ export async function setChannelTicketURL(channelId: string, ticketURL: string):
     body: JSON.stringify({ ticket_url: ticketURL }),
   });
   if (!res.ok) throw new Error(`Failed to set ticket: ${await errorText(res)}`);
+}
+
+/** Adds and removes a channel's or thread's tags; returns the tags it then has. */
+export async function editChannelTags(channelId: string, add: string[], remove: string[]): Promise<string[]> {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/tags`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ add, remove }),
+  });
+  if (!res.ok) throw new Error(`Failed to edit tags: ${await errorText(res)}`);
+  return ((await res.json()) as { tags: string[] }).tags;
+}
+
+/** A tag in use, with how many channels and threads carry it. */
+export interface TagCount {
+  tag: string;
+  count: number;
+}
+
+/** The tags in use across every project, by name. */
+export async function listTags(): Promise<TagCount[]> {
+  const res = await apiFetch(`${getApiUrl()}/api/tags`);
+  if (!res.ok) throw new Error(`Failed to list tags: ${await errorText(res)}`);
+  return ((await res.json()) as { tags: TagCount[] }).tags;
 }
 
 export async function deleteChannel(channelId: string): Promise<void> {

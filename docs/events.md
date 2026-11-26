@@ -500,7 +500,7 @@ A channel's git state changed (branch switch, new commit, or diff size). Broadca
 
 Emitted by the in-process `BranchPoller` goroutine, which ticks every 5s (default), compares each channel's working directory against the previous tick, and broadcasts only when at least one field changed. The first tick after startup primes the cache without broadcasting; a channel first seen on a later tick (created since) is broadcast once, since its git state may have moved on since the sidebar fetched it.
 
-Also emitted by [`POST /api/channels/{id}/rename`](api.md#post-apichannelsidrename), carrying the new `name`, by [`POST /api/channels/{id}/description`](api.md#post-apichannelsiddescription), carrying the new `description` (empty when cleared), and by [`POST /api/channels/{id}/ticket`](api.md#post-apichannelsidticket), carrying the new `ticket_url` (empty when cleared). Those events carry nothing else, so a client applies only the name, description or ticket URL and keeps the git fields it has.
+Also emitted by [`POST /api/channels/{id}/rename`](api.md#post-apichannelsidrename), carrying the new `name`, by [`POST /api/channels/{id}/description`](api.md#post-apichannelsiddescription), carrying the new `description` (empty when cleared), by [`POST /api/channels/{id}/ticket`](api.md#post-apichannelsidticket), carrying the new `ticket_url` (empty when cleared), and by [`POST /api/channels/{id}/tags`](api.md#post-apichannelsidtags), carrying the new `tags` (empty when none are left). Those events carry nothing else, so a client applies only the name, description, ticket URL or tags and keeps the git fields it has.
 
 **Payload schema:**
 
@@ -529,6 +529,7 @@ Also emitted by [`POST /api/channels/{id}/rename`](api.md#post-apichannelsidrena
 | `name`           | string | New display name (only on rename; omitted otherwise) |
 | `description`    | string | New description, empty when cleared (only on a description change; omitted otherwise) |
 | `ticket_url`     | string | New ticket URL, empty when cleared (only on a ticket change; omitted otherwise) |
+| `tags`           | string[] | The channel's tags after an edit, sorted, empty when none are left (only on a tags change; omitted otherwise) |
 
 ---
 

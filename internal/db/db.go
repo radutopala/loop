@@ -32,6 +32,8 @@ type Store interface {
 	UpdateChannelName(ctx context.Context, channelID, name string) error
 	UpdateChannelDescription(ctx context.Context, channelID, description string) error
 	UpdateChannelTicketURL(ctx context.Context, channelID, ticketURL string) error
+	UpdateChannelTags(ctx context.Context, channelID string, add, remove []string) ([]string, error)
+	ListChannelTags(ctx context.Context) ([]TagCount, error)
 	DeleteChannel(ctx context.Context, channelID string) error
 	DeleteChannelsByParentID(ctx context.Context, parentID string) error
 	ListChannelIDsByParentID(ctx context.Context, parentID string) ([]string, error)
@@ -319,8 +321,11 @@ func (s *SQLiteStore) withTx(ctx context.Context, fn func(tx *sql.Tx) error) err
 // Column lists for SELECT queries.
 const (
 	messageColumns = `id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, is_triggered, is_running, priority, mode, created_at, kind, chain_position, tool_use_id, tool_name, is_error, trigger_msg_id, not_before, edit_hold_until, session_id, transcript_uuid, add_uuid, tags`
-	channelColumns = `id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, task_id, description, ticket_url, learn_override, explain_override, kind, created_at, updated_at`
-	taskColumns    = `id, channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec, thread_id, worktree, origin_branch, update_before_run, running, workflow_name, workflow_inputs, bash_script, plugin_id, plugin_action`
+	channelColumns = `id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, task_id, description, ticket_url, learn_override, explain_override, kind, created_at, updated_at, ` + channelTagsColumn
+	// channelTagsColumn reads a channel's tags as a JSON array; the queries
+	// using channelColumns select FROM channels without an alias.
+	channelTagsColumn = `(SELECT json_group_array(t.name) FROM channel_tags ct JOIN tags t ON t.id = ct.tag_id WHERE ct.channel_id = channels.id)`
+	taskColumns       = `id, channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec, thread_id, worktree, origin_branch, update_before_run, running, workflow_name, workflow_inputs, bash_script, plugin_id, plugin_action`
 )
 
 // helpers
@@ -340,9 +345,9 @@ type rowScanner interface {
 func scanChannelFrom(scanner rowScanner) (*Channel, error) {
 	ch := &Channel{}
 	var active, worktree, locked, forkPending int
-	var permJSON string
+	var permJSON, tagsJSON string
 	if err := scanner.Scan(&ch.ID, &ch.ChannelID, &ch.GuildID, &ch.Name, &ch.DirPath,
-		&ch.ParentID, &ch.Platform, &active, &ch.SessionID, &permJSON, &worktree, &ch.BaseBranch, &locked, &ch.ModelOverride, &ch.EffortOverride, &forkPending, &ch.TaskID, &ch.Description, &ch.TicketURL, &ch.LearnOverride, &ch.ExplainOverride, &ch.Kind, &ch.CreatedAt, &ch.UpdatedAt); err != nil {
+		&ch.ParentID, &ch.Platform, &active, &ch.SessionID, &permJSON, &worktree, &ch.BaseBranch, &locked, &ch.ModelOverride, &ch.EffortOverride, &forkPending, &ch.TaskID, &ch.Description, &ch.TicketURL, &ch.LearnOverride, &ch.ExplainOverride, &ch.Kind, &ch.CreatedAt, &ch.UpdatedAt, &tagsJSON); err != nil {
 		return nil, err
 	}
 	ch.Active = active == 1
@@ -352,6 +357,7 @@ func scanChannelFrom(scanner rowScanner) (*Channel, error) {
 	if permJSON != "" {
 		_ = json.Unmarshal([]byte(permJSON), &ch.Permissions)
 	}
+	ch.Tags = parseTags(tagsJSON)
 	return ch, nil
 }
 

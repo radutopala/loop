@@ -501,6 +501,8 @@ func (s *Server) registerChannelRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/channels/{id}/rename", s.handleRenameChannel)
 	mux.HandleFunc("POST /api/channels/{id}/description", s.handleSetChannelDescription)
 	mux.HandleFunc("POST /api/channels/{id}/ticket", s.handleSetChannelTicketURL)
+	mux.HandleFunc("POST /api/channels/{id}/tags", s.handleEditChannelTags)
+	mux.HandleFunc("GET /api/tags", s.handleListTags)
 }
 
 // registerTaskRoutes registers the scheduled task, shortcut, and command routes.

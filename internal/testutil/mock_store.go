@@ -808,3 +808,15 @@ func (m *MockStore) ListReviewSessions(ctx context.Context) ([]*db.ReviewSession
 	v, _ := args.Get(0).([]*db.ReviewSession)
 	return v, args.Error(1)
 }
+
+func (m *MockStore) UpdateChannelTags(ctx context.Context, channelID string, add, remove []string) ([]string, error) {
+	args := m.Called(ctx, channelID, add, remove)
+	tags, _ := args.Get(0).([]string)
+	return tags, args.Error(1)
+}
+
+func (m *MockStore) ListChannelTags(ctx context.Context) ([]db.TagCount, error) {
+	args := m.Called(ctx)
+	tags, _ := args.Get(0).([]db.TagCount)
+	return tags, args.Error(1)
+}

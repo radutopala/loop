@@ -44,6 +44,9 @@ type Channel struct {
 	// TicketURL links the channel or thread to its ticket in Jira, GitHub
 	// or any other tracker; empty when there's none.
 	TicketURL string `json:"ticket_url"`
+	// Tags label the channel or thread for the sidebar's tag: search;
+	// sorted, lowercase and without duplicates. Empty when there's none.
+	Tags []string `json:"tags"`
 	// LearnOverride turns the end-of-run learn pass on ("on") or off ("off")
 	// for this channel; empty inherits the config's learn.enabled.
 	LearnOverride string `json:"learn_override"`
@@ -160,6 +163,12 @@ const (
 // run's composer mode (e.g. "plan") so an ask answered mid-plan resumes in
 // plan mode; Data is the broadcast event payload JSON used to rehydrate the
 // card.
+// TagCount is a tag in use and how many channels and threads carry it.
+type TagCount struct {
+	Tag   string `json:"tag"`
+	Count int    `json:"count"`
+}
+
 type PausedChannel struct {
 	ChannelID string
 	Kind      string

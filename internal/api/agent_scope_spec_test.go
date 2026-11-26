@@ -89,6 +89,8 @@ var worldRoutes = map[string]worldRoute{
 	"POST /api/channels/{id}/rename":           {target: "/api/channels/<thread>/rename", body: `{"name":"n"}`},
 	"POST /api/channels/{id}/description":      {target: "/api/channels/<thread>/description", body: `{"description":"d"}`},
 	"POST /api/channels/{id}/ticket":           {target: "/api/channels/<thread>/ticket", body: `{"ticket_url":"https://example.com/t/1"}`},
+	"POST /api/channels/{id}/tags":             {target: "/api/channels/<thread>/tags", body: `{"add":["t"],"remove":["u"]}`},
+	"GET /api/tags":                            {target: "/api/tags", reveals: "list_tags lists the tag names every project uses, a shared vocabulary for picking one"},
 	"POST /api/channels/{id}/monitors":         {target: "/api/channels/<channel>/monitors", body: `{"command":"true","description":"d"}`},
 	"GET /api/channels/{id}/monitors":          {target: "/api/channels/<channel>/monitors"},
 	"DELETE /api/channels/{id}/monitors/{mid}": {target: "/api/channels/<channel>/monitors/<monitor>"},

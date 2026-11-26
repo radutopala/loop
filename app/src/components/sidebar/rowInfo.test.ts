@@ -35,6 +35,16 @@ describe("rowInfoLines", () => {
       ],
     ],
     [
+      "the tags after the ticket, before the path",
+      { dir_path: "/p", ticket_url: "https://t/1", tags: ["api", "web"] },
+      [
+        { key: "ticket", value: "https://t/1" },
+        { key: "tags", value: "api, web" },
+        { key: "path", value: "/p" },
+      ],
+    ],
+    ["no tags line for empty tags", { dir_path: "/p", tags: [] }, [{ key: "path", value: "/p" }]],
+    [
       "the path before the branch",
       { dir_path: "/p", branch: "main" },
       [

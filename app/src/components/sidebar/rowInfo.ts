@@ -6,7 +6,7 @@ import { prChip, prReasonText } from "../../utils/prStatus";
 
 /** One line of a sidebar row's info popup. */
 export interface RowInfoLine {
-  key: "ticket" | "path" | "branch" | "pr" | "ci" | "conflict" | "cmt" | "commit" | "sync" | "model" | "status";
+  key: "ticket" | "tags" | "path" | "branch" | "pr" | "ci" | "conflict" | "cmt" | "commit" | "sync" | "model" | "status";
   value: string;
   /** Shown dimmed after the value, e.g. the commit's subject. */
   detail?: string;
@@ -14,7 +14,7 @@ export interface RowInfoLine {
 
 /**
  * The lines of a sidebar row's info popup, leaving out any with nothing to
- * say: its ticket's URL, its directory, its branch, the PR open on it, why
+ * say: its ticket's URL, its tags, its directory, its branch, the PR open on it, why
  * its ci, cnf and cmt pills are lit (with the watcher's status when given), its
  * commit and subject, how far it is from its base and upstream branches, its
  * model/effort overrides, and whether its agent is running or it's locked.
@@ -23,6 +23,7 @@ export function rowInfoLines(channel: Channel, pr?: PRInfo | null, prStatus?: PR
   const lines: RowInfoLine[] = [];
   const ticket = channel.ticket_url?.trim();
   if (ticket) lines.push({ key: "ticket", value: ticket });
+  if (channel.tags?.length) lines.push({ key: "tags", value: channel.tags.join(", ") });
   if (channel.dir_path) lines.push({ key: "path", value: channel.dir_path });
   const commit = channel.commit?.slice(0, 7);
   if (channel.branch && channel.branch !== "HEAD") {

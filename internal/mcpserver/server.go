@@ -181,6 +181,16 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 	}, s.handleSetTicketURL)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "set_tags",
+		Description: "Add tags to or remove tags from a channel, thread or worktree thread. Tags group work across the desktop app's sidebar, whose search filters by them (tag:x tag:y text), and show when hovering a row. channel_id is optional — omit it to tag the channel or thread this agent is running in. Tags are lowercased; each holds letters, digits and - _ . /, at most 32 characters, and a row carries at most 20. Call list_tags first and reuse an existing tag over coining a near-duplicate. Returns the tags after.",
+	}, s.handleSetTags)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "list_tags",
+		Description: "List the tags in use across every channel and thread, each with how many carry it. Use it to pick an existing tag before set_tags.",
+	}, s.handleListTags)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "search_channels",
 		Description: "Search for channels and threads. Returns channel IDs, names, directory paths, and active status. Use the query parameter to filter by name.",
 	}, s.handleSearchChannels)

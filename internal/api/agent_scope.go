@@ -30,6 +30,8 @@ var agentRoutes = []string{
 	"POST /api/channels/{id}/rename",
 	"POST /api/channels/{id}/description",
 	"POST /api/channels/{id}/ticket",
+	"POST /api/channels/{id}/tags",
+	"GET /api/tags",
 	"POST /api/channels/{id}/monitors",
 	"GET /api/channels/{id}/monitors",
 	"DELETE /api/channels/{id}/monitors/{mid}",

@@ -8,6 +8,7 @@ import {
   deleteChannel,
   deleteQueuedMessage,
   deleteThread,
+  editChannelTags,
   ensureChannel,
   fetchAgentConfig,
   fetchChannels,
@@ -26,6 +27,7 @@ import {
   killAgentContainer,
   listPendingAsks,
   listPendingPlans,
+  listTags,
   pasteImage,
   releaseQueuedHold,
   removeWorktree,
@@ -435,6 +437,24 @@ describe("writes", () => {
   it.each(cases)("$name throws on failure", async (c) => {
     respond("", { status: 500, statusText: "Bad" });
     await expect(c.run()).rejects.toThrow(c.err);
+  });
+});
+
+describe("tags", () => {
+  it("editChannelTags POSTs the edit and returns the tags", async () => {
+    json({ channel_id: "ch1", tags: ["api", "web"] });
+    await expect(editChannelTags("ch1", ["web"], ["old"])).resolves.toEqual(["api", "web"]);
+    expect(sent()).toEqual({ url: `${API}/api/channels/ch1/tags`, method: "POST", body: { add: ["web"], remove: ["old"] } });
+    respond("bad tag", { status: 400 });
+    await expect(editChannelTags("ch1", ["x y"], [])).rejects.toThrow("Failed to edit tags: bad tag");
+  });
+
+  it("listTags returns the tags in use", async () => {
+    json({ tags: [{ tag: "api", count: 2 }] });
+    await expect(listTags()).resolves.toEqual([{ tag: "api", count: 2 }]);
+    expect(sent().url).toBe(`${API}/api/tags`);
+    respond("db down", { status: 500 });
+    await expect(listTags()).rejects.toThrow("Failed to list tags: db down");
   });
 });
 

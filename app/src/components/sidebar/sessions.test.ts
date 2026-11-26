@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Channel } from "../../types";
-import { activeSessions, isTaskThread, matchesSearch, RECENT_WINDOW_MS, recentSessions, relativeTime, sessionContext, sessionName } from "./sessions";
+import { activeSessions, isSearching, isTaskThread, matchesSearch, parseSearch, RECENT_WINDOW_MS, recentSessions, relativeTime, sessionContext, sessionName } from "./sessions";
 
 function ch(id: string, over: Partial<Channel> = {}): Channel {
   return {
@@ -86,6 +86,47 @@ describe("matchesSearch", () => {
 
   it("matches the name as the sidebar shows it", () => {
     expect(matchesSearch(ch("d", { name: "", dir_path: "/src/webapp" }), "webapp")).toBe(true);
+  });
+
+  it.each([
+    ["tag:api", true],
+    ["TAG:#Web", true],
+    ["tag:api tag:web", true],
+    ["tag:api tag:ops", false],
+    ["tag:api login", true],
+    ["login tag:api", true],
+    ["tag:api nothing", false],
+    ["tag:", true],
+    ["tag:ap", false],
+  ])("with tags, %j matches: %s", (query, want) => {
+    expect(matchesSearch({ ...thread, tags: ["api", "web"] }, query)).toBe(want);
+  });
+
+  it("needs the tags on a session without any", () => {
+    expect(matchesSearch(thread, "tag:api")).toBe(false);
+  });
+
+  it("matches the text in the context given", () => {
+    expect(matchesSearch(thread, "Backend", "backend › web")).toBe(true);
+    expect(matchesSearch(thread, "backend")).toBe(false);
+  });
+});
+
+describe("parseSearch", () => {
+  it.each([
+    ["", { tags: [], text: "" }],
+    ["  Login  Fix ", { tags: [], text: "login fix" }],
+    ["tag:API tag:#web retry", { tags: ["api", "web"], text: "retry" }],
+    ["tag: retry", { tags: [], text: "retry" }],
+  ])("%j", (query, want) => {
+    expect(parseSearch(query)).toEqual(want);
+  });
+
+  it("tells whether a search filters anything", () => {
+    expect(isSearching("")).toBe(false);
+    expect(isSearching("tag:")).toBe(false);
+    expect(isSearching("tag:x")).toBe(true);
+    expect(isSearching("x")).toBe(true);
   });
 });
 

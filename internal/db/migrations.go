@@ -709,6 +709,19 @@ var migrations = []migration{
 	sqlMigration(`ALTER TABLE messages ADD COLUMN tags TEXT NOT NULL DEFAULT ''`),
 	// title is the PR/MR's title as its last lookup saw it.
 	sqlMigration(`ALTER TABLE pr_state ADD COLUMN title TEXT NOT NULL DEFAULT ''`),
+	// tags is the tag vocabulary; channel_tags puts tags on channels and
+	// threads. A tag no channel carries any more is pruned.
+	sqlMigration(`CREATE TABLE IF NOT EXISTS tags (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL UNIQUE,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`),
+	sqlMigration(`CREATE TABLE IF NOT EXISTS channel_tags (
+		channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+		tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+		PRIMARY KEY (channel_id, tag_id)
+	)`),
+	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_channel_tags_tag ON channel_tags(tag_id)`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the
