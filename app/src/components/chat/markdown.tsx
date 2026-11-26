@@ -3,7 +3,7 @@ import "./math.css";
 import { useContext, useState } from "react";
 import { useTheme } from "../../ThemeContext";
 import { BARE_URL, trimUrl } from "../../utils/bareUrl";
-import { findCandidatePaths, markdownFileTarget } from "../../utils/fileLinks";
+import { codeSpanPath, findCandidatePaths, markdownFileTarget } from "../../utils/fileLinks";
 import { inAppHref } from "../../utils/messageLinks";
 import { CopyButton } from "../shared/CopyButton";
 import { ChatComponent } from "./ChatComponent";
@@ -105,9 +105,13 @@ function formatInline(text: string, s: Record<string, React.CSSProperties>, chan
     } else if (isInlineMath(token)) {
       nodes.push(<span key={nodes.length} dangerouslySetInnerHTML={{ __html: renderMath(inlineMathTeX(token), false) }} />);
     } else if (token.startsWith("`")) {
+      const code = token.slice(1, -1);
+      // A code span that names a file opens it, as a path in the text does;
+      // it stays code while the file is looked up, or when there's none.
+      const file = channelId ? codeSpanPath(code) : null;
       nodes.push(
         <code key={nodes.length} style={s.inlineCode}>
-          {token.slice(1, -1)}
+          {file ? <FileLink channelId={channelId} raw={file.path} line={file.line} label={code} /> : code}
         </code>,
       );
     } else if (token.startsWith("**")) {

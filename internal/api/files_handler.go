@@ -11,6 +11,7 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -361,6 +362,43 @@ var fileSearchSkipDirs = map[string]bool{
 	"__pycache__":  true,
 }
 
+// walkRoot visits the files and dirs under rootAbs that the file search
+// shows, with their slash-separated path from the root: it skips
+// fileSearchSkipDirs, what .gitignore ignores and what the editor config
+// excludes, and the subtrees it can't read.
+func (s *Server) walkRoot(rootAbs string, ec config.EditorConfig, visit func(rel string, d fs.DirEntry)) {
+	patterns := loadGitignorePatterns(s.sys, rootAbs)
+	err := s.sys.WalkDir(rootAbs, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			// Skip unreadable subtrees but keep walking siblings.
+			if d != nil && d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if path == rootAbs {
+			return nil
+		}
+		rel, err := filepath.Rel(rootAbs, path)
+		if err != nil {
+			return nil
+		}
+		skipped := gitignoreMatch(patterns, rel) || ec.Excluded(filepath.ToSlash(rel))
+		if d.IsDir() {
+			if fileSearchSkipDirs[d.Name()] || skipped {
+				return fs.SkipDir
+			}
+		} else if skipped {
+			return nil
+		}
+		visit(filepath.ToSlash(rel), d)
+		return nil
+	})
+	if err != nil {
+		s.logger.Warn("file search walk error", "root", rootAbs, "err", err)
+	}
+}
+
 // fuzzyMatchSeq is a sequential, case-insensitive fuzzy match: every rune of q
 // must appear in s in order. Empty q always matches.
 func fuzzyMatchSeq(q, s string) bool {
@@ -452,50 +490,12 @@ func (s *Server) handleSearchFiles(w http.ResponseWriter, r *http.Request) {
 		if rootAbs == "" {
 			continue
 		}
-		patterns := loadGitignorePatterns(s.sys, rootAbs)
-		err := s.sys.WalkDir(rootAbs, func(path string, d fs.DirEntry, walkErr error) error {
-			if walkErr != nil {
-				// Skip unreadable subtrees but keep walking siblings.
-				if d != nil && d.IsDir() {
-					return fs.SkipDir
-				}
-				return nil
+		s.walkRoot(rootAbs, ec, func(rel string, d fs.DirEntry) {
+			if d.IsDir() && !withDirs || !fuzzyMatchSeq(q, rel) {
+				return
 			}
-			if path == rootAbs {
-				return nil
-			}
-			rel, err := filepath.Rel(rootAbs, path)
-			if err != nil {
-				return nil
-			}
-			if d.IsDir() {
-				if fileSearchSkipDirs[d.Name()] {
-					return fs.SkipDir
-				}
-				if gitignoreMatch(patterns, rel) || ec.Excluded(filepath.ToSlash(rel)) {
-					return fs.SkipDir
-				}
-				if withDirs && fuzzyMatchSeq(q, rel) {
-					results = append(results, fileSearchResult{RootIndex: rootIdx, RelPath: filepath.ToSlash(rel), Name: d.Name(), IsDir: true})
-				}
-				return nil
-			}
-			if gitignoreMatch(patterns, rel) || ec.Excluded(filepath.ToSlash(rel)) {
-				return nil
-			}
-			if !fuzzyMatchSeq(q, rel) {
-				return nil
-			}
-			results = append(results, fileSearchResult{
-				RootIndex: rootIdx,
-				RelPath:   filepath.ToSlash(rel),
-				Name:      d.Name(),
-			})
-			return nil
+			results = append(results, fileSearchResult{RootIndex: rootIdx, RelPath: rel, Name: d.Name(), IsDir: d.IsDir()})
 		})
-		if err != nil {
-			s.logger.Warn("file search walk error", "root", rootAbs, "err", err)
-		}
 	}
 
 	// Rank: (a) basename starts with q, (b) relPath contains q, (c) fuzzy-only.
@@ -1145,6 +1145,56 @@ func (s *Server) resolveAndStat(roots []string, path string) (bool, int, string)
 	return false, 0, ""
 }
 
+// suffixCandidate reports whether a path not found at a root may name a
+// file deeper down: a relative path that stays inside the root.
+func suffixCandidate(p string) bool {
+	if p == "" || filepath.IsAbs(p) {
+		return false
+	}
+	clean := filepath.ToSlash(filepath.Clean(p))
+	return clean != "." && clean != ".." && !strings.HasPrefix(clean, "../")
+}
+
+// resolveBySuffix resolves the results at the indexes given, relative paths
+// not found at any root, to the one file under the roots whose path ends
+// with them: a chat names a file by its name (chatShared.tsx) or from a
+// subdir (src/hooks/useChat.ts) as often as from the root. A path more than
+// one file ends with stays unresolved.
+func (s *Server) resolveBySuffix(ctx context.Context, channelID string, roots []string, results []filesExistsResult, idxs []int) {
+	byName := make(map[string][]int)
+	for _, i := range idxs {
+		clean := filepath.ToSlash(filepath.Clean(results[i].Path))
+		byName[path.Base(clean)] = append(byName[path.Base(clean)], i)
+	}
+	matches := make(map[int]int)
+	ec := s.editorConfig(ctx, channelID)
+	for rootIdx, root := range roots {
+		if root == "" {
+			continue
+		}
+		s.walkRoot(root, ec, func(rel string, d fs.DirEntry) {
+			if d.IsDir() {
+				return
+			}
+			for _, i := range byName[d.Name()] {
+				want := filepath.ToSlash(filepath.Clean(results[i].Path))
+				if rel != want && !strings.HasSuffix(rel, "/"+want) {
+					continue
+				}
+				matches[i]++
+				results[i].RootIndex, results[i].RelPath = rootIdx, rel
+			}
+		})
+	}
+	for _, i := range idxs {
+		if matches[i] == 1 {
+			results[i].Exists = true
+		} else {
+			results[i].RootIndex, results[i].RelPath = 0, ""
+		}
+	}
+}
+
 const maxExistsBatch = 200
 
 func (s *Server) handleFilesExists(w http.ResponseWriter, r *http.Request) {
@@ -1169,9 +1219,16 @@ func (s *Server) handleFilesExists(w http.ResponseWriter, r *http.Request) {
 	}
 
 	results := make([]filesExistsResult, 0, len(req.Paths))
+	var unresolved []int
 	for _, p := range req.Paths {
 		exists, idx, rel := s.resolveAndStat(roots, p)
+		if !exists && suffixCandidate(p) {
+			unresolved = append(unresolved, len(results))
+		}
 		results = append(results, filesExistsResult{Path: p, Exists: exists, RootIndex: idx, RelPath: rel})
+	}
+	if len(unresolved) > 0 {
+		s.resolveBySuffix(r.Context(), channelID, roots, results, unresolved)
 	}
 
 	writeHTTPJSON(w, http.StatusOK, filesExistsResponse{Results: results}, s.logger)

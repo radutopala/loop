@@ -1715,6 +1715,72 @@ func (s *ServerSuite) TestFilesExists_Relative() {
 	require.False(s.T(), resp.Results[1].Exists)
 }
 
+func (s *ServerSuite) TestFilesExists_BySuffix() {
+	primary := s.T().TempDir()
+	secondary := s.T().TempDir()
+	for _, f := range []string{"app/src/chat/bubbles.tsx", "a/dup.ts", "b/dup.ts", "node_modules/x/hidden.ts", "top.md"} {
+		require.NoError(s.T(), os.MkdirAll(filepath.Join(primary, filepath.Dir(f)), 0755))
+		require.NoError(s.T(), os.WriteFile(filepath.Join(primary, f), []byte("x"), 0644))
+	}
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(secondary, "pkg"), 0755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(secondary, "pkg", "extra.go"), []byte("x"), 0644))
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(primary, ".loop"), 0755))
+	// An empty extra dir is skipped, not walked.
+	cfgJSON := fmt.Sprintf(`{"extra_dirs": ["", %q]}`, secondary)
+	require.NoError(s.T(), os.WriteFile(filepath.Join(primary, ".loop", "config.json"), []byte(cfgJSON), 0644))
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: primary}, nil)
+
+	type want struct {
+		exists bool
+		root   int
+		rel    string
+	}
+	cases := []struct {
+		path string
+		want want
+	}{
+		// Found at the root: no walk needed.
+		{"top.md", want{true, 0, "top.md"}},
+		// A bare name and a path from a subdir find the one file they end.
+		{"bubbles.tsx", want{true, 0, "app/src/chat/bubbles.tsx"}},
+		{"src/chat/bubbles.tsx", want{true, 0, "app/src/chat/bubbles.tsx"}},
+		{"./chat/bubbles.tsx", want{true, 0, "app/src/chat/bubbles.tsx"}},
+		// In an extra root too.
+		{"extra.go", want{true, 2, "pkg/extra.go"}},
+		// Only whole path segments count.
+		{"hat/bubbles.tsx", want{}},
+		// More than one file ends with it.
+		{"dup.ts", want{}},
+		// The walk skips what the file search skips.
+		{"hidden.ts", want{}},
+		{"nowhere.ts", want{}},
+		// Paths that leave the root, and absolute ones, aren't looked for.
+		{"../bubbles.tsx", want{}},
+		{"/nope/bubbles.tsx", want{}},
+		{".", want{}},
+	}
+	paths := make([]string, len(cases))
+	for i, c := range cases {
+		paths[i] = c.path
+	}
+	enc, err := json.Marshal(filesExistsRequest{Paths: paths})
+	require.NoError(s.T(), err)
+
+	rec := s.testRequest("POST", "/api/channels/ch-1/files/exists", string(enc))
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp filesExistsResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp.Results, len(cases))
+	for i, c := range cases {
+		r := resp.Results[i]
+		require.Equal(s.T(), c.path, r.Path)
+		require.Equal(s.T(), c.want, want{r.Exists, r.RootIndex, r.RelPath}, c.path)
+	}
+}
+
 func (s *ServerSuite) TestFilesExists_Absolute() {
 	tmpDir := s.T().TempDir()
 	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "abs.txt"), []byte("x"), 0644))

@@ -2164,6 +2164,7 @@ Batched existence check for path candidates discovered in chat text or tool inpu
 **Behavior notes:**
 - Each candidate is resolved against the channel's primary `dir_path` and any `extra_dirs` from project config, in order. The first root that contains the path wins; the `root_index` in the response refers to that root (compatible with the `root` query parameter on other file endpoints).
 - Relative paths are tried under each root via the same path-validation rules as the read/write endpoints (no absolute, no `..` traversal, symlink-aware containment check).
+- A relative path found under no root is then looked for deeper down: it resolves to the one file, under any root, whose path ends with it (`bubbles.tsx` or `src/chat/bubbles.tsx` finds `app/src/chat/bubbles.tsx`). Only whole path segments count, the walk skips what [file search](#get-apichannelsidfilessearch) skips, and a path that more than one file ends with returns `exists: false`.
 - Absolute paths are stat'd directly, then matched against each root's resolved prefix to derive `rel_path`. Paths outside every root return `exists: false`.
 - Directories return `exists: false` — only regular files are reported as existing, since the link UX opens files in the editor.
 - The batch is capped at **200 paths per request**; extras are silently dropped. Request body is limited to 64 KiB.

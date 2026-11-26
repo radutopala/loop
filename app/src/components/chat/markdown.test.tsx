@@ -128,6 +128,29 @@ describe("MarkdownContent", () => {
       expect(msg().querySelector("p")?.textContent).toBe("edit src/a.ts:4 then x lib/b.go");
     });
 
+    it("links a code span that names a file, keeping it code", async () => {
+      renderMarkdown("see `docker-compose.yml`, `src/a.ts:12:3` and `make test`");
+      const bare = await screen.findByRole("link", { name: "docker-compose.yml" });
+      expect(bare.closest("code")).toBeTruthy();
+      expect(screen.getByRole("link", { name: "src/a.ts:12:3" }).closest("code")).toBeTruthy();
+      expect(screen.queryByRole("link", { name: "make test" })).toBeNull();
+      expect(existsMock).toHaveBeenCalledWith("ch-1", ["docker-compose.yml", "src/a.ts"]);
+    });
+
+    it("keeps a code span naming a missing file plain code", async () => {
+      existsMock.mockImplementation(async (_channelId, paths) => paths.map((p) => ({ path: p, exists: false })));
+      renderMarkdown("see `notes.md`");
+      await waitFor(() => expect(existsMock).toHaveBeenCalledWith("ch-1", ["notes.md"]));
+      expect(screen.queryByRole("link")).toBeNull();
+      expect(msg().querySelector("code")?.textContent).toBe("notes.md");
+    });
+
+    it("leaves a code span naming a file as code without a channel", () => {
+      renderMarkdown("see `notes.md`", "");
+      expect(screen.queryByRole("link")).toBeNull();
+      expect(existsMock).not.toHaveBeenCalled();
+    });
+
     it("links a path that is the whole line", async () => {
       renderMarkdown("src/a.ts");
       expect(await screen.findByRole("link", { name: "src/a.ts" })).toBeTruthy();

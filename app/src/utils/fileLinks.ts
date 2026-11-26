@@ -27,7 +27,7 @@ export interface ParsedCandidate {
 // File path heuristic. Matches:
 //   - relative paths with at least one `/` and a file extension (src/foo.ts)
 //   - absolute paths starting with `/` (e.g. /Users/.../file.go)
-// Optional `:NNN` line suffix is captured separately so callers can jump.
+// Optional `:NNN` (or `:LNNN`) line suffix is captured separately so callers can jump.
 //
 // Notes:
 //   - Two-segment minimum prevents matching common URLs ("foo.com")
@@ -35,7 +35,7 @@ export interface ParsedCandidate {
 //   - Trailing punctuation (".", ",", ")", "]", "'", '"', ";", ":") is excluded
 //   - A match never starts right after `/`, `.` or a word char, so a path
 //     inside a URL (https://host/a/b.txt) isn't taken
-const PATH_REGEX = /(?<![\w./])((?:\/|(?:[\w.\-+@]+\/)+)[\w.\-+@]+(?:\/[\w.\-+@]+)*\.[a-zA-Z0-9]{1,8})(?::(\d+))?(?![\w/])/g;
+const PATH_REGEX = /(?<![\w./])((?:\/|(?:[\w.\-+@]+\/)+)[\w.\-+@]+(?:\/[\w.\-+@]+)*\.[a-zA-Z0-9]{1,8})(?::L?(\d+))?(?![\w/])/g;
 
 export function findCandidatePaths(text: string): ParsedCandidate[] {
   const out: ParsedCandidate[] = [];
@@ -55,6 +55,19 @@ export function findCandidatePaths(text: string): ParsedCandidate[] {
     });
   }
   return out;
+}
+
+// A code span that is a path and nothing else: relative or absolute, with a
+// file extension, and an optional :line (or :Lline, and :column). Unlike text, a bare
+// name (`README.md`) counts too: the backticks already mark it as a name.
+const CODE_PATH_REGEX = /^(\/?(?:[\w.\-+@]+\/)*[\w.\-+@]+\.[a-zA-Z0-9]{1,8})(?::L?(\d+)(?::\d+)?)?$/;
+
+/** The file an inline code span names, with its line, when the span is a
+ *  path and nothing else; null otherwise. */
+export function codeSpanPath(code: string): { path: string; line: number | null } | null {
+  const m = code.trim().match(CODE_PATH_REGEX);
+  if (!m) return null;
+  return { path: m[1]!, line: m[2] ? parseInt(m[2], 10) : null };
 }
 
 /** The file a markdown link's href points at, with the line it names:

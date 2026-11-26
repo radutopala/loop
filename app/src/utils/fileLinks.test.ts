@@ -1,6 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { checkFilesExist } from "../api/files";
-import { commandDirs, findCandidatePaths, getValidationStatus, markdownFileTarget, pathInDir, requestValidation, resetFileLinkCache, retain, revalidateMissing, subscribe } from "./fileLinks";
+import {
+  codeSpanPath,
+  commandDirs,
+  findCandidatePaths,
+  getValidationStatus,
+  markdownFileTarget,
+  pathInDir,
+  requestValidation,
+  resetFileLinkCache,
+  retain,
+  revalidateMissing,
+  subscribe,
+} from "./fileLinks";
 
 vi.mock("../api/files", () => ({ checkFilesExist: vi.fn() }));
 
@@ -23,6 +35,11 @@ describe("findCandidatePaths", () => {
     expect(found).toHaveLength(1);
     expect(found[0]).toMatchObject({ raw: "internal/api/server.go", line: 142 });
     expect(found[0]!.length).toBe("internal/api/server.go:142".length);
+  });
+
+  it("parses a trailing :L line suffix", () => {
+    const found = findCandidatePaths("see app/src/a.ts:L499 now");
+    expect(found[0]).toMatchObject({ raw: "app/src/a.ts", line: 499, length: "app/src/a.ts:L499".length });
   });
 
   it("requires at least two segments — does not match a bare domain", () => {
@@ -236,6 +253,24 @@ describe("validation cache", () => {
     revalidateMissing("ch");
     await settle();
     expect(exists).not.toHaveBeenCalled();
+  });
+});
+
+describe("codeSpanPath", () => {
+  it.each([
+    ["a bare file name", "README.md", { path: "README.md", line: null }],
+    ["a relative path", "src/a.ts", { path: "src/a.ts", line: null }],
+    ["an absolute path", "/r/a.go", { path: "/r/a.go", line: null }],
+    ["a line suffix", "src/a.ts:12", { path: "src/a.ts", line: 12 }],
+    ["a line and column suffix", "src/a.ts:12:3", { path: "src/a.ts", line: 12 }],
+    ["an :L line suffix", "bubbles.tsx:L145", { path: "bubbles.tsx", line: 145 }],
+    ["surrounding spaces", " a.ts ", { path: "a.ts", line: null }],
+    ["no file for a command", "make test", null],
+    ["no file for a name without an extension", "Makefile", null],
+    ["no file for a directory", "src/", null],
+    ["no file for a home path", "~/a.md", null],
+  ])("gives %s", (_name, code, want) => {
+    expect(codeSpanPath(code)).toEqual(want);
   });
 });
 

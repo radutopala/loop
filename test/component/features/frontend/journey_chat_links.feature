@@ -57,6 +57,30 @@ Feature: Chat Links Journey
     Then I wait for text "markdownlinktarget" to appear
 
   @chat-file-links
+  Scenario: A file named in a code span opens it in the editor
+    Given I set up a test channel via API for git repo "bdd-code-span-links"
+    And I create a file "docs/deep/codespan.md" in the repo with:
+      """
+      codespanlinktarget
+      """
+    And I open the app in a browser
+    And I wait for text "bdd-code-span-links" to appear
+
+    When I click on "bdd-code-span-links" in the sidebar
+    And I wait for "textarea" to be visible
+    And I inject a bot message with:
+      """
+      Code reply: see `codespan.md:L1` and run `make test`.
+      """
+    Then I wait for text "Code reply" to appear
+    # A bare file name in backticks is a link to the one file it names,
+    # deeper down, and stays code.
+    And I wait for "code a[href='#']" to be visible
+    And the element "code a[href='#']" should contain text "codespan.md:L1"
+    When I click on "code a[href='#']"
+    Then I wait for text "codespanlinktarget" to appear
+
+  @chat-file-links
   Scenario: A file link in a side chat opens the file in the channel's editor
     Given I set up a test channel via API for git repo "bdd-side-file-links"
     And I create a file "notes/side.md" in the repo with:
