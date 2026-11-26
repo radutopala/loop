@@ -62,7 +62,7 @@ vi.mock("../../hooks/useSessionPersistence", async (importOriginal) => ({
 }));
 vi.mock("../../layouts/sideChats", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../layouts/sideChats")>()),
-  sideChats: { open: vi.fn(), close: vi.fn(), sweep: vi.fn() },
+  sideChats: { open: vi.fn(), close: vi.fn(), sweep: vi.fn(), shows: vi.fn(() => false) },
 }));
 vi.mock("../../hooks/useChatState", () => ({ useChatState: vi.fn() }));
 vi.mock("../../hooks/useAgentRegistry", () => ({ useAgentRegistry: vi.fn() }));
@@ -1427,7 +1427,7 @@ describe("WorkspaceLayout cross-component events (open-panel and open-file)", ()
     expect(last(CanvasLayout).canvas.tiles.map((t: any) => t.panel)).toEqual(["git"]);
   });
 
-  it("handles loop:open-file on split, empty, canvas, and from learnChannelId", () => {
+  it("handles loop:open-file on split, empty, canvas, and from learnChannelId or a side chat", () => {
     const h = setHooks({ learn: { learnChannelId: "learn-ch", running: false, proposals: [], shortcutsVersion: 0 } });
     seed("Chat", hsplit(leaf("chat", "chat"), leaf("git", "git")));
     renderLayout();
@@ -1446,6 +1446,12 @@ describe("WorkspaceLayout cross-component events (open-panel and open-file)", ()
     // Already has editor: does not add another, also accepts learnChannelId
     openFile({ channelId: "learn-ch", target: { rootIndex: 0, relPath: "b.ts" }, line: 5 });
     expect(h.editor.openFileAtLine).toHaveBeenCalledWith("0:b.ts", 5, undefined);
+
+    // and a side chat of the channel's
+    vi.mocked(sideChats.shows).mockImplementation((ch, id) => ch === CH && id === "side-ch");
+    openFile({ channelId: "side-ch", target: { rootIndex: 1, relPath: "s.ts" }, line: 6 });
+    expect(h.editor.openFileAtLine).toHaveBeenCalledWith("1:s.ts", 6, undefined);
+    vi.mocked(sideChats.shows).mockReturnValue(false);
 
     // Split without chat anchors to first leaf
     seed("OnlyGit", leaf("git", "git"));

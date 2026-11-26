@@ -65,6 +65,12 @@ export class SideChats {
     return started;
   }
 
+  /** shows tells whether sideChannelId is the side chat of one of
+   *  channelId's panes. */
+  shows(channelId: string, sideChannelId: string): boolean {
+    return Object.values(this.deps.load(channelId)).includes(sideChannelId);
+  }
+
   /** close ends the side chat of channelId's pane leafId, if it has one:
    *  one still starting too, once it has. */
   async close(channelId: string, leafId: string): Promise<void> {
