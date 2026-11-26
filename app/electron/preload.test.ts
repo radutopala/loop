@@ -1,4 +1,8 @@
+import { readFileSync } from "node:fs";
 import Module from "node:module";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import vm from "node:vm";
 import { describe, expect, it, vi } from "vitest";
 
 type Handler = (...args: unknown[]) => void;
@@ -29,21 +33,16 @@ describe("electron/preload.cjs", () => {
       },
     };
 
-    type LoadFn = (request: string, ...rest: unknown[]) => unknown;
-    const mod = Module as unknown as { _load: LoadFn };
-    const origLoad = mod._load;
-    mod._load = function (request: string, ...rest: unknown[]) {
-      if (request === "electron") return fakeElectron;
-      return origLoad.call(this, request, ...rest);
+    // Run the preload as Node would, with a require that hands it the fake
+    // electron module.
+    const file = fileURLToPath(new URL("./preload.cjs", import.meta.url));
+    const wrapper = vm.runInThisContext(Module.wrap(readFileSync(file, "utf-8")), { filename: file }) as (...args: unknown[]) => void;
+    const requireFake = (request: string) => {
+      if (request !== "electron") throw new Error(`unexpected require: ${request}`);
+      return fakeElectron;
     };
-
-    try {
-      const req = Module.createRequire(import.meta.url);
-      delete req.cache[req.resolve("./preload.cjs")];
-      req("./preload.cjs");
-    } finally {
-      mod._load = origLoad;
-    }
+    const module = { exports: {} };
+    wrapper(module.exports, requireFake, module, file, path.dirname(file));
 
     expect(fakeElectron.contextBridge.exposeInMainWorld).toHaveBeenCalledWith("loopAPI", expect.any(Object));
     const api = exposed.loopAPI;

@@ -1,3 +1,6 @@
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -46,6 +49,9 @@ describe("electron/main.ts", () => {
     await deps.fetch("http://127.0.0.1:8222/api/health", { method: "GET" });
     expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:8222/api/health", { method: "GET" });
 
-    await deps.sleep(0);
+    await expect(deps.sleep(0)).resolves.toBeUndefined();
+    expect(deps.homedir()).toBe(os.homedir());
+    expect(deps.fs).toBe(fs);
+    expect(deps.execFileSync).toBe(execFileSync);
   });
 });
