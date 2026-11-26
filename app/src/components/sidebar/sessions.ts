@@ -21,16 +21,51 @@ export function sessionName(channel: Channel): string {
   return channel.name || channel.dir_path?.split("/").pop() || channel.id;
 }
 
+/** The sidebar's search, split into its tag:x filters and its free text. */
+export interface SessionSearch {
+  /** Tags a session must all carry, lowercased and without a leading '#'. */
+  tags: string[];
+  /** The rest of the query, lowercased. */
+  text: string;
+}
+
+const TAG_TOKEN = /^tag:#?(.*)$/i;
+
+/** Splits a search like "tag:web tag:api login" into its tags and its text. */
+export function parseSearch(query: string): SessionSearch {
+  const tags: string[] = [];
+  const words: string[] = [];
+  for (const token of query.trim().split(/\s+/)) {
+    const tag = TAG_TOKEN.exec(token);
+    if (tag) {
+      // A bare "tag:" is one still being typed: it filters nothing yet.
+      if (tag[1]) tags.push(tag[1].toLowerCase());
+    } else if (token) {
+      words.push(token);
+    }
+  }
+  return { tags, text: words.join(" ").toLowerCase() };
+}
+
+/** Whether a search filters anything. */
+export function isSearching(query: string): boolean {
+  const { tags, text } = parseSearch(query);
+  return tags.length > 0 || !!text;
+}
+
 /**
- * Whether a session matches the sidebar's search, given in lower case: its
- * name, description, ticket URL, branch, or its PR/MR's title or reference
- * (#12, !12 for a merge request).
+ * Whether a session matches the sidebar's search: it carries every tag:x the
+ * search names, and the rest of the search is in its name, description,
+ * ticket URL, branch, its PR/MR's title or reference (#12, !12 for a merge
+ * request), or the context given (where the session lives).
  */
-export function matchesSearch(channel: Channel, query: string): boolean {
-  if (!query) return true;
+export function matchesSearch(channel: Channel, query: string, context = ""): boolean {
+  const { tags, text } = parseSearch(query);
+  if (!tags.every((t) => channel.tags?.includes(t))) return false;
+  if (!text) return true;
   const pr = channel.pr_number ? `${channel.pr_kind === "mr" ? "!" : "#"}${channel.pr_number}` : "";
   const branch = channel.branch === "HEAD" ? "" : channel.branch;
-  return [sessionName(channel), channel.description, channel.ticket_url, branch, pr, channel.pr_title].some((f) => !!f && f.toLowerCase().includes(query));
+  return [sessionName(channel), channel.description, channel.ticket_url, branch, pr, channel.pr_title, context].some((f) => !!f && f.toLowerCase().includes(text));
 }
 
 /** Where a thread lives: its ancestors' names, outermost first. Empty for a top-level channel. */

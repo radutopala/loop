@@ -171,7 +171,7 @@ Every component gets a small stepper: each `<section data-step="Title">` becomes
 
 ## File Links
 
-Paths that look like files in the channel's working tree are auto-detected in both message text and tool-use input blocks, validated against the loop fs, and rendered as clickable links. Clicking opens the file in the editor panel and scrolls to the parsed line.
+Paths that look like files in the channel's working tree are auto-detected in both message text and tool-use input blocks, validated against the loop fs, and rendered as clickable links. Clicking opens the file in the editor panel and scrolls to the parsed line. The links in a [side chat](#side-chats), and in its Learn view, open the file in the channel's editor, as the chat's do; a view over the layout closes to show it.
 
 ### Detection
 
@@ -179,8 +179,10 @@ A regex (`app/src/utils/fileLinks.ts`) extracts candidates from rendered text:
 
 - Relative paths with at least one `/` and a file extension (`src/foo.ts`, `internal/api/server.go`)
 - Absolute paths starting with `/` (e.g. `/Users/me/dev/loop/main.go`)
-- Optional trailing `:NNN` line suffix is captured separately so the click can jump to that line
+- Optional trailing `:NNN` (or `:LNNN`) line suffix is captured separately so the click can jump to that line
 - URLs (`https://…`, `file://…`) are excluded
+
+An inline code span that holds a path and nothing else links too, and stays code: `` `src/foo.ts:12` ``, and also a bare file name such as `` `README.md` ``, since the backticks already mark it as a name. A span that holds anything else, such as `` `make test` ``, stays plain code.
 
 Tool-use blocks dispatch on tool name. Tools whose `tool_input` summary is itself a bare path — `Read`, `Edit`, `Write`, `MultiEdit`, `NotebookEdit`, `NotebookRead` — render the entire input as a single link. All other tools (`Bash`, `Grep`, `Glob`, …) fall back to the same regex pass over their input string, so paths embedded in commands or queries still link.
 
@@ -192,6 +194,8 @@ Candidates are batched per channel and POSTed to [`/api/channels/{id}/files/exis
 
 - **Exists** → renders as an underlined link in `colors.active`
 - **Does not exist** → continues to render as plain text
+
+A relative path that isn't under a root as written, such as a bare file name or a path from a subdirectory, links to the one file in the channel's folders whose path ends with it. When more than one file does, it stays plain text.
 
 A path that wasn't found is checked again each time a tool call finishes, while a link on screen shows it, so a file the command itself writes links once it exists.
 

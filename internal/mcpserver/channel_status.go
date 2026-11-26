@@ -20,30 +20,31 @@ type channelStatusInput struct {
 
 // statusChannel is what channel_status reads of GET /api/channels.
 type statusChannel struct {
-	ChannelID         string `json:"channel_id"`
-	Name              string `json:"name"`
-	DirPath           string `json:"dir_path"`
-	ParentID          string `json:"parent_id"`
-	ContainerRunning  bool   `json:"container_running"`
-	AgentRunning      bool   `json:"agent_running"`
-	Branch            string `json:"branch"`
-	Commit            string `json:"commit"`
-	Subject           string `json:"subject"`
-	Upstream          string `json:"upstream"`
-	Ahead             int    `json:"ahead"`
-	Behind            int    `json:"behind"`
-	SyncBase          string `json:"sync_base"`
-	BaseAhead         int    `json:"base_ahead"`
-	BaseBehind        int    `json:"base_behind"`
-	Worktree          bool   `json:"worktree"`
-	BaseBranch        string `json:"base_branch"`
-	Locked            bool   `json:"locked"`
-	ModelOverride     string `json:"model_override"`
-	EffortOverride    string `json:"effort_override"`
-	Description       string `json:"description"`
-	TicketURL         string `json:"ticket_url"`
-	PRAttention       string `json:"pr_attention"`
-	UnresolvedThreads int    `json:"unresolved_threads"`
+	ChannelID         string   `json:"channel_id"`
+	Name              string   `json:"name"`
+	DirPath           string   `json:"dir_path"`
+	ParentID          string   `json:"parent_id"`
+	ContainerRunning  bool     `json:"container_running"`
+	AgentRunning      bool     `json:"agent_running"`
+	Branch            string   `json:"branch"`
+	Commit            string   `json:"commit"`
+	Subject           string   `json:"subject"`
+	Upstream          string   `json:"upstream"`
+	Ahead             int      `json:"ahead"`
+	Behind            int      `json:"behind"`
+	SyncBase          string   `json:"sync_base"`
+	BaseAhead         int      `json:"base_ahead"`
+	BaseBehind        int      `json:"base_behind"`
+	Worktree          bool     `json:"worktree"`
+	BaseBranch        string   `json:"base_branch"`
+	Locked            bool     `json:"locked"`
+	ModelOverride     string   `json:"model_override"`
+	EffortOverride    string   `json:"effort_override"`
+	Description       string   `json:"description"`
+	TicketURL         string   `json:"ticket_url"`
+	Tags              []string `json:"tags"`
+	PRAttention       string   `json:"pr_attention"`
+	UnresolvedThreads int      `json:"unresolved_threads"`
 }
 
 // statusPR is what channel_status reads of GET /api/channels/{id}/pr/status.
@@ -196,7 +197,7 @@ func (s *Server) fetchPRStatuses(rows []*statusChannel) map[string]*statusPR {
 }
 
 // channelStatusLines are what the desktop app's sidebar shows when hovering
-// a row: its description, ticket, directory, branch, PR/MR, why its ci, cnf and cmt pills
+// a row: its description, ticket, tags, directory, branch, PR/MR, why its ci, cnf and cmt pills
 // are lit, its commit, how far it is from its base and upstream, its
 // model/effort overrides and whether its agent is running or it's locked.
 func channelStatusLines(ch *statusChannel, pr *statusPR) []string {
@@ -206,6 +207,9 @@ func channelStatusLines(ch *statusChannel, pr *statusPR) []string {
 	}
 	if ch.TicketURL != "" {
 		lines = append(lines, "ticket: "+ch.TicketURL)
+	}
+	if len(ch.Tags) > 0 {
+		lines = append(lines, "tags: "+strings.Join(ch.Tags, ", "))
 	}
 	if ch.DirPath != "" {
 		lines = append(lines, "path: "+ch.DirPath)

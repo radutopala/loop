@@ -15,7 +15,7 @@ import (
 func (s *MCPServerSuite) TestListTools() {
 	res, err := s.session.ListTools(s.ctx, nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 58) // 25 base + 3 ui + 3 playground + 2 shortcut + 1 chat_component + 12 quality + 1 rename + 1 description + 1 ticket + 9 review
+	require.Len(s.T(), res.Tools, 60) // 25 base + 3 ui + 3 playground + 2 shortcut + 1 chat_component + 12 quality + 1 rename + 1 description + 1 ticket + 2 tags + 9 review
 
 	names := make(map[string]bool)
 	for _, t := range res.Tools {

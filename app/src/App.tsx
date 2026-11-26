@@ -6,6 +6,7 @@ import {
   createWorktreeThread,
   deleteChannel,
   deleteThread,
+  editChannelTags,
   ensureChannel,
   fetchChannels,
   fetchPlaygroundShares,
@@ -14,6 +15,7 @@ import {
   importWorktree,
   initApiUrl,
   isDaemonHealthy,
+  listTags,
   rebuildImage,
   renameChannel,
   setChannelDescription,
@@ -751,6 +753,18 @@ function AppInner() {
     }
   }, []);
 
+  const handleEditTags = useCallback(async (id: string, add: string[], remove: string[]) => {
+    setError(null);
+    try {
+      // The channel.updated event brings the new tags to every row.
+      await editChannelTags(id, add, remove);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to edit tags";
+      setError(message);
+      console.error("edit tags failed:", err);
+    }
+  }, []);
+
   const handleSetLocked = useCallback(
     async (id: string, locked: boolean) => {
       setError(null);
@@ -861,6 +875,8 @@ function AppInner() {
           onRenameThread={handleRename}
           onSetDescription={handleSetDescription}
           onSetTicketURL={handleSetTicketURL}
+          onEditTags={handleEditTags}
+          loadTags={listTags}
           onSetLocked={handleSetLocked}
           onDeleteBatch={handleDeleteBatch}
           onOpenSettings={() => togglePanel("settings")}

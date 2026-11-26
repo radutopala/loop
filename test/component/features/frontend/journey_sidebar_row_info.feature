@@ -186,3 +186,54 @@ Feature: Sidebar Row Info
     When I rest the pointer on "bdd-row-ticket" in the sidebar
     Then the row info should not show "ticket"
     And the element "[data-testid='header-ticket']" should not exist
+
+  @row-tags
+  Scenario: A channel's tags show in its row info, are edited from the context menu and filter the search
+    Given I set up a test channel via API for git repo "bdd-row-tags"
+    And I open the app in a browser
+    And I wait for text "bdd-row-tags" to appear
+
+    When I rest the pointer on "bdd-row-tags" in the sidebar
+    Then the row info should not show "tags"
+
+    # Only tags the search can match are taken.
+    When I send a POST request to "/api/channels/{channel_id}/tags" with body:
+      """
+      {"add": ["two words"]}
+      """
+    Then the response status should be 400
+
+    # An agent tags it through the API; the open popup follows.
+    When I send a POST request to "/api/channels/{channel_id}/tags" with body:
+      """
+      {"add": ["#BDD-Web", "bdd-api"]}
+      """
+    Then the response status should be 200
+    And the response should contain "bdd-web"
+    And the row info "tags" should read "bdd-api, bdd-web"
+    When I send a GET request to "/api/tags"
+    Then the response should contain "bdd-web"
+
+    # The dialog shows its tags; one is removed, another added.
+    When I right-click on "bdd-row-tags" in the sidebar
+    And I click on "Edit Tags" in the context menu
+    Then I wait for "[data-testid='tags-dialog']" to be visible
+    And the element "[data-testid='tags-chip-bdd-web']" should be visible
+    When I click on "[data-testid='tags-remove-bdd-web']"
+    And I type "bdd-auth" into "[data-testid='tags-input']"
+    And I press Enter
+    Then the element "[data-testid='tags-chip-bdd-auth']" should be visible
+    When I click on "[data-testid='tags-submit']"
+    Then I wait up to "2s" for "[data-testid='tags-dialog']" to disappear
+    When I rest the pointer on "bdd-row-tags" in the sidebar
+    Then the row info "tags" should read "bdd-api, bdd-auth"
+
+    # The search filters by every tag:x and the text alike.
+    When I type "tag:bdd-api tag:bdd-auth" into "input[placeholder='Search...']"
+    Then I wait for text "bdd-row-tags" to appear
+    When I clear and type "tag:bdd-api tag:bdd-web" into "input[placeholder='Search...']"
+    Then I wait up to "5s" for text "bdd-row-tags" to disappear
+    When I clear and type "tag:bdd-auth row-tags" into "input[placeholder='Search...']"
+    Then I wait for text "bdd-row-tags" to appear
+    When I clear and type "tag:bdd-auth zz-no-match" into "input[placeholder='Search...']"
+    Then I wait up to "5s" for text "bdd-row-tags" to disappear

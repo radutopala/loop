@@ -28,7 +28,7 @@ func statusAPI(channels string, prs map[string]string) func(*http.Request) (*htt
 
 const statusChannels = `[
 	{"channel_id":"root","name":"loop","dir_path":"/work/loop","branch":"main","commit":"6fb9594abcdef","subject":"Merge it","sync_base":"origin/main","upstream":"origin/main","container_running":true},
-	{"channel_id":"test-channel","parent_id":"root","name":"feat-x","dir_path":"/work/loop/.worktrees/feat-x","branch":"feat/x","base_branch":"main","worktree":true,"commit":"abc1234","base_ahead":3,"base_behind":1,"sync_base":"main","agent_running":true,"locked":true,"pr_attention":"failed","unresolved_threads":2,"ticket_url":"https://example.com/T-1","description":"Fix the\nlogin","model_override":"opus","effort_override":"high"},
+	{"channel_id":"test-channel","parent_id":"root","name":"feat-x","dir_path":"/work/loop/.worktrees/feat-x","branch":"feat/x","base_branch":"main","worktree":true,"commit":"abc1234","base_ahead":3,"base_behind":1,"sync_base":"main","agent_running":true,"locked":true,"pr_attention":"failed","unresolved_threads":2,"ticket_url":"https://example.com/T-1","tags":["api","web"],"description":"Fix the\nlogin","model_override":"opus","effort_override":"high"},
 	{"channel_id":"child","parent_id":"test-channel","name":"notes","dir_path":"/work/loop/.worktrees/feat-x","branch":"HEAD","commit":"abc1234"},
 	{"channel_id":"other","name":"elsewhere","dir_path":"/work/other"}
 ]`
@@ -51,6 +51,7 @@ func (s *MCPServerSuite) TestChannelStatusTree() {
   - feat-x [worktree thread] (ID: test-channel, this one)
       description: Fix the login
       ticket: https://example.com/T-1
+      tags: api, web
       path: /work/loop/.worktrees/feat-x
       branch: feat/x (from main)
       pr: #12 ✗ 1 failing · https://example.com/pull/12

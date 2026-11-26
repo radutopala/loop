@@ -177,7 +177,7 @@ describe("SideChatPane", () => {
   it("reports its closed Explain view, then null once it goes, removing its hosts", async () => {
     const { last, onSideView, unmount } = await ready();
     const v = last()!;
-    expect(v).toMatchObject({ open: false, view: "explain", running: false, openMode: "fork" });
+    expect(v).toMatchObject({ open: false, sideChannelId: "side-1", learnChannelId: "", view: "explain", running: false, openMode: "fork" });
     expect(v.chatHost.querySelector('[data-testid="chat-view"]')).toBeTruthy();
     const park = document.createElement("div");
     park.dataset.chatPark = "";

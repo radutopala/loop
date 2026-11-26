@@ -78,6 +78,9 @@ type channelResponse struct {
 	Description string `json:"description,omitempty"`
 	// TicketURL links the channel or thread to its ticket; absent when unset.
 	TicketURL string `json:"ticket_url,omitempty"`
+	// Tags label the channel or thread for the sidebar's tag: search,
+	// sorted; absent without any.
+	Tags []string `json:"tags,omitempty"`
 	// LastActivityAt is when the channel's newest message was written, or
 	// its review session last changed when that's later; the sidebar's
 	// Recent section sorts by it. Absent for a channel with neither.
@@ -337,6 +340,7 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 			TaskID:              ch.TaskID,
 			Description:         ch.Description,
 			TicketURL:           ch.TicketURL,
+			Tags:                ch.Tags,
 			LastActivityAt:      lastActivity,
 			TrustPending:        trustPendingFor(trustDir),
 			PluginBadges:        badges[ch.ChannelID],

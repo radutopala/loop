@@ -8,6 +8,7 @@ import {
   createWorktreeThread,
   deleteChannel,
   deleteThread,
+  editChannelTags,
   ensureChannel,
   fetchChannels,
   fetchPlaygroundShares,
@@ -15,6 +16,7 @@ import {
   importWorktree,
   initApiUrl,
   isDaemonHealthy,
+  listTags,
   rebuildImage,
   renameChannel,
   setChannelDescription,
@@ -66,6 +68,8 @@ vi.mock("./api/loopApi", () => ({
   setChannelDescription: vi.fn(),
   setChannelLocked: vi.fn(),
   setChannelTicketURL: vi.fn(),
+  editChannelTags: vi.fn(),
+  listTags: vi.fn(),
 }));
 vi.mock("./api/notifications", () => ({ fetchUnreadNotifications: vi.fn() }));
 vi.mock("./components/InboxView", async () => ({ default: (await import("./test/app-shell-app-stubs")).stub("inbox"), isInboxWindow: vi.fn(() => false) }));
@@ -763,6 +767,7 @@ describe("channel actions", () => {
     ["onRenameThread", () => vi.mocked(renameChannel), ["proj", "n"], "Failed to rename", "rename failed:"],
     ["onSetDescription", () => vi.mocked(setChannelDescription), ["proj", "d"], "Failed to set description", "set description failed:"],
     ["onSetTicketURL", () => vi.mocked(setChannelTicketURL), ["proj", "u"], "Failed to set ticket", "set ticket failed:"],
+    ["onEditTags", () => vi.mocked(editChannelTags), ["proj", ["a"], []], "Failed to edit tags", "edit tags failed:"],
     ["onSetLocked", () => vi.mocked(setChannelLocked), ["proj", true], "Failed to update lock", "set locked failed:"],
     ["onDeleteThread", () => vi.mocked(deleteChannel), ["proj"], "Failed to delete", "delete failed:"],
     ["onDeleteBatch", () => vi.mocked(deleteChannel), [["proj"]], "Failed to delete", "batch delete failed:"],
@@ -789,6 +794,9 @@ describe("channel actions", () => {
     expect(setChannelDescription).toHaveBeenCalledWith("proj", "about");
     await call(() => sidebar().onSetTicketURL("proj", "https://t/1"));
     expect(setChannelTicketURL).toHaveBeenCalledWith("proj", "https://t/1");
+    await call(() => sidebar().onEditTags("proj", ["a"], ["b"]));
+    expect(editChannelTags).toHaveBeenCalledWith("proj", ["a"], ["b"]);
+    expect(sidebar().loadTags).toBe(listTags);
     await call(() => sidebar().onSetLocked("proj", true));
     expect(setChannelLocked).toHaveBeenCalledWith("proj", true);
     // Rename and lock read the list again; description and ticket wait for the event.

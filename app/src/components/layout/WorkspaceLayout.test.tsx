@@ -1598,6 +1598,7 @@ describe("WorkspaceLayout side views (Learn, Explain, Shell, Edits) and SideChat
     const close1 = vi.fn();
     const close2 = vi.fn();
 
+    const h = setHooks();
     seed("Chat", hsplit(leaf("chat", "chat"), leaf("sc-1", "chat-side", { openMode: "fork" }), leaf("sc-2", "chat-side", { openMode: "fresh" })));
     renderLayout();
 
@@ -1607,8 +1608,18 @@ describe("WorkspaceLayout side views (Learn, Explain, Shell, Edits) and SideChat
     // Reporting null when not present is a no-op
     act(() => sc1().onSideView("sc-1", null));
 
-    const view1: SideChatView = { open: true, view: "learn", running: false, openMode: "fork", chatHost: host1, paneHost: pane1, close: close1 };
-    const view2: SideChatView = { open: true, view: "explain", running: true, openMode: "fresh", chatHost: host2, paneHost: pane2, close: close2 };
+    const view1: SideChatView = {
+      open: true,
+      sideChannelId: "side-1",
+      learnChannelId: "side-learn-1",
+      view: "learn",
+      running: false,
+      openMode: "fork",
+      chatHost: host1,
+      paneHost: pane1,
+      close: close1,
+    };
+    const view2: SideChatView = { open: true, sideChannelId: "side-2", learnChannelId: "", view: "explain", running: true, openMode: "fresh", chatHost: host2, paneHost: pane2, close: close2 };
 
     // Open sc-1 side view -> renders side-chat-split overlay and focuses its textarea
     const focusSpy = vi.spyOn(host1.querySelector("textarea")!, "focus");
@@ -1643,6 +1654,17 @@ describe("WorkspaceLayout side views (Learn, Explain, Shell, Edits) and SideChat
     act(() => ws().openSide("learn"));
     expect(close2).toHaveBeenCalledTimes(1);
 
+    // A side chat's file links open in the channel's editor, its Learn
+    // view's too, closing its view when it's up.
+    openFile({ channelId: "side-1", target: { rootIndex: 1, relPath: "s.ts" }, line: 6 });
+    expect(h.editor.openFileAtLine).toHaveBeenLastCalledWith("1:s.ts", 6, undefined);
+    openFile({ channelId: "side-learn-1", target: { rootIndex: 0, relPath: "l.ts" }, line: 7 });
+    expect(h.editor.openFileAtLine).toHaveBeenLastCalledWith("0:l.ts", 7, undefined);
+    expect(close1).toHaveBeenCalledTimes(1);
+    openFile({ channelId: "side-2", target: { rootIndex: 0, relPath: "t.ts" }, line: 8 });
+    expect(h.editor.openFileAtLine).toHaveBeenLastCalledWith("0:t.ts", 8, undefined);
+    expect(close2).toHaveBeenCalledTimes(2);
+
     // Clearing sc-1 and sc-2
     act(() => sc1().onSideView("sc-1", null));
     act(() => sc2().onSideView("sc-2", null));
@@ -1651,7 +1673,7 @@ describe("WorkspaceLayout side views (Learn, Explain, Shell, Edits) and SideChat
     seed("Board", canvasOf({ id: "sc-3", panel: "chat-side", openMode: "fresh" }));
     act(() => ws().setTab("Board"));
     const sc3 = lastFor(SideChatPane, (p) => p.leafId === "sc-3");
-    act(() => sc3.onSideView("sc-3", { open: true, view: "explain", running: false, openMode: "fresh", chatHost: host1, paneHost: pane1, close: close1 }));
+    act(() => sc3.onSideView("sc-3", { open: true, sideChannelId: "side-3", learnChannelId: "", view: "explain", running: false, openMode: "fresh", chatHost: host1, paneHost: pane1, close: close1 }));
     expect(screen.getByTestId("learn-dock").dataset.tile).toBe("sc-3");
     expect(lastFor(SideChatPane, (p) => p.leafId === "sc-3").sideViewPlace).toBe("dock");
 

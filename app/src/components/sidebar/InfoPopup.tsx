@@ -1,4 +1,4 @@
-import { type ReactNode, type RefObject, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, type ReactNode, type RefObject, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
@@ -129,4 +129,35 @@ export function InfoPopup({ anchorRef, hovered, testId, title, children }: InfoP
 /** The popup's border, also for the rules between its sections. */
 export function infoBorder(colors: { isDark: boolean; textDisabled: string; inputBorder: string }): string {
   return `1px solid ${colors.isDark ? colors.textDisabled : colors.inputBorder}`;
+}
+
+interface SectionInfoProps {
+  anchorRef: RefObject<HTMLElement | null>;
+  hovered: boolean;
+  testId: string;
+  title: string;
+  description: string;
+  /** Label, value and an optional key for the value's test id (the label's text otherwise). */
+  lines: [ReactNode, string, string?][];
+}
+
+/** The info card of a sidebar control: what it does, then label and value lines. */
+export function SectionInfo({ anchorRef, hovered, testId, title, description, lines }: SectionInfoProps) {
+  const { colors } = useTheme();
+  return (
+    <InfoPopup anchorRef={anchorRef} hovered={hovered} testId={testId} title={title}>
+      <div style={{ gridColumn: "1 / -1", color: colors.textLight, maxWidth: 320, marginBottom: 4 }}>{description}</div>
+      {lines.map(([label, value, key]) => {
+        const id = key ?? String(label);
+        return (
+          <Fragment key={id}>
+            <span style={{ color: colors.textMuted }}>{label}</span>
+            <span data-testid={`${testId}-${id.replace(/ /g, "-")}`} style={{ color: colors.textLight }}>
+              {value}
+            </span>
+          </Fragment>
+        );
+      })}
+    </InfoPopup>
+  );
 }

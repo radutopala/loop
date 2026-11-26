@@ -43,6 +43,8 @@ var agentRouteScopes = map[string]routeScope{
 	"POST /api/channels/{id}/rename":           {path: "channel"},
 	"POST /api/channels/{id}/description":      {path: "channel"},
 	"POST /api/channels/{id}/ticket":           {path: "channel"},
+	"POST /api/channels/{id}/tags":             {path: "channel"},
+	"GET /api/tags":                            {none: "list_tags lists the tag names every project uses, a shared vocabulary for picking one"},
 	"POST /api/channels/{id}/monitors":         {path: "channel"},
 	"GET /api/channels/{id}/monitors":          {path: "channel"},
 	"DELETE /api/channels/{id}/monitors/{mid}": {path: "channel"},

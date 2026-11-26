@@ -87,10 +87,12 @@ Tabs at the top of the list switch between Recent and Tree (the channel tree); t
 ## Search
 
 The search box sits below the header and provides real-time case-insensitive filtering.
+Resting the pointer on it shows a card, like the tab bar's, with what it matches and how `tag:name` filters.
 
 ### Behavior
 
 - Matches a channel or thread by its name, description, ticket URL, branch, or its PR/MR's number (`#12`, or `!12` for a GitLab merge request) and title
+- `tag:name` narrows the search to rows carrying that [tag](#tags); several must all match, and the rest of the query must match too: `tag:api tag:auth login` finds the rows tagged both `api` and `auth` whose name, description, … holds `login`. A `#` after `tag:` is dropped, and a bare `tag:` filters nothing yet
 - The PR/MR is the one the [PR watcher](pr.md) last saw on the branch: Loop learns a branch's PR/MR when its Git panel or row info first looks it up, so a PR/MR it hasn't looked up yet doesn't match
 - Shows a parent channel if any of its threads match (even if the parent name does not match)
 - When the parent matches, all its threads are shown
@@ -159,6 +161,7 @@ The DM channel is always pinned at the top of the channel list:
 - Auto-selected on first load if no channel is selected and no hash is present
 - Cannot be deleted (excluded from context menu delete option)
 - Cannot be selected in batch selection mode
+- Stays through a text search, but a `tag:name` search hides it unless a thread in it carries the tag (the DM itself can't be tagged)
 
 ---
 
@@ -199,6 +202,7 @@ Right-clicking a channel opens a context menu with:
 | **Copy Channel ID** | Copies the raw channel ID |
 | **Open Ticket** | Opens the channel's [ticket URL](#ticket-url) in the browser (only when one is set; threads too) |
 | **Edit Ticket** | Sets, changes or clears the channel's [ticket URL](#ticket-url) (not shown for DM; threads too) |
+| **Edit Tags** | Adds and removes the row's [tags](#tags), picking from the tags in use (not shown for DM; threads too) |
 | **Delete Channel** | Deletes the channel after a Yes in the "Delete this channel?" bubble under the item (not shown for DM) |
 
 The "Delete Channel" item has `danger: true` styling (red text) and a separator above it. Clicking it opens a Yes / No bubble under the item (a menu item's `confirm`); No closes the bubble and keeps the menu.
@@ -214,6 +218,7 @@ Hovering a channel, thread or worktree thread shows a popup beside the row (`Row
 | **title** | The row's full name, in bold at the top: the sidebar cuts a long one short. |
 | **description** | What the thread is for, above the other lines, as written (line breaks kept). Set from the [context menu](#thread-description) or by the agent's `set_thread_description` MCP tool. Left out when empty. |
 | **ticket** | The URL of the row's [ticket](#ticket-url), e.g. a Jira issue. Left out when there's none. |
+| **tags** | The row's [tags](#tags), e.g. `api, auth`. Left out when it has none. |
 | **path** | The row's directory. For a worktree thread, that's the worktree's checkout. |
 | **branch** | The checked-out branch, e.g. `main`, picked out in the theme's accent color. A worktree thread adds the branch it was cut from, e.g. `worktree/fix (from main)`. A detached checkout shows `detached`. |
 | **pr** | The [pull request](#pull-request) open on the branch, e.g. `#42 Fix the login (open)`. Left out when there's none. |
@@ -313,6 +318,14 @@ A channel, thread or worktree thread can be linked to its ticket: the URL of a J
 It shows as the first line of the [row info](#row-info) popup and follows changes live, like the description. The popup can't be clicked, so the row's context menu gets an **Open Ticket** item while one is set, which opens it in the browser. The workspace header shows it too, after the channel or thread id, by its key (`ChannelHeaderInfo`, `ticketKey`): the issue key when the URL carries one (`PROJ-123`, Jira's `?selectedIssue=` included, Linear and the like), `owner/repo#7` for a GitHub issue or PR, `project!5` / `project#3` for a GitLab merge request or issue, otherwise the URL's last path segment. Clicking it opens the ticket; hovering shows the full URL.
 
 Right-click any row but the DM and pick **Edit Ticket** to open the ticket dialog (`TicketDialog`), prefilled with the current URL when there is one. Enter saves, Escape cancels; saving it empty clears it. It checks the URL as you type with the same rules as the API, so a URL the API would reject (a bare `PROJ-123`, a non-http(s) scheme) shows why and can't be saved. It's offered on locked rows too, since it changes nothing on disk.
+
+### Tags
+
+Channels, threads and worktree threads can carry tags (at most 20 each) to find them again: the [search](#search) filters by them with `tag:name`. A tag is lowercased and loses a leading `#`, and holds only letters, digits and `- _ . /`, starting with a letter or digit, at most 32 bytes, so a search splits cleanly. Tags are shared across projects: the same tag on two rows is one tag, and it's gone once no row carries it (`tags` and `channel_tags` tables).
+
+Right-click any row but the DM and pick **Edit Tags** to open the tags dialog (`TagsDialog`). It shows the row's tags, each with a × that removes it; typing a tag and pressing Enter adds it, checked as you type with the same rules as the API; below the input it offers the tags already in use (`GET /api/tags`), with how many rows carry each, narrowed by what's typed, and a click adds one. Enter on an empty input or **Save** applies the difference in one edit (`POST /api/channels/{id}/tags`); Escape cancels. It's offered on locked rows too.
+
+The tags show as a line of the [row info](#row-info) popup, after the ticket, and follow changes live from [`channel.updated`](events.md#channelupdated) events. No chips are drawn on the rows themselves. Agents edit them with the `set_tags` [MCP tool](mcpserver.md), which defaults to their own channel or thread, and list the tags in use with `list_tags`; `channel_status` prints each row's tags.
 
 ### Pull Request
 

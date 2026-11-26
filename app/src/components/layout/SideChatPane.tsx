@@ -52,6 +52,10 @@ interface SideChatPaneProps {
 export interface SideChatView {
   /** The view is open; view is kept while it closes. */
   open: boolean;
+  /** The side chat's channel, and its Learn view's thread ("" while it has
+   *  none): their file links open in the channel's editor. */
+  sideChannelId: string;
+  learnChannelId: string;
   view: SideView;
   /** Its explanation or learn pass is running. */
   running: boolean;
@@ -173,8 +177,8 @@ function SideChat({
   const promptEdits = usePromptEdits(sideChannelId, subscribeChannelEvents, wsOpens);
   const running = sideView === "explain" ? explain.explanations.some(explanationPending) : sideView === "edits" ? promptEdits.running : sideView === "learn" && learn.running;
   useEffect(() => {
-    onSideView?.(leafId, { open: sideOpen, view: sideView, running, openMode: mode, chatHost, paneHost, close });
-  }, [onSideView, leafId, sideOpen, sideView, running, mode, chatHost, paneHost, close]);
+    onSideView?.(leafId, { open: sideOpen, sideChannelId, learnChannelId: learn.learnChannelId, view: sideView, running, openMode: mode, chatHost, paneHost, close });
+  }, [onSideView, leafId, sideOpen, sideChannelId, learn.learnChannelId, sideView, running, mode, chatHost, paneHost, close]);
   useEffect(() => () => onSideView?.(leafId, null), [onSideView, leafId]);
   const overlaid = sideViewPlace === "overlay";
   const viewOpen = sideOpen && sideViewPlace != null;

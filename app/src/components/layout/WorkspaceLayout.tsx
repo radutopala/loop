@@ -1051,13 +1051,19 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   // skips the automatic file-tree sidecar that handleSplitLeaf would
   // attach — opening a file should give the editor alone, not the editor
   // + file tree combo.
-  // The learn thread's FileLinks in the Learn view count too (it shares the channel's roots).
+  // The learn thread's FileLinks in the Learn view count too, and those of
+  // the channel's side chats and their Learn views: they share the
+  // channel's roots.
   useEffect(() => {
     const handler = (ev: Event) => {
       const ce = ev as CustomEvent<FileLinkOpenDetail>;
-      if (!ce.detail || (ce.detail.channelId !== channelId && (!learnChannelId || ce.detail.channelId !== learnChannelId))) return;
-      // The editor is in the layout: the Learn view closes to show it.
+      const from = ce.detail?.channelId;
+      if (!from) return;
+      const side = Object.values(sideChatViewsRef.current).find((v) => v.sideChannelId === from || v.learnChannelId === from);
+      if (from !== channelId && from !== learnChannelId && !side) return;
+      // The editor is in the layout: the view over it closes to show it.
       setLearnOpen(false);
+      if (side?.open) side.close();
       const { target, line, pin } = ce.detail;
       const pathKey = makePathKey(target.rootIndex, target.relPath);
 

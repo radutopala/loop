@@ -154,6 +154,37 @@ describe("Sidebar", () => {
       expect(channelRowNames()).toEqual(["dm", "alpha"]);
       expect(threadNames()).toEqual(["one", "deep"]);
     });
+
+    it("filters by tag:x, every tag and the text alike", async () => {
+      const channels = all.map((c) => (c.id === "a3" ? { ...c, tags: ["api", "web"] } : c.id === "b" ? { ...c, tags: ["api"] } : c));
+      const { user } = setup({ channels });
+      const search = screen.getByPlaceholderText("Search...");
+      await user.type(search, "tag:api");
+      // The untagged DM goes, unlike in a text search.
+      expect(channelRowNames()).toEqual(["alpha", "beta"]);
+      // A tagged channel keeps all its threads, as a matching one does.
+      expect(threadNames()).toEqual(["three", "bee"]);
+      await user.type(search, " tag:web");
+      expect(channelRowNames()).toEqual(["alpha"]);
+      await user.type(search, " nothing");
+      expect(channelRowNames()).toEqual([]);
+    });
+
+    it("keeps the DM for a tag:x a thread in it carries, with only that thread", async () => {
+      const dmThreads = [channel({ id: "dt", name: "tagged", parent_id: "dm", tags: ["api"] }), channel({ id: "du", name: "plain", parent_id: "dm" })];
+      const { user } = setup({ channels: [...all, ...dmThreads] });
+      await user.type(screen.getByPlaceholderText("Search..."), "tag:api");
+      expect(channelRowNames()).toEqual(["dm"]);
+      expect(threadNames()).toEqual(["tagged"]);
+    });
+
+    it("keeps all the DM's threads when the DM matches", async () => {
+      const dmThreads = [channel({ id: "dt", name: "first", parent_id: "dm" }), channel({ id: "du", name: "second", parent_id: "dm" })];
+      const { user } = setup({ channels: [...all, ...dmThreads] });
+      await user.type(screen.getByPlaceholderText("Search..."), "dm");
+      expect(channelRowNames()).toEqual(["dm"]);
+      expect(threadNames()).toEqual(["first", "second"]);
+    });
   });
 
   describe("channel order", () => {
@@ -351,6 +382,28 @@ describe("Sidebar", () => {
       await user.type(input, " new{Enter}");
       expect(onSetDescription).toHaveBeenCalledWith("a3", "old new");
       expect(screen.queryByTestId("description-input")).toBeNull();
+    });
+
+    it("edits a thread's tags from its menu, or cancels it", async () => {
+      const onEditTags = vi.fn();
+      const loadTags = vi.fn(() => Promise.resolve([{ tag: "api", count: 1 }]));
+      const channels = all.map((c) => (c.id === "a1" ? { ...c, tags: ["web"] } : c));
+      const { user } = setup({ channels, onEditTags, loadTags });
+      open(channelRow("alpha"));
+      await user.click(screen.getByRole("menuitem", { name: "Edit Tags" }));
+      expect(screen.getByTestId("tags-current").textContent).toBe("No tags");
+      await user.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(screen.queryByTestId("tags-dialog")).toBeNull();
+      open(threadButton("one"));
+      await user.click(screen.getByRole("menuitem", { name: "Edit Tags" }));
+      await user.click(await screen.findByTestId("tags-pick-api"));
+      await user.click(screen.getByTestId("tags-remove-web"));
+      await user.click(screen.getByTestId("tags-submit"));
+      expect(onEditTags).toHaveBeenCalledWith("a1", ["api"], ["web"]);
+      expect(screen.queryByTestId("tags-dialog")).toBeNull();
+      // The DM has none to edit.
+      open(channelRow("dm"));
+      expect(menuLabels()).toEqual(["Copy Link", "Copy Channel ID"]);
     });
 
     it("edits a channel's ticket, or cancels it", async () => {

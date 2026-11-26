@@ -332,8 +332,8 @@ type ChannelUpdatedData struct {
 	SyncBase      string `json:"sync_base,omitempty"`
 	BaseAhead     int    `json:"base_ahead,omitempty"`
 	BaseBehind    int    `json:"base_behind,omitempty"`
-	// Name, Description and TicketURL are set by a rename, a description
-	// change or a ticket change, which carry nothing else: the git fields
+	// Name, Description, TicketURL and Tags are set by a rename, a
+	// description, ticket or tag change, which carry nothing else: the git fields
 	// above are then zero and must not be applied. The branch poller never
 	// sets them.
 	Name string `json:"name,omitempty"`
@@ -341,6 +341,9 @@ type ChannelUpdatedData struct {
 	Description *string `json:"description,omitempty"`
 	// TicketURL is a pointer for the same reason.
 	TicketURL *string `json:"ticket_url,omitempty"`
+	// Tags is set by a tag change, to the tags after, sorted; a pointer so
+	// removing the last one (empty) still goes out.
+	Tags *[]string `json:"tags,omitempty"`
 }
 
 // TaskEventData is the payload for task.created and task.updated events.

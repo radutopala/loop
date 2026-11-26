@@ -239,3 +239,64 @@ func (s *Server) handleSetTicketURL(_ context.Context, _ *mcp.CallToolRequest, i
 	}
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, nil, nil
 }
+
+type setTagsInput struct {
+	ChannelID string   `json:"channel_id,omitempty" jsonschema:"The ID of the channel or thread to tag; defaults to the current one"`
+	Add       []string `json:"add,omitempty" jsonschema:"Tags to add: lowercase letters, digits and - _ . /, at most 32 characters each. Prefer one list_tags returns"`
+	Remove    []string `json:"remove,omitempty" jsonschema:"Tags to remove; a tag in both add and remove is removed"`
+}
+
+type setTagsResponse struct {
+	Tags []string `json:"tags"`
+}
+
+func (s *Server) handleSetTags(_ context.Context, _ *mcp.CallToolRequest, input setTagsInput) (*mcp.CallToolResult, any, error) {
+	channelID := input.ChannelID
+	if channelID == "" {
+		channelID = s.channelID
+	}
+	s.logger.Info("mcp tool call", "tool", "set_tags", "channel_id", channelID)
+
+	if channelID == "" {
+		return errorResult("channel_id is required"), nil, nil
+	}
+
+	data, _ := json.Marshal(map[string][]string{"add": input.Add, "remove": input.Remove})
+	resp, errResult, err := doAPICall[setTagsResponse](s, "POST", fmt.Sprintf("%s/api/channels/%s/tags", s.apiURL, channelID), http.StatusOK, data)
+	if errResult != nil || err != nil {
+		return errResult, nil, err
+	}
+
+	text := fmt.Sprintf("Tags of %s: %s.", channelID, strings.Join(resp.Tags, ", "))
+	if len(resp.Tags) == 0 {
+		text = fmt.Sprintf("%s has no tags.", channelID)
+	}
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, nil, nil
+}
+
+type listTagsInput struct{}
+
+type listTagsResponse struct {
+	Tags []struct {
+		Tag   string `json:"tag"`
+		Count int    `json:"count"`
+	} `json:"tags"`
+}
+
+func (s *Server) handleListTags(_ context.Context, _ *mcp.CallToolRequest, _ listTagsInput) (*mcp.CallToolResult, any, error) {
+	s.logger.Info("mcp tool call", "tool", "list_tags")
+
+	resp, errResult, err := doAPICall[listTagsResponse](s, "GET", s.apiURL+"/api/tags", http.StatusOK, nil)
+	if errResult != nil || err != nil {
+		return errResult, nil, err
+	}
+	if len(resp.Tags) == 0 {
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "No tags in use."}}}, nil, nil
+	}
+	var b strings.Builder
+	b.WriteString("Tags in use (channels and threads carrying each):\n")
+	for _, t := range resp.Tags {
+		fmt.Fprintf(&b, "- %s (%d)\n", t.Tag, t.Count)
+	}
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: strings.TrimRight(b.String(), "\n")}}}, nil, nil
+}

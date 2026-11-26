@@ -170,6 +170,18 @@ describe("SidebarHeader", () => {
     });
   });
 
+  it("explains the search and its tag:x filter on hover", () => {
+    setup();
+    const box = screen.getByPlaceholderText("Search...").parentElement!;
+    expect(screen.queryByTestId("sidebar-search-info")).toBeNull();
+    fireEvent.mouseEnter(box);
+    expect(screen.getByTestId("sidebar-search-info-title").textContent).toBe("Search");
+    expect(screen.getByTestId("sidebar-search-info").textContent).toContain("Esc clears it.");
+    expect(screen.getByTestId("sidebar-search-info-tag").textContent).toBe("only the rows carrying that tag");
+    fireEvent.mouseLeave(box);
+    expect(screen.queryByTestId("sidebar-search-info")).toBeNull();
+  });
+
   describe("new channel input", () => {
     it("shows only while creating, wired to the given ref", () => {
       const ref = createRef<HTMLInputElement>();

@@ -1129,6 +1129,8 @@ In headless/Linux environments where Electron can't launch, `LOOP_NO_ELECTRON=1 
 | `rename_thread` | Rename a thread, worktree thread or channel's display name (sessions, directory and branch preserved) |
 | `set_thread_description` | Set what a thread or worktree thread is for, shown when hovering it in the sidebar (defaults to the current thread; empty clears) |
 | `set_ticket_url` | Link a channel, thread or worktree thread to its ticket's URL (Jira, GitHub, …), shown when hovering it in the sidebar (defaults to the current one; empty clears) |
+| `set_tags` | Add and remove a channel, thread or worktree thread's tags, which the sidebar's search filters by (`tag:name`; defaults to the current one) |
+| `list_tags` | List the tags in use across every project, with how many channels and threads carry each |
 | `delete_thread` | Delete a thread by ID (cleans up worktree and branch if applicable) |
 | `search_channels` | Search for channels and threads by name |
 | `channel_status` | Show a channel's threads and worktree threads as a tree, each with its sidebar hover info: branch, PR/MR checks, merge conflict, unresolved review threads, sync and agent status (`channel_id` optional — defaults to the current channel's tree) |

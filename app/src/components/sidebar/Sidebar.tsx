@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from "react";
-import { forkThread } from "../../api/channels";
+import { forkThread, type TagCount } from "../../api/channels";
 import { setGlobalConfigValue } from "../../api/configApi";
 import { useTheme } from "../../ThemeContext";
 import type { Channel, ImageBuildStatusData, ImageUpdateAvailableData, UpdateStatus } from "../../types";
@@ -18,8 +18,9 @@ import { RenameThreadDialog } from "./RenameThreadDialog";
 import { type SectionKey, SectionTabs, SessionSections } from "./SessionSections";
 import { SidebarFooter } from "./SidebarFooter";
 import { SidebarHeader } from "./SidebarHeader";
-import { activeSessions, isTaskThread, matchesSearch, recentSessions, sessionContext } from "./sessions";
+import { activeSessions, isSearching, isTaskThread, matchesSearch, parseSearch, recentSessions, sessionContext } from "./sessions";
 import { SIDEBAR_MIN_WIDTH, savedSidebarWidth } from "./sidebarWidth";
+import { TagsDialog } from "./TagsDialog";
 import { TicketDialog } from "./TicketDialog";
 
 const MIN_WIDTH = SIDEBAR_MIN_WIDTH;
@@ -105,6 +106,10 @@ interface SidebarProps {
   /** Sets what a thread is for; empty clears it. */
   onSetDescription?: (threadId: string, description: string) => void;
   onSetTicketURL?: (channelId: string, ticketURL: string) => void;
+  /** Adds and removes a channel's or thread's tags. */
+  onEditTags?: (channelId: string, add: string[], remove: string[]) => void;
+  /** Loads the tags in use, for the Tags dialog to offer. */
+  loadTags?: () => Promise<TagCount[]>;
   onSetLocked?: (channelId: string, locked: boolean) => void;
   onDeleteBatch?: (ids: string[]) => void;
   onOpenDirectory?: (dirPath: string) => void;
@@ -149,6 +154,8 @@ export function Sidebar({
   onRenameThread,
   onSetDescription,
   onSetTicketURL,
+  onEditTags,
+  loadTags,
   onSetLocked,
   onDeleteBatch,
   onOpenDirectory,
@@ -181,6 +188,7 @@ export function Sidebar({
   const [renaming, setRenaming] = useState<Channel | null>(null);
   const [describing, setDescribing] = useState<Channel | null>(null);
   const [ticketing, setTicketing] = useState<Channel | null>(null);
+  const [tagging, setTagging] = useState<Channel | null>(null);
   const [channelOrder, setChannelOrder] = useState<string[]>(loadOrder);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [threadOrder, setThreadOrder] = useState<Record<string, string[]>>(loadThreadOrder);
@@ -409,6 +417,13 @@ export function Sidebar({
           onClick: () => setTicketing(channel),
         });
       }
+      // Tags too: they're only for finding the row again.
+      if (!isDm && onEditTags && loadTags) {
+        items.push({
+          label: "Edit Tags",
+          onClick: () => setTagging(channel),
+        });
+      }
       if (!isDm && onSetLocked) {
         items.push({
           label: channel.locked ? "Unlock" : "Lock",
@@ -430,7 +445,7 @@ export function Sidebar({
       }
       setContextMenu({ x: e.clientX, y: e.clientY, items });
     },
-    [onDeleteThread, onRenameThread, onSetDescription, onSetTicketURL, onSetLocked, onSelect],
+    [onDeleteThread, onRenameThread, onSetDescription, onSetTicketURL, onEditTags, loadTags, onSetLocked, onSelect],
   );
 
   const handleMouseDown = useCallback(
@@ -461,7 +476,8 @@ export function Sidebar({
     [width],
   );
 
-  const query = searchQuery.toLowerCase();
+  const query = searchQuery;
+  const searching = isSearching(query);
   const byId = new Map(channels.map((c) => [c.id, c]));
   const isRunning = (id: string) => !!byId.get(id)?.agent_running || !!byId.get(id)?.review_running || !!isRunningMapRef?.current?.has(id);
   const pillsFor = (id: string): PillKind[] => pills.filter((p) => pillsRef?.current?.get(p.kind)?.has(id)).map((p) => p.kind);
@@ -494,7 +510,6 @@ export function Sidebar({
 
   // Separate DM channel (pinned at top) from regular channels.
   const dm = channels.find((c) => c.name === "dm" && !c.parent_id);
-  const dmChannel = dm && shownInTree(dm) ? dm : undefined;
   const allTopLevel = sortByOrder(
     channels.filter((c) => !c.parent_id && (c.name || c.dir_path) && !(c.name === "dm" && !c.parent_id) && shownInTree(c)),
     channelOrder,
@@ -508,18 +523,17 @@ export function Sidebar({
   };
 
   // When searching, show channels that match or have matching threads/sub-threads.
-  const topLevel = query
-    ? allTopLevel.filter((c) => {
-        const threads = threadsByParent[c.id] ?? [];
-        return matchesSearch(c, query) || threads.some(threadTreeMatches);
-      })
-    : allTopLevel;
+  const inSearch = (c: Channel) => !searching || matchesSearch(c, query) || (threadsByParent[c.id] ?? []).some(threadTreeMatches);
+  const topLevel = allTopLevel.filter(inSearch);
+  // The DM stays pinned on top through a text search, but not through a
+  // tag:x it (or a thread in it) doesn't carry.
+  const dmChannel = dm && shownInTree(dm) && (parseSearch(query).tags.length === 0 || inSearch(dm)) ? dm : undefined;
 
   // Filter threads when searching.
   const getFilteredThreads = (parentId: string): Channel[] => {
     const threads = threadsByParent[parentId] ?? [];
-    if (!query) return threads;
-    const parent = allTopLevel.find((c) => c.id === parentId);
+    if (!searching) return threads;
+    const parent = parentId === dm?.id ? dm : allTopLevel.find((c) => c.id === parentId);
     if (parent && matchesSearch(parent, query)) return threads;
     return threads.filter(threadTreeMatches);
   };
@@ -528,7 +542,7 @@ export function Sidebar({
   // since they count as active now. Select mode is about the tree's
   // checkboxes, so it steps aside for it.
   const isUnread = (id: string) => unreadIdsRef?.current?.has(id) ?? false;
-  const matchesQuery = (c: Channel) => matchesSearch(c, query) || sessionContext(c, byId).toLowerCase().includes(query);
+  const matchesQuery = (c: Channel) => matchesSearch(c, query, sessionContext(c, byId));
   const now = Date.now();
   const active = selectMode ? [] : activeSessions(channels, isRunning, held).filter((c) => matchesQuery(c) && (!needsYou || lit(c.id)));
   for (const c of active) seenActiveAtRef.current.set(c.id, now);
@@ -763,6 +777,19 @@ export function Sidebar({
             onSubmit={(ticketURL) => {
               onSetTicketURL?.(ticketing.id, ticketURL);
               setTicketing(null);
+            }}
+          />
+        )}
+
+        {tagging && loadTags && (
+          <TagsDialog
+            currentTags={tagging.tags ?? []}
+            name={tagging.name}
+            loadTags={loadTags}
+            onCancel={() => setTagging(null)}
+            onSubmit={(add, remove) => {
+              onEditTags?.(tagging.id, add, remove);
+              setTagging(null);
             }}
           />
         )}

@@ -370,6 +370,8 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("POST /api/channels/{id}/rename", s.srv.handleRenameChannel)
 	s.mux.HandleFunc("POST /api/channels/{id}/description", s.srv.handleSetChannelDescription)
 	s.mux.HandleFunc("POST /api/channels/{id}/ticket", s.srv.handleSetChannelTicketURL)
+	s.mux.HandleFunc("POST /api/channels/{id}/tags", s.srv.handleEditChannelTags)
+	s.mux.HandleFunc("GET /api/tags", s.srv.handleListTags)
 	s.mux.HandleFunc("POST /api/agents", s.srv.handleRegisterAgent)
 	s.mux.HandleFunc("GET /api/agents", s.srv.handleListAgents)
 	s.mux.HandleFunc("PATCH /api/agents/{id}", s.srv.handleUpdateAgent)
