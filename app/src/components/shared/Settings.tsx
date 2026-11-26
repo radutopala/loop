@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type BuiltinKind, restoreBuiltins } from "../../api/builtins";
-import { type ConfigResponse, type ConfigSchema, fetchConfigSchema, fetchGlobalConfig, fetchProjectConfig, saveGlobalConfig, saveProjectConfig } from "../../api/configApi";
+import { ConfigChangedError, type ConfigResponse, type ConfigSchema, fetchConfigSchema, fetchGlobalConfig, fetchProjectConfig, saveGlobalConfig, saveProjectConfig } from "../../api/configApi";
 import { getImageStatus, getReclaimable, reclaimDockerSpace } from "../../api/loopApi";
 import { PLUGINS_CHANGED } from "../../api/plugins";
 import { DEFAULT_FONT_SIZES, useTheme } from "../../ThemeContext";
@@ -80,6 +80,14 @@ interface SettingsProps {
   onProjectTrusted?: () => void;
 }
 
+/** Runs fn after everything already queued on queue, and queues it. fn
+ *  must not reject, or nothing queued after it runs. */
+function queued<T>(queue: { current: Promise<unknown> }, fn: () => Promise<T>): Promise<T> {
+  const run = queue.current.then(fn);
+  queue.current = run;
+  return run;
+}
+
 export function Settings({
   open,
   projectDirPath,
@@ -135,6 +143,21 @@ export function Settings({
   useEffect(() => {
     globalDirtyRef.current = globalDirty;
   }, [globalDirty]);
+
+  // The hash of the file each scope's forms were loaded from, sent with a
+  // save so it can't overwrite a change made since. A save's own result
+  // moves it on, and saves run one at a time per scope so an auto-save
+  // right after another doesn't send the hash the first one replaced.
+  const globalHashRef = useRef<string | undefined>(undefined);
+  const projectHashRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    globalHashRef.current = globalConfig?.hash;
+  }, [globalConfig]);
+  useEffect(() => {
+    projectHashRef.current = projectConfig?.hash;
+  }, [projectConfig]);
+  const globalQueueRef = useRef<Promise<unknown>>(Promise.resolve());
+  const projectQueueRef = useRef<Promise<unknown>>(Promise.resolve());
 
   useEffect(() => {
     onConfigDirtyChange?.(configDirty);
@@ -261,21 +284,29 @@ export function Settings({
     setHiddenPills(desktop.hidden_pills ?? []);
   };
 
-  const handleSaveGlobalConfig = async (content: string): Promise<string | null> => {
-    try {
-      await saveGlobalConfig(content);
-      try {
-        applyDesktop(JSON.parse(content).desktop);
-      } catch {
-        /* ignore parse errors */
-      }
-      // Re-fetch so other sections see the updated values.
-      fetchGlobalConfig().then(setGlobalConfig).catch(logErr("re-fetching global config"));
-      return null;
-    } catch (e: any) {
-      return e.message ?? "Failed to save";
-    }
+  // Re-fetches the global config into the forms, queued behind the saves.
+  const refetchGlobalConfig = () => {
+    void queued(globalQueueRef, () => fetchGlobalConfig().then(setGlobalConfig).catch(logErr("re-fetching global config")));
   };
+
+  const handleSaveGlobalConfig = (content: string): Promise<string | null> =>
+    queued(globalQueueRef, async () => {
+      try {
+        globalHashRef.current = await saveGlobalConfig(content, globalHashRef.current);
+        try {
+          applyDesktop(JSON.parse(content).desktop);
+        } catch {
+          /* ignore parse errors */
+        }
+        // Re-fetch so other sections see the updated values.
+        refetchGlobalConfig();
+        return null;
+      } catch (e: any) {
+        // Fetch the newer file, for Cancel to load.
+        if (e instanceof ConfigChangedError) refetchGlobalConfig();
+        return e.message ?? "Failed to save";
+      }
+    });
 
   const handleRestoreBuiltins = async (kind: BuiltinKind) => {
     setRestoringByKind((prev) => ({ ...prev, [kind]: true }));
@@ -315,17 +346,24 @@ export function Settings({
     setReclaimMsg(msg);
   };
 
-  const handleSaveProjectConfig = async (content: string): Promise<string | null> => {
+  const refetchProjectConfig = (id: string) => {
+    void queued(projectQueueRef, () => fetchProjectConfig(id).then(setProjectConfig).catch(logErr("re-fetching project config")));
+  };
+
+  const handleSaveProjectConfig = (content: string): Promise<string | null> => {
     // The project forms only show while a channel's config is loaded.
     const id = channelId!;
-    try {
-      await saveProjectConfig(id, content);
-      // Re-fetch so other sections see the updated values.
-      fetchProjectConfig(id).then(setProjectConfig).catch(logErr("re-fetching project config"));
-      return null;
-    } catch (e: any) {
-      return e.message ?? "Failed to save";
-    }
+    return queued(projectQueueRef, async () => {
+      try {
+        projectHashRef.current = await saveProjectConfig(id, content, projectHashRef.current);
+        // Re-fetch so other sections see the updated values.
+        refetchProjectConfig(id);
+        return null;
+      } catch (e: any) {
+        if (e instanceof ConfigChangedError) refetchProjectConfig(id);
+        return e.message ?? "Failed to save";
+      }
+    });
   };
 
   // A restore rewrote the file: re-fetch it so the forms show it, and apply

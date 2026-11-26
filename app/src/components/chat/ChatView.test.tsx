@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchPromptSuggestion, forkAtMessage } from "../../api/channels";
@@ -166,6 +166,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // Unmount before the stubbed observers go: a render still on its way
+  // would otherwise build one that no longer exists.
+  cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   localStorage.clear();

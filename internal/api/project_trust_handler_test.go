@@ -119,7 +119,7 @@ func (s *ServerSuite) TestSaveProjectConfigKeepsTrust() {
 	save := func(content string) {
 		body, _ := json.Marshal(configSaveRequest{Content: content})
 		rec := s.testRequest("PUT", "/api/config/project?channel_id=ch-1", string(body))
-		require.Equal(s.T(), http.StatusNoContent, rec.Code, rec.Body.String())
+		require.Equal(s.T(), http.StatusOK, rec.Code, rec.Body.String())
 	}
 
 	save(`{"mounts": ["/a:/a"]}`)
@@ -144,7 +144,7 @@ func (s *ServerSuite) TestSaveProjectConfigUnreadableBeforeKeepsNothing() {
 	s.srv.projectTrust = trust
 
 	rec := s.testRequest("PUT", "/api/config/project?channel_id=ch-1", `{"content":"{}"}`)
-	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	require.Equal(s.T(), http.StatusOK, rec.Code)
 	trust.AssertNotCalled(s.T(), "Keep", mock.Anything, mock.Anything, mock.Anything)
 }
 

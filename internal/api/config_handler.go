@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -17,10 +19,51 @@ type configResponse struct {
 	Path    string         `json:"path"`
 	Content map[string]any `json:"content"`
 	Raw     string         `json:"raw"`
+	// Hash names the file's text as read, empty for a missing file; a save
+	// sends it back as base_hash.
+	Hash string `json:"hash"`
 }
 
 type configSaveRequest struct {
 	Content string `json:"content"`
+	// BaseHash, when set, is the hash of the file the content was made
+	// from. The save is refused when the file has changed since, so it
+	// doesn't overwrite an edit made in between.
+	BaseHash *string `json:"base_hash,omitempty"`
+}
+
+// configSaveResponse carries the hash of the file as saved, to send as the
+// next save's base_hash.
+type configSaveResponse struct {
+	Hash string `json:"hash"`
+}
+
+// configHash names a config file's text; a missing file has the empty hash.
+func configHash(data []byte, exists bool) string {
+	if !exists {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+// configChanged reports, with the config lock held, whether the file at
+// path no longer has the text req was made from. It writes the response
+// when it has changed or can't be read.
+func configChanged(w http.ResponseWriter, read func(string) ([]byte, error), path string, req configSaveRequest) bool {
+	if req.BaseHash == nil {
+		return false
+	}
+	data, err := read(path)
+	if err != nil && !os.IsNotExist(err) {
+		http.Error(w, "failed to read config file", http.StatusInternalServerError)
+		return true
+	}
+	if configHash(data, err == nil) != *req.BaseHash {
+		http.Error(w, "the config file changed since it was loaded; reload it and save again", http.StatusConflict)
+		return true
+	}
+	return false
 }
 
 // handleConfigSchema returns the JSON schema describing all configuration fields.
@@ -67,11 +110,14 @@ func (s *Server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 	// A whole-file write, but it must not land inside another edit's
 	// read-modify-write of the file, which would then overwrite it.
 	defer s.lockConfig(path, "settings")()
+	if configChanged(w, s.sys.ReadFile, path, req) {
+		return
+	}
 	if err := writeConfigAtomic(s.sys, path, content); err != nil {
 		http.Error(w, "failed to write config file", http.StatusInternalServerError)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	writeHTTPJSON(w, http.StatusOK, configSaveResponse{Hash: configHash(content, true)}, s.logger)
 }
 
 // handleGetProjectConfig reads the project-level .loop/config.json for the
@@ -131,6 +177,9 @@ func (s *Server) handleSaveProjectConfig(w http.ResponseWriter, r *http.Request)
 	}
 	// See handleSaveConfig.
 	defer s.lockConfig(path, "settings")()
+	if configChanged(w, func(p string) ([]byte, error) { return s.sys.ReadFileIn(dirPath, p) }, path, req) {
+		return
+	}
 	before, keep := s.readProjectConfigBefore(path)
 	if err := writeConfigAtomic(projectFS{s.sys, dirPath}, path, content); err != nil {
 		http.Error(w, "failed to write config file", http.StatusInternalServerError)
@@ -139,7 +188,7 @@ func (s *Server) handleSaveProjectConfig(w http.ResponseWriter, r *http.Request)
 	if keep {
 		s.keepProjectTrust(dirPath, before, content)
 	}
-	w.WriteHeader(http.StatusNoContent)
+	writeHTTPJSON(w, http.StatusOK, configSaveResponse{Hash: configHash(content, true)}, s.logger)
 }
 
 // resolveProjectConfigDirPath returns the directory to use for project config.
@@ -219,18 +268,19 @@ func readConfigFile(read func(string) ([]byte, error), path string) (configRespo
 	}
 
 	raw := string(data)
+	hash := configHash(data, true)
 
 	// Standardize HJSON to valid JSON for parsing.
 	standardized, err := hujson.Standardize(data)
 	if err != nil {
 		// Return raw even if HJSON parsing fails.
-		return configResponse{Path: path, Raw: raw}, nil
+		return configResponse{Path: path, Raw: raw, Hash: hash}, nil
 	}
 
 	var content map[string]any
 	if err := json.Unmarshal(standardized, &content); err != nil {
-		return configResponse{Path: path, Raw: raw}, nil
+		return configResponse{Path: path, Raw: raw, Hash: hash}, nil
 	}
 
-	return configResponse{Path: path, Content: content, Raw: raw}, nil
+	return configResponse{Path: path, Content: content, Raw: raw, Hash: hash}, nil
 }

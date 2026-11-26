@@ -21,15 +21,11 @@ export async function fetchRoots(channelId: string): Promise<RootEntry[]> {
 export async function updateExtraDirs(channelId: string, extraDirs: string[]): Promise<void> {
   const { fetchProjectConfig, saveProjectConfig } = await import("./configApi");
 
-  let config: Record<string, unknown> = {};
-  try {
-    const existing = await fetchProjectConfig(channelId);
-    if (existing.content) {
-      config = { ...existing.content };
-    }
-  } catch {
-    // No existing config or parse error — start fresh
-  }
+  // A missing file reads as content null and raw "". Text that doesn't
+  // parse, or a failed read, must not be replaced with a fresh config.
+  const existing = await fetchProjectConfig(channelId);
+  if (!existing.content && existing.raw?.trim()) throw new Error("the project config doesn't parse; fix it first");
+  const config: Record<string, unknown> = { ...existing.content };
 
   if (extraDirs.length > 0) {
     config.extra_dirs = extraDirs;
@@ -38,7 +34,7 @@ export async function updateExtraDirs(channelId: string, extraDirs: string[]): P
   }
 
   const content = JSON.stringify(config, null, 2);
-  await saveProjectConfig(channelId, content);
+  await saveProjectConfig(channelId, content, existing.hash);
 }
 
 // ── File operations ──

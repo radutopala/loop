@@ -320,13 +320,28 @@ describe("ConfigForm", () => {
       expect((row("name").querySelector("input") as HTMLInputElement).value).toBe("");
     });
 
-    it("keeps edits when the config is re-fetched unchanged, and reloads a new one", async () => {
-      const { user, rerender } = renderForm({ schema, config: cfg({ name: "a" }) });
-      await user.type(row("name").querySelector("input")!, "b");
+    it("keeps edits when the config is re-fetched, until cancel loads the new one", async () => {
+      const { user, ref, rerender } = renderForm({ schema, config: cfg({ name: "a" }) });
+      const input = () => row("name").querySelector("input") as HTMLInputElement;
+      await user.type(input(), "b");
       rerender({ config: cfg({ name: "a" }) });
-      expect((row("name").querySelector("input") as HTMLInputElement).value).toBe("ab");
+      expect(input().value).toBe("ab");
       rerender({ config: cfg({ name: "z" }) });
-      expect((row("name").querySelector("input") as HTMLInputElement).value).toBe("z");
+      expect(input().value).toBe("ab");
+      act(() => ref.current!.cancel());
+      expect(input().value).toBe("z");
+      // Unchanged since cancel loaded it: a re-fetch keeps new edits.
+      await user.type(input(), "y");
+      rerender({ config: cfg({ name: "z" }) });
+      expect(input().value).toBe("zy");
+      // Without edits, a new file loads straight away.
+      act(() => ref.current!.cancel());
+      rerender({ config: cfg({ name: "w" }) });
+      expect(input().value).toBe("w");
+      // Another file loads over edits.
+      await user.type(input(), "v");
+      rerender({ config: { ...cfg({ name: "p" }), path: "/proj/.loop/config.json" } });
+      expect(input().value).toBe("p");
       rerender({ config: null });
       expect((row("name").querySelector("input") as HTMLInputElement).value).toBe("");
     });

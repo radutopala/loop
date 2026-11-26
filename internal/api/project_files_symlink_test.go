@@ -153,7 +153,7 @@ func (s *ServerSuite) TestProjectConfigWritesDontFollowSymlinksOut() {
 		s.store.ExpectedCalls = nil
 		s.store.On("GetChannel", mock.Anything, "ch-proj").Return(&db.Channel{ChannelID: "ch-proj", DirPath: project}, nil)
 		rec := s.testRequest("PUT", "/api/config/project?channel_id=ch-proj", `{"content":"{}"}`)
-		require.Equal(s.T(), http.StatusNoContent, rec.Code, rec.Body.String())
+		require.Equal(s.T(), http.StatusOK, rec.Code, rec.Body.String())
 	})
 	content, err := os.ReadFile(global)
 	require.NoError(s.T(), err)
@@ -210,14 +210,17 @@ func (s *ServerSuite) TestProjectConfigIOStaysInTheProject() {
 	s.srv.sys = inProjectSystem{t: s.T(), project: dir}
 	path := filepath.Join(dir, ".loop", "config.json")
 
-	for _, w := range []struct{ method, target, body string }{
-		{"PUT", "/api/config/project?channel_id=ch-1", `{"content":"{}"}`},
-		{"POST", "/api/shortcuts", `{"action":"add","scope":"project","channel_id":"ch-1","name":"x","prompt":"p"}`},
-		{"POST", "/api/bash-shortcuts", `{"action":"add","scope":"project","channel_id":"ch-1","name":"x","command":"id"}`},
-		{"POST", "/api/workflows", `{"action":"add","scope":"project","channel_id":"ch-1","workflow":{"name":"w","nodes":[{"id":"b","type":"bash","script":"id"}]}}`},
+	for _, w := range []struct {
+		method, target, body string
+		code                 int
+	}{
+		{"PUT", "/api/config/project?channel_id=ch-1", `{"content":"{}"}`, http.StatusOK},
+		{"POST", "/api/shortcuts", `{"action":"add","scope":"project","channel_id":"ch-1","name":"x","prompt":"p"}`, http.StatusNoContent},
+		{"POST", "/api/bash-shortcuts", `{"action":"add","scope":"project","channel_id":"ch-1","name":"x","command":"id"}`, http.StatusNoContent},
+		{"POST", "/api/workflows", `{"action":"add","scope":"project","channel_id":"ch-1","workflow":{"name":"w","nodes":[{"id":"b","type":"bash","script":"id"}]}}`, http.StatusNoContent},
 	} {
 		rec := s.testRequest(w.method, w.target, w.body)
-		require.Equal(s.T(), http.StatusNoContent, rec.Code, w.target+": "+rec.Body.String())
+		require.Equal(s.T(), w.code, rec.Code, w.target+": "+rec.Body.String())
 	}
 	ch := &db.Channel{ChannelID: "ch-1", DirPath: dir}
 	_, _, _, err := s.srv.editLearnConfig(context.Background(), ch, &learn.PromptShortcut{Name: "y", Prompt: "p"}, true)

@@ -100,7 +100,7 @@ func (s *ServerSuite) TestGlobalConfigHistory() {
 
 	s.srv.sys = homeSystem{home: filepath.Dir(s.srv.loopDir)}
 	rec := s.testRequest("PUT", "/api/config", `{"content":"{\"a\": 1}"}`)
-	require.Equal(s.T(), http.StatusNoContent, rec.Code, rec.Body.String())
+	require.Equal(s.T(), http.StatusOK, rec.Code, rec.Body.String())
 	saved, err := os.ReadFile(path)
 	require.NoError(s.T(), err)
 
@@ -162,7 +162,7 @@ func (s *ServerSuite) TestProjectConfigHistory() {
 	require.Equal(s.T(), http.StatusNoContent, rec.Code, rec.Body.String())
 
 	rec = s.testRequest("PUT", "/api/config/project?channel_id=ch-1", `{"content":"{\"mounts\": [\"/b:/b\"]}"}`)
-	require.Equal(s.T(), http.StatusNoContent, rec.Code, rec.Body.String())
+	require.Equal(s.T(), http.StatusOK, rec.Code, rec.Body.String())
 	require.True(s.T(), s.projectTrustStatus().Trusted)
 
 	h := s.configHistory("/api/config/project/history?channel_id=ch-1")

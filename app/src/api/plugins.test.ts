@@ -216,14 +216,15 @@ describe("setPluginEnabled", () => {
     { name: "a project", channelId: "ch-1", url: "http://localhost:8222/api/config/project?channel_id=ch-1" },
     { name: "the global config", channelId: undefined, url: "http://localhost:8222/api/config" },
   ])("writes $name and tells plugin views", async ({ channelId, url }) => {
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ raw: "// mine\n{}\n", content: {} })));
-    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ raw: "// mine\n{}\n", content: {}, hash: "h1" })));
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ hash: "h2" })));
     await setPluginEnabled("echo", true, channelId);
     expect(fetchMock.mock.calls[0]![0]).toBe(url);
     const [putURL, putInit] = fetchMock.mock.calls[1]!;
     expect(putURL).toBe(url);
     expect(putInit.method).toBe("PUT");
-    const { content } = JSON.parse(putInit.body);
+    const { content, base_hash } = JSON.parse(putInit.body);
+    expect(base_hash).toBe("h1");
     expect(content).toContain("// mine");
     expect(content).toContain('"enabled": true');
     expect((window.dispatchEvent as ReturnType<typeof vi.fn>).mock.calls.at(-1)![0].type).toBe(PLUGINS_CHANGED);
@@ -231,7 +232,7 @@ describe("setPluginEnabled", () => {
 
   it("writes an empty file", async () => {
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ content: {} })));
-    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ hash: "h2" })));
     await setPluginEnabled("echo", false);
     expect(JSON.parse(JSON.parse(fetchMock.mock.calls[1]![1].body).content)).toEqual({ plugins: { echo: { enabled: false } } });
   });
@@ -240,13 +241,13 @@ describe("setPluginEnabled", () => {
 describe("setPluginSetting", () => {
   it("sets a setting, then removes it", async () => {
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ raw: '{"plugins": {"echo": {"enabled": true}}}', content: {} })));
-    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ hash: "h2" })));
     await setPluginSetting("echo", "count", 7, "ch-1");
     const set = JSON.parse(JSON.parse(fetchMock.mock.calls[1]![1].body).content);
     expect(set).toEqual({ plugins: { echo: { enabled: true, settings: { count: 7 } } } });
 
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ raw: JSON.stringify(set), content: {} })));
-    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ hash: "h2" })));
     await setPluginSetting("echo", "count", undefined);
     expect(fetchMock.mock.calls[2]![0]).toBe("http://localhost:8222/api/config");
     expect(JSON.parse(JSON.parse(fetchMock.mock.calls[3]![1].body).content)).toEqual({ plugins: { echo: { enabled: true, settings: {} } } });
@@ -256,7 +257,7 @@ describe("setPluginSetting", () => {
 describe("setPluginSchedule", () => {
   it("turns an action's scheduled task off, keeping the rest of its entry", async () => {
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ raw: '{"plugins": {"echo": {"schedules": {"daily": {"schedule": "0 7 * * *"}}}}}', content: {} })));
-    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ hash: "h2" })));
     await setPluginSchedule("echo", "daily", false, "ch-1");
     expect(fetchMock.mock.calls[1]![0]).toBe("http://localhost:8222/api/config/project?channel_id=ch-1");
     expect(JSON.parse(JSON.parse(fetchMock.mock.calls[1]![1].body).content)).toEqual({
@@ -268,14 +269,14 @@ describe("setPluginSchedule", () => {
 describe("setPluginScheduleEntry", () => {
   it("writes an action's entry without its unset fields, then removes it", async () => {
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ raw: '{"plugins": {"echo": {"enabled": true}}}', content: {} })));
-    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ hash: "h2" })));
     await setPluginScheduleEntry("echo", "daily", { enabled: true, type: "", schedule: "0 7 * * *" });
     expect(fetchMock.mock.calls[1]![0]).toBe("http://localhost:8222/api/config");
     const set = JSON.parse(JSON.parse(fetchMock.mock.calls[1]![1].body).content);
     expect(set).toEqual({ plugins: { echo: { enabled: true, schedules: { daily: { enabled: true, schedule: "0 7 * * *" } } } } });
 
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ raw: JSON.stringify(set), content: {} })));
-    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ hash: "h2" })));
     await setPluginScheduleEntry("echo", "daily", undefined, "ch-1");
     expect(fetchMock.mock.calls[3]![0]).toBe("http://localhost:8222/api/config/project?channel_id=ch-1");
     expect(JSON.parse(JSON.parse(fetchMock.mock.calls[3]![1].body).content)).toEqual({ plugins: { echo: { enabled: true, schedules: {} } } });
@@ -283,7 +284,7 @@ describe("setPluginScheduleEntry", () => {
 
   it("keeps an interval's type", async () => {
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ raw: "", content: {} })));
-    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ hash: "h2" })));
     await setPluginScheduleEntry("echo", "ping", { type: "interval", schedule: "1h" });
     expect(JSON.parse(JSON.parse(fetchMock.mock.calls[1]![1].body).content)).toEqual({ plugins: { echo: { schedules: { ping: { type: "interval", schedule: "1h" } } } } });
   });

@@ -321,7 +321,7 @@ func (s *ServerSuite) TestPluginsChangedEvents() {
 	pm.On("StopDisabled", mock.Anything).Return(true).Once()
 	pm.On("SyncSchedules", mock.Anything).Return(errors.New("boom")).Once()
 	pm.On("NotifySettings", mock.Anything, mock.Anything).Return(errors.New("bang")).Once()
-	require.Equal(s.T(), http.StatusNoContent, s.testRequest("PUT", "/api/config", `{"content":"{}"}`).Code)
+	require.Equal(s.T(), http.StatusOK, s.testRequest("PUT", "/api/config", `{"content":"{}"}`).Code)
 	require.Len(s.T(), sent, 4)
 	sent = sent[:3]
 

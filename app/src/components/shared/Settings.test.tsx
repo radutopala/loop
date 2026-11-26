@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createBackupKey, fetchBackupStatus } from "../../api/backup";
 import { restoreBuiltins } from "../../api/builtins";
 import {
+  ConfigChangedError,
   type ConfigResponse,
   type ConfigSchema,
   fetchConfigHistory,
@@ -98,8 +99,8 @@ const schema: ConfigSchema = {
 };
 
 const cfg = (content: Record<string, unknown> | null, path = "/cfg/config.json"): ConfigResponse => ({ path, content, raw: JSON.stringify(content) });
-const globalCfg = cfg({ model: "opus", workflows: "w1" });
-const projectCfg = cfg({ workspace: "/work" }, "/work/.loop/config.json");
+const globalCfg = { ...cfg({ model: "opus", workflows: "w1" }), hash: "hg" };
+const projectCfg = { ...cfg({ workspace: "/work" }, "/work/.loop/config.json"), hash: "hp" };
 
 const estimate: DockerReclaimable = {
   volumes_sized: true,
@@ -163,8 +164,8 @@ describe("Settings", () => {
     schemaMock.mockResolvedValue(schema);
     globalMock.mockResolvedValue(globalCfg);
     projectMock.mockResolvedValue(projectCfg);
-    saveGlobalMock.mockResolvedValue(undefined);
-    saveProjectMock.mockResolvedValue(undefined);
+    saveGlobalMock.mockResolvedValue("h-saved");
+    saveProjectMock.mockResolvedValue("h-saved");
     imageMock.mockResolvedValue(imageStatus);
     reclaimableMock.mockResolvedValue(estimate);
     historyMock.mockResolvedValue({
@@ -337,15 +338,15 @@ describe("Settings", () => {
     });
 
     it("saves the global edits, applying the desktop settings and fetching the config again", async () => {
-      const d = deferred<void>();
+      const d = deferred<string>();
       saveGlobalMock.mockReturnValue(d.promise);
       const { user } = renderSettings();
       await loaded();
       await user.type(field("desktop.note"), "hi");
       await user.click(screen.getByRole("button", { name: "Save" }));
       expect(screen.getByRole("button", { name: "Saving..." })).toHaveProperty("disabled", true);
-      await act(async () => d.resolve());
-      expect(saveGlobalMock).toHaveBeenCalledWith(`${JSON.stringify({ model: "opus", workflows: "w1", desktop: { note: "hi" } }, null, 2)}\n`);
+      await act(async () => d.resolve("h2"));
+      expect(saveGlobalMock).toHaveBeenCalledWith(`${JSON.stringify({ model: "opus", workflows: "w1", desktop: { note: "hi" } }, null, 2)}\n`, "hg");
       expect(theme.setThemeName).toHaveBeenCalledWith("dark");
       expect(theme.setFontSizes).toHaveBeenCalledWith(DEFAULT_FONT_SIZES);
       expect(theme.setIslands).toHaveBeenCalledWith(false);
@@ -381,7 +382,7 @@ describe("Settings", () => {
       const view = await jsonEditor();
       act(() => view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: "{bad" } }));
       await user.click(screen.getByRole("button", { name: "Save" }));
-      expect(saveGlobalMock).toHaveBeenCalledWith("{bad");
+      expect(saveGlobalMock).toHaveBeenCalledWith("{bad", "hg");
       await waitFor(() => expect(globalMock).toHaveBeenCalledTimes(2));
       expect(theme.setThemeName).not.toHaveBeenCalled();
     });
@@ -403,8 +404,53 @@ describe("Settings", () => {
       await waitFor(() => expect(field("workspace").value).toBe("/work"));
       await user.type(field("workspace"), "/x");
       await user.click(screen.getByRole("button", { name: "Save" }));
-      expect(saveProjectMock).toHaveBeenCalledWith("ch-1", `${JSON.stringify({ workspace: "/work/x" }, null, 2)}\n`);
+      expect(saveProjectMock).toHaveBeenCalledWith("ch-1", `${JSON.stringify({ workspace: "/work/x" }, null, 2)}\n`, "hp");
       await waitFor(() => expect(projectMock).toHaveBeenCalledTimes(2));
+    });
+
+    it("bases the next save on the saved file's hash", async () => {
+      const { user } = renderSettings({ initialSection: "Agent" });
+      await loaded();
+      globalMock.mockRejectedValue(new Error("gone"));
+      await user.type(field("model"), "-x");
+      await user.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(console.warn).toHaveBeenCalledWith("[loop] re-fetching global config:", expect.any(Error)));
+      await user.type(field("model"), "y");
+      await user.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(saveGlobalMock).toHaveBeenCalledTimes(2));
+      expect(saveGlobalMock.mock.calls.map((c) => c[1])).toEqual(["hg", "h-saved"]);
+    });
+
+    it("keeps the edits of a save refused over a changed file, until cancel loads the newer file", async () => {
+      saveGlobalMock.mockRejectedValueOnce(new ConfigChangedError());
+      const { user } = renderSettings({ initialSection: "Agent" });
+      await loaded();
+      globalMock.mockResolvedValue({ ...cfg({ model: "sonnet" }), hash: "hn" });
+      await user.type(field("model"), "-x");
+      await user.click(screen.getByRole("button", { name: "Save" }));
+      expect(await screen.findByText(/changed since it was loaded/)).toBeTruthy();
+      await waitFor(() => expect(globalMock).toHaveBeenCalledTimes(2));
+      expect(field("model").value).toBe("opus-x");
+
+      await user.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(field("model").value).toBe("sonnet");
+      await user.type(field("model"), "!");
+      await user.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(saveGlobalMock).toHaveBeenLastCalledWith(`${JSON.stringify({ model: "sonnet!" }, null, 2)}\n`, "hn"));
+    });
+
+    it("fetches the newer project file when a save is refused over it", async () => {
+      saveProjectMock.mockRejectedValueOnce(new ConfigChangedError());
+      const { user } = renderSettings({ projectDirPath: "/work", channelId: "ch-1", initialSection: "__proj_Workspace" });
+      await loaded();
+      await waitFor(() => expect(field("workspace").value).toBe("/work"));
+      projectMock.mockResolvedValue({ ...cfg({ workspace: "/new" }, "/work/.loop/config.json"), hash: "hn" });
+      await user.type(field("workspace"), "/x");
+      await user.click(screen.getByRole("button", { name: "Save" }));
+      expect(await screen.findByText(/changed since it was loaded/)).toBeTruthy();
+      await waitFor(() => expect(projectMock).toHaveBeenCalledTimes(2));
+      await user.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(field("workspace").value).toBe("/new");
     });
 
     it.each([

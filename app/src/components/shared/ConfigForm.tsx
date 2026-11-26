@@ -286,7 +286,10 @@ export const ConfigForm = forwardRef<ConfigFormHandle, ConfigFormProps>(function
   const [, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Read by the loading effect, which must not drop unsaved edits.
+  const dirtyRef = useRef(false);
   const setDirty = (v: boolean) => {
+    dirtyRef.current = v;
     setDirtyRaw(v);
     onDirtyChange?.(v);
   };
@@ -294,6 +297,7 @@ export const ConfigForm = forwardRef<ConfigFormHandle, ConfigFormProps>(function
   // A refetch that returns the file unchanged (React StrictMode runs the
   // loading effect twice in dev) must not wipe what the user is typing.
   const loadedRawRef = useRef<string | undefined>(undefined);
+  const loadedPathRef = useRef<string | undefined>(undefined);
   // The file has text the daemon couldn't parse, so the form holds none of
   // it: saving the form would write an empty config over the file.
   const unparsedRef = useRef(false);
@@ -307,7 +311,12 @@ export const ConfigForm = forwardRef<ConfigFormHandle, ConfigFormProps>(function
       return;
     }
     if (config.raw === loadedRawRef.current) return;
+    // A newer file while there are unsaved edits (one a refused save
+    // fetched) waits for Cancel, which loads it, instead of replacing them.
+    // Another file (another project's) always loads.
+    if (dirtyRef.current && config.path === loadedPathRef.current) return;
     loadedRawRef.current = config.raw;
+    loadedPathRef.current = config.path;
     unparsedRef.current = config.content == null && !!config.raw?.trim();
     const parsed = (config.content ?? {}) as ConfigData;
     setFormData(parsed);
@@ -389,6 +398,7 @@ export const ConfigForm = forwardRef<ConfigFormHandle, ConfigFormProps>(function
       setFormData({});
       setJsonDraft("{\n  \n}\n");
     } else {
+      loadedRawRef.current = config.raw;
       unparsedRef.current = config.content == null && !!config.raw?.trim();
       const parsed = (config.content ?? {}) as ConfigData;
       setFormData(parsed);
