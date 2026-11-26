@@ -42,7 +42,7 @@ function view(): EditorView {
 }
 
 async function editorShows(text: string) {
-  await waitFor(() => expect(document.querySelector(".cm-editor") && view().state.doc.toString()).toBe(text));
+  await waitFor(() => expect(document.querySelector(".cm-editor") && view().state.doc.toString()).toBe(text), { timeout: 4000 });
 }
 
 // The tree row comes before the tab with the same title.
@@ -91,7 +91,8 @@ describe("loadTabs", () => {
   });
 });
 
-describe("MemoryPanel", () => {
+// CodeMirror is slow to mount under jsdom, and these tests mount it many times.
+describe("MemoryPanel", { timeout: 20000 }, () => {
   let removeRangeRects: () => void = () => {};
 
   beforeEach(() => {

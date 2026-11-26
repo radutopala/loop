@@ -289,7 +289,7 @@ describe("useChatStateStore", () => {
   describe("confirmed idle channels", () => {
     it("ends a leftover run once a later channel list shows the channel idle", () => {
       const { result, update, emit } = setup({ channels: [ch("sel", true), ch("bg", true), ch("gone", true)] });
-      const listener = result.current.subscribeChatEvents(vi.fn()) && vi.fn();
+      const listener = vi.fn();
       result.current.subscribeChatEvents(listener);
       emit(ev("message.streaming", { content: "x" }, "sel"), ev("message.streaming", { content: "y" }, "bg"));
       result.current.saveState("sel", { ...result.current.getState("sel")!, isRunning: true });

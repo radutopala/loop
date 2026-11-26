@@ -146,7 +146,8 @@ async function renderWithDm() {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  // Reset, not clear: a once-value a test left unused must not reach the next.
+  vi.resetAllMocks();
   localStorage.clear();
   window.history.replaceState(null, "", "/");
   vi.mocked(isInboxWindow).mockReturnValue(false);
