@@ -39,6 +39,9 @@ export interface ConfigResponse {
   path: string;
   content: Record<string, any> | null;
   raw: string;
+  /** The file's text's hash, "" when it's missing: pass it to a save as
+   *  baseHash so the save can't overwrite a change made since. */
+  hash?: string;
 }
 
 // ── API functions ──
@@ -63,14 +66,31 @@ function globalConfigSaved(): void {
   if (typeof window !== "undefined") window.dispatchEvent(new Event(GLOBAL_CONFIG_SAVED_EVENT));
 }
 
-export async function saveGlobalConfig(content: string): Promise<void> {
-  const res = await apiFetch(`${getApiUrl()}/api/config`, {
+/** A save refused because the file changed since its baseHash was read. */
+export class ConfigChangedError extends Error {
+  constructor() {
+    super("The config file changed since it was loaded. Cancel to load the new version, then make your change again.");
+    this.name = "ConfigChangedError";
+  }
+}
+
+/** PUTs content to url, refused when the file no longer has baseHash, and
+ *  returns the saved file's hash. */
+async function putConfig(url: string, content: string, baseHash: string | undefined, what: string): Promise<string> {
+  const res = await apiFetch(url, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({ content, base_hash: baseHash }),
   });
-  if (!res.ok) throw new Error(`Failed to save global config: ${res.statusText}`);
+  if (res.status === 409) throw new ConfigChangedError();
+  if (!res.ok) throw new Error(`Failed to save ${what}: ${res.statusText}`);
+  return ((await res.json()) as { hash: string }).hash;
+}
+
+export async function saveGlobalConfig(content: string, baseHash?: string): Promise<string> {
+  const hash = await putConfig(`${getApiUrl()}/api/config`, content, baseHash, "global config");
   globalConfigSaved();
+  return hash;
 }
 
 /** raw, a config file's text, with path set to value, or removed when value
@@ -89,7 +109,7 @@ export function withConfigValue(raw: string, path: string[], value: unknown): st
 /** Sets path in the global config file, leaving the rest of it as it was. */
 export async function setGlobalConfigValue(path: string[], value: unknown): Promise<void> {
   const cfg = await fetchGlobalConfig();
-  await saveGlobalConfig(withConfigValue(cfg.raw ?? "", path, value));
+  await saveGlobalConfig(withConfigValue(cfg.raw ?? "", path, value), cfg.hash);
 }
 
 export async function fetchProjectConfig(channelId: string): Promise<ConfigResponse> {
@@ -171,14 +191,9 @@ export async function trustProjectConfig(channelId: string, hash: string): Promi
   if (!res.ok) throw new Error(`Failed to trust project config: ${res.statusText}`);
 }
 
-export async function saveProjectConfig(channelId: string, content: string): Promise<void> {
+export async function saveProjectConfig(channelId: string, content: string, baseHash?: string): Promise<string> {
   const params = new URLSearchParams({ channel_id: channelId });
-  const res = await apiFetch(`${getApiUrl()}/api/config/project?${params}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content }),
-  });
-  if (!res.ok) throw new Error(`Failed to save project config: ${res.statusText}`);
+  return putConfig(`${getApiUrl()}/api/config/project?${params}`, content, baseHash, "project config");
 }
 
 // ── Config history ──

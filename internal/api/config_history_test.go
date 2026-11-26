@@ -66,13 +66,41 @@ func historySources(h configHistoryResponse) []string {
 
 // TestGlobalConfigHistory saves, edits outside Loop and restores the global
 // config, and reads its history back.
+func (s *ServerSuite) TestWriteConfigAtomic() {
+	const path = "/home/test/.loop/config.json"
+	boom := errors.New("boom")
+	for _, tc := range []struct {
+		name                string
+		writeErr, renameErr error
+		wantErr             error
+		wantRemove          bool
+	}{
+		{name: "renames the temp file into place"},
+		{name: "a failed write leaves the file alone", writeErr: boom, wantErr: boom},
+		{name: "a failed rename removes the temp file", renameErr: boom, wantErr: boom, wantRemove: true},
+	} {
+		s.Run(tc.name, func() {
+			sys := new(testutil.MockSystem)
+			sys.On("WriteFile", path+".tmp", []byte("{}"), os.FileMode(0o644)).Return(tc.writeErr)
+			if tc.writeErr == nil {
+				sys.On("Rename", path+".tmp", path).Return(tc.renameErr)
+			}
+			if tc.wantRemove {
+				sys.On("Remove", path+".tmp").Return(nil)
+			}
+			require.ErrorIs(s.T(), writeConfigAtomic(sys, path, []byte("{}")), tc.wantErr)
+			sys.AssertExpectations(s.T())
+		})
+	}
+}
+
 func (s *ServerSuite) TestGlobalConfigHistory() {
 	path := s.useConfigHistory()
 	require.Empty(s.T(), s.configHistory("/api/config/history").Revisions)
 
 	s.srv.sys = homeSystem{home: filepath.Dir(s.srv.loopDir)}
 	rec := s.testRequest("PUT", "/api/config", `{"content":"{\"a\": 1}"}`)
-	require.Equal(s.T(), http.StatusNoContent, rec.Code, rec.Body.String())
+	require.Equal(s.T(), http.StatusOK, rec.Code, rec.Body.String())
 	saved, err := os.ReadFile(path)
 	require.NoError(s.T(), err)
 
@@ -134,7 +162,7 @@ func (s *ServerSuite) TestProjectConfigHistory() {
 	require.Equal(s.T(), http.StatusNoContent, rec.Code, rec.Body.String())
 
 	rec = s.testRequest("PUT", "/api/config/project?channel_id=ch-1", `{"content":"{\"mounts\": [\"/b:/b\"]}"}`)
-	require.Equal(s.T(), http.StatusNoContent, rec.Code, rec.Body.String())
+	require.Equal(s.T(), http.StatusOK, rec.Code, rec.Body.String())
 	require.True(s.T(), s.projectTrustStatus().Trusted)
 
 	h := s.configHistory("/api/config/project/history?channel_id=ch-1")
@@ -341,7 +369,7 @@ func (s *ServerSuite) TestConfigHistoryErrors() {
 			sys := new(testutil.MockSystem)
 			sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
 			sys.On("ReadFile", path).Return(nil, os.ErrNotExist)
-			sys.On("WriteFile", path, mock.Anything, mock.Anything).Return(boom)
+			sys.On("WriteFile", path+".tmp", mock.Anything, mock.Anything).Return(boom)
 			s.srv.sys = sys
 		}, http.StatusInternalServerError},
 		{"restore mkdir", "POST", "/api/config/history/1/restore", func(store *testutil.MockStore) {
@@ -355,7 +383,7 @@ func (s *ServerSuite) TestConfigHistoryErrors() {
 			sys := new(testutil.MockSystem)
 			sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
 			sys.On("ReadFile", rev.Path).Return(nil, os.ErrNotExist)
-			sys.On("WriteFile", rev.Path, mock.Anything, mock.Anything).Return(boom)
+			sys.On("WriteFile", rev.Path+".tmp", mock.Anything, mock.Anything).Return(boom)
 			s.srv.sys = sys
 		}, http.StatusInternalServerError},
 	}

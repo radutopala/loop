@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  ConfigChangedError,
   configRevisionSourceLabel,
   fetchBashShortcuts,
   fetchConfigHistory,
@@ -193,15 +194,21 @@ describe("configRevisionSourceLabel", () => {
   });
 });
 
+// The response to a save: the saved file's hash.
+function saved(hash = "h-saved"): Response {
+  return new Response(JSON.stringify({ hash }));
+}
+
 describe("setGlobalConfigValue", () => {
   it("sets one key in the global config and keeps its comments", async () => {
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ path: "", content: null, raw: '{\n  // mine\n  "desktop": {"theme": "light"}\n}' })));
-    fetchMock.mockResolvedValueOnce({ ok: true });
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ path: "", content: null, raw: '{\n  // mine\n  "desktop": {"theme": "light"}\n}', hash: "h1" })));
+    fetchMock.mockResolvedValueOnce(saved());
     await setGlobalConfigValue(["desktop", "hidden_pills"], ["ci", "comment"]);
     const [url, init] = fetchMock.mock.calls[1] ?? [];
     expect(url).toMatch(/\/api\/config$/);
     expect(init.method).toBe("PUT");
-    const content: string = JSON.parse(init.body).content;
+    const { content, base_hash } = JSON.parse(init.body) as { content: string; base_hash: string };
+    expect(base_hash).toBe("h1");
     expect(content).toContain("// mine");
     expect(content).toContain('"theme": "light"');
     expect(content).toMatch(/"hidden_pills": \[\s*"ci",\s*"comment"\s*\]/);
@@ -234,22 +241,34 @@ describe("global config", () => {
     await expect(fetchGlobalConfig()).rejects.toThrow("Failed to fetch global config: boom");
   });
 
-  it("saves it and tells the window", async () => {
-    fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
-    await saveGlobalConfig("{}");
+  it("saves it from the file it was made from, returns the new hash and tells the window", async () => {
+    fetchMock.mockResolvedValue(saved("h2"));
+    await expect(saveGlobalConfig("{}", "h1")).resolves.toBe("h2");
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBe("http://localhost:8222/api/config");
     expect(init.method).toBe("PUT");
-    expect(JSON.parse(init.body)).toEqual({ content: "{}" });
+    expect(JSON.parse(init.body)).toEqual({ content: "{}", base_hash: "h1" });
     expect(dispatched).toEqual([GLOBAL_CONFIG_SAVED_EVENT]);
+  });
+
+  it("saves it unchecked without a base hash", async () => {
+    fetchMock.mockResolvedValue(saved());
+    await saveGlobalConfig("{}");
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body)).toEqual({ content: "{}" });
+  });
+
+  it("refuses a save over a file that changed, without telling the window", async () => {
+    fetchMock.mockResolvedValue(new Response("changed\n", { status: 409 }));
+    await expect(saveGlobalConfig("{}", "h1")).rejects.toBeInstanceOf(ConfigChangedError);
+    expect(dispatched).toEqual([]);
   });
 
   it("saves it without a window to tell", async () => {
     fetchMock.mockImplementation(async () => {
       vi.stubGlobal("window", undefined);
-      return new Response(null, { status: 204 });
+      return saved("h");
     });
-    await expect(saveGlobalConfig("{}")).resolves.toBeUndefined();
+    await expect(saveGlobalConfig("{}")).resolves.toBe("h");
     expect(dispatched).toEqual([]);
   });
 
@@ -261,7 +280,7 @@ describe("global config", () => {
 
   it("sets a value in a config with no raw text", async () => {
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ content: null })));
-    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    fetchMock.mockResolvedValueOnce(saved());
     await setGlobalConfigValue(["a"], 1);
     expect(JSON.parse(JSON.parse(fetchMock.mock.calls[1]![1].body).content)).toEqual({ a: 1 });
   });
@@ -269,12 +288,17 @@ describe("global config", () => {
 
 describe("saveProjectConfig", () => {
   it("puts the content for the channel", async () => {
-    fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
-    await saveProjectConfig("c 1", "{}");
+    fetchMock.mockResolvedValue(saved("h2"));
+    await expect(saveProjectConfig("c 1", "{}", "h1")).resolves.toBe("h2");
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBe("http://localhost:8222/api/config/project?channel_id=c+1");
     expect(init.method).toBe("PUT");
-    expect(JSON.parse(init.body)).toEqual({ content: "{}" });
+    expect(JSON.parse(init.body)).toEqual({ content: "{}", base_hash: "h1" });
+  });
+
+  it("refuses a save over a file that changed", async () => {
+    fetchMock.mockResolvedValue(new Response("", { status: 409 }));
+    await expect(saveProjectConfig("c1", "{}", "h1")).rejects.toThrow("changed since it was loaded");
   });
 
   it("throws on an error status", async () => {

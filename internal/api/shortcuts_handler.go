@@ -63,9 +63,9 @@ func (f projectFS) MkdirAll(path string, perm os.FileMode) error {
 
 func (s *Server) writeScopedConfig(scope, path string, data []byte) error {
 	if scope == "project" {
-		return s.sys.WriteFileIn(filepath.Dir(filepath.Dir(path)), path, data, 0644)
+		return writeConfigAtomic(projectFS{s.sys, filepath.Dir(filepath.Dir(path))}, path, data)
 	}
-	return s.sys.WriteFile(path, data, 0644)
+	return writeConfigAtomic(s.sys, path, data)
 }
 
 // resolveConfigPath returns the config file path for the given scope and

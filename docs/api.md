@@ -4125,39 +4125,49 @@ Returns the global config as both parsed JSON and raw HJSON text.
 **Response (200):**
 ```json
 {
-  "config": { "platforms": ["local"], "claude_model": "" },
-  "raw": "{\n  \"platforms\": [\"local\"]\n}"
+  "path": "/home/you/.loop/config.json",
+  "content": { "platforms": ["local"] },
+  "raw": "{\n  \"platforms\": [\"local\"]\n}",
+  "hash": "9f2c…"
 }
 ```
 
-| Field    | Type   | Description |
-|----------|--------|-------------|
-| `config` | object | Parsed config values |
-| `raw`    | string | Raw HJSON file contents (for the JSON editor view) |
+| Field     | Type           | Description |
+|-----------|----------------|-------------|
+| `path`    | string         | The config file's path |
+| `content` | object \| null | Parsed config values; `null` when the file is missing or doesn't parse |
+| `raw`     | string         | The file's text (for the JSON editor view); `""` when it's missing |
+| `hash`    | string         | SHA-256 of the file's text, `""` when it's missing. Send it back as `base_hash` when saving |
+
+**Errors:** `500` if the file exists but can't be read.
 
 ---
 
 ### `PUT /api/config`
 
-Save global config. Accepts raw HJSON text.
+Save global config. Accepts HJSON text, which is reformatted with its comments kept. The file is written to a temp file and renamed into place, so readers never see it half-written.
 
 **Request:**
 ```json
 {
-  "raw": "{\n  \"platforms\": [\"local\"],\n  \"claude_model\": \"claude-opus-4-6\"\n}"
+  "content": "{\n  \"platforms\": [\"local\"],\n  \"claude_model\": \"claude-opus-4-6\"\n}",
+  "base_hash": "9f2c…"
 }
 ```
 
-| Field | Type   | Required | Description |
-|-------|--------|----------|-------------|
-| `raw` | string | yes      | HJSON config text to write to `~/.loop/config.json` |
+| Field       | Type   | Required | Description |
+|-------------|--------|----------|-------------|
+| `content`   | string | yes      | HJSON config text to write to `~/.loop/config.json` |
+| `base_hash` | string | no       | The `hash` of the file the content was made from (`""` for a missing file). When set, the save is refused with `409` if the file has changed since, so it doesn't overwrite an edit made in between |
 
 **Response (200):**
 ```json
-{"ok": true}
+{"hash": "41d8…"}
 ```
 
-**Errors:** `400` if the HJSON is invalid.
+`hash` is the saved file's, to send as the next save's `base_hash`.
+
+**Errors:** `400` if the HJSON is invalid. `409` if `base_hash` no longer matches the file. `500` if the file can't be read for the `base_hash` check or can't be written.
 
 ---
 
@@ -4179,9 +4189,9 @@ Returns the project config for a channel.
 }
 ```
 
-Same shape as `GET /api/config`. If no project config file exists, `config` is an empty object and `raw` is `""`.
+Same shape as `GET /api/config`. If no project config file exists, `content` is `null`, and `raw` and `hash` are `""`.
 
-**Errors:** `400` if `channel_id` is missing. `404` if channel not found.
+**Errors:** `400` if `channel_id` is missing or the channel isn't found. `500` if the file exists but can't be read.
 
 ---
 
@@ -4310,15 +4320,18 @@ Save project config for a channel. Owner-only.
 **Request:**
 ```json
 {
-  "content": "{\n  \"claude_model\": \"claude-opus-4-6\"\n}"
+  "content": "{\n  \"claude_model\": \"claude-opus-4-6\"\n}",
+  "base_hash": "9f2c…"
 }
 ```
 
-**Response:** `204 No Content`
+`base_hash` works as in [`PUT /api/config`](#put-apiconfig).
+
+**Response (200):** `{"hash": "…"}`, the saved file's hash.
 
 Creates the `.loop/` directory and config file if they don't exist. A project config that was trusted stays trusted (see [`GET /api/config/project/trust`](#get-apiconfigprojecttrust)).
 
-**Errors:** `400` if `channel_id` is missing, the channel isn't found, the HJSON is invalid, or `.loop` or `.loop/config.json` is a symlink outside the project.
+**Errors:** `400` if `channel_id` is missing, the channel isn't found, the HJSON is invalid, or `.loop` or `.loop/config.json` is a symlink outside the project. `409` if `base_hash` no longer matches the file.
 
 ---
 

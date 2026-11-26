@@ -21,9 +21,9 @@ type langProfile struct {
 	// to complexity but should not increase nesting depth.
 	nestingParents map[string]struct{}
 
-	// shortCircuit is the node type whose `operator` field is `&&` or `||`.
-	// Tree-sitter exposes these as binary expressions; we look at the operator
-	// text to disambiguate.
+	// shortCircuit is the node type whose `operator` field is `&&` or `||`
+	// (`and` or `or` in Python). Tree-sitter exposes these as binary
+	// expressions; we look at the operator text to disambiguate.
 	shortCircuit string
 
 	// paramListField is the field name on a function-definition node whose
@@ -42,9 +42,19 @@ type langProfile struct {
 	// `(a, b, c int)` is a single parameter_declaration with three names —
 	// the smell is the parameter count, not the declaration count.
 	paramNameLeafType string
+
+	// paramSkip lists named children of the parameter list that aren't
+	// parameters, such as Python's bare `*` and `/` separators. Only used
+	// when paramListChildType is empty.
+	paramSkip map[string]struct{}
+
+	// receiverNames are first-parameter names that work as a receiver
+	// (Python's `self` and `cls`); like Go receivers, they aren't counted.
+	receiverNames map[string]struct{}
 }
 
-// goProfile, tsProfile, jsProfile cover the production grammars. New
+// goProfile, tsProfile, jsProfile, pyProfile and rustProfile cover the
+// production grammars. New
 // languages append a profile entry and register it in profiles.
 var (
 	goProfile = langProfile{
@@ -96,12 +106,59 @@ var (
 	}
 
 	jsProfile = tsProfile
+
+	pyProfile = langProfile{
+		branching: setOf(
+			"if_statement",
+			"elif_clause",
+			"for_statement",
+			"while_statement",
+			"except_clause",
+			"case_clause",
+			"conditional_expression",
+			"for_in_clause",
+			"if_clause",
+		),
+		nestingParents: setOf(
+			"if_statement",
+			"for_statement",
+			"while_statement",
+			"except_clause",
+			"match_statement",
+			"conditional_expression",
+		),
+		shortCircuit:   "boolean_operator",
+		paramListField: "parameters",
+		paramSkip:      setOf("keyword_separator", "positional_separator"),
+		receiverNames:  setOf("self", "cls"),
+	}
+
+	rustProfile = langProfile{
+		branching: setOf(
+			"if_expression",
+			"for_expression",
+			"while_expression",
+			"match_arm",
+		),
+		nestingParents: setOf(
+			"if_expression",
+			"for_expression",
+			"while_expression",
+			"loop_expression",
+			"match_expression",
+		),
+		shortCircuit:       "binary_expression",
+		paramListField:     "parameters",
+		paramListChildType: "parameter",
+	}
 )
 
 var profiles = map[string]langProfile{
 	"go":         goProfile,
 	"typescript": tsProfile,
 	"javascript": jsProfile,
+	"python":     pyProfile,
+	"rust":       rustProfile,
 }
 
 func setOf(names ...string) map[string]struct{} {
@@ -125,7 +182,7 @@ func walkFunctionBody(lang *gotreesitter.Language, langName string, fnDef *gotre
 
 	body := &FunctionBody{
 		LOC:        lineOf(fnDef.EndPoint()) - lineOf(fnDef.StartPoint()) + 1,
-		ParamCount: countParams(lang, fnDef, p),
+		ParamCount: countParams(lang, fnDef, p, source),
 	}
 
 	var tokens []string
@@ -182,7 +239,7 @@ func (s *walkState) visit(n *gotreesitter.Node, depth int, cyclomatic, cognitive
 }
 
 // isShortCircuit returns true when n is a binary expression whose operator
-// text is `&&` or `||`. Tree-sitter grammars expose the operator either as a
+// text is `&&` or `||`, or Python's `and` or `or`. Tree-sitter grammars expose the operator either as a
 // child node or as field-named "operator"; we read the text directly from the
 // source bytes between the left/right operand boundaries.
 func isShortCircuit(n *gotreesitter.Node, lang *gotreesitter.Language, source []byte) bool {
@@ -190,14 +247,17 @@ func isShortCircuit(n *gotreesitter.Node, lang *gotreesitter.Language, source []
 	if op == nil {
 		return false
 	}
-	t := op.Text(source)
-	return t == "&&" || t == "||"
+	switch op.Text(source) {
+	case "&&", "||", "and", "or":
+		return true
+	}
+	return false
 }
 
 // countParams returns the parameter count of fnDef, looking up the field
 // name in the profile. Receiver and type-parameter lists are excluded by
 // design — only the field named in p.paramListField counts.
-func countParams(lang *gotreesitter.Language, fnDef *gotreesitter.Node, p langProfile) int {
+func countParams(lang *gotreesitter.Language, fnDef *gotreesitter.Node, p langProfile, source []byte) int {
 	if p.paramListField == "" {
 		return 0
 	}
@@ -206,7 +266,20 @@ func countParams(lang *gotreesitter.Language, fnDef *gotreesitter.Node, p langPr
 		return 0
 	}
 	if p.paramListChildType == "" {
-		return list.NamedChildCount()
+		count := 0
+		for i := 0; i < list.NamedChildCount(); i++ {
+			c := list.NamedChild(i)
+			if _, skip := p.paramSkip[c.Type(lang)]; skip {
+				continue
+			}
+			if i == 0 {
+				if _, recv := p.receiverNames[c.Text(source)]; recv {
+					continue
+				}
+			}
+			count++
+		}
+		return count
 	}
 	count := 0
 	for i := 0; i < list.NamedChildCount(); i++ {
@@ -246,13 +319,16 @@ func countLeaves(lang *gotreesitter.Language, n *gotreesitter.Node, leafType str
 // literal values still produce identical shingles.
 func normaliseToken(nodeType string) string {
 	switch nodeType {
-	case "identifier", "type_identifier", "field_identifier", "package_identifier", "property_identifier":
+	case "identifier", "type_identifier", "field_identifier", "package_identifier", "property_identifier",
+		"shorthand_field_identifier":
 		return "IDENT"
-	case "interpreted_string_literal", "raw_string_literal", "string_literal", "string", "string_fragment", "template_string":
+	case "interpreted_string_literal", "raw_string_literal", "string_literal", "string", "string_fragment", "template_string",
+		"string_content":
 		return "LIT_STR"
-	case "int_literal", "float_literal", "imaginary_literal", "rune_literal", "number":
+	case "int_literal", "float_literal", "imaginary_literal", "rune_literal", "number",
+		"integer", "float", "integer_literal", "char_literal":
 		return "LIT_NUM"
-	case "true", "false", "nil", "null", "undefined":
+	case "true", "false", "nil", "null", "undefined", "none", "boolean_literal":
 		return "LIT_BOOL"
 	}
 	return nodeType

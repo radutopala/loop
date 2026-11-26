@@ -142,6 +142,9 @@ async function renderApp() {
 async function renderWithDm() {
   const r = await renderApp();
   await screen.findByTestId("workspace");
+  // The layout's DOM can land before its mount effect runs; wait for the
+  // mount itself, so a test counting mounts doesn't count this one later.
+  await waitFor(() => expect(h.layoutMounts).toHaveBeenCalled());
   return r;
 }
 

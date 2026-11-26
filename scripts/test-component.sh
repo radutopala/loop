@@ -238,7 +238,21 @@ LOOP_PID=$!
 echo "loop started with PID: $LOOP_PID"
 
 cleanup() {
+    local rc=$?
     echo -e "\n${YELLOW}Shutting down...${NC}"
+    # On a failed run, show the global config as the tests left it and the
+    # writes to it (source and size of each), while the server still
+    # runs: a scenario that finds a config entry missing then shows who
+    # rewrote the file.
+    if [ "$rc" -ne 0 ] && [ -f "$LOOP_DIR/config.json" ]; then
+        echo -e "${YELLOW}=== Global config.json at exit ===${NC}"
+        cat "$LOOP_DIR/config.json"
+        echo -e "${YELLOW}=== Global config revisions, newest first ===${NC}"
+        curl -sf -H "Authorization: Bearer $(cat "$LOOP_API_TOKEN_FILE" 2>/dev/null)" \
+            http://localhost:8222/api/config/history 2>/dev/null || echo "(history unavailable)"
+        echo
+        echo -e "${YELLOW}=== End config dump ===${NC}"
+    fi
     # Always dump server log tail for debugging CI failures.
     if [ -s "$LOOP_STDERR" ]; then
         echo -e "${YELLOW}=== Loop server stderr (last 500 lines) ===${NC}"

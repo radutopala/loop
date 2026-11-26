@@ -29,6 +29,12 @@ var DefaultExcludePatterns = []string{
 	"build/",
 	"target/",
 	"vendor/",
+	"__pycache__/",
+	".venv/",
+	"venv/",
+	".tox/",
+	".mypy_cache/",
+	".pytest_cache/",
 	"*.min.js",
 	"*.generated.go",
 }

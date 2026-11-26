@@ -219,8 +219,8 @@ export function withPluginEnabled(raw: string, id: string, enabled: boolean): st
 async function setPluginValue(id: string, path: string[], value: unknown, channelId?: string | null): Promise<void> {
   const cfg = channelId ? await fetchProjectConfig(channelId) : await fetchGlobalConfig();
   const text = withPluginValue(cfg.raw ?? "", id, path, value);
-  if (channelId) await saveProjectConfig(channelId, text);
-  else await saveGlobalConfig(text);
+  if (channelId) await saveProjectConfig(channelId, text, cfg.hash);
+  else await saveGlobalConfig(text, cfg.hash);
   window.dispatchEvent(new Event(PLUGINS_CHANGED));
 }
 

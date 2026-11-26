@@ -20,6 +20,12 @@ var typescriptQuery string
 //go:embed queries/javascript.scm
 var javascriptQuery string
 
+//go:embed queries/python.scm
+var pythonQuery string
+
+//go:embed queries/rust.scm
+var rustQuery string
+
 // LanguageSpec pairs a language name with its grammar and tags query. The
 // constructor takes a slice of these so tests can inject broken inputs to
 // exercise the compile-error path.
@@ -28,10 +34,14 @@ type LanguageSpec struct {
 	Extensions []string
 	Language   *gotreesitter.Language
 	Query      string
+
+	// ImportPaths turns the text of an @import.path capture into the
+	// import paths it names. Nil keeps the text as one path, minus quotes.
+	ImportPaths func(raw string) []string
 }
 
 // DefaultSpecs returns the production language specs: Go, TypeScript,
-// JavaScript. Follow-on language PRs append here and to the
+// JavaScript, Python, Rust. New languages append here and to the
 // GOTREESITTER_GRAMMAR_SET env var in internal/quality/grammars.go.
 func DefaultSpecs() []LanguageSpec {
 	return []LanguageSpec{
@@ -53,13 +63,28 @@ func DefaultSpecs() []LanguageSpec {
 			Language:   grammars.JavascriptLanguage(),
 			Query:      javascriptQuery,
 		},
+		{
+			Name:        "python",
+			Extensions:  []string{".py"},
+			Language:    grammars.PythonLanguage(),
+			Query:       pythonQuery,
+			ImportPaths: pythonImportPaths,
+		},
+		{
+			Name:        "rust",
+			Extensions:  []string{".rs"},
+			Language:    grammars.RustLanguage(),
+			Query:       rustQuery,
+			ImportPaths: rustImportPaths,
+		},
 	}
 }
 
 type languageHandle struct {
-	name     string
-	language *gotreesitter.Language
-	query    *gotreesitter.Query
+	name        string
+	language    *gotreesitter.Language
+	query       *gotreesitter.Query
+	importPaths func(raw string) []string
 }
 
 // parseFunc parses a source byte slice with a given language. Held as a
@@ -88,7 +113,10 @@ func New(specs []LanguageSpec) (*TreeSitterParser, error) {
 		if err != nil {
 			return nil, fmt.Errorf("compile %s query: %w", spec.Name, err)
 		}
-		h := &languageHandle{name: spec.Name, language: spec.Language, query: q}
+		h := &languageHandle{name: spec.Name, language: spec.Language, query: q, importPaths: spec.ImportPaths}
+		if h.importPaths == nil {
+			h.importPaths = quotedImportPath
+		}
 		p.handles = append(p.handles, h)
 		for _, ext := range spec.Extensions {
 			p.byExt[strings.ToLower(ext)] = h
@@ -147,6 +175,7 @@ func applyMatch(facts *FileFacts, match gotreesitter.QueryMatch, source []byte, 
 	var (
 		fnName, typeName, callName, importPath string
 		fnDef, typeDef, callSite, importSite   *gotreesitter.Node
+		modDecl                                bool
 	)
 	for _, c := range match.Captures {
 		switch c.Name {
@@ -159,7 +188,11 @@ func applyMatch(facts *FileFacts, match gotreesitter.QueryMatch, source []byte, 
 		case "type.def":
 			typeDef = c.Node
 		case "import.path":
-			importPath = trimQuotes(c.Text(source))
+			importPath = c.Text(source)
+		case "import.module":
+			// A Rust `mod foo;` is a child module of the current file.
+			importPath = "self::" + c.Text(source)
+			modDecl = true
 		case "import.site":
 			importSite = c.Node
 		case "call.name":
@@ -175,6 +208,7 @@ func applyMatch(facts *FileFacts, match gotreesitter.QueryMatch, source []byte, 
 			Name:      fnName,
 			StartLine: lineOf(fnDef.StartPoint()),
 			EndLine:   lineOf(fnDef.EndPoint()),
+			Entry:     isTestAttributed(handle.language, fnDef, source),
 			Body:      walkFunctionBody(handle.language, handle.name, fnDef, source),
 		})
 	case typeDef != nil && typeName != "":
@@ -183,10 +217,19 @@ func applyMatch(facts *FileFacts, match gotreesitter.QueryMatch, source []byte, 
 			StartLine: lineOf(typeDef.StartPoint()),
 		})
 	case importSite != nil && importPath != "":
-		facts.Imports = append(facts.Imports, Import{
-			Path:      importPath,
-			StartLine: lineOf(importSite.StartPoint()),
-		})
+		// An inline `mod foo { … }` names no file.
+		if modDecl && importSite.ChildByFieldName("body", handle.language) != nil {
+			return
+		}
+		for _, p := range handle.importPaths(importPath) {
+			if p == "" {
+				continue
+			}
+			facts.Imports = append(facts.Imports, Import{
+				Path:      p,
+				StartLine: lineOf(importSite.StartPoint()),
+			})
+		}
 	case callSite != nil && callName != "":
 		facts.Calls = append(facts.Calls, Call{
 			Name:      callName,
@@ -201,6 +244,11 @@ func lineOf(p gotreesitter.Point) int {
 
 func trimQuotes(s string) string {
 	return strings.Trim(s, `"'`+"`")
+}
+
+// quotedImportPath is the ImportPaths default: one path, minus quotes.
+func quotedImportPath(raw string) []string {
+	return []string{trimQuotes(raw)}
 }
 
 func countLines(source []byte) int {

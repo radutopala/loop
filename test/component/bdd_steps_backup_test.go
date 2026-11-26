@@ -80,7 +80,7 @@ func (tc *TestContext) saveGlobalConfig(content string) error {
 	if err := tc.doRequest(http.MethodPut, "/api/config", string(body)); err != nil {
 		return err
 	}
-	if tc.LastStatus != http.StatusNoContent {
+	if tc.LastStatus != http.StatusOK {
 		return fmt.Errorf("saving global config: status %d, body: %s", tc.LastStatus, string(tc.LastBody))
 	}
 	return nil

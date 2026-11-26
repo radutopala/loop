@@ -511,7 +511,7 @@ func (tc *TestContext) addExtraWorkspaceRootViaAPI() error {
 	if err := tc.doRequest(http.MethodPut, "/api/config/project?channel_id="+tc.ChannelID, string(body)); err != nil {
 		return err
 	}
-	if tc.LastStatus != http.StatusNoContent {
+	if tc.LastStatus != http.StatusOK {
 		return fmt.Errorf("saving project config: status %d, body: %s", tc.LastStatus, tc.LastBody)
 	}
 	return nil
@@ -527,7 +527,7 @@ func (tc *TestContext) saveProjectConfigViaAPI(cfg *godog.DocString) error {
 	if err := tc.doRequest(http.MethodPut, "/api/config/project?channel_id="+tc.ChannelID, string(body)); err != nil {
 		return err
 	}
-	if tc.LastStatus != http.StatusNoContent {
+	if tc.LastStatus != http.StatusOK {
 		return fmt.Errorf("saving project config: status %d, body: %s", tc.LastStatus, tc.LastBody)
 	}
 	return tc.trustProjectConfig(tc.ChannelID)
@@ -2049,7 +2049,7 @@ func (tc *TestContext) saveGlobalConfigAppending(line string) error {
 	if err := tc.doRequest(http.MethodPut, "/api/config", string(body)); err != nil {
 		return err
 	}
-	if tc.LastStatus != http.StatusNoContent {
+	if tc.LastStatus != http.StatusOK {
 		return fmt.Errorf("saving global config: status %d, body: %s", tc.LastStatus, string(tc.LastBody))
 	}
 	return nil

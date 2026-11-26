@@ -60,6 +60,34 @@ describe("CopyButton", () => {
     expect(button.querySelector("polyline")).toBeNull();
   });
 
+  it("restarts the revert on a second copy and drops it on unmount", async () => {
+    const { unmount } = render(<CopyButton text="x" visible testId="copy" />);
+    const button = screen.getByTestId("copy");
+    await act(async () => {
+      fireEvent.click(button);
+    });
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    await act(async () => {
+      fireEvent.click(button);
+    });
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(button.title).toBe("Copied");
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+    expect(button.title).toBe("Copy");
+
+    await act(async () => {
+      fireEvent.click(button);
+    });
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("stays put when the clipboard refuses the write", async () => {
     writeMock.mockRejectedValue(new Error("blocked"));
     render(<CopyButton text="x" visible title="Copy link" icon={<span>icon</span>} />);

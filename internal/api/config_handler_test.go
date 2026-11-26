@@ -45,6 +45,7 @@ func (s *ServerSuite) TestGetConfigSuccess() {
 	require.Equal(s.T(), "/home/test/.loop/config.json", resp.Path)
 	require.Equal(s.T(), "claude-opus-4-6", resp.Content["claude_model"])
 	require.Equal(s.T(), `{"claude_model":"claude-opus-4-6"}`, resp.Raw)
+	require.Equal(s.T(), configHash([]byte(resp.Raw), true), resp.Hash)
 }
 
 func (s *ServerSuite) TestGetConfigFileNotFound() {
@@ -63,6 +64,33 @@ func (s *ServerSuite) TestGetConfigFileNotFound() {
 	require.Empty(s.T(), resp.Raw)
 }
 
+// A file that can't be read fails the request: shown as missing, the empty
+// config would be saved over it.
+func (s *ServerSuite) TestGetConfigReadError() {
+	sys := new(testutil.MockSystem)
+	sys.On("UserHomeDir").Return("/home/test", nil)
+	sys.On("ReadFile", "/home/test/.loop/config.json").Return(nil, errors.New("I/O error"))
+	s.srv.sys = sys
+
+	rec := s.testRequest("GET", "/api/config", "")
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "failed to read config file")
+}
+
+func (s *ServerSuite) TestGetProjectConfigReadError() {
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{
+		ChannelID: "ch-1",
+		DirPath:   "/projects/myapp",
+	}, nil)
+	sys := new(testutil.MockSystem)
+	sys.On("ReadFile", "/projects/myapp/.loop/config.json").Return(nil, errors.New("I/O error"))
+	s.srv.sys = sys
+
+	rec := s.testRequest("GET", "/api/config/project?channel_id=ch-1", "")
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "failed to read config file")
+}
+
 func (s *ServerSuite) TestGetConfigHomeDirError() {
 	sys := new(testutil.MockSystem)
 	sys.On("UserHomeDir").Return("", errors.New("no home"))
@@ -78,18 +106,77 @@ func (s *ServerSuite) TestGetConfigHomeDirError() {
 func (s *ServerSuite) TestSaveConfigSuccess() {
 	sys := new(testutil.MockSystem)
 	sys.On("UserHomeDir").Return("/home/test", nil)
-	sys.On("WriteFile", "/home/test/.loop/config.json", []byte("{\n  \"key\": \"val\"\n}\n"), os.FileMode(0644)).Return(nil)
+	sys.On("WriteFile", "/home/test/.loop/config.json.tmp", []byte("{\n  \"key\": \"val\"\n}\n"), os.FileMode(0644)).Return(nil)
+	sys.On("Rename", "/home/test/.loop/config.json.tmp", "/home/test/.loop/config.json").Return(nil)
 	s.srv.sys = sys
 
 	rec := s.testRequest("PUT", "/api/config", `{"content":"{\"key\":\"val\"}"}`)
-	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	require.Equal(s.T(), http.StatusOK, rec.Code)
 	sys.AssertExpectations(s.T())
+}
+
+// A save made from the file as it was loaded goes through, and answers with
+// the hash to base the next save on; one made from an older copy is refused,
+// so it doesn't overwrite what changed in between.
+func (s *ServerSuite) TestSaveConfigBaseHash() {
+	const path = "/home/test/.loop/config.json"
+	onDisk := []byte(`{"a": 1}`)
+	saved := []byte("{\n  \"key\": \"val\"\n}\n")
+	for _, tc := range []struct {
+		name     string
+		read     []byte
+		readErr  error
+		base     string
+		wantCode int
+	}{
+		{name: "the loaded file", read: onDisk, base: configHash(onDisk, true), wantCode: http.StatusOK},
+		{name: "a file still missing", readErr: os.ErrNotExist, base: "", wantCode: http.StatusOK},
+		{name: "a file changed since", read: []byte(`{"a": 2}`), base: configHash(onDisk, true), wantCode: http.StatusConflict},
+		{name: "a file created since", read: onDisk, base: "", wantCode: http.StatusConflict},
+		{name: "an unreadable file", readErr: errors.New("I/O error"), base: "", wantCode: http.StatusInternalServerError},
+	} {
+		s.Run(tc.name, func() {
+			sys := new(testutil.MockSystem)
+			sys.On("UserHomeDir").Return("/home/test", nil)
+			sys.On("ReadFile", path).Return(tc.read, tc.readErr)
+			sys.On("WriteFile", path+".tmp", saved, os.FileMode(0644)).Return(nil).Maybe()
+			sys.On("Rename", path+".tmp", path).Return(nil).Maybe()
+			s.srv.sys = sys
+
+			body, _ := json.Marshal(configSaveRequest{Content: `{"key":"val"}`, BaseHash: &tc.base})
+			rec := s.testRequest("PUT", "/api/config", string(body))
+			require.Equal(s.T(), tc.wantCode, rec.Code, rec.Body.String())
+			if tc.wantCode != http.StatusOK {
+				sys.AssertNotCalled(s.T(), "WriteFile", mock.Anything, mock.Anything, mock.Anything)
+				return
+			}
+			var resp configSaveResponse
+			require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
+			require.Equal(s.T(), configHash(saved, true), resp.Hash)
+		})
+	}
+}
+
+func (s *ServerSuite) TestSaveProjectConfigRefusesAChangedFile() {
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: "/projects/myapp"}, nil)
+	sys := new(testutil.MockSystem)
+	sys.On("MkdirAll", "/projects/myapp/.loop", os.FileMode(0755)).Return(nil)
+	sys.On("ReadFile", "/projects/myapp/.loop/config.json").Return([]byte(`{"a": 2}`), nil)
+	s.srv.sys = sys
+
+	base := configHash([]byte(`{"a": 1}`), true)
+	body, _ := json.Marshal(configSaveRequest{Content: "{}", BaseHash: &base})
+	rec := s.testRequest("PUT", "/api/config/project?channel_id=ch-1", string(body))
+	require.Equal(s.T(), http.StatusConflict, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "changed since it was loaded")
+	sys.AssertNotCalled(s.T(), "WriteFile", mock.Anything, mock.Anything, mock.Anything)
 }
 
 func (s *ServerSuite) TestSaveConfigWaitsForConfigLock() {
 	sys := new(testutil.MockSystem)
 	sys.On("UserHomeDir").Return("/home/test", nil)
-	sys.On("WriteFile", "/home/test/.loop/config.json", []byte("{\n  \"key\": \"val\"\n}\n"), os.FileMode(0644)).Return(nil)
+	sys.On("WriteFile", "/home/test/.loop/config.json.tmp", []byte("{\n  \"key\": \"val\"\n}\n"), os.FileMode(0644)).Return(nil)
+	sys.On("Rename", "/home/test/.loop/config.json.tmp", "/home/test/.loop/config.json").Return(nil)
 	s.srv.sys = sys
 
 	rec := s.requestUnderConfigLock("/home/test/.loop/config.json", func() *httptest.ResponseRecorder {
@@ -97,7 +184,7 @@ func (s *ServerSuite) TestSaveConfigWaitsForConfigLock() {
 	}, func() {
 		sys.AssertNotCalled(s.T(), "WriteFile", mock.Anything, mock.Anything, mock.Anything)
 	})
-	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	require.Equal(s.T(), http.StatusOK, rec.Code)
 	sys.AssertExpectations(s.T())
 }
 
@@ -117,11 +204,12 @@ func (s *ServerSuite) TestSaveConfigAcceptsHJSON() {
 	sys := new(testutil.MockSystem)
 	sys.On("UserHomeDir").Return("/home/test", nil)
 	content := "{\n  // comment\n  \"key\": \"val\",\n}\n"
-	sys.On("WriteFile", "/home/test/.loop/config.json", []byte(content), os.FileMode(0644)).Return(nil)
+	sys.On("WriteFile", "/home/test/.loop/config.json.tmp", []byte(content), os.FileMode(0644)).Return(nil)
+	sys.On("Rename", "/home/test/.loop/config.json.tmp", "/home/test/.loop/config.json").Return(nil)
 	s.srv.sys = sys
 
 	rec := s.testRequest("PUT", "/api/config", `{"content":"{\n\t\/\/ comment\n\t\"key\":\"val\",\n}"}`)
-	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	require.Equal(s.T(), http.StatusOK, rec.Code)
 	sys.AssertExpectations(s.T())
 }
 
@@ -200,11 +288,12 @@ func (s *ServerSuite) TestSaveProjectConfigSuccess() {
 
 	sys := new(testutil.MockSystem)
 	sys.On("MkdirAll", "/projects/myapp/.loop", os.FileMode(0755)).Return(nil)
-	sys.On("WriteFile", "/projects/myapp/.loop/config.json", []byte("{\n  \"claude_model\": \"opus\"\n}\n"), os.FileMode(0644)).Return(nil)
+	sys.On("WriteFile", "/projects/myapp/.loop/config.json.tmp", []byte("{\n  \"claude_model\": \"opus\"\n}\n"), os.FileMode(0644)).Return(nil)
+	sys.On("Rename", "/projects/myapp/.loop/config.json.tmp", "/projects/myapp/.loop/config.json").Return(nil)
 	s.srv.sys = sys
 
 	rec := s.testRequest("PUT", "/api/config/project?channel_id=ch-1", `{"content":"{\"claude_model\":\"opus\"}"}`)
-	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	require.Equal(s.T(), http.StatusOK, rec.Code)
 	sys.AssertExpectations(s.T())
 }
 
@@ -212,7 +301,8 @@ func (s *ServerSuite) TestSaveProjectConfigWaitsForConfigLock() {
 	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: "/projects/myapp"}, nil)
 	sys := new(testutil.MockSystem)
 	sys.On("MkdirAll", "/projects/myapp/.loop", os.FileMode(0755)).Return(nil)
-	sys.On("WriteFile", "/projects/myapp/.loop/config.json", []byte("{\n  \"claude_model\": \"opus\"\n}\n"), os.FileMode(0644)).Return(nil)
+	sys.On("WriteFile", "/projects/myapp/.loop/config.json.tmp", []byte("{\n  \"claude_model\": \"opus\"\n}\n"), os.FileMode(0644)).Return(nil)
+	sys.On("Rename", "/projects/myapp/.loop/config.json.tmp", "/projects/myapp/.loop/config.json").Return(nil)
 	s.srv.sys = sys
 
 	rec := s.requestUnderConfigLock("/projects/myapp/.loop/config.json", func() *httptest.ResponseRecorder {
@@ -220,7 +310,7 @@ func (s *ServerSuite) TestSaveProjectConfigWaitsForConfigLock() {
 	}, func() {
 		sys.AssertNotCalled(s.T(), "WriteFile", mock.Anything, mock.Anything, mock.Anything)
 	})
-	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	require.Equal(s.T(), http.StatusOK, rec.Code)
 	sys.AssertExpectations(s.T())
 }
 
@@ -254,11 +344,12 @@ func (s *ServerSuite) TestSaveProjectConfigAcceptsHJSON() {
 	sys := new(testutil.MockSystem)
 	content := "{\n  // comment\n  \"claude_model\": \"opus\",\n}\n"
 	sys.On("MkdirAll", "/projects/myapp/.loop", os.FileMode(0755)).Return(nil)
-	sys.On("WriteFile", "/projects/myapp/.loop/config.json", []byte(content), os.FileMode(0644)).Return(nil)
+	sys.On("WriteFile", "/projects/myapp/.loop/config.json.tmp", []byte(content), os.FileMode(0644)).Return(nil)
+	sys.On("Rename", "/projects/myapp/.loop/config.json.tmp", "/projects/myapp/.loop/config.json").Return(nil)
 	s.srv.sys = sys
 
 	rec := s.testRequest("PUT", "/api/config/project?channel_id=ch-1", `{"content":"{\n\t\/\/ comment\n\t\"claude_model\":\"opus\",\n}"}`)
-	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	require.Equal(s.T(), http.StatusOK, rec.Code)
 	sys.AssertExpectations(s.T())
 }
 
@@ -351,11 +442,12 @@ func (s *ServerSuite) TestSaveProjectConfigWorktreeUsesParentDir() {
 
 	sys := new(testutil.MockSystem)
 	sys.On("MkdirAll", "/projects/myapp/.loop", os.FileMode(0755)).Return(nil)
-	sys.On("WriteFile", "/projects/myapp/.loop/config.json", []byte("{\n  \"claude_model\": \"opus\"\n}\n"), os.FileMode(0644)).Return(nil)
+	sys.On("WriteFile", "/projects/myapp/.loop/config.json.tmp", []byte("{\n  \"claude_model\": \"opus\"\n}\n"), os.FileMode(0644)).Return(nil)
+	sys.On("Rename", "/projects/myapp/.loop/config.json.tmp", "/projects/myapp/.loop/config.json").Return(nil)
 	s.srv.sys = sys
 
 	rec := s.testRequest("PUT", "/api/config/project?channel_id=wt-1", `{"content":"{\"claude_model\":\"opus\"}"}`)
-	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	require.Equal(s.T(), http.StatusOK, rec.Code)
 	sys.AssertExpectations(s.T())
 }
 
@@ -464,7 +556,8 @@ func (s *ServerSuite) TestReadConfigFileWithHJSON() {
 }`
 	sys.On("ReadFile", "/some/config.json").Return([]byte(hjsonContent), nil)
 
-	resp := readConfigFile(sys.ReadFile, "/some/config.json")
+	resp, err := readConfigFile(sys.ReadFile, "/some/config.json")
+	require.NoError(s.T(), err)
 	require.Equal(s.T(), "/some/config.json", resp.Path)
 	require.Equal(s.T(), "claude-opus-4-6", resp.Content["claude_model"])
 	require.Equal(s.T(), hjsonContent, resp.Raw)
@@ -475,7 +568,8 @@ func (s *ServerSuite) TestReadConfigFileWithPlainJSON() {
 	content := `{"key":"value"}`
 	sys.On("ReadFile", "/some/config.json").Return([]byte(content), nil)
 
-	resp := readConfigFile(sys.ReadFile, "/some/config.json")
+	resp, err := readConfigFile(sys.ReadFile, "/some/config.json")
+	require.NoError(s.T(), err)
 	require.Equal(s.T(), "/some/config.json", resp.Path)
 	require.Equal(s.T(), "value", resp.Content["key"])
 	require.Equal(s.T(), content, resp.Raw)
@@ -485,7 +579,8 @@ func (s *ServerSuite) TestReadConfigFileNotFound() {
 	sys := new(testutil.MockSystem)
 	sys.On("ReadFile", "/missing/config.json").Return(nil, os.ErrNotExist)
 
-	resp := readConfigFile(sys.ReadFile, "/missing/config.json")
+	resp, err := readConfigFile(sys.ReadFile, "/missing/config.json")
+	require.NoError(s.T(), err)
 	require.Equal(s.T(), "/missing/config.json", resp.Path)
 	require.Nil(s.T(), resp.Content)
 	require.Empty(s.T(), resp.Raw)
@@ -495,17 +590,16 @@ func (s *ServerSuite) TestReadConfigFileReadError() {
 	sys := new(testutil.MockSystem)
 	sys.On("ReadFile", "/bad/config.json").Return(nil, errors.New("I/O error"))
 
-	resp := readConfigFile(sys.ReadFile, "/bad/config.json")
-	require.Equal(s.T(), "/bad/config.json", resp.Path)
-	require.Nil(s.T(), resp.Content)
-	require.Empty(s.T(), resp.Raw)
+	_, err := readConfigFile(sys.ReadFile, "/bad/config.json")
+	require.EqualError(s.T(), err, "I/O error")
 }
 
 func (s *ServerSuite) TestReadConfigFileInvalidHJSON() {
 	sys := new(testutil.MockSystem)
 	sys.On("ReadFile", "/bad/config.json").Return([]byte(`{not valid hjson at all`), nil)
 
-	resp := readConfigFile(sys.ReadFile, "/bad/config.json")
+	resp, err := readConfigFile(sys.ReadFile, "/bad/config.json")
+	require.NoError(s.T(), err)
 	require.Equal(s.T(), "/bad/config.json", resp.Path)
 	require.Nil(s.T(), resp.Content)
 	require.Equal(s.T(), `{not valid hjson at all`, resp.Raw)
@@ -517,7 +611,8 @@ func (s *ServerSuite) TestReadConfigFileInvalidJSONAfterStandardize() {
 	sys := new(testutil.MockSystem)
 	sys.On("ReadFile", "/bare/config.json").Return([]byte(`"just a string"`), nil)
 
-	resp := readConfigFile(sys.ReadFile, "/bare/config.json")
+	resp, err := readConfigFile(sys.ReadFile, "/bare/config.json")
+	require.NoError(s.T(), err)
 	require.Equal(s.T(), "/bare/config.json", resp.Path)
 	// json.Unmarshal into map[string]any fails for a bare string, so content is nil.
 	require.Nil(s.T(), resp.Content)

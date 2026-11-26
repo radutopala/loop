@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/radutopala/loop/internal/quality/graph"
+	"github.com/radutopala/loop/internal/quality/parser"
 )
 
 // RedundancyName is the canonical key for the redundancy metric — the
@@ -90,10 +91,73 @@ var interfaceNames = map[string]struct{}{
 	"Swap":            {},
 }
 
-// isReachableByConvention reports whether a function name is implicitly
+// pythonEntryNames are the unittest hooks the test runner calls.
+var pythonEntryNames = map[string]struct{}{
+	"setUp":          {},
+	"tearDown":       {},
+	"setUpClass":     {},
+	"tearDownClass":  {},
+	"setUpModule":    {},
+	"tearDownModule": {},
+}
+
+// rustTraitMethods are std and serde trait methods, which operators, `?`,
+// `for` loops, formatting and derives call without naming them.
+var rustTraitMethods = map[string]struct{}{
+	"fmt":         {},
+	"from":        {},
+	"try_from":    {},
+	"from_str":    {},
+	"drop":        {},
+	"deref":       {},
+	"deref_mut":   {},
+	"default":     {},
+	"clone":       {},
+	"eq":          {},
+	"partial_cmp": {},
+	"cmp":         {},
+	"hash":        {},
+	"next":        {},
+	"into_iter":   {},
+	"as_ref":      {},
+	"as_mut":      {},
+	"borrow":      {},
+	"index":       {},
+	"index_mut":   {},
+	"poll":        {},
+	"add":         {},
+	"sub":         {},
+	"mul":         {},
+	"div":         {},
+	"neg":         {},
+	"not":         {},
+	"serialize":   {},
+	"deserialize": {},
+}
+
+// isReachableByConvention reports whether a function is implicitly
 // called by the runtime, the test harness, or interface dispatch and
-// therefore shouldn't appear in the dead list.
-func isReachableByConvention(name string) bool {
+// therefore shouldn't appear in the dead list. lang is the file's
+// language, for the conventions of one language only.
+func isReachableByConvention(f parser.Function, lang string) bool {
+	if f.Entry {
+		return true
+	}
+	name := f.Name
+	switch lang {
+	case "python":
+		if _, ok := pythonEntryNames[name]; ok {
+			return true
+		}
+		// Dunder methods back operators and protocols; pytest collects test_*.
+		if strings.HasPrefix(name, "test_") || (len(name) > 4 && strings.HasPrefix(name, "__") && strings.HasSuffix(name, "__")) {
+			return true
+		}
+	case "rust":
+		if _, ok := rustTraitMethods[name]; ok {
+			return true
+		}
+	}
 	if _, ok := entryNames[name]; ok {
 		return true
 	}
@@ -166,7 +230,7 @@ func computeDeadCode(g *graph.Graph) Result {
 	var dead []DeadFunction
 	for _, n := range g.Nodes {
 		for _, f := range n.Functions {
-			if isReachableByConvention(f.Name) {
+			if isReachableByConvention(f, n.Language) {
 				continue
 			}
 			if _, called := callSet[f.Name]; called {

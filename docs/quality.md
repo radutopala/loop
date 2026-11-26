@@ -17,7 +17,7 @@ Design is inspired by [sentrux](https://github.com/sentrux/sentrux) (Rust, MIT).
 | **Cycles** (Tarjan SCC) | `internal/quality/metrics` | Strongly-connected components in the import graph. | Fewer/smaller = healthier. |
 | **Depth** (Lakos levelization) | `internal/quality/metrics` | Longest path through the dependency DAG. | Lower = healthier. |
 | **Equality** (Gini) | `internal/quality/metrics` | Concentration of LOC across files (god-file detection). | Lower (less concentration) = healthier. |
-| **Redundancy** | `internal/quality/metrics` | Dead-code candidates: functions whose name never appears at any Call site, after filtering runtime entry points (`main`, `init`, `Test*`/`Benchmark*`/`Example*`/`Fuzz*`) and common interface methods (`String`, `Error`, `MarshalJSON`, `ServeHTTP`, …). The headline score also folds in clone duplication via SimHash + Hamming-distance clustering over function bodies, so two near-duplicates count toward the same drag as one dead function. | Lower = healthier. |
+| **Redundancy** | `internal/quality/metrics` | Dead-code candidates: functions whose name never appears at any Call site, after filtering runtime entry points (`main`, `init`, `Test*`/`Benchmark*`/`Example*`/`Fuzz*`; Python dunders, `test_*` and unittest's `setUp`/`tearDown` hooks; Rust `#[test]` functions) and common interface methods (`String`, `Error`, `MarshalJSON`, `ServeHTTP`, …, and Rust trait methods such as `fmt`, `from`, `drop`, `next`). The headline score also folds in clone duplication via SimHash + Hamming-distance clustering over function bodies, so two near-duplicates count toward the same drag as one dead function. | Lower = healthier. |
 | **Complexity** | `internal/quality/metrics` | Per-function cyclomatic, cognitive, max nesting, parameter count, and LOC against soft thresholds. Each dimension scores 1.0 at or below T and decays as `T/raw` past T (0.50 at 2T, 0.25 at 4T, 0.10 at 10T) — a saturating curve that keeps badly-complex functions ranked against each other instead of all clamping to 0. The metric score is the LOC-weighted mean of per-function scores. | Higher = healthier. |
 
 Each metric returns a `Score` in `[0, 1]`; `quality_signal` is `round(10000 * geo_mean(scores))`. See `internal/quality/metrics/signal.go`. The standalone `clones` sub-metric (clusters, duplicated/total LOC) is exposed separately via `quality_clones` and `GET /quality/clones`; it is folded into Redundancy at the headline level so the geomean factor count stays at six.
@@ -31,8 +31,12 @@ The active grammar set is pinned in `internal/quality/grammars.go`:
 - **Go** — `internal/quality/parser/queries/go.scm`
 - **TypeScript** — `internal/quality/parser/queries/typescript.scm`
 - **JavaScript** — `internal/quality/parser/queries/javascript.scm`
+- **Python** (`.py`) — `internal/quality/parser/queries/python.scm`
+- **Rust** (`.rs`) — `internal/quality/parser/queries/rust.scm`
 
-Files in other languages are enumerated and counted toward `quality.max_files` but are skipped at parse time and reported via the `parse_failed` counter. To add a language: append to `ActiveLanguages` in `grammars.go`, vendor the upstream tree-sitter `tags.scm` plus any quality-specific captures into `internal/quality/parser/queries/<lang>.scm`, and add fixtures under `internal/quality/parser/testdata/`.
+Import edges follow each language's module rules. A Python `import a.b` or `from a import b` resolves to `a/b.py` or `a/b/__init__.py`, found from a source root (a directory that isn't itself a package), and relative imports (`from .x import y`) resolve against the importer's package. A Rust `use crate::…`, `self::…` or `super::…` path resolves to the deepest module file it names (`x.rs` or `x/mod.rs`), starting from the nearest `lib.rs`/`main.rs` for `crate::`, and `mod foo;` resolves to the child module's file. Imports of external packages and crates (stdlib, `std::`, PyPI, crates.io) draw no edge.
+
+Files in other languages are enumerated and counted toward `quality.max_files` but are skipped at parse time and reported via the `parse_failed` counter. To add a language: append to `activeGrammarSet` in `grammars.go`, vendor the upstream tree-sitter `tags.scm` plus any quality-specific captures into `internal/quality/parser/queries/<lang>.scm`, and add fixtures under `internal/quality/parser/testdata/`.
 
 For each parsed function, the parser also runs a tree-sitter body walk (`internal/quality/parser/bodywalk.go`) that produces a `FunctionBody` fact — decision points, cognitive load, max nesting, parameter count, LOC, and a normalised shingle list. The Complexity and Clones metrics consume these directly; languages without a body-walk pass simply skip those metrics.
 
@@ -71,7 +75,7 @@ Quality is driven by `quality.*` keys in `~/.loop/config.json` and per-project `
 }
 ```
 
-Built-in path exclusions (always applied): `.git/` (and a worktree's `.git` file), `node_modules/`, `dist/`, `build/`, `target/`, `vendor/`, `*.min.js`, `*.generated.go` (see `internal/quality/graph/enumerate.go`). `quality.exclude_paths` is appended to them. Git's ignore files are layered on top: the repo's `.git/info/exclude` (shared by its worktrees), then every `.gitignore` from the repo root down. That includes the ones above the scanned directory when you scan a subdirectory. They follow git's rules:
+Built-in path exclusions (always applied): `.git/` (and a worktree's `.git` file), `node_modules/`, `dist/`, `build/`, `target/`, `vendor/`, Python's `__pycache__/`, `.venv/`, `venv/`, `.tox/`, `.mypy_cache/` and `.pytest_cache/`, `*.min.js`, `*.generated.go` (see `internal/quality/graph/enumerate.go`). `quality.exclude_paths` is appended to them. Git's ignore files are layered on top: the repo's `.git/info/exclude` (shared by its worktrees), then every `.gitignore` from the repo root down. That includes the ones above the scanned directory when you scan a subdirectory. They follow git's rules:
 - a pattern with a leading or middle `/` is anchored to its file's directory;
 - a bare name matches files and directories at any depth below it;
 - `!` re-includes, and a deeper file or later line wins;
@@ -81,7 +85,7 @@ Built-in path exclusions (always applied): `.git/` (and a worktree's `.git` file
 
 A `.gitignore` that can't be read is skipped, wherever it is. Your global excludes file (`core.excludesFile`) is not read.
 
-The clone detector leaves test files out unless `quality.clones.include_tests` is set: Go `*_test.go`; JS/TS `*.test.*`, `*.spec.*` and files under a `__tests__/` dir; and any file under a `testdata/` dir, since those hold fixtures. Each file-name rule applies only to its own language, so `openapi.spec.go` is not a test file. Table-driven tests repeat their shape on purpose, and would otherwise dominate `duplication_ceiling`.
+The clone detector leaves test files out unless `quality.clones.include_tests` is set: Go `*_test.go`; JS/TS `*.test.*`, `*.spec.*` and files under a `__tests__/` dir; Python `test_*.py`, `*_test.py`, `conftest.py` and files under a `tests/` dir; Rust files under a `tests/` dir; and any file under a `testdata/` dir, since those hold fixtures. Each file-name rule applies only to its own language, so `openapi.spec.go` is not a test file. Table-driven tests repeat their shape on purpose, and would otherwise dominate `duplication_ceiling`.
 
 Config changes drop the engine's parser/graph cache for the affected channel but do **not** auto-trigger a rescan — the panel keeps rendering the previous snapshot until the next manual scan rebuilds with the new config.
 

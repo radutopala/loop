@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTheme } from "../../ThemeContext";
 import { writeClipboard } from "../../utils/copyToClipboard";
 
@@ -31,6 +31,10 @@ export function CopyButton({
 }) {
   const { colors } = useTheme();
   const [copied, setCopied] = useState(false);
+  // The pending revert to the copy icon, cleared on a new copy and on
+  // unmount so it never sets state on an unmounted button.
+  const revert = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(revert.current), []);
   const copy = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
@@ -38,7 +42,8 @@ export function CopyButton({
       writeClipboard(text, html)
         .then(() => {
           setCopied(true);
-          setTimeout(() => setCopied(false), 1200);
+          clearTimeout(revert.current);
+          revert.current = setTimeout(() => setCopied(false), 1200);
         })
         .catch(() => {
           /* clipboard blocked — no-op */

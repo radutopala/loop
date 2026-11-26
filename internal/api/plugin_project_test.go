@@ -315,12 +315,13 @@ func (s *ServerSuite) TestPluginsChangedEvents() {
 	// logged.
 	sys := new(testutil.MockSystem)
 	sys.On("UserHomeDir").Return("/home/test", nil)
-	sys.On("WriteFile", "/home/test/.loop/config.json", mock.Anything, os.FileMode(0644)).Return(nil)
+	sys.On("WriteFile", "/home/test/.loop/config.json.tmp", mock.Anything, os.FileMode(0644)).Return(nil)
+	sys.On("Rename", "/home/test/.loop/config.json.tmp", "/home/test/.loop/config.json").Return(nil)
 	s.srv.sys = sys
 	pm.On("StopDisabled", mock.Anything).Return(true).Once()
 	pm.On("SyncSchedules", mock.Anything).Return(errors.New("boom")).Once()
 	pm.On("NotifySettings", mock.Anything, mock.Anything).Return(errors.New("bang")).Once()
-	require.Equal(s.T(), http.StatusNoContent, s.testRequest("PUT", "/api/config", `{"content":"{}"}`).Code)
+	require.Equal(s.T(), http.StatusOK, s.testRequest("PUT", "/api/config", `{"content":"{}"}`).Code)
 	require.Len(s.T(), sent, 4)
 	sent = sent[:3]
 

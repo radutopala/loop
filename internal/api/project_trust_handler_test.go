@@ -119,7 +119,7 @@ func (s *ServerSuite) TestSaveProjectConfigKeepsTrust() {
 	save := func(content string) {
 		body, _ := json.Marshal(configSaveRequest{Content: content})
 		rec := s.testRequest("PUT", "/api/config/project?channel_id=ch-1", string(body))
-		require.Equal(s.T(), http.StatusNoContent, rec.Code, rec.Body.String())
+		require.Equal(s.T(), http.StatusOK, rec.Code, rec.Body.String())
 	}
 
 	save(`{"mounts": ["/a:/a"]}`)
@@ -137,13 +137,14 @@ func (s *ServerSuite) TestSaveProjectConfigUnreadableBeforeKeepsNothing() {
 	sys := new(testutil.MockSystem)
 	sys.On("MkdirAll", "/projects/myapp/.loop", os.FileMode(0755)).Return(nil)
 	sys.On("ReadFile", "/projects/myapp/.loop/config.json").Return(nil, errors.New("boom"))
-	sys.On("WriteFile", "/projects/myapp/.loop/config.json", []byte("{}\n"), os.FileMode(0644)).Return(nil)
+	sys.On("WriteFile", "/projects/myapp/.loop/config.json.tmp", []byte("{}\n"), os.FileMode(0644)).Return(nil)
+	sys.On("Rename", "/projects/myapp/.loop/config.json.tmp", "/projects/myapp/.loop/config.json").Return(nil)
 	s.srv.sys = sys
 	trust := new(mockProjectTrust)
 	s.srv.projectTrust = trust
 
 	rec := s.testRequest("PUT", "/api/config/project?channel_id=ch-1", `{"content":"{}"}`)
-	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	require.Equal(s.T(), http.StatusOK, rec.Code)
 	trust.AssertNotCalled(s.T(), "Keep", mock.Anything, mock.Anything, mock.Anything)
 }
 

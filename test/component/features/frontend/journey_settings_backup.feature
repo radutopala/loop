@@ -33,4 +33,4 @@ Feature: Settings Backup Journey
     And the element "[data-testid='backup-create-key']" should contain text "Create a new key"
 
     When I remove the global backup config
-    Then the response status should be 204
+    Then the response status should be 200

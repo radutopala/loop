@@ -40,6 +40,10 @@ type Function struct {
 	StartLine int
 	EndLine   int
 
+	// Entry marks a function a test harness calls on its own, such as a
+	// Rust `#[test]` function, so dead-code detection leaves it out.
+	Entry bool
+
 	// Body is per-function structural data extracted during the AST walk:
 	// decision-point counts (cyclomatic, cognitive), nesting depth, parameter
 	// count, and shape shingles for clone detection. Nil when the language

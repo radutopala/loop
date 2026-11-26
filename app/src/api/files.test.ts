@@ -85,14 +85,15 @@ describe("updateExtraDirs", () => {
   }
 
   function reply(get: Response) {
-    fetchMock.mockImplementation((_url: string, init?: RequestInit) => Promise.resolve(init?.method === "PUT" ? new Response(null, { status: 204 }) : get.clone()));
+    fetchMock.mockImplementation((_url: string, init?: RequestInit) => Promise.resolve(init?.method === "PUT" ? new Response(JSON.stringify({ hash: "h2" })) : get.clone()));
   }
 
   it("merges the dirs into the existing project config", async () => {
-    reply(new Response(JSON.stringify({ content: { model: "opus" } })));
+    reply(new Response(JSON.stringify({ content: { model: "opus" }, raw: '{"model": "opus"}', hash: "h1" })));
     await updateExtraDirs("ch1", ["/a", "/b"]);
     expect(sent().url).toBe(configUrl);
     expect(sent(1)).toMatchObject({ url: configUrl, method: "PUT" });
+    expect(JSON.parse(sent(1).body as string).base_hash).toBe("h1");
     expect(saved()).toEqual({ model: "opus", extra_dirs: ["/a", "/b"] });
   });
 
@@ -108,10 +109,13 @@ describe("updateExtraDirs", () => {
     expect(saved()).toEqual({ extra_dirs: ["/a"] });
   });
 
-  it("starts from an empty config when it can't be read", async () => {
-    reply(new Response("broken", { status: 500 }));
-    await updateExtraDirs("ch1", ["/a"]);
-    expect(saved()).toEqual({ extra_dirs: ["/a"] });
+  it.each([
+    ["can't be read", new Response("broken", { status: 500 }), "broken"],
+    ["doesn't parse", new Response(JSON.stringify({ content: null, raw: "{broken" })), "doesn't parse"],
+  ])("leaves a config that %s alone", async (_name, get, message) => {
+    reply(get);
+    await expect(updateExtraDirs("ch1", ["/a"])).rejects.toThrow(message);
+    expect(fetchMock.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === "PUT")).toBe(false);
   });
 });
 
