@@ -606,6 +606,18 @@ func (s *WatcherSuite) TestPollEnds() {
 	require.Len(s.T(), s.broadcasts, n+1)
 }
 
+// TestPollClearsStaleThreads clears the review threads a checkout kept after
+// leaving its PR's branch, so they stop counting.
+func (s *WatcherSuite) TestPollClearsStaleThreads() {
+	s.store.put(db.PRState{ChannelID: ch, Threads: []string{"T1"}})
+	s.target = nil
+	require.False(s.T(), s.poll())
+	require.Equal(s.T(), db.PRState{ChannelID: ch}, s.store.get(ch))
+	require.Equal(s.T(), []events.PREventData{{ChannelID: ch}}, s.broadcasts)
+	require.False(s.T(), s.poll())
+	require.Len(s.T(), s.broadcasts, 1, "quiet once cleared")
+}
+
 func (s *WatcherSuite) TestPollErrors() {
 	s.settings()
 	s.store.put(db.PRState{ChannelID: ch, Forge: forge.KindPR, Number: 12, Watching: true})
