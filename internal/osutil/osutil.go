@@ -102,7 +102,21 @@ func (RealSystem) ExecCommandOutput(name string, args ...string) ([]byte, error)
 func (RealSystem) Getwd() (string, error)                    { return os.Getwd() }
 func (RealSystem) Executable() (string, error)               { return os.Executable() }
 func (RealSystem) Chmod(name string, mode os.FileMode) error { return os.Chmod(name, mode) }
-func (RealSystem) Rename(oldpath, newpath string) error      { return os.Rename(oldpath, newpath) }
+
+// Rename refuses a path that holds a ".." element after cleaning, like the
+// other path methods: either side could otherwise leave the dir it was
+// built under.
+func (RealSystem) Rename(oldpath, newpath string) error {
+	cleanOld, err := safePath(oldpath)
+	if err != nil {
+		return err
+	}
+	cleanNew, err := safePath(newpath)
+	if err != nil {
+		return err
+	}
+	return os.Rename(cleanOld, cleanNew)
+}
 func (RealSystem) CreateTemp(dir, pattern string) (*os.File, error) {
 	return os.CreateTemp(dir, pattern)
 }
