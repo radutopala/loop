@@ -219,6 +219,28 @@ func (s *RealSystemSuite) TestRename() {
 	require.NoError(s.T(), err)
 }
 
+func (s *RealSystemSuite) TestRenameTraversal() {
+	inside := filepath.Join(s.dir, "inside.txt")
+	tests := []struct {
+		name    string
+		oldpath string
+		newpath string
+	}{
+		{name: "old path", oldpath: "../passwd", newpath: inside},
+		{name: "new path", oldpath: inside, newpath: "../passwd"},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			require.NoError(s.T(), os.WriteFile(inside, []byte("data"), 0o644))
+			err := s.sys.Rename(tc.oldpath, tc.newpath)
+			require.Error(s.T(), err)
+			require.Contains(s.T(), err.Error(), "disallowed traversal")
+			_, err = os.Stat(inside)
+			require.NoError(s.T(), err)
+		})
+	}
+}
+
 func (s *RealSystemSuite) TestCreateTemp() {
 	f, err := s.sys.CreateTemp(s.dir, "test-*")
 	require.NoError(s.T(), err)
