@@ -319,11 +319,13 @@ func (w *Watcher) poll(ctx context.Context, channelID string, e *entry) (bool, t
 	}
 	t, f, err := w.target(ctx, st)
 	if errors.Is(err, ErrNoPR) {
-		if st.Watching || st.Attention != "" || st.Open || st.Number != 0 {
+		if st.Watching || st.Attention != "" || st.Open || st.Number != 0 || len(st.Threads) > 0 {
 			// The branch has no PR/MR any more (a lookup finds merged and
-			// closed ones too), so the sidebar's search forgets it as well.
+			// closed ones too), so the sidebar's search forgets it as well,
+			// and its review threads stop counting.
 			st.Watching, st.Attention, st.Open = false, "", false
 			st.Forge, st.Number, st.Title = "", 0, ""
+			st.Threads = nil
 			w.save(ctx, st)
 			w.publish(e, events.PREventData{ChannelID: channelID})
 		}
